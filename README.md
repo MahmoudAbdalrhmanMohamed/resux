@@ -8,32 +8,30 @@ This is an MVP, not a production-ready framework.
 
 ## Create App
 
-The create command is handled by the `create-resux` package. After publishing that package to npm, users can run:
+Resux is published as one npm package. After publishing, users can scaffold an app with the same package they install in the app:
 
 ```sh
-npm create resux@latest
+npx resux@latest init
 ```
 
 With a project directory:
 
 ```sh
-npm create resux@latest my-app
+npx resux@latest init my-app
 ```
 
-With create-package options:
+With create options:
 
 ```sh
-npm create resux@latest my-app -- --no-install
+npx resux@latest init my-app --no-install
 ```
-
-`npm create resux@latest` works because npm maps `create <name>` to a package named `create-<name>`, so this repository now includes `packages/create-resux`.
 
 Generated apps use a single Resux dependency, similar to Nuxt apps installing `nuxt`:
 
 ```json
 {
   "dependencies": {
-    "@resux/resux": "^0.1.0"
+    "resux": "^0.1.0"
   }
 }
 ```
@@ -54,16 +52,17 @@ npm install
 npm run dev
 ```
 
-## Workspace
+## Package Layout
 
 ```txt
-packages/
-  compiler/      SFC parser, route manifest builder, code generator
-  runtime/       SSR renderer, composables, client resume loader source
-  cli/           @resux/resux package with the resux dev, build, and preview commands
-  create-resux/  npm create resux@latest scaffolder
+src/
+  compiler/   SFC parser, route manifest builder, code generator
+  runtime/    SSR renderer, composables, client resume loader source
+  index.ts    Resux CLI, Node server, and public node handler
+  create.ts   App scaffolder used by `resux init`
 
-tests/           Compiler, SSR, and client resume tests
+templates/    Starter files copied by `resux init`
+tests/        Compiler, SSR, and client resume tests
 ```
 
 ## Development
@@ -80,20 +79,17 @@ Run the full publish-readiness check:
 npm run pack:check
 ```
 
-This builds, tests, and dry-runs npm packing for `@resux/runtime`, `@resux/compiler`, `@resux/resux`, and `create-resux`.
+This builds, tests, and dry-runs npm packing for the single `resux` package.
 
 ## Publishing
 
-Publish the packages in dependency order:
+Publish the single package:
 
 ```sh
-npm publish --workspace @resux/runtime
-npm publish --workspace @resux/compiler
-npm publish --workspace @resux/resux
-npm publish --workspace create-resux
+npm publish --access public
 ```
 
-After `create-resux` is published, users can run `npm create resux@latest`.
+After `resux` is published, users can run `npx resux@latest init`.
 
 ## Compatibility Policy
 
@@ -108,6 +104,7 @@ Resux follows npm semver starting with the `0.1.x` release line.
 The `resux` CLI supports:
 
 ```sh
+resux init <project-dir>
 resux dev <app-root>
 resux build <app-root>
 resux preview <app-root>
@@ -140,7 +137,7 @@ Build output is written to:
 
 ## App Types
 
-Generated apps include `env.d.ts` and `tsconfig.json` wired to `@resux/resux/globals`, so app files can use the Resux-style globals without imports:
+Generated apps include `env.d.ts` and `tsconfig.json` wired to `resux/globals`, so app files can use the Resux-style globals without imports:
 
 ```ts
 const count = useState("count", () => 0)
@@ -410,12 +407,12 @@ Unsupported resumability patterns should fail at compile time instead of silentl
 
 ## Architecture
 
-Resux has four packages:
+Resux is one package with four internal parts:
 
 - Compiler: parses `.vue` files, creates routes, validates resumable handlers, and emits server/client modules.
 - Runtime: renders HTML on the server, provides Resux-style composables, runs plugins, applies layouts, collects head entries, and serializes payloads.
 - CLI: builds apps, starts the dev server, and previews generated output.
-- Create CLI: scaffolds a starter app for `npm create resux@latest`.
+- Create CLI: scaffolds a starter app for `resux init`.
 
 The browser initially receives only server-rendered HTML, the serialized payload, and the small resume loader.
 

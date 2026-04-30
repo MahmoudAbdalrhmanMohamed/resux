@@ -12,6 +12,6 @@
     "inspect": "resux inspect ."
   },
   "dependencies": {
-    "@resux/resux": "^0.1.0"
+    "resux": "^0.1.0"
   }
 }

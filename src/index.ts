@@ -6,8 +6,9 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import vuePlugin from "@vitejs/plugin-vue";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
-import { buildProject, type BuildOptions } from "@resux/compiler";
-import { renderApp, renderDocument, type RenderResult, type RouteContext, type RouteMiddlewareResult } from "@resux/runtime";
+import { buildProject, type BuildOptions } from "./compiler/index.js";
+import { runCreateResux } from "./create.js";
+import { renderApp, renderDocument, type RenderResult, type RouteContext, type RouteMiddlewareResult } from "./runtime/index.js";
 
 const version = "0.1.0";
 const require = createRequire(import.meta.url);
@@ -95,6 +96,11 @@ async function runCli(args: string[]): Promise<void> {
     return;
   }
 
+  if (command === "init" || command === "create") {
+    await runCreateResux(commandArgs);
+    return;
+  }
+
   const cliOptions = readCliOptions(commandArgs);
   const appRoot = path.resolve(cliOptions.appRoot);
   const outDir = path.join(appRoot, ".resux");
@@ -135,6 +141,12 @@ function isMainModule(): boolean {
 }
 
 function readCommand(args: string[]): string {
+  const first = args[0];
+
+  if (first === "init" || first === "create") {
+    return first;
+  }
+
   if (args.includes("--help") || args.includes("-h")) {
     return "help";
   }
@@ -142,8 +154,6 @@ function readCommand(args: string[]): string {
   if (args.includes("--version") || args.includes("-v")) {
     return "version";
   }
-
-  const first = args[0];
 
   if (!first || first.startsWith("-")) {
     return "dev";
@@ -529,7 +539,7 @@ export default defineNitroConfig({
 
 function createNitroHandler(): string {
   return `import { fromNodeMiddleware } from "h3";
-import { createResuxNodeHandler } from "@resux/resux/node";
+import { createResuxNodeHandler } from "resux/node";
 
 export default fromNodeMiddleware(createResuxNodeHandler());
 `;
@@ -693,6 +703,7 @@ function printHelp(): void {
 
 Usage:
   resux dev [app-root] [options]
+  resux init [project-dir] [options]
   resux build [app-root] [options]
   resux preview [app-root] [options]
   resux start [app-root] [options]
@@ -700,6 +711,7 @@ Usage:
   resux deploy [app-root] [options]
 
 Commands:
+  init      Scaffold a new Resux app
   dev       Start the Resux dev server with Vite middleware
   build     Build server and client output into .resux
   preview   Serve the built app, rebuilding when needed

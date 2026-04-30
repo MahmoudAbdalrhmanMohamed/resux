@@ -21,13 +21,15 @@ interface CliOptions {
 const defaultProjectName = "resux-app";
 const packageManagers = new Set<PackageManager>(["npm", "pnpm", "yarn", "bun"]);
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+if (isMainModule()) {
+  runCreateResux(process.argv.slice(2)).catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}
 
-async function main(): Promise<void> {
-  const options = parseArgs(process.argv.slice(2));
+export async function runCreateResux(args: string[] = process.argv.slice(2)): Promise<void> {
+  const options = parseArgs(args);
 
   if (options.help) {
     printHelp();
@@ -87,7 +89,7 @@ function parseArgs(args: string[]): CliOptions {
     } else if (arg.startsWith("--pm=")) {
       options.packageManager = readPackageManager(arg.slice("--pm=".length));
     } else if (arg.startsWith("-")) {
-      throw new Error(`Unknown option "${arg}". Run create-resux --help for usage.`);
+      throw new Error(`Unknown option "${arg}". Run resux init --help for usage.`);
     } else if (!options.targetDir) {
       options.targetDir = arg;
     } else {
@@ -299,11 +301,16 @@ function canPrompt(): boolean {
   return Boolean(stdin.isTTY && stdout.isTTY);
 }
 
+function isMainModule(): boolean {
+  return process.argv[1] ? path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) : false;
+}
+
 function printHelp(): void {
-  console.log(`create-resux
+  console.log(`resux init
 
 Usage:
-  npm create resux@latest [project-dir] [options]
+  npx resux@latest init [project-dir] [options]
+  resux init [project-dir] [options]
 
 Options:
   --install               Install dependencies after scaffolding

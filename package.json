@@ -1,22 +1,63 @@
 {
-  "name": "resux-workspace",
+  "name": "resux",
   "version": "0.1.0",
   "private": false,
   "type": "module",
-  "workspaces": [
-    "packages/*"
+  "files": [
+    "dist",
+    "templates",
+    "README.md"
   ],
+  "bin": {
+    "resux": "dist/index.js",
+    "create-resux": "dist/create.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./globals": {
+      "types": "./dist/globals.d.ts",
+      "default": "./dist/globals.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime/index.d.ts",
+      "default": "./dist/runtime/index.js"
+    },
+    "./compiler": {
+      "types": "./dist/compiler/index.d.ts",
+      "default": "./dist/compiler/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc -b",
     "test": "vitest run",
-    "create:local": "npm run build && node packages/create-resux/dist/index.js",
-    "pack:check": "npm run build && npm test && npm pack --dry-run --workspace @resux/runtime --workspace @resux/compiler --workspace @resux/resux --workspace create-resux"
+    "create:local": "npm run build && node dist/index.js init",
+    "pack:check": "npm run build && npm test && npm pack --dry-run"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^6.0.6",
+    "@vue/compiler-dom": "^3.5.22",
+    "@vue/compiler-sfc": "^3.5.22",
+    "h3": "^1.15.4",
+    "nitropack": "^2.12.6",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.10",
+    "vue": "^3.5.33"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
     "happy-dom": "^20.0.10",
-    "typescript": "^5.9.3",
-    "vite": "^8.0.10",
     "vitest": "^4.0.8"
   }
 }

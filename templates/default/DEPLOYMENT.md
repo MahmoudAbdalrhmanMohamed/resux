@@ -37,6 +37,6 @@ Use `npm run inspect` to print the routes, server handlers, route rules, and bui
 To refresh these deployment files after changing Resux versions:
 
 ```sh
-npx @resux/resux deploy . --preset docker --force
-npx @resux/resux deploy . --preset nitro --force
+npx resux deploy . --preset docker --force
+npx resux deploy . --preset nitro --force
 ```

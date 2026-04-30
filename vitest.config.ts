@@ -4,8 +4,8 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   resolve: {
     alias: {
-      "@resux/runtime": path.resolve(__dirname, "packages/runtime/src/index.ts"),
-      "@resux/compiler": path.resolve(__dirname, "packages/compiler/src/index.ts")
+      "resux/runtime": path.resolve(__dirname, "src/runtime/index.ts"),
+      "resux/compiler": path.resolve(__dirname, "src/compiler/index.ts")
     }
   },
   test: {

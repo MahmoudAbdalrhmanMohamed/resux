@@ -7,7 +7,7 @@ import type {
   RouteContext,
   RuntimeConfig,
   SeoMetaInput
-} from "@resux/runtime";
+} from "./runtime/index.js";
 
 interface ResuxModuleContext {
   rootDir: string;

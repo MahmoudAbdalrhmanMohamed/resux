@@ -1,0 +1,17 @@
+{
+  "name": "%PROJECT_NAME%",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "resux dev .",
+    "build": "resux build .",
+    "build:nitro": "npm run build && nitro build",
+    "preview": "resux preview .",
+    "start": "resux start .",
+    "start:nitro": "node .output/server/index.mjs",
+    "inspect": "resux inspect ."
+  },
+  "dependencies": {
+    "@resux/resux": "^0.1.0"
+  }
+}

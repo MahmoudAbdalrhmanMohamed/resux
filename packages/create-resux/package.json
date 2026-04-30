@@ -1,0 +1,23 @@
+{
+  "name": "create-resux",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "create-resux": "dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "templates"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}

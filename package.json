@@ -1,0 +1,22 @@
+{
+  "name": "resux-workspace",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run",
+    "create:local": "npm run build && node packages/create-resux/dist/index.js",
+    "pack:check": "npm run build && npm test && npm pack --dry-run --workspace @resux/runtime --workspace @resux/compiler --workspace @resux/resux --workspace create-resux"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "happy-dom": "^20.0.10",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.10",
+    "vitest": "^4.0.8"
+  }
+}

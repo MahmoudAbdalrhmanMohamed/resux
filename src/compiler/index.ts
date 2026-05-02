@@ -322,7 +322,7 @@ async function buildServerBundle(root: string, outDir: string): Promise<void> {
         sourcemap: false,
         manifest: false,
         rollupOptions: {
-          external: ["resux/runtime"],
+          external: ["@mahmoud-abdelrahman/resux/runtime"],
           output: {
             format: "es",
             entryFileNames: "index.mjs",
@@ -1054,7 +1054,7 @@ function createComponentModuleSource(options: {
   analysis: ScriptAnalysis;
   client: boolean;
 }): string {
-  const importPath = options.client ? "/__resux/runtime-client.mjs" : "resux/runtime";
+  const importPath = options.client ? "/__resux/runtime-client.mjs" : "@mahmoud-abdelrahman/resux/runtime";
   const factory = options.client ? "createClientComponent" : "defineComponent";
   const source = [
     `import { ${factory} } from ${JSON.stringify(importPath)};`,
@@ -1384,7 +1384,7 @@ function compilePluginFile(file: string, index: number): CompiledPlugin {
     id: `p${index}`,
     file,
     mode,
-    source: transpileSupportModule(file, `import { defineResuxPlugin } from "resux/runtime";\n`)
+    source: transpileSupportModule(file, `import { defineResuxPlugin } from "@mahmoud-abdelrahman/resux/runtime";\n`)
   };
 }
 
@@ -1399,7 +1399,7 @@ function compileMiddlewareFile(file: string, index: number): CompiledMiddleware 
     global,
     source: transpileSupportModule(
       file,
-      `import { defineResuxRouteMiddleware, navigateTo, abortNavigation } from "resux/runtime";\n`
+      `import { defineResuxRouteMiddleware, navigateTo, abortNavigation } from "@mahmoud-abdelrahman/resux/runtime";\n`
     )
   };
 }
@@ -1408,7 +1408,7 @@ function compileServerMiddlewareFile(file: string, index: number): CompiledServe
   return {
     id: `s${index}`,
     file,
-    source: transpileSupportModule(file, `import { defineServerMiddleware, defineEventHandler, eventHandler, readBody, getQuery } from "resux/runtime";\n`)
+    source: transpileSupportModule(file, `import { defineServerMiddleware, defineEventHandler, eventHandler, readBody, getQuery } from "@mahmoud-abdelrahman/resux/runtime";\n`)
   };
 }
 
@@ -1420,7 +1420,7 @@ function compileServerHandlerFile(file: string, index: number, routePath: string
     path: routePath,
     file,
     params,
-    source: transpileSupportModule(file, `import { defineEventHandler, eventHandler, readBody, getQuery } from "resux/runtime";\n`)
+    source: transpileSupportModule(file, `import { defineEventHandler, eventHandler, readBody, getQuery } from "@mahmoud-abdelrahman/resux/runtime";\n`)
   };
 }
 

@@ -539,7 +539,7 @@ export default defineNitroConfig({
 
 function createNitroHandler(): string {
   return `import { fromNodeMiddleware } from "h3";
-import { createResuxNodeHandler } from "resux/node";
+import { createResuxNodeHandler } from "@mahmoud-abdelrahman/resux/node";
 
 export default fromNodeMiddleware(createResuxNodeHandler());
 `;

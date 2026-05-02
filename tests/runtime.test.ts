@@ -11,7 +11,7 @@ import {
   renderApp,
   renderDocument,
   type ComponentDefinition
-} from "resux/runtime";
+} from "@mahmoud-abdelrahman/resux/runtime";
 
 describe("runtime SSR", () => {
   it("renders HTML and serialized state without eagerly loading handler chunks", async () => {

@@ -1855,6 +1855,12 @@ async function navigateTo(target, options = {}) {
       return;
     }
 
+    if (options.replace) {
+      history.replaceState({ __resux: true, path: routePath }, "", nextUrl.href);
+    } else {
+      history.pushState({ __resux: true, path: routePath }, "", nextUrl.href);
+    }
+
     setRouteTransition("swapping", { path: routePath });
     const previousPayload = globalThis.__RESUX__;
     const preserved = replaceRouteHtml(root, result.html);
@@ -1863,12 +1869,6 @@ async function navigateTo(target, options = {}) {
     clearScopeCacheExcept(preserved.scopeIds);
     void resumePendingAsyncData();
     void mountVueIslands(preserved.root);
-
-    if (options.replace) {
-      history.replaceState({ __resux: true, path: routePath }, "", nextUrl.href);
-    } else {
-      history.pushState({ __resux: true, path: routePath }, "", nextUrl.href);
-    }
 
     if (nextUrl.hash) {
       document.getElementById(nextUrl.hash.slice(1))?.scrollIntoView();
@@ -2100,25 +2100,61 @@ function applyHead(head) {
     document.title = head.title;
   }
 
-  document.querySelectorAll("[data-rx-head]").forEach((element) => element.remove());
+  const nextEntries = [];
 
   for (const meta of head.meta ?? []) {
-    const element = document.createElement("meta");
-    element.setAttribute("data-rx-head", "true");
-    for (const [key, value] of Object.entries(meta)) {
-      element.setAttribute(key, value);
-    }
-    document.head.appendChild(element);
+    nextEntries.push({ tag: "meta", attrs: meta });
   }
 
   for (const link of head.link ?? []) {
-    const element = document.createElement("link");
+    nextEntries.push({ tag: "link", attrs: link });
+  }
+
+  const existing = new Map();
+  document.querySelectorAll("[data-rx-head]").forEach((element) => {
+    existing.set(headElementKey(element), element);
+  });
+
+  const used = new Set();
+  for (const entry of nextEntries) {
+    const key = headEntryKey(entry.tag, entry.attrs);
+    const current = existing.get(key);
+    if (current) {
+      used.add(current);
+      continue;
+    }
+
+    const element = document.createElement(entry.tag);
     element.setAttribute("data-rx-head", "true");
-    for (const [key, value] of Object.entries(link)) {
+    for (const [key, value] of Object.entries(entry.attrs)) {
       element.setAttribute(key, value);
     }
     document.head.appendChild(element);
+    used.add(element);
   }
+
+  document.querySelectorAll("[data-rx-head]").forEach((element) => {
+    if (!used.has(element)) {
+      element.remove();
+    }
+  });
+}
+
+function headElementKey(element) {
+  const attrs = {};
+  for (const attribute of Array.from(element.attributes || [])) {
+    if (attribute.name !== "data-rx-head") {
+      attrs[attribute.name] = attribute.value;
+    }
+  }
+  return headEntryKey(element.tagName.toLowerCase(), attrs);
+}
+
+function headEntryKey(tag, attrs) {
+  const normalized = Object.entries(attrs || {})
+    .map(([key, value]) => [key, String(value)])
+    .sort(([a], [b]) => a.localeCompare(b));
+  return tag + ":" + JSON.stringify(normalized);
 }
 
 async function handleDelegatedEvent(eventName, event) {

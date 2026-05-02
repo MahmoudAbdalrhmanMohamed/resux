@@ -812,6 +812,91 @@ export default createClientComponent({ id: "m0", name: "Model", file: "Model.vue
     expect(window.document.head.innerHTML).toContain('name="route"');
   });
 
+  it("preserves loaded global styles while navigating between routes", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-style-nav-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.head.innerHTML = '<link data-rx-head="true" rel="stylesheet" href="/styles.css">';
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <span data-rx-layout="default">
+          <section class="shell">
+            <nav><a href="/">Home</a><a href="/about">About</a></nav>
+            <span data-rx-page=""><main class="page">Home</main></span>
+          </section>
+        </span>
+      </div>
+    `;
+    const stylesheet = window.document.querySelector('link[href="/styles.css"]');
+
+    const routePayloads: Record<string, unknown> = {
+      "/about": {
+        html: `
+          <span data-rx-layout="default">
+            <section class="shell">
+              <nav><a href="/">Home</a><a href="/about">About</a></nav>
+              <span data-rx-page=""><main class="page">About</main></span>
+            </section>
+          </span>
+        `,
+        head: { title: "About", link: [{ rel: "stylesheet", href: "/styles.css" }] },
+        payload: { route: { path: "/about", params: {}, query: {} }, scopes: {}, modules: {} }
+      },
+      "/": {
+        html: `
+          <span data-rx-layout="default">
+            <section class="shell">
+              <nav><a href="/">Home</a><a href="/about">About</a></nav>
+              <span data-rx-page=""><main class="page">Home</main></span>
+            </section>
+          </span>
+        `,
+        head: { title: "Home", link: [{ rel: "stylesheet", href: "/styles.css" }] },
+        payload: { route: { path: "/", params: {}, query: {} }, scopes: {}, modules: {} }
+      }
+    };
+
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      scrollTo: () => undefined,
+      fetch: async (url: string) => {
+        const request = new URL(url, "http://localhost");
+        const routePath = decodeURIComponent(request.searchParams.get("path") ?? "");
+        return new Response(JSON.stringify(routePayloads[routePath]), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      },
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    window.document.querySelector('a[href="/about"]')!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+    await waitForHtml(window, "<main class=\"page\">About</main>");
+
+    expect(window.location.pathname).toBe("/about");
+    expect(window.document.getElementById("__resux")?.textContent).toContain("About");
+    expect(window.document.querySelector('link[href="/styles.css"]')).toBe(stylesheet);
+
+    window.document.querySelector('a[href="/"]')!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+    await waitForHtml(window, "<main class=\"page\">Home</main>");
+
+    expect(window.location.pathname).toBe("/");
+    expect(window.document.getElementById("__resux")?.textContent).toContain("Home");
+    expect(window.document.querySelector('link[href="/styles.css"]')).toBe(stylesheet);
+  });
+
   it("reports route transition phases with progress and accessibility state", async () => {
     const tempDir = path.join(os.tmpdir(), `resux-transition-${Date.now()}`);
     await mkdir(tempDir, { recursive: true });

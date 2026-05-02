@@ -163,11 +163,11 @@ describe("runtime SSR", () => {
       file: "StatsPage.vue",
       handlers: [],
       async script(ctx) {
-        const stats = ctx.useAsyncData("stats", async () => {
+        const { data, pending } = ctx.useAsyncData("stats", async () => {
           await new Promise((resolve) => setTimeout(resolve, 50));
           return { label: "Ready" };
         });
-        return { stats };
+        return { data, pending };
       },
       template: [
         {
@@ -175,7 +175,7 @@ describe("runtime SSR", () => {
           tag: "p",
           attrs: [],
           events: [],
-          if: { expression: "stats.pending.value", blockId: "b0" },
+          if: { expression: "pending.value", blockId: "b0" },
           children: [{ type: "text", value: "Loading stats" }]
         },
         {
@@ -183,8 +183,8 @@ describe("runtime SSR", () => {
           tag: "p",
           attrs: [],
           events: [],
-          if: { expression: "!stats.pending.value", blockId: "b1" },
-          children: [{ type: "interpolation", expression: "stats.value.value.label", bindingId: "b2" }]
+          if: { expression: "!pending.value", blockId: "b1" },
+          children: [{ type: "interpolation", expression: "data.value.label", bindingId: "b2" }]
         }
       ]
     });

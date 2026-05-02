@@ -16,6 +16,7 @@ export interface AsyncDataError {
 }
 
 export interface AsyncDataResource<T = unknown> {
+  data: Ref<T | undefined>;
   value: Ref<T | undefined>;
   pending: Ref<boolean>;
   error: Ref<AsyncDataError | null>;
@@ -635,6 +636,7 @@ function createPendingAsyncDataResource<T>(): {
   const error: Ref<AsyncDataError | null> = { value: null };
   let completion: Promise<void> = Promise.resolve();
   const resource: AsyncDataResource<T> = {
+    data: value,
     value,
     pending,
     error,
@@ -1647,15 +1649,17 @@ function installResux() {
 }
 
 function createAsyncDataResource(value, pending = false, error = null) {
+  const data = { value };
   let completion = Promise.resolve();
   const resource = {
-    value: { value },
+    data,
+    value: data,
     pending: { value: pending },
     error: { value: error },
     then(onfulfilled, onrejected) {
       return completion.then(() => {
         const snapshot = {
-          value: resource.value.value,
+          value: resource.data.value,
           pending: resource.pending.value,
           error: resource.error.value
         };
@@ -1674,10 +1678,10 @@ async function settleAsyncDataResource(resource, handler, key) {
   try {
     const value = await handler();
     assertJsonSerializable(value, 'useAsyncData("' + key + '")');
-    resource.value.value = value;
+    resource.data.value = value;
     resource.error.value = null;
   } catch (error) {
-    resource.value.value = undefined;
+    resource.data.value = undefined;
     resource.error.value = normalizeAsyncDataError(error);
   } finally {
     resource.pending.value = false;
@@ -1688,7 +1692,7 @@ function serializeAsyncData(refs) {
   const output = {};
   for (const [key, ref] of Object.entries(refs)) {
     output[key] = {
-      value: ref.value.value === undefined ? null : ref.value.value,
+      value: ref.data.value === undefined ? null : ref.data.value,
       pending: ref.pending.value,
       error: ref.error.value
     };
@@ -2650,7 +2654,7 @@ function serializeAsyncData(refs: Record<string, AsyncDataResource<unknown>>): R
   const output: Record<string, SerializedAsyncData> = {};
 
   for (const [key, resource] of Object.entries(refs)) {
-    const value = resource.value.value;
+    const value = resource.data.value;
     if (!resource.pending.value && !resource.error.value) {
       assertJsonSerializable(value, `useAsyncData("${key}")`);
     }

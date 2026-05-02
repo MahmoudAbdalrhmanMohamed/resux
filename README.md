@@ -330,7 +330,7 @@ Server middleware can continue by returning nothing, end the Node response direc
 - Lazy client handler chunks loaded on first interaction.
 - Client-side navigation, persistent same-layout DOM, built-in route transition progress, and hover/focus route payload prefetch for same-origin links.
 - MVP composables: `useState`, `useAsyncData`, `useRoute`, `useHead`, `useSeoMeta`, `useRuntimeConfig`, `useResuxApp`, `useFetch`, `$fetch`, and `onMounted`.
-- `useAsyncData` returns a resource with `value`, `pending`, and `error` state, and still works with `await` when you want to block setup.
+- `useAsyncData` returns a resource with reactive `data`, `pending`, and `error` refs, plus `value` as a data alias for compatibility. It still works with `await` when you want to block setup.
 
 ## Component Syntax
 
@@ -360,15 +360,15 @@ For a Next-style loading skeleton, call `useAsyncData` without `await` and branc
 
 ```vue
 <script setup lang="ts">
-const stats = useAsyncData("stats", async () => {
+const { data, pending } = useAsyncData("stats", async () => {
   await new Promise((resolve) => setTimeout(resolve, 700))
   return { response: "14 ms" }
 })
 </script>
 
 <template>
-  <div v-if="stats.pending.value" class="skeleton"></div>
-  <strong v-if="!stats.pending.value">{{ stats.value.value.response }}</strong>
+  <div v-if="pending.value" class="skeleton"></div>
+  <strong v-if="!pending.value">{{ data.value.response }}</strong>
 </template>
 ```
 

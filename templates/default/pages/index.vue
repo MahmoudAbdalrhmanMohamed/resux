@@ -1,7 +1,7 @@
 <script setup lang="ts">
 const count = useState("count", () => 0)
 const config = useRuntimeConfig()
-const stats = useAsyncData("starter-stats", async () => {
+const { data, pending } = useAsyncData("starter-stats", async () => {
   await new Promise((resolve) => setTimeout(resolve, 700))
   return {
     response: "14 ms",
@@ -32,23 +32,23 @@ function increment() {
     </section>
 
     <section class="stats-panel">
-      <div v-if="stats.pending.value" class="stats-grid">
+      <div v-if="pending.value" class="stats-grid">
         <div class="stat skeleton"></div>
         <div class="stat skeleton"></div>
         <div class="stat skeleton"></div>
       </div>
-      <div v-if="!stats.pending.value" class="stats-grid">
+      <div v-if="!pending.value" class="stats-grid">
         <article class="stat">
           <span>Response</span>
-          <strong>{{ stats.value.value.response }}</strong>
+          <strong>{{ data.value.response }}</strong>
         </article>
         <article class="stat">
           <span>Routes</span>
-          <strong>{{ stats.value.value.routes }}</strong>
+          <strong>{{ data.value.routes }}</strong>
         </article>
         <article class="stat">
           <span>Mode</span>
-          <strong v-text="stats.value.value.mode">Mode</strong>
+          <strong v-text="data.value.mode">Mode</strong>
         </article>
       </div>
     </section>

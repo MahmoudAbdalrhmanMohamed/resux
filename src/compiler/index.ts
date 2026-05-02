@@ -458,10 +458,15 @@ export function createRouteManifest(
 ): RouteManifestRecord[] {
   return files
     .map((file, index) => {
-      const pagesRoot = file.includes(`${path.sep}app${path.sep}pages${path.sep}`)
-        ? path.join(root, "app", "pages")
-        : path.join(root, "pages");
-      const relative = normalizePath(path.relative(pagesRoot, file));
+      const normalizedRoot = normalizePath(path.resolve(root));
+      const normalizedFile = normalizePath(path.resolve(file));
+      const appPagesRoot = `${normalizedRoot}/app/pages/`;
+      const pagesRoot = `${normalizedRoot}/pages/`;
+      const relative = normalizedFile.startsWith(appPagesRoot)
+        ? normalizedFile.slice(appPagesRoot.length)
+        : normalizedFile.startsWith(pagesRoot)
+          ? normalizedFile.slice(pagesRoot.length)
+          : normalizePath(path.relative(path.join(root, "pages"), file));
       const withoutExtension = relative.replace(/\.vue$/, "");
       const parts = withoutExtension.split("/");
       const params: string[] = [];

@@ -3,6 +3,10 @@ name: Publish to npm
 on:
   release:
     types: [published]
+  push:
+    tags:
+      - "v*"
+      - "resuxjs@*"
 
 permissions:
   contents: read
@@ -12,6 +16,9 @@ jobs:
   publish:
     name: Publish package
     runs-on: ubuntu-latest
+    concurrency:
+      group: npm-publish-${{ github.ref }}
+      cancel-in-progress: false
 
     steps:
       - name: Checkout
@@ -20,16 +27,16 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 20.19.0
           registry-url: "https://registry.npmjs.org/"
           cache: npm
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --include=optional
 
       - name: Install Linux Rolldown binding
-        run: npm install --no-save @rolldown/binding-linux-x64-gnu@1.0.0-rc.17
+        run: npm install --no-save --package-lock=false @rolldown/binding-linux-x64-gnu@1.0.0-rc.17
 
       - name: Check package
         run: npm run pack:check
@@ -52,5 +59,3 @@ jobs:
       - name: Publish package
         if: steps.npm-version.outputs.published == 'false'
         run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -11,6 +11,18 @@ This is an MVP, not a production-ready framework.
 Resux is published as one npm package. After publishing, users can scaffold an app with the same package they install in the app:
 
 ```sh
+npm create resuxjs@latest
+```
+
+With a project directory:
+
+```sh
+npm create resuxjs@latest my-app
+```
+
+Equivalent direct package command:
+
+```sh
 npx resuxjs@latest init
 ```
 

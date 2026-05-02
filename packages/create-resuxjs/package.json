@@ -1,0 +1,29 @@
+{
+  "name": "create-resuxjs",
+  "version": "0.2.0",
+  "private": false,
+  "type": "module",
+  "description": "Create a Resux app.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MahmoudAbdalrhmanMohamed/resux.git",
+    "directory": "packages/create-resuxjs"
+  },
+  "bugs": {
+    "url": "https://github.com/MahmoudAbdalrhmanMohamed/resux/issues"
+  },
+  "homepage": "https://github.com/MahmoudAbdalrhmanMohamed/resux#readme",
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "bin": {
+    "create-resuxjs": "index.js"
+  },
+  "dependencies": {
+    "resuxjs": "^0.2.0"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}

@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "private": false,
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MahmoudAbdalrhmanMohamed/resux.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MahmoudAbdalrhmanMohamed/resux/issues"
+  },
+  "homepage": "https://github.com/MahmoudAbdalrhmanMohamed/resux#readme",
   "files": [
     "dist",
     "templates",

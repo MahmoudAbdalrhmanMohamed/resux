@@ -43,6 +43,7 @@ export async function runCreateResux(args: string[] = process.argv.slice(2)): Pr
     const root = path.resolve(process.cwd(), targetDir);
     const projectName = toPackageName(path.basename(root));
     const title = toTitle(projectName);
+    const frameworkPackage = await readFrameworkPackage();
     const install = options.install ?? await promptConfirm(prompts, "Install dependencies?", canPrompt(), options.yes);
     const packageManager = options.packageManager ?? detectPackageManager();
 
@@ -51,6 +52,7 @@ export async function runCreateResux(args: string[] = process.argv.slice(2)): Pr
       "%PROJECT_NAME%": projectName,
       "%PROJECT_TITLE%": title
     });
+    await writeFile(path.join(root, "package.json"), createStarterPackageJson(projectName, frameworkPackage), "utf8");
 
     if (install) {
       await installDependencies(root, packageManager);
@@ -202,6 +204,37 @@ async function copyEntry(
   }
 
   await writeFile(target, contents, "utf8");
+}
+
+async function readFrameworkPackage(): Promise<{ name: string; version: string }> {
+  const packageJsonPath = fileURLToPath(new URL("../package.json", import.meta.url));
+  const contents = await readFile(packageJsonPath, "utf8");
+  const packageJson = JSON.parse(contents) as { name?: unknown; version?: unknown };
+
+  return {
+    name: typeof packageJson.name === "string" ? packageJson.name : "resux",
+    version: typeof packageJson.version === "string" ? packageJson.version : "0.0.0"
+  };
+}
+
+function createStarterPackageJson(projectName: string, frameworkPackage: { name: string; version: string }): string {
+  return `${JSON.stringify({
+    name: projectName,
+    private: true,
+    type: "module",
+    scripts: {
+      dev: "resux dev .",
+      build: "resux build .",
+      "build:nitro": "npm run build && nitro build",
+      preview: "resux preview .",
+      start: "resux start .",
+      "start:nitro": "node .output/server/index.mjs",
+      inspect: "resux inspect ."
+    },
+    dependencies: {
+      [frameworkPackage.name]: `^${frameworkPackage.version}`
+    }
+  }, null, 2)}\n`;
 }
 
 async function installDependencies(root: string, packageManager: PackageManager): Promise<void> {

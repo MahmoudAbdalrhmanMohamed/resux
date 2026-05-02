@@ -17,8 +17,8 @@ export interface AsyncDataError {
 
 export interface AsyncDataResource<T = unknown> {
   value: Ref<T | undefined>;
-  pending: boolean;
-  error: AsyncDataError | null;
+  pending: Ref<boolean>;
+  error: Ref<AsyncDataError | null>;
   then: any;
 }
 
@@ -631,17 +631,19 @@ function createPendingAsyncDataResource<T>(): {
   setCompletion: (completion: Promise<void>) => void;
 } {
   const value: Ref<T | undefined> = { value: undefined };
+  const pending: Ref<boolean> = { value: true };
+  const error: Ref<AsyncDataError | null> = { value: null };
   let completion: Promise<void> = Promise.resolve();
   const resource: AsyncDataResource<T> = {
     value,
-    pending: true,
-    error: null,
+    pending,
+    error,
     then(onfulfilled: any, onrejected: any) {
       return completion.then(() => {
         const snapshot = {
           value: resource.value.value,
-          pending: resource.pending,
-          error: resource.error
+          pending: resource.pending.value,
+          error: resource.error.value
         };
         return onfulfilled ? onfulfilled(snapshot) : snapshot;
       }, onrejected);
@@ -665,12 +667,12 @@ async function settleAsyncDataResource<T>(
     const value = handler ? await handler() : undefined;
     assertJsonSerializable(value, `useAsyncData("${key}")`);
     resource.value.value = value as T;
-    resource.error = null;
+    resource.error.value = null;
   } catch (error) {
     resource.value.value = undefined;
-    resource.error = normalizeAsyncDataError(error);
+    resource.error.value = normalizeAsyncDataError(error);
   } finally {
-    resource.pending = false;
+    resource.pending.value = false;
   }
 }
 
@@ -1531,7 +1533,7 @@ export function createClientComponent(definition) {
               snapshot?.error ?? null
             );
             asyncDataRefs[key] = resource;
-            if (resource.pending && typeof handler === "function") {
+            if (resource.pending.value && typeof handler === "function") {
               const completion = settleAsyncDataResource(resource, handler, key);
               resource.setCompletion(completion);
               pendingCompletions.push(completion);
@@ -1648,14 +1650,14 @@ function createAsyncDataResource(value, pending = false, error = null) {
   let completion = Promise.resolve();
   const resource = {
     value: { value },
-    pending,
-    error,
+    pending: { value: pending },
+    error: { value: error },
     then(onfulfilled, onrejected) {
       return completion.then(() => {
         const snapshot = {
           value: resource.value.value,
-          pending: resource.pending,
-          error: resource.error
+          pending: resource.pending.value,
+          error: resource.error.value
         };
         return onfulfilled ? onfulfilled(snapshot) : snapshot;
       }, onrejected);
@@ -1673,12 +1675,12 @@ async function settleAsyncDataResource(resource, handler, key) {
     const value = await handler();
     assertJsonSerializable(value, 'useAsyncData("' + key + '")');
     resource.value.value = value;
-    resource.error = null;
+    resource.error.value = null;
   } catch (error) {
     resource.value.value = undefined;
-    resource.error = normalizeAsyncDataError(error);
+    resource.error.value = normalizeAsyncDataError(error);
   } finally {
-    resource.pending = false;
+    resource.pending.value = false;
   }
 }
 
@@ -1687,8 +1689,8 @@ function serializeAsyncData(refs) {
   for (const [key, ref] of Object.entries(refs)) {
     output[key] = {
       value: ref.value.value === undefined ? null : ref.value.value,
-      pending: ref.pending,
-      error: ref.error
+      pending: ref.pending.value,
+      error: ref.error.value
     };
   }
   return output;
@@ -2649,13 +2651,13 @@ function serializeAsyncData(refs: Record<string, AsyncDataResource<unknown>>): R
 
   for (const [key, resource] of Object.entries(refs)) {
     const value = resource.value.value;
-    if (!resource.pending && !resource.error) {
+    if (!resource.pending.value && !resource.error.value) {
       assertJsonSerializable(value, `useAsyncData("${key}")`);
     }
     output[key] = {
       value: value === undefined ? null : value as JsonValue,
-      pending: resource.pending,
-      error: resource.error
+      pending: resource.pending.value,
+      error: resource.error.value
     };
   }
 

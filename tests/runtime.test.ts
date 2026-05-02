@@ -175,7 +175,7 @@ describe("runtime SSR", () => {
           tag: "p",
           attrs: [],
           events: [],
-          if: { expression: "stats.pending", blockId: "b0" },
+          if: { expression: "stats.pending.value", blockId: "b0" },
           children: [{ type: "text", value: "Loading stats" }]
         },
         {
@@ -183,8 +183,8 @@ describe("runtime SSR", () => {
           tag: "p",
           attrs: [],
           events: [],
-          if: { expression: "!stats.pending", blockId: "b1" },
-          children: [{ type: "interpolation", expression: "stats.value.label", bindingId: "b2" }]
+          if: { expression: "!stats.pending.value", blockId: "b1" },
+          children: [{ type: "interpolation", expression: "stats.value.value.label", bindingId: "b2" }]
         }
       ]
     });
@@ -521,8 +521,8 @@ describe("client resume loader", () => {
       handlerFile,
       `import { createClientComponent } from ${JSON.stringify(pathToFileURL(runtimeFile).href)};
 const __template = [
-  { type: "element", tag: "p", attrs: [], events: [], if: { expression: "stats.pending", blockId: "b0" }, children: [{ type: "text", value: "Loading stats" }] },
-  { type: "element", tag: "p", attrs: [], events: [], if: { expression: "!stats.pending", blockId: "b1" }, children: [{ type: "interpolation", expression: "stats.value.label", bindingId: "b2" }] }
+  { type: "element", tag: "p", attrs: [], events: [], if: { expression: "stats.pending.value", blockId: "b0" }, children: [{ type: "text", value: "Loading stats" }] },
+  { type: "element", tag: "p", attrs: [], events: [], if: { expression: "!stats.pending.value", blockId: "b1" }, children: [{ type: "interpolation", expression: "stats.value.value.label", bindingId: "b2" }] }
 ];
 async function script(ctx) {
   const stats = ctx.useAsyncData("stats", async () => {

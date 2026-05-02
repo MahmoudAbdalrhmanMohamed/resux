@@ -32,23 +32,23 @@ function increment() {
     </section>
 
     <section class="stats-panel">
-      <div v-if="stats.pending" class="stats-grid">
+      <div v-if="stats.pending.value" class="stats-grid">
         <div class="stat skeleton"></div>
         <div class="stat skeleton"></div>
         <div class="stat skeleton"></div>
       </div>
-      <div v-if="!stats.pending" class="stats-grid">
+      <div v-if="!stats.pending.value" class="stats-grid">
         <article class="stat">
           <span>Response</span>
-          <strong>{{ stats.value.response }}</strong>
+          <strong>{{ stats.value.value.response }}</strong>
         </article>
         <article class="stat">
           <span>Routes</span>
-          <strong>{{ stats.value.routes }}</strong>
+          <strong>{{ stats.value.value.routes }}</strong>
         </article>
         <article class="stat">
           <span>Mode</span>
-          <strong v-text="stats.value.mode">Mode</strong>
+          <strong v-text="stats.value.value.mode">Mode</strong>
         </article>
       </div>
     </section>

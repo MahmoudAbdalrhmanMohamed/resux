@@ -367,8 +367,8 @@ const stats = useAsyncData("stats", async () => {
 </script>
 
 <template>
-  <div v-if="stats.pending" class="skeleton"></div>
-  <strong v-if="!stats.pending">{{ stats.value.response }}</strong>
+  <div v-if="stats.pending.value" class="skeleton"></div>
+  <strong v-if="!stats.pending.value">{{ stats.value.value.response }}</strong>
 </template>
 ```
 

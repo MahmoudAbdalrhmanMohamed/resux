@@ -576,6 +576,145 @@ export default createClientComponent({ id: "m0", name: "Stats", file: "Stats.vue
     });
   });
 
+  it("clears pending async-data skeletons and renders an error when fetch fails", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-pending-error-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const handlerFile = path.join(tempDir, "handler.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+    await writeFile(
+      handlerFile,
+      `import { createClientComponent } from ${JSON.stringify(pathToFileURL(runtimeFile).href)};
+const __template = [
+  { type: "element", tag: "p", attrs: [], events: [], if: { expression: "stats.pending.value", blockId: "b0" }, children: [{ type: "text", value: "Loading stats" }] },
+  { type: "element", tag: "p", attrs: [], events: [], if: { expression: "stats.error.value", blockId: "b1" }, children: [{ type: "interpolation", expression: "stats.error.value.message", bindingId: "b2" }] },
+  { type: "element", tag: "p", attrs: [], events: [], if: { expression: "!stats.pending.value && !stats.error.value", blockId: "b3" }, children: [{ type: "interpolation", expression: "stats.value.value.label", bindingId: "b4" }] }
+];
+async function script(ctx) {
+  const stats = ctx.useAsyncData("stats", () => ctx.$fetch("/api/stats"));
+  return { stats };
+}
+export default createClientComponent({ id: "m0", name: "Stats", file: "Stats.vue", script, template: __template, handlers: [] });
+`,
+      "utf8"
+    );
+
+    const window = new Window();
+    window.document.body.innerHTML = `
+      <span data-rx-block="s0:b0"><p>Loading stats</p></span>
+      <span data-rx-block="s0:b1"></span>
+      <span data-rx-block="s0:b3"></span>
+    `;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      fetch: async () => new Response(JSON.stringify({ message: "boom" }), { status: 500 }),
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {
+          s0: {
+            id: "s0",
+            moduleId: "m0",
+            state: {},
+            asyncData: {
+              stats: { value: null, pending: true, error: null }
+            }
+          }
+        },
+        modules: {
+          m0: pathToFileURL(handlerFile).href
+        }
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await waitForHtml(window, "Fetch failed for /api/stats: 500");
+
+    expect(window.document.body.innerHTML).not.toContain("Loading stats");
+    expect((globalThis as any).__RESUX__.scopes.s0.asyncData.stats).toEqual({
+      value: null,
+      pending: false,
+      error: {
+        name: "Error",
+        message: "Fetch failed for /api/stats: 500"
+      }
+    });
+  });
+
+  it("renders successful async data when another pending request fails", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-partial-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const handlerFile = path.join(tempDir, "handler.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+    await writeFile(
+      handlerFile,
+      `import { createClientComponent } from ${JSON.stringify(pathToFileURL(runtimeFile).href)};
+const __template = [
+  { type: "element", tag: "p", attrs: [], events: [], if: { expression: "profile.pending.value", blockId: "b0" }, children: [{ type: "text", value: "Loading profile" }] },
+  { type: "element", tag: "p", attrs: [], events: [], if: { expression: "!profile.pending.value && !profile.error.value", blockId: "b1" }, children: [{ type: "interpolation", expression: "profile.value.value.name", bindingId: "b2" }] },
+  { type: "element", tag: "p", attrs: [], events: [], if: { expression: "stats.pending.value", blockId: "b3" }, children: [{ type: "text", value: "Loading stats" }] },
+  { type: "element", tag: "p", attrs: [], events: [], if: { expression: "stats.error.value", blockId: "b4" }, children: [{ type: "interpolation", expression: "stats.error.value.message", bindingId: "b5" }] }
+];
+async function script(ctx) {
+  const profile = ctx.useAsyncData("profile", () => ctx.$fetch("/api/profile"));
+  const stats = ctx.useAsyncData("stats", () => ctx.$fetch("/api/stats"));
+  return { profile, stats };
+}
+export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue", script, template: __template, handlers: [] });
+`,
+      "utf8"
+    );
+
+    const window = new Window();
+    window.document.body.innerHTML = `
+      <span data-rx-block="s0:b0"><p>Loading profile</p></span>
+      <span data-rx-block="s0:b1"></span>
+      <span data-rx-block="s0:b3"><p>Loading stats</p></span>
+      <span data-rx-block="s0:b4"></span>
+    `;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      fetch: async (url: string) => url.includes("profile")
+        ? new Response(JSON.stringify({ name: "Ada" }), { status: 200 })
+        : new Response("Server exploded", { status: 500 }),
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {
+          s0: {
+            id: "s0",
+            moduleId: "m0",
+            state: {},
+            asyncData: {
+              profile: { value: null, pending: true, error: null },
+              stats: { value: null, pending: true, error: null }
+            }
+          }
+        },
+        modules: {
+          m0: pathToFileURL(handlerFile).href
+        }
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await waitForHtml(window, "Ada");
+    await waitForHtml(window, "Fetch failed for /api/stats: 500");
+
+    expect(window.document.body.innerHTML).not.toContain("Loading profile");
+    expect(window.document.body.innerHTML).not.toContain("Loading stats");
+    expect((globalThis as any).__RESUX__.scopes.s0.asyncData.profile).toEqual({
+      value: { name: "Ada" },
+      pending: false,
+      error: null
+    });
+    expect((globalThis as any).__RESUX__.scopes.s0.asyncData.stats.pending).toBe(false);
+    expect((globalThis as any).__RESUX__.scopes.s0.asyncData.stats.error?.message).toBe("Fetch failed for /api/stats: 500");
+  });
+
   it("imports the handler chunk on interaction and reuses the resumed scope", async () => {
     const tempDir = path.join(os.tmpdir(), `resux-${Date.now()}`);
     await mkdir(tempDir, { recursive: true });
@@ -628,6 +767,77 @@ export default createClientComponent({ id: "m0", name: "Counter", file: "Counter
 
     expect(window.document.querySelector("[data-rx-text='s0:b0']")?.textContent).toBe("2");
     expect((globalThis as any).__setupRuns).toBe(1);
+  });
+
+  it("navigates programmatically with useRouter from a resumed handler", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-router-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const handlerFile = path.join(tempDir, "handler.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+    await writeFile(
+      handlerFile,
+      `import { createClientComponent } from ${JSON.stringify(pathToFileURL(runtimeFile).href)};
+const __template = [];
+async function script(ctx) {
+  const router = ctx.useRouter();
+  function goAbout() {
+    return router.push("/about");
+  }
+  return { router, goAbout };
+}
+export default createClientComponent({ id: "m0", name: "RouterPage", file: "RouterPage.vue", script, template: __template, handlers: ["goAbout"] });
+`,
+      "utf8"
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <button data-rx-on-click="s0:m0:goAbout">About</button>
+        <main>Home</main>
+      </div>
+    `;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      scrollTo: () => undefined,
+      fetch: async () => new Response(
+        JSON.stringify({
+          html: "<main>About</main>",
+          head: { title: "About" },
+          payload: {
+            route: { path: "/about", params: {}, query: {} },
+            scopes: {},
+            modules: {}
+          }
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }
+      ),
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {
+          s0: { id: "s0", moduleId: "m0", state: {}, asyncData: {} }
+        },
+        modules: {
+          m0: pathToFileURL(handlerFile).href
+        }
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    window.document.querySelector("button")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+    await waitForHtml(window, "<main>About</main>");
+
+    expect(window.location.pathname).toBe("/about");
+    expect((globalThis as any).__RESUX__.route.path).toBe("/about");
+    expect(window.document.title).toBe("About");
   });
 
   it("applies resumable event modifiers before running handlers", async () => {

@@ -29,6 +29,14 @@ export interface RouteContext {
   query: Record<string, string | string[]>;
 }
 
+export interface ResuxRouter {
+  push(to: string): Promise<void> | void;
+  replace(to: string): Promise<void> | void;
+  back(): void;
+  forward(): void;
+  go(delta: number): void;
+}
+
 export interface PageMeta {
   layout?: string | false;
   middleware?: string | string[];
@@ -201,6 +209,7 @@ export interface SetupContext {
   useAsyncData<T>(key: string, handler?: () => T | Promise<T>): AsyncDataResource<T>;
   defineProps<T extends Record<string, unknown> = Record<string, unknown>>(): T;
   useRoute(): RouteContext;
+  useRouter(): ResuxRouter;
   useHead(input: HeadEntry): void;
   useSeoMeta(input: SeoMetaInput): void;
   useRuntimeConfig(): RuntimeConfig;
@@ -591,6 +600,10 @@ function createServerSetupContext(
       return route;
     },
 
+    useRouter(): ResuxRouter {
+      return createServerRouter();
+    },
+
     useHead(input: HeadEntry): void {
       headEntries.push(input);
     },
@@ -676,6 +689,19 @@ async function settleAsyncDataResource<T>(
   } finally {
     resource.pending.value = false;
   }
+}
+
+function createServerRouter(): ResuxRouter {
+  const navigate = (): void => {
+    // Client navigation is only available after hydration.
+  };
+  return {
+    push: navigate,
+    replace: navigate,
+    back: navigate,
+    forward: navigate,
+    go: navigate
+  };
 }
 
 function renderTemplateNodes(nodes: TemplateNode[], context: RenderTemplateContext, locals: Record<string, unknown> = {}): string {
@@ -1549,6 +1575,9 @@ export function createClientComponent(definition) {
         useRoute() {
           return route;
         },
+        useRouter() {
+          return createClientRouter();
+        },
         useHead() {
           // Head updates are server-rendered in the MVP.
         },
@@ -1887,6 +1916,26 @@ async function navigateTo(target, options = {}) {
       setRouteTransition("idle", { path: routePath });
     }
   }
+}
+
+function createClientRouter() {
+  return {
+    push(to) {
+      return navigateTo(to);
+    },
+    replace(to) {
+      return navigateTo(to, { replace: true });
+    },
+    back() {
+      history.back();
+    },
+    forward() {
+      history.forward();
+    },
+    go(delta) {
+      history.go(delta);
+    }
+  };
 }
 
 function replaceRouteHtml(root, html) {

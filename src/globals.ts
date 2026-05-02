@@ -5,6 +5,7 @@ import type {
   PageMeta,
   Ref,
   RouteContext,
+  ResuxRouter,
   RuntimeConfig,
   SeoMetaInput
 } from "./runtime/index.js";
@@ -30,6 +31,7 @@ declare global {
   const useState: <T = unknown>(key: string, factory?: () => T) => Ref<T>;
   const useAsyncData: <T = unknown>(key: string, handler?: () => T | Promise<T>) => AsyncDataResource<T>;
   const useRoute: () => RouteContext;
+  const useRouter: () => ResuxRouter;
   const useHead: (input: HeadEntry) => void;
   const useSeoMeta: (input: SeoMetaInput) => void;
   const useRuntimeConfig: () => RuntimeConfig;

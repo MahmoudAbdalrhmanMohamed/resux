@@ -1,7 +1,7 @@
 <script setup lang="ts">
 const count = useState("count", () => 0)
 const config = useRuntimeConfig()
-const { data, pending } = useAsyncData("starter-stats", async () => {
+const { data, pending, error } = useAsyncData("starter-stats", async () => {
   await new Promise((resolve) => setTimeout(resolve, 700))
   return {
     response: "14 ms",
@@ -10,8 +10,13 @@ const { data, pending } = useAsyncData("starter-stats", async () => {
   }
 })
 
-useHead({
-  title: config.public.appName
+useSeoMeta({
+  title: config.public.appName,
+  description: "A Resux application.",
+  ogTitle: config.public.appName,
+  ogDescription: "A Resux application.",
+  twitterCard: "summary_large_image",
+  themeColor: "#2563eb"
 })
 
 function increment() {
@@ -26,29 +31,34 @@ function increment() {
       <h1>{{ config.public.appName }}</h1>
       <p class="lede">Server-rendered Vue-like files with resumable client handlers.</p>
       <div class="actions">
-        <button @click="increment">Count: {{ count.value }}</button>
+        <button @click="increment">Count: {{ count }}</button>
         <ResuxLink to="/about">About this app</ResuxLink>
       </div>
     </section>
 
     <section class="stats-panel">
-      <div v-if="pending.value" class="stats-grid">
+      <div v-if="pending" class="stats-grid">
         <div class="stat skeleton"></div>
         <div class="stat skeleton"></div>
         <div class="stat skeleton"></div>
       </div>
-      <div v-if="!pending.value" class="stats-grid">
+      <div v-if="error" class="stat error-state">
+        <span>Stats unavailable</span>
+        <strong>{{ error.message }}</strong>
+        <a href="/">Try again</a>
+      </div>
+      <div v-if="!pending && !error && data" class="stats-grid">
         <article class="stat">
           <span>Response</span>
-          <strong>{{ data.value.response }}</strong>
+          <strong>{{ data.response }}</strong>
         </article>
         <article class="stat">
           <span>Routes</span>
-          <strong>{{ data.value.routes }}</strong>
+          <strong>{{ data.routes }}</strong>
         </article>
         <article class="stat">
           <span>Mode</span>
-          <strong v-text="data.value.mode">Mode</strong>
+          <strong v-text="data.mode">Mode</strong>
         </article>
       </div>
     </section>

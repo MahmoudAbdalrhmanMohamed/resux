@@ -154,11 +154,16 @@ Generated apps include `env.d.ts` and `tsconfig.json` wired to `resuxjs/globals`
 ```ts
 const count = useState("count", () => 0)
 const route = useRoute()
+const router = useRouter()
 useSeoMeta({
   title: "My App",
   description: "My app description",
   ogTitle: "My App"
 })
+
+function openAbout() {
+  router.push("/about")
+}
 
 export default defineResuxConfig({
   app: {
@@ -238,11 +243,6 @@ Resux supports first-party and third-party build-time modules in `resux.config.t
 ```ts
 export default defineResuxConfig({
   modules: [
-    ["resux:seo", {
-      title: "My App",
-      description: "A Resux application.",
-      themeColor: "#2563eb"
-    }],
     "resux:security",
     ["resux:performance", { assetMaxAge: 31536000 }],
     ["./modules/security.ts", { header: "enabled" }]
@@ -256,7 +256,6 @@ export default defineResuxConfig({
 
 Built-in modules:
 
-- `resux:seo`: adds title, description, Open Graph, Twitter card, theme color, and optional link tags.
 - `resux:security`: adds default production hardening headers and optional custom headers or CSP through route rules.
 - `resux:performance`: adds immutable cache rules for built Resux runtime/handler assets and `no-store` for route payloads.
 
@@ -329,7 +328,7 @@ Server middleware can continue by returning nothing, end the Node response direc
 - Resumable event handlers such as `@click="increment"`.
 - Lazy client handler chunks loaded on first interaction.
 - Client-side navigation, persistent same-layout DOM, built-in route transition progress, and hover/focus route payload prefetch for same-origin links.
-- MVP composables: `useState`, `useAsyncData`, `useRoute`, `useHead`, `useSeoMeta`, `useRuntimeConfig`, `useResuxApp`, `useFetch`, `$fetch`, and `onMounted`.
+- MVP composables: `useState`, `useAsyncData`, `useRoute`, `useRouter`, `useHead`, `useSeoMeta`, `useRuntimeConfig`, `useResuxApp`, `useFetch`, `$fetch`, and `onMounted`.
 - `useAsyncData` returns a resource with reactive `data`, `pending`, and `error` refs, plus `value` as a data alias for compatibility. It still works with `await` when you want to block setup.
 
 ## Component Syntax
@@ -399,6 +398,8 @@ The MVP compiler supports:
 - `<ResuxLink to="/path">`.
 - `defineProps()` in components.
 - `definePageMeta({ layout, middleware, title, meta })`.
+- `useRoute()` for the current path, params, and query.
+- `useRouter().push("/path")`, `replace`, `back`, `forward`, and `go`.
 - `useHead({ title, meta, link })`.
 - `useSeoMeta({ title, description, ogTitle, ogImage, twitterCard })`.
 - `onMounted()`, run when the component scope is first resumed in the browser.

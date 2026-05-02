@@ -112,6 +112,35 @@ const label = useState("label", () => "Save")
     expect(template).not.toContain("Ignored");
   });
 
+  it("auto-unwraps setup refs in template expressions", () => {
+    const component = compileVueSource(
+      `<script setup>
+const count = useState("count", () => 0)
+const { data, pending, error } = useAsyncData("stats", async () => ({ label: "Ready" }))
+</script>
+<template>
+  <button :class="'count-' + count">Count: {{ count }}</button>
+  <p v-if="pending">Loading</p>
+  <p v-if="error">{{ error.message }}</p>
+  <strong v-if="!pending && !error" v-text="data.label">Label</strong>
+</template>`,
+      {
+        file: "Unwrap.vue",
+        id: "m0",
+        name: "Unwrap"
+      }
+    );
+
+    const template = JSON.stringify(component.template);
+    expect(template).toContain("'count-' + count.value");
+    expect(template).toContain('"expression":"count.value"');
+    expect(template).toContain('"expression":"pending.value"');
+    expect(template).toContain('"expression":"!pending.value && !error.value"');
+    expect(template).toContain('"expression":"error.value"');
+    expect(template).toContain('"expression":"error.value.message"');
+    expect(template).toContain('"expression":"data.value.label"');
+  });
+
   it("compiles advanced event modifiers", () => {
     const component = compileVueSource(
       `<script setup>
@@ -217,6 +246,27 @@ useSeoMeta({
 
     expect(component.serverSource).toContain("useSeoMeta");
     expect(component.clientSource).toContain("useSeoMeta");
+  });
+
+  it("exposes useRouter to compiled setup code and resumable handlers", () => {
+    const component = compileVueSource(
+      `<script setup>
+const router = useRouter()
+function goAbout() {
+  router.push("/about")
+}
+</script>
+<template><button @click="goAbout">About</button></template>`,
+      {
+        file: "Router.vue",
+        id: "m0",
+        name: "Router"
+      }
+    );
+
+    expect(component.handlers).toEqual(["goAbout"]);
+    expect(component.serverSource).toContain("useRouter");
+    expect(component.clientSource).toContain("useRouter");
   });
 
   it("compiles defineProps for reusable components", () => {
@@ -344,7 +394,6 @@ describe("project build manifest", () => {
       path.join(root, "resux.config.ts"),
       `export default defineResuxConfig({
   modules: [
-    ["resux:seo", { title: "Docs", description: "Resux docs", image: "/og.png", themeColor: "#2563eb" }],
     ["resux:security", { contentSecurityPolicy: "default-src 'self'", headers: { "x-app": "resux" } }],
     ["resux:performance", { assetMaxAge: 120 }]
   ]
@@ -355,12 +404,6 @@ describe("project build manifest", () => {
     const manifest = await import(`${pathToFileURL(path.join(root, ".resux", "server", "manifest.mjs")).href}?t=${Date.now()}`);
     const manifestJson = JSON.parse(await readFile(path.join(root, ".resux", "manifest.json"), "utf8"));
 
-    expect(manifest.appHead.title).toBe("Docs");
-    expect(manifest.appHead.meta).toEqual(expect.arrayContaining([
-      { name: "description", content: "Resux docs" },
-      { property: "og:image", content: "/og.png" },
-      { name: "theme-color", content: "#2563eb" }
-    ]));
     expect(manifest.routeRules["/**"].headers["x-app"]).toBe("resux");
     expect(manifest.routeRules["/**"].headers["content-security-policy"]).toBe("default-src 'self'");
     expect(manifest.routeRules["/__resux/handlers/**"].cache).toEqual({ maxAge: 120 });

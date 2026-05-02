@@ -121,6 +121,7 @@ interface ScriptAnalysis {
   bindings: string[];
   handlerNames: Set<string>;
   resumableBindings: Set<string>;
+  templateRefBindings: Set<string>;
   handlers: Map<string, ts.Node>;
   sourceFile: ts.SourceFile;
   pageMeta?: PageMeta;
@@ -128,6 +129,7 @@ interface ScriptAnalysis {
 
 interface CompileTemplateState {
   file: string;
+  templateRefBindings: Set<string>;
   bindingIndex: number;
   inlineHandlerIndex: number;
   handlers: TemplateEvent[];
@@ -418,7 +420,8 @@ export function compileVueSource(source: string, options: { file: string; id: st
   }
 
   const script = descriptor.scriptSetup?.content ?? "";
-  const template = compileTemplate(descriptor.template.content, options.file);
+  const templateRefBindings = inferTemplateRefBindings(script, options.file);
+  const template = compileTemplate(descriptor.template.content, options.file, templateRefBindings);
   const analysis = analyzeScript(script, options.file, template.inlineHandlers);
   validateTemplateHandlers(template.handlers, analysis, options.file, source);
   const serverSource = createComponentModuleSource({
@@ -494,10 +497,15 @@ export function createRouteManifest(
     .sort((a, b) => routeScore(b.path) - routeScore(a.path) || a.path.localeCompare(b.path));
 }
 
-function compileTemplate(template: string, file: string): { nodes: TemplateNode[]; handlers: TemplateEvent[]; inlineHandlers: GeneratedHandler[] } {
+function compileTemplate(
+  template: string,
+  file: string,
+  templateRefBindings: Set<string> = new Set()
+): { nodes: TemplateNode[]; handlers: TemplateEvent[]; inlineHandlers: GeneratedHandler[] } {
   const ast = parseTemplate(template, { comments: false });
   const state: CompileTemplateState = {
     file,
+    templateRefBindings,
     bindingIndex: 0,
     inlineHandlerIndex: 0,
     handlers: [],
@@ -522,7 +530,7 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
   if (node.type === NodeTypes.INTERPOLATION) {
     return {
       type: "interpolation",
-      expression: node.content.content,
+      expression: transformTemplateExpression(node.content.content, state.templateRefBindings, state.file, node),
       bindingId: nextBindingId(state)
     };
   }
@@ -564,7 +572,7 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
       attrs.push({
         kind: "dynamic",
         name: arg,
-        value: expression,
+        value: transformTemplateExpression(expression, state.templateRefBindings, state.file, prop),
         bindingId: nextBindingId(state)
       });
       continue;
@@ -596,7 +604,7 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
         throw new ResuxCompileError("v-if needs an expression.", locationFromVueNode(state.file, prop));
       }
       element.if = {
-        expression,
+        expression: transformTemplateExpression(expression, state.templateRefBindings, state.file, prop),
         blockId: nextBindingId(state)
       };
       continue;
@@ -608,6 +616,7 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
         throw new ResuxCompileError("v-for needs an expression.", locationFromVueNode(state.file, prop));
       }
       element.for = parseForExpression(expression, state.file, prop, state);
+      element.for.source = transformTemplateExpression(element.for.source, state.templateRefBindings, state.file, prop);
       continue;
     }
 
@@ -619,7 +628,7 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
       attrs.push({
         kind: "dynamic",
         name: "hidden",
-        value: `!(${expression})`,
+        value: `!(${transformTemplateExpression(expression, state.templateRefBindings, state.file, prop)})`,
         bindingId: nextBindingId(state)
       });
       continue;
@@ -632,7 +641,7 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
       }
       element.children = [{
         type: "interpolation",
-        expression,
+        expression: transformTemplateExpression(expression, state.templateRefBindings, state.file, prop),
         bindingId: nextBindingId(state)
       }];
       continue;
@@ -644,7 +653,7 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
         throw new ResuxCompileError("v-html needs an expression.", locationFromVueNode(state.file, prop));
       }
       element.html = {
-        expression,
+        expression: transformTemplateExpression(expression, state.templateRefBindings, state.file, prop),
         bindingId: nextBindingId(state)
       };
       element.children = [];
@@ -663,7 +672,7 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
       attrs.push({
         kind: "dynamic",
         name: model.attribute,
-        value: model.value,
+        value: transformTemplateExpression(model.value, state.templateRefBindings, state.file, prop),
         bindingId: nextBindingId(state)
       });
       const event = {
@@ -702,9 +711,10 @@ function createModelBinding(
   const isCheckbox = inputType === "checkbox";
   const handler = nextInlineHandlerName(state);
   const target = "$event.target";
+  const assignmentExpression = state.templateRefBindings.has(expression.trim()) ? `${expression.trim()}.value` : expression;
   const assignment = isCheckbox
-    ? `${expression} = Boolean(${target} && ${target}.checked)`
-    : `${expression} = ${target} ? ${target}.value : ""`;
+    ? `${assignmentExpression} = Boolean(${target} && ${target}.checked)`
+    : `${assignmentExpression} = ${target} ? ${target}.value : ""`;
 
   state.inlineHandlers.push({
     name: handler,
@@ -722,6 +732,71 @@ function createModelBinding(
 function staticAttributeValue(props: any[], name: string): string | undefined {
   const attr = props.find((prop) => prop.type === NodeTypes.ATTRIBUTE && prop.name === name);
   return attr?.value?.content;
+}
+
+function transformTemplateExpression(
+  expression: string,
+  templateRefBindings: Set<string>,
+  file: string,
+  node: any
+): string {
+  if (templateRefBindings.size === 0) {
+    return expression;
+  }
+
+  const wrapped = `(${expression})`;
+  const sourceFile = ts.createSourceFile(`${file}?template-expression`, wrapped, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  if (((sourceFile as unknown as { parseDiagnostics?: unknown[] }).parseDiagnostics ?? []).length > 0) {
+    throw new ResuxCompileError("Template expression is not valid JavaScript.", locationFromVueNode(file, node));
+  }
+
+  const insertions: number[] = [];
+  const visit = (current: ts.Node): void => {
+    if (ts.isIdentifier(current) && templateRefBindings.has(current.text) && shouldAutoUnwrapTemplateIdentifier(current)) {
+      const position = current.end - 1;
+      if (position >= 0 && position <= expression.length) {
+        insertions.push(position);
+      }
+    }
+
+    ts.forEachChild(current, visit);
+  };
+
+  visit(sourceFile);
+  if (insertions.length === 0) {
+    return expression;
+  }
+
+  const uniqueInsertions = [...new Set(insertions)].sort((a, b) => b - a);
+  let transformed = expression;
+  for (const position of uniqueInsertions) {
+    transformed = `${transformed.slice(0, position)}.value${transformed.slice(position)}`;
+  }
+  return transformed;
+}
+
+function shouldAutoUnwrapTemplateIdentifier(node: ts.Identifier): boolean {
+  const parent = node.parent;
+  if (!parent) {
+    return true;
+  }
+
+  if (ts.isPropertyAccessExpression(parent)) {
+    if (parent.expression === node && parent.name.text === "value") {
+      return false;
+    }
+    return parent.name !== node;
+  }
+
+  if (ts.isPropertyAssignment(parent) && parent.name === node) {
+    return false;
+  }
+
+  if (ts.isShorthandPropertyAssignment(parent) || ts.isBindingElement(parent)) {
+    return false;
+  }
+
+  return true;
 }
 
 function isAssignableExpression(expression: string): boolean {
@@ -794,6 +869,7 @@ function analyzeScript(script: string, file: string, inlineHandlers: GeneratedHa
   const bindings = new Set<string>();
   const handlerNames = new Set<string>();
   const resumableBindings = new Set<string>();
+  const templateRefBindings = inferTemplateRefBindings(script, file);
   const handlers = new Map<string, ts.Node>();
   let pageMeta: PageMeta | undefined;
 
@@ -857,10 +933,69 @@ function analyzeScript(script: string, file: string, inlineHandlers: GeneratedHa
     bindings: [...bindings],
     handlerNames,
     resumableBindings,
+    templateRefBindings,
     handlers,
     sourceFile,
     pageMeta
   };
+}
+
+function inferTemplateRefBindings(script: string, file: string): Set<string> {
+  const sourceFile = ts.createSourceFile(file, script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const bindings = new Set<string>();
+
+  for (const statement of sourceFile.statements) {
+    if (!ts.isVariableStatement(statement)) {
+      continue;
+    }
+
+    for (const declaration of statement.declarationList.declarations) {
+      const initializer = unwrapAwaitExpression(declaration.initializer);
+      if (!initializer || !ts.isCallExpression(initializer)) {
+        continue;
+      }
+
+      const callee = initializer.expression;
+      const calleeName = ts.isIdentifier(callee)
+        ? callee.text
+        : ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.name)
+          ? callee.name.text
+          : "";
+
+      if (ts.isIdentifier(declaration.name) && isTemplateRefFactory(calleeName)) {
+        bindings.add(declaration.name.text);
+        continue;
+      }
+
+      if (ts.isObjectBindingPattern(declaration.name) && isAsyncDataFactory(calleeName)) {
+        for (const element of declaration.name.elements) {
+          if (!ts.isBindingElement(element) || !ts.isIdentifier(element.name)) {
+            continue;
+          }
+          const propertyName = element.propertyName && ts.isIdentifier(element.propertyName)
+            ? element.propertyName.text
+            : element.name.text;
+          if (["data", "pending", "error", "value"].includes(propertyName)) {
+            bindings.add(element.name.text);
+          }
+        }
+      }
+    }
+  }
+
+  return bindings;
+}
+
+function unwrapAwaitExpression(node: ts.Expression | undefined): ts.Expression | undefined {
+  return node && ts.isAwaitExpression(node) ? node.expression : node;
+}
+
+function isTemplateRefFactory(name: string): boolean {
+  return ["ref", "computed", "shallowRef", "useState", "useAsyncData", "useFetch"].includes(name);
+}
+
+function isAsyncDataFactory(name: string): boolean {
+  return ["useAsyncData", "useFetch"].includes(name);
 }
 
 function isDefinePageMetaStatement(statement: ts.Statement): boolean {
@@ -1029,7 +1164,7 @@ function isResumableInitializer(node: ts.Expression | undefined): boolean {
     return false;
   }
   if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
-    return ["useState", "useAsyncData", "useRoute", "useRuntimeConfig", "useResuxApp", "defineProps"].includes(node.expression.text);
+    return ["useState", "useAsyncData", "useRoute", "useRouter", "useRuntimeConfig", "useResuxApp", "defineProps"].includes(node.expression.text);
   }
   if (ts.isAwaitExpression(node) && ts.isCallExpression(node.expression) && ts.isIdentifier(node.expression.expression)) {
     return ["useAsyncData", "useFetch"].includes(node.expression.expression.text);
@@ -1066,7 +1201,7 @@ function createComponentModuleSource(options: {
     options.analysis.imports,
     `const __template = ${JSON.stringify(options.template, null, 2)};`,
     `async function __rx_setup(__ctx) {`,
-    `const { useState, useAsyncData, useRoute, useHead, useSeoMeta, useRuntimeConfig, useResuxApp, useFetch, $fetch, onMounted, definePageMeta, defineProps } = __ctx;`,
+    `const { useState, useAsyncData, useRoute, useRouter, useHead, useSeoMeta, useRuntimeConfig, useResuxApp, useFetch, $fetch, onMounted, definePageMeta, defineProps } = __ctx;`,
     options.analysis.setupBody,
     `return { ${options.analysis.bindings.join(", ")} };`,
     `}`,
@@ -1623,44 +1758,6 @@ function resolveBuiltinModule(specifier: string): BuiltinResuxModule | null {
 }
 
 const builtinModules: Record<string, BuiltinResuxModule> = {
-  seo: {
-    defaults: {},
-    setup(options, resux) {
-      const input = isPlainObject(options) ? options : {};
-      const meta: Array<Record<string, string>> = [];
-      const title = firstString(input.title);
-      const description = firstString(input.description);
-      const image = firstString(input.image);
-      const themeColor = firstString(input.themeColor);
-      const twitterCard = firstString(input.twitterCard) ?? "summary_large_image";
-
-      if (description) {
-        meta.push({ name: "description", content: description });
-        meta.push({ property: "og:description", content: description });
-        meta.push({ name: "twitter:description", content: description });
-      }
-      if (title) {
-        meta.push({ property: "og:title", content: title });
-        meta.push({ name: "twitter:title", content: title });
-      }
-      if (image) {
-        meta.push({ property: "og:image", content: image });
-        meta.push({ name: "twitter:image", content: image });
-      }
-      if (themeColor) {
-        meta.push({ name: "theme-color", content: themeColor });
-      }
-      if (twitterCard) {
-        meta.push({ name: "twitter:card", content: twitterCard });
-      }
-
-      resux.addHead({
-        ...(title ? { title } : {}),
-        ...(meta.length ? { meta } : {}),
-        ...(Array.isArray(input.link) ? { link: input.link.filter(isPlainObject) as Array<Record<string, string>> } : {})
-      });
-    }
-  },
   security: {
     defaults: {
       route: "/**",

@@ -173,6 +173,31 @@ h1 {
   font-size: 1.7rem;
 }
 
+.error-state {
+  max-width: 520px;
+  border-color: #c8553d;
+  background: #fff7f4;
+}
+
+.error-state strong {
+  color: #8f2f1d;
+  font-size: 1.05rem;
+  line-height: 1.5;
+}
+
+.error-state a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  margin-top: 18px;
+  border: 1px solid #8f2f1d;
+  border-radius: 8px;
+  padding: 0 14px;
+  color: #8f2f1d;
+  font-weight: 800;
+  text-decoration: none;
+}
+
 .skeleton {
   position: relative;
   overflow: hidden;

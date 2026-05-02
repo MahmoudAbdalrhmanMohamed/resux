@@ -2,6 +2,14 @@
 definePageMeta({
   title: "About"
 })
+
+useSeoMeta({
+  title: "About",
+  description: "Learn about this Resux application.",
+  ogTitle: "About",
+  ogDescription: "Learn about this Resux application.",
+  twitterCard: "summary"
+})
 </script>
 
 <template>

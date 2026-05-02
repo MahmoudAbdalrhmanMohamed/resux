@@ -483,8 +483,10 @@ describe("runtime SSR", () => {
       { name: "twitter:card", content: "summary_large_image" },
       { property: "fb:app_id", content: "123" }
     ]));
+    expect(documentHtml.indexOf("<title>Share Title</title>")).toBe("<!doctype html><html lang=\"en\"><head>".length);
     expect(documentHtml.indexOf("<title>Share Title</title>")).toBeLessThan(documentHtml.indexOf("<style>"));
     expect(documentHtml.indexOf('property="og:title"')).toBeLessThan(documentHtml.indexOf("<style>"));
+    expect(documentHtml.indexOf('property="og:title"')).toBeLessThan(documentHtml.indexOf('charset="utf-8"'));
     expect(documentHtml.indexOf('property="og:title"')).toBeGreaterThan(documentHtml.indexOf("<head>"));
   });
 });

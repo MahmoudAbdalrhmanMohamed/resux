@@ -383,8 +383,8 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
     "<!doctype html>",
     '<html lang="en">',
     "<head>",
-    '<meta charset="utf-8">',
     renderHead(mergedHead),
+    '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<style>
 #__resux-loading {

@@ -8,19 +8,7 @@ This is an MVP, not a production-ready framework.
 
 ## Create App
 
-Resux is published as one npm package. After publishing, users can scaffold an app with the same package they install in the app:
-
-```sh
-npm create resuxjs@latest
-```
-
-With a project directory:
-
-```sh
-npm create resuxjs@latest my-app
-```
-
-Equivalent direct package command:
+Create a new app with the latest published Resux package:
 
 ```sh
 npx resuxjs@latest init
@@ -43,7 +31,7 @@ Generated apps use a single Resux dependency, similar to Nuxt apps installing `n
 ```json
 {
   "dependencies": {
-    "resuxjs": "^0.1.0"
+    "resuxjs": "^0.2.8"
   }
 }
 ```
@@ -92,16 +80,6 @@ npm run pack:check
 ```
 
 This builds, tests, and dry-runs npm packing for the single `resuxjs` package.
-
-## Publishing
-
-Publish the single package:
-
-```sh
-npm publish --access public
-```
-
-After `resuxjs` is published, users can run `npx resuxjs@latest init`.
 
 ## Compatibility Policy
 

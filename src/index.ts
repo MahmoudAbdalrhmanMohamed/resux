@@ -11,8 +11,8 @@ import { buildProject, type BuildOptions } from "./compiler/index.js";
 import { runCreateResux } from "./create.js";
 import { renderApp, renderDocument, type RenderResult, type RouteContext, type RouteMiddlewareResult } from "./runtime/index.js";
 
-const version = "0.1.0";
 const require = createRequire(import.meta.url);
+const version = (require("../package.json") as { version?: string }).version ?? "0.0.0";
 let activeDevBuild: Promise<void> | null = null;
 let devBuildDirty = false;
 let devBuildRevision = 0;

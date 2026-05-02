@@ -1,6 +1,6 @@
 {
   "name": "resuxjs",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "private": false,
   "type": "module",
   "repository": {
@@ -17,6 +17,7 @@
     "README.md"
   ],
   "bin": {
+    "resuxjs": "dist/index.js",
     "resux": "dist/index.js",
     "create-resux": "dist/create.js"
   },

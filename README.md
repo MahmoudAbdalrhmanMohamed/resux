@@ -81,14 +81,6 @@ npm run pack:check
 
 This builds, tests, and dry-runs npm packing for the single `resuxjs` package.
 
-## Compatibility Policy
-
-Resux follows npm semver starting with the `0.1.x` release line.
-
-- Patch releases, such as `0.1.1`, preserve compatibility for documented APIs, generated starter structure, CLI commands, config keys, file-based routing conventions, and runtime payload formats.
-- Minor releases before `1.0.0`, such as `0.2.0`, may include breaking changes, but they must be documented in release notes and migration guidance before publishing.
-- Experimental or undocumented internals, including generated files under `.resux`, may change between releases unless they are explicitly documented as public API.
-
 ## CLI
 
 The `resux` CLI supports:

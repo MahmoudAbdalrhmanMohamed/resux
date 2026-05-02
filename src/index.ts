@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -112,6 +113,11 @@ async function runCli(args: string[]): Promise<void> {
   if (command === "build") {
     const result = await buildProject(appRoot, outDir, { ...buildOptions, vite: "build" });
     console.log(`Built ${result.routes.length} route(s) into ${path.relative(process.cwd(), outDir)}`);
+    await ensureNitroBuildFiles(appRoot);
+    await runNitroBuild(appRoot);
+  } else if (command === "compile") {
+    const result = await buildProject(appRoot, outDir, { ...buildOptions, vite: "build" });
+    console.log(`Compiled ${result.routes.length} route(s) into ${path.relative(process.cwd(), outDir)}`);
   } else if (command === "deploy") {
     await generateDeploymentFiles(appRoot, cliOptions.deployPreset, cliOptions.force);
   } else if (command === "inspect") {
@@ -386,6 +392,40 @@ async function generateDeploymentFiles(appRoot: string, preset: DeployPreset, fo
   }
 }
 
+async function ensureNitroBuildFiles(appRoot: string): Promise<void> {
+  if (!(await exists(path.join(appRoot, "nitro.config.ts")))) {
+    await writeDeploymentFile(appRoot, "nitro.config.ts", createNitroConfig(), false);
+  }
+
+  if (!(await exists(path.join(appRoot, ".resux-nitro", "handler.ts")))) {
+    await writeDeploymentFile(appRoot, ".resux-nitro/handler.ts", createNitroHandler(), false);
+  }
+}
+
+async function runNitroBuild(appRoot: string): Promise<void> {
+  const nitroPackageJson = require.resolve("nitropack/package.json");
+  const nitroCli = path.join(path.dirname(nitroPackageJson), "dist", "cli", "index.mjs");
+
+  console.log("Building Nitro output into .output");
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(process.execPath, [nitroCli, "build"], {
+      cwd: appRoot,
+      stdio: "inherit",
+      env: process.env
+    });
+
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`Nitro build exited with code ${code ?? "unknown"}.`));
+      }
+    });
+  });
+}
+
 async function assertDirectory(directory: string): Promise<void> {
   const stats = await stat(directory);
   if (!stats.isDirectory()) {
@@ -426,11 +466,10 @@ Install the Nitro build dependencies:
 npm install -D nitropack h3
 \`\`\`
 
-Build Resux first, then build the Nitro server:
+Build Resux. The default production build creates both \`.resux\` and Nitro \`.output\`:
 
 \`\`\`sh
 npm run build
-npx nitro build
 node .output/server/index.mjs
 \`\`\`
 
@@ -440,7 +479,7 @@ Nitro reads \`NITRO_PRESET\` for provider-specific output. For example:
 NITRO_PRESET=vercel npx nitro build
 \`\`\`
 
-The generated Nitro handler wraps the Resux Node request handler, so deploy \`.resux\` with the Nitro output unless your platform runs the Nitro build from the project root.
+The generated Nitro handler wraps the Resux Node request handler. \`resux build\` runs Nitro from the project root so \`.output\` can be started with Node.
 `
     : "";
 
@@ -486,6 +525,7 @@ function createNitroConfig(): string {
   return `import { defineNitroConfig } from "nitropack/config";
 
 export default defineNitroConfig({
+  compatibilityDate: "2026-05-02",
   handlers: [
     {
       route: "/**",
@@ -705,6 +745,7 @@ Usage:
   resux dev [app-root] [options]
   resux init [project-dir] [options]
   resux build [app-root] [options]
+  resux compile [app-root] [options]
   resux preview [app-root] [options]
   resux start [app-root] [options]
   resux inspect [app-root] [options]
@@ -713,7 +754,8 @@ Usage:
 Commands:
   init      Scaffold a new Resux app
   dev       Start the Resux dev server with Vite middleware
-  build     Build server and client output into .resux
+  build     Build server/client output into .resux and Nitro .output
+  compile   Build only the lower-level .resux output
   preview   Serve the built app, rebuilding when needed
   start     Alias for preview, intended for production Node servers
   inspect   Print a build manifest summary for debugging

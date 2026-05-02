@@ -225,10 +225,8 @@ function createStarterPackageJson(projectName: string, frameworkPackage: { name:
     scripts: {
       dev: "resux dev .",
       build: "resux build .",
-      "build:nitro": "npm run build && nitro build",
       preview: "resux preview .",
-      start: "resux start .",
-      "start:nitro": "node .output/server/index.mjs",
+      start: "node .output/server/index.mjs",
       inspect: "resux inspect ."
     },
     dependencies: {

@@ -175,7 +175,7 @@ Resux uses Vite in both main app commands:
 
 - `resux dev` emits Resux client modules into `.resux/vite-client` and serves the resume runtime plus handler modules through Vite middleware.
 - `resux dev` also opens a dev-only update channel at `/__resux/dev-events`; when source files change, Resux rebuilds, re-imports active client component modules with a cache-busting revision, and patches active resumable scopes without a full document reload.
-- `resux build` uses Vite production bundling for the resume runtime, handler chunks, and server manifest, then writes optimized output into `.resux/client` and `.resux/server-bundle`.
+- `resux build` uses Vite production bundling for the resume runtime, handler chunks, and server manifest, then writes optimized output into `.resux/client` and `.resux/server-bundle` before producing a Nitro `.output` server.
 
 The generated starter keeps Resux-style scripts:
 
@@ -185,7 +185,7 @@ The generated starter keeps Resux-style scripts:
     "dev": "resux dev .",
     "build": "resux build .",
     "preview": "resux preview .",
-    "start": "resux start .",
+    "start": "node .output/server/index.mjs",
     "inspect": "resux inspect ."
   }
 }
@@ -216,11 +216,11 @@ resux deploy . --preset docker --force
 resux deploy . --preset nitro --force
 ```
 
-The Nitro preset writes `nitro.config.ts` and a small `.resux-nitro/handler.ts` adapter. Build Resux first, then let Nitro produce provider-specific output:
+The Nitro preset writes `nitro.config.ts` and a small `.resux-nitro/handler.ts` adapter. `resux build` now produces Nuxt-style `.output` by default:
 
 ```sh
 npm run build
-npx nitro build
+node .output/server/index.mjs
 ```
 
 The generated Nitro config is conservative for resumability: SSR pages, API routes, and route payloads use `cache-control: no-store`, while build-stable Resux runtime and handler assets use long immutable caching. Nitro prerender crawling is disabled by default.

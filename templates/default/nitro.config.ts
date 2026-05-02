@@ -1,6 +1,7 @@
 import { defineNitroConfig } from "nitropack/config";
 
 export default defineNitroConfig({
+  compatibilityDate: "2026-05-02",
   handlers: [
     {
       route: "/**",

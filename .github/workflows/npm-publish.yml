@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   publish:
-    name: Publish package
+    name: Publish to npm
     runs-on: ubuntu-latest
     concurrency:
       group: npm-publish-${{ github.ref }}

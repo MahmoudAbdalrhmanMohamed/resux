@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProject, compileVueSource, createRouteManifest, ResuxCompileError } from "@mahmoud-abdelrahman/resux/compiler";
+import { buildProject, compileVueSource, createRouteManifest, ResuxCompileError } from "resuxjs/compiler";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

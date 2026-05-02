@@ -1,5 +1,5 @@
 {
-  "name": "@mahmoud-abdelrahman/resux",
+  "name": "resuxjs",
   "version": "0.1.0",
   "private": false,
   "type": "module",

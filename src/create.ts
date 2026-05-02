@@ -212,7 +212,7 @@ async function readFrameworkPackage(): Promise<{ name: string; version: string }
   const packageJson = JSON.parse(contents) as { name?: unknown; version?: unknown };
 
   return {
-    name: typeof packageJson.name === "string" ? packageJson.name : "@mahmoud-abdelrahman/resux",
+    name: typeof packageJson.name === "string" ? packageJson.name : "resuxjs",
     version: typeof packageJson.version === "string" ? packageJson.version : "0.0.0"
   };
 }
@@ -342,7 +342,7 @@ function printHelp(): void {
   console.log(`resux init
 
 Usage:
-  npx @mahmoud-abdelrahman/resux@latest init [project-dir] [options]
+  npx resuxjs@latest init [project-dir] [options]
   resux init [project-dir] [options]
 
 Options:

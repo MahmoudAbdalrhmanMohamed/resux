@@ -11,19 +11,19 @@ This is an MVP, not a production-ready framework.
 Resux is published as one npm package. After publishing, users can scaffold an app with the same package they install in the app:
 
 ```sh
-npx @mahmoud-abdelrahman/resux@latest init
+npx resuxjs@latest init
 ```
 
 With a project directory:
 
 ```sh
-npx @mahmoud-abdelrahman/resux@latest init my-app
+npx resuxjs@latest init my-app
 ```
 
 With create options:
 
 ```sh
-npx @mahmoud-abdelrahman/resux@latest init my-app --no-install
+npx resuxjs@latest init my-app --no-install
 ```
 
 Generated apps use a single Resux dependency, similar to Nuxt apps installing `nuxt`:
@@ -31,7 +31,7 @@ Generated apps use a single Resux dependency, similar to Nuxt apps installing `n
 ```json
 {
   "dependencies": {
-    "@mahmoud-abdelrahman/resux": "^0.1.0"
+    "resuxjs": "^0.1.0"
   }
 }
 ```
@@ -79,7 +79,7 @@ Run the full publish-readiness check:
 npm run pack:check
 ```
 
-This builds, tests, and dry-runs npm packing for the single `@mahmoud-abdelrahman/resux` package.
+This builds, tests, and dry-runs npm packing for the single `resuxjs` package.
 
 ## Publishing
 
@@ -89,7 +89,7 @@ Publish the single package:
 npm publish --access public
 ```
 
-After `@mahmoud-abdelrahman/resux` is published, users can run `npx @mahmoud-abdelrahman/resux@latest init`.
+After `resuxjs` is published, users can run `npx resuxjs@latest init`.
 
 ## Compatibility Policy
 
@@ -137,7 +137,7 @@ Build output is written to:
 
 ## App Types
 
-Generated apps include `env.d.ts` and `tsconfig.json` wired to `@mahmoud-abdelrahman/resux/globals`, so app files can use the Resux-style globals without imports:
+Generated apps include `env.d.ts` and `tsconfig.json` wired to `resuxjs/globals`, so app files can use the Resux-style globals without imports:
 
 ```ts
 const count = useState("count", () => 0)

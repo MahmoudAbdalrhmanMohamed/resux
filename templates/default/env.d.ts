@@ -1,1 +1,1 @@
-/// <reference types="@mahmoud-abdelrahman/resux/globals" />
+/// <reference types="resuxjs/globals" />

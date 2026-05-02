@@ -5,7 +5,7 @@
     "moduleResolution": "NodeNext",
     "strict": true,
     "skipLibCheck": true,
-    "types": ["@mahmoud-abdelrahman/resux/globals"],
+    "types": ["resuxjs/globals"],
     "lib": ["ES2022", "DOM"]
   },
   "include": [

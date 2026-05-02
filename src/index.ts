@@ -526,6 +526,12 @@ function createNitroConfig(): string {
 
 export default defineNitroConfig({
   compatibilityDate: "2026-05-02",
+  publicAssets: [
+    {
+      dir: "public",
+      baseURL: "/"
+    }
+  ],
   handlers: [
     {
       route: "/**",

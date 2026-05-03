@@ -31,7 +31,7 @@ Generated apps use a single Resux dependency, similar to Nuxt apps installing `n
 ```json
 {
   "dependencies": {
-    "resuxjs": "^0.2.13"
+    "resuxjs": "^0.2.14"
   }
 }
 ```

@@ -14,6 +14,16 @@ const { data, pending, error } = await useAsyncData("starter-stats", ({ signal }
 useSeoMeta({
   title: appName,
   description: "A Resux application.",
+  keywords: [
+    "Resux",
+    "resumable framework",
+    "server-side rendering",
+    "Vue-like SFC",
+    "TypeScript framework",
+    "islands architecture",
+    "Nuxt-inspired",
+    "Qwik-inspired"
+  ],
   ogTitle: appName,
   ogDescription: "A Resux application.",
   twitterCard: "summary_large_image",

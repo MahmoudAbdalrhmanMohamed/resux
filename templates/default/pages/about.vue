@@ -6,6 +6,7 @@ definePageMeta({
 useSeoMeta({
   title: "About",
   description: "Learn about this Resux application.",
+  keywords: ["Resux", "SSR", "resumability", "Vue-like routes", "server API"],
   ogTitle: "About",
   ogDescription: "Learn about this Resux application.",
   twitterCard: "summary"

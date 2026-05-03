@@ -1,4 +1,5 @@
 import { getQuery as h3GetQuery, readBody as h3ReadBody, setHeader as h3SetHeader } from "h3";
+import type { Ref as VueRef } from "vue";
 
 export type JsonValue =
   | null
@@ -8,9 +9,7 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export interface Ref<T = unknown> {
-  value: T;
-}
+export type Ref<T = unknown> = VueRef<T>;
 
 export interface AsyncDataError {
   name: string;
@@ -610,7 +609,7 @@ function createServerSetupContext(
 
       const value = factory ? factory() : undefined;
       assertJsonSerializable(value, `useState("${key}")`);
-      const ref: Ref<T> = { value: value as T };
+      const ref = { value: value as T } as Ref<T>;
       stateRefs[key] = ref as Ref<unknown>;
       return ref;
     },
@@ -660,7 +659,7 @@ function createServerSetupContext(
     async useFetch<T>(url: string, init?: RequestInit): Promise<Ref<T>> {
       return {
         value: await fetchJson<T>(url, init)
-      };
+      } as Ref<T>;
     },
 
     $fetch<T>(url: string, init?: RequestInit): Promise<T> {
@@ -681,9 +680,9 @@ function createPendingAsyncDataResource<T>(): {
   resource: AsyncDataResource<T>;
   setCompletion: (completion: Promise<void>) => void;
 } {
-  const value: Ref<T | undefined> = { value: undefined };
-  const pending: Ref<boolean> = { value: true };
-  const error: Ref<AsyncDataError | null> = { value: null };
+  const value = { value: undefined } as Ref<T | undefined>;
+  const pending = { value: true } as Ref<boolean>;
+  const error = { value: null } as Ref<AsyncDataError | null>;
   let completion: Promise<void> = Promise.resolve();
   const resource: AsyncDataResource<T> = {
     data: value,

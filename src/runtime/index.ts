@@ -1,3 +1,5 @@
+import { getQuery as h3GetQuery, readBody as h3ReadBody, setHeader as h3SetHeader } from "h3";
+
 export type JsonValue =
   | null
   | boolean
@@ -358,6 +360,12 @@ export function defineServerMiddleware(middleware: ServerMiddleware): ServerMidd
 }
 
 export async function readBody<T = unknown>(event: EventHandlerEvent): Promise<T> {
+  try {
+    return await h3ReadBody(event as unknown as Parameters<typeof h3ReadBody>[0]) as T;
+  } catch {
+    // Fall through to the minimal reader for tests and custom Node-like events.
+  }
+
   const req = event.node.req as AsyncIterable<Uint8Array> | { on?: unknown } | undefined;
   if (!req || typeof (req as AsyncIterable<Uint8Array>)[Symbol.asyncIterator] !== "function") {
     return undefined as T;
@@ -381,7 +389,15 @@ export async function readBody<T = unknown>(event: EventHandlerEvent): Promise<T
 }
 
 export function getQuery(event: EventHandlerEvent): Record<string, string | string[]> {
-  return event.query;
+  try {
+    return h3GetQuery(event as unknown as Parameters<typeof h3GetQuery>[0]) as Record<string, string | string[]>;
+  } catch {
+    return event.query;
+  }
+}
+
+export function setHeader(event: EventHandlerEvent, name: string, value: number | string | string[]): void {
+  h3SetHeader(event as unknown as Parameters<typeof h3SetHeader>[0], name, value);
 }
 
 export async function renderApp(options: RenderAppOptions): Promise<RenderResult> {

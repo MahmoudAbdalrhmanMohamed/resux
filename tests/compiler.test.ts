@@ -340,7 +340,7 @@ describe("project build manifest", () => {
     );
     await writeFile(path.join(root, "middleware", "auth.ts"), "export default defineResuxRouteMiddleware(() => {})");
     await writeFile(path.join(root, "plugins", "app.ts"), "export default defineResuxPlugin(() => {})");
-    await writeFile(path.join(root, "server", "middleware", "headers.ts"), "export default defineServerMiddleware((event) => { event.node.res.setHeader('x-server-middleware', 'true') })");
+    await writeFile(path.join(root, "server", "middleware", "headers.ts"), "export default defineServerMiddleware((event) => { setHeader(event, 'x-server-middleware', 'true') })");
     await writeFile(path.join(root, "server", "api", "hello.ts"), "export default defineEventHandler(() => ({ hello: 'world' }))");
     await writeFile(
       path.join(root, "resux.config.ts"),

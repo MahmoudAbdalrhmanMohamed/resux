@@ -31,7 +31,7 @@ Generated apps use a single Resux dependency, similar to Nuxt apps installing `n
 ```json
 {
   "dependencies": {
-    "resuxjs": "^0.2.9"
+    "resuxjs": "^0.2.10"
   }
 }
 ```
@@ -257,7 +257,7 @@ Files in `server/middleware` run for each request before server handlers, public
 
 ```ts
 export default defineServerMiddleware((event) => {
-  event.node.res.setHeader("x-app", "resux")
+  setHeader(event, "x-app", "resux")
 
   if (event.path.startsWith("/private")) {
     return { type: "redirect", to: "/login", statusCode: 302 }
@@ -265,7 +265,7 @@ export default defineServerMiddleware((event) => {
 })
 ```
 
-Server middleware can continue by returning nothing, end the Node response directly, return a `Response`, return a JSON-serializable value, return `false` to send `403`, or return a redirect/abort object.
+Server middleware can continue by returning nothing, use h3-style helpers such as `setHeader(event, name, value)`, end the Node response directly when necessary, return a `Response`, return a JSON-serializable value, return `false` to send `403`, or return a redirect/abort object.
 
 ## What Works
 
@@ -283,7 +283,7 @@ Server middleware can continue by returning nothing, end the Node response direc
 - Request-time server middleware from `server/middleware`.
 - Plugins from `plugins/` with `defineResuxPlugin`.
 - Server API/routes from `server/api` and `server/routes`.
-- Server handler helpers: `readBody(event)` and `getQuery(event)`.
+- Server handler helpers: `readBody(event)`, `getQuery(event)`, and `setHeader(event, name, value)`, backed by h3.
 - `error.vue` for custom 404/500 rendering.
 - Public file serving from `public/`.
 - Built-in health checks at `/__resux/health`.

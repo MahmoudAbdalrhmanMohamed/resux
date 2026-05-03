@@ -51,6 +51,7 @@ declare global {
   const defineServerMiddleware: <T>(middleware: T) => T;
   const readBody: <T = unknown>(event: unknown) => Promise<T>;
   const getQuery: (event: unknown) => Record<string, string | string[]>;
+  const setHeader: (event: unknown, name: string, value: number | string | string[]) => void;
   const navigateTo: (to: string, options?: { statusCode?: number }) => unknown;
   const abortNavigation: (message?: string, options?: { statusCode?: number }) => unknown;
   const defineResuxModule: <TOptions = Record<string, unknown>>(module: ResuxModule<TOptions>) => ResuxModule<TOptions>;

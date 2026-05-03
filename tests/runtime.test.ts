@@ -10,6 +10,7 @@ import {
   readBody,
   renderApp,
   renderDocument,
+  setHeader,
   type ComponentDefinition
 } from "resuxjs/runtime";
 
@@ -563,6 +564,28 @@ describe("runtime SSR", () => {
 });
 
 describe("server event helpers", () => {
+  it("sets response headers through the h3-style helper", () => {
+    const headers = new Map<string, number | string | string[]>();
+    const event = {
+      path: "/api/message",
+      method: "GET",
+      query: {},
+      params: {},
+      node: {
+        req: {},
+        res: {
+          setHeader(name: string, value: number | string | string[]) {
+            headers.set(name, value);
+          }
+        }
+      }
+    };
+
+    setHeader(event, "x-app", "resux");
+
+    expect(headers.get("x-app")).toBe("resux");
+  });
+
   it("reads JSON request bodies", async () => {
     const event = {
       path: "/api/message",

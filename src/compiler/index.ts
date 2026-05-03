@@ -1558,7 +1558,7 @@ function compileServerMiddlewareFile(file: string, index: number): CompiledServe
   return {
     id: `s${index}`,
     file,
-    source: transpileSupportModule(file, `import { defineServerMiddleware, defineEventHandler, eventHandler, readBody, getQuery } from "resuxjs/runtime";\n`)
+    source: transpileSupportModule(file, `import { defineServerMiddleware, defineEventHandler, eventHandler, readBody, getQuery, setHeader } from "resuxjs/runtime";\n`)
   };
 }
 
@@ -1570,7 +1570,7 @@ function compileServerHandlerFile(file: string, index: number, routePath: string
     path: routePath,
     file,
     params,
-    source: transpileSupportModule(file, `import { defineEventHandler, eventHandler, readBody, getQuery } from "resuxjs/runtime";\n`)
+    source: transpileSupportModule(file, `import { defineEventHandler, eventHandler, readBody, getQuery, setHeader } from "resuxjs/runtime";\n`)
   };
 }
 

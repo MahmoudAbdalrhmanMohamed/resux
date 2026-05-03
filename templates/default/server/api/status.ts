@@ -1,5 +1,9 @@
-export default defineEventHandler(() => ({
-  ok: true,
-  framework: "resux",
-  mode: "resumable"
-}))
+export default defineEventHandler((event) => {
+  setHeader(event, "x-app", "resux")
+
+  return {
+    ok: true,
+    framework: "resux",
+    mode: "resumable"
+  }
+})

@@ -3,11 +3,11 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { NodeTypes, parse as parseTemplate } from "@vue/compiler-dom";
-import { parse as parseSfc } from "@vue/compiler-sfc";
+import { compileStyle, parse as parseSfc, type SFCStyleBlock } from "@vue/compiler-sfc";
 import vuePlugin from "@vitejs/plugin-vue";
 import ts from "typescript";
 import { build as viteBuild } from "vite";
-import { getClientRuntimeSource, type ElementTemplateNode, type PageMeta, type TemplateAttribute, type TemplateEvent, type TemplateNode } from "../runtime/index.js";
+import { getClientRuntimeSource, type ComponentStyle, type ElementTemplateNode, type PageMeta, type TemplateAttribute, type TemplateEvent, type TemplateNode } from "../runtime/index.js";
 
 const require = createRequire(import.meta.url);
 
@@ -35,6 +35,8 @@ export interface CompiledComponent {
   clientSource: string;
   template: TemplateNode[];
   handlers: string[];
+  styles: ComponentStyle[];
+  styleScopeId?: string;
   meta?: PageMeta;
 }
 
@@ -267,8 +269,8 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
   }
   await writeFile(path.join(absoluteOut, "manifest.json"), JSON.stringify({
     routes,
-    components: components.map(({ id, name, file, handlers, meta }) => ({ id, name, file, handlers, meta })),
-    layouts: layouts.map(({ id, name, file }) => ({ id, name, file })),
+    components: components.map(({ id, name, file, handlers, styles, styleScopeId, meta }) => ({ id, name, file, handlers, styles, styleScopeId, meta })),
+    layouts: layouts.map(({ id, name, file, styles, styleScopeId }) => ({ id, name, file, styles, styleScopeId })),
     plugins: plugins.map(({ id, file, mode }) => ({ id, file, mode })),
     middleware: middleware.map(({ id, name, file, global }) => ({ id, name, file, global })),
     serverMiddleware: serverMiddleware.map(({ id, file }) => ({ id, file })),
@@ -423,6 +425,10 @@ export function compileVueSource(source: string, options: { file: string; id: st
   const templateRefBindings = inferTemplateRefBindings(script, options.file);
   const template = compileTemplate(descriptor.template.content, options.file, templateRefBindings);
   const analysis = analyzeScript(script, options.file, template.inlineHandlers);
+  const compiledStyles = compileSfcStyles(descriptor.styles, {
+    id: options.id,
+    file: options.file
+  });
   validateTemplateHandlers(template.handlers, analysis, options.file, source);
   const serverSource = createComponentModuleSource({
     id: options.id,
@@ -430,6 +436,8 @@ export function compileVueSource(source: string, options: { file: string; id: st
     file: options.file,
     template: template.nodes,
     analysis,
+    styles: compiledStyles.styles,
+    styleScopeId: compiledStyles.styleScopeId,
     client: false
   });
   const clientSource = createComponentModuleSource({
@@ -438,6 +446,8 @@ export function compileVueSource(source: string, options: { file: string; id: st
     file: options.file,
     template: template.nodes,
     analysis,
+    styles: compiledStyles.styles,
+    styleScopeId: compiledStyles.styleScopeId,
     client: true
   });
 
@@ -449,7 +459,81 @@ export function compileVueSource(source: string, options: { file: string; id: st
     clientSource,
     template: template.nodes,
     handlers: [...new Set(template.handlers.map((event) => event.handler))],
+    styles: compiledStyles.styles,
+    styleScopeId: compiledStyles.styleScopeId,
     meta: analysis.pageMeta
+  };
+}
+
+function compileSfcStyles(
+  styleBlocks: SFCStyleBlock[],
+  options: { id: string; file: string }
+): { styles: ComponentStyle[]; styleScopeId?: string } {
+  const scopeId = `rx-s-${options.id}`;
+  const styles: ComponentStyle[] = [];
+  let hasScopedStyles = false;
+
+  for (let index = 0; index < styleBlocks.length; index++) {
+    const style = styleBlocks[index];
+    const lang = style.lang ?? (typeof style.attrs.lang === "string" ? style.attrs.lang : undefined);
+
+    if (lang && lang !== "css") {
+      throw new ResuxCompileError(
+        `Resux <style> only supports plain CSS in resumable components. Unsupported lang "${lang}".`,
+        styleBlockLocation(options.file, style)
+      );
+    }
+    if (style.module) {
+      throw new ResuxCompileError(
+        "Resux <style module> is not supported in resumable components yet.",
+        styleBlockLocation(options.file, style)
+      );
+    }
+    if (style.src) {
+      throw new ResuxCompileError(
+        "Resux <style src> is not supported in resumable components yet.",
+        styleBlockLocation(options.file, style)
+      );
+    }
+
+    const result = compileStyle({
+      id: scopeId,
+      filename: options.file,
+      source: style.content,
+      scoped: Boolean(style.scoped),
+      isProd: true
+    });
+
+    if (result.errors.length > 0) {
+      const error = result.errors[0];
+      const message = error instanceof Error ? error.message : String(error);
+      throw new ResuxCompileError(message, styleBlockLocation(options.file, style));
+    }
+
+    const css = result.code.trim();
+    if (!css) {
+      continue;
+    }
+
+    hasScopedStyles ||= Boolean(style.scoped);
+    styles.push({
+      id: `${options.id}-${index}`,
+      css,
+      scoped: Boolean(style.scoped)
+    });
+  }
+
+  return {
+    styles,
+    styleScopeId: hasScopedStyles ? `data-v-${scopeId}` : undefined
+  };
+}
+
+function styleBlockLocation(file: string, style: SFCStyleBlock): CompileErrorLocation {
+  return {
+    file,
+    line: style.loc.start.line,
+    column: style.loc.start.column
   };
 }
 
@@ -1197,6 +1281,8 @@ function createComponentModuleSource(options: {
   file: string;
   template: TemplateNode[];
   analysis: ScriptAnalysis;
+  styles: ComponentStyle[];
+  styleScopeId?: string;
   client: boolean;
 }): string {
   const importPath = options.client ? "/__resux/runtime-client.mjs" : "resuxjs/runtime";
@@ -1217,6 +1303,8 @@ function createComponentModuleSource(options: {
     `script: __rx_setup,`,
     `template: __template,`,
     `handlers: ${JSON.stringify([...options.analysis.handlerNames])},`,
+    `styles: ${JSON.stringify(options.styles)},`,
+    `styleScopeId: ${JSON.stringify(options.styleScopeId)},`,
     `meta: ${JSON.stringify(options.analysis.pageMeta ?? {})}`,
     `});`
   ].join("\n");

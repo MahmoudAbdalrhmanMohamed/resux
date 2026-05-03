@@ -561,6 +561,37 @@ describe("runtime SSR", () => {
     expect(documentHtml.indexOf('property="og:title"')).toBeLessThan(documentHtml.indexOf('charset="utf-8"'));
     expect(documentHtml.indexOf('property="og:title"')).toBeGreaterThan(documentHtml.indexOf("<head>"));
   });
+
+  it("renders component styles in head and scoped attrs in HTML", async () => {
+    const page = defineComponent({
+      id: "m0",
+      name: "StyledPage",
+      file: "pages/styled.vue",
+      handlers: [],
+      styles: [
+        {
+          id: "m0-0",
+          css: ".page[data-v-rx-s-m0]{color:red}",
+          scoped: true
+        }
+      ],
+      styleScopeId: "data-v-rx-s-m0",
+      async script() {
+        return {};
+      },
+      template: [{ type: "element", tag: "main", attrs: [{ kind: "static", name: "class", value: "page" }], events: [], children: [{ type: "text", value: "Styled" }] }]
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/styled", params: {}, query: {} }
+    });
+    const documentHtml = renderDocument(result);
+
+    expect(result.head.style).toEqual([{ id: "m0-0", css: ".page[data-v-rx-s-m0]{color:red}", scoped: true }]);
+    expect(result.html).toContain('<main class="page" data-v-rx-s-m0="">Styled</main>');
+    expect(documentHtml).toContain('<style data-rx-head="true" data-rx-style="m0-0">.page[data-v-rx-s-m0]{color:red}</style>');
+  });
 });
 
 describe("server event helpers", () => {
@@ -1335,6 +1366,57 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     expect(window.location.pathname).toBe("/");
     expect(window.document.getElementById("__resux")?.textContent).toContain("Home");
     expect(window.document.querySelector('link[href="/styles.css"]')).toBe(stylesheet);
+  });
+
+  it("updates route style tags while navigating between routes", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-style-head-nav-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.head.innerHTML = '<style data-rx-head="true" data-rx-style="m0-0">.home{color:red}</style>';
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <a href="/about">About</a>
+        <main class="home">Home</main>
+      </div>
+    `;
+
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      scrollTo: () => undefined,
+      fetch: async () => new Response(
+        JSON.stringify({
+          html: '<main class="about">About</main>',
+          head: {
+            title: "About",
+            style: [{ id: "m1-0", css: ".about{color:blue}" }]
+          },
+          payload: { route: { path: "/about", params: {}, query: {} }, scopes: {}, modules: {} }
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }
+      ),
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    window.document.querySelector('a[href="/about"]')!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+    await waitForHtml(window, '<main class="about">About</main>');
+
+    expect(window.document.querySelector('style[data-rx-style="m0-0"]')).toBeNull();
+    expect(window.document.querySelector('style[data-rx-style="m1-0"]')?.textContent).toBe(".about{color:blue}");
   });
 
   it("reports route transition phases with progress and accessibility state", async () => {

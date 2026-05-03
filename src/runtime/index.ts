@@ -64,6 +64,13 @@ export interface HeadEntry {
   title?: string;
   meta?: Array<Record<string, string>>;
   link?: Array<Record<string, string>>;
+  style?: ComponentStyle[];
+}
+
+export interface ComponentStyle {
+  id: string;
+  css: string;
+  scoped?: boolean;
 }
 
 export type SeoMetaValue = string | number | boolean | null | undefined;
@@ -244,6 +251,8 @@ export interface ComponentDefinition {
   script: (ctx: SetupContext) => Record<string, unknown> | Promise<Record<string, unknown>>;
   template: TemplateNode[];
   handlers: string[];
+  styles?: ComponentStyle[];
+  styleScopeId?: string;
   meta?: PageMeta;
 }
 
@@ -315,6 +324,7 @@ interface RenderTemplateContext {
   scope: Record<string, unknown>;
   scopeId: string;
   moduleId: string;
+  styleScopeId?: string;
   route: RouteContext;
   components: Record<string, ComponentDefinition>;
   layouts: Record<string, ComponentDefinition>;
@@ -516,6 +526,7 @@ class ResuxRenderer {
   private nextScopeId = 0;
   private readonly scopes: Record<string, ScopeRecord> = {};
   private readonly headEntries: HeadEntry[] = [];
+  private readonly styleIds = new Set<string>();
 
   constructor(
     private readonly route: RouteContext,
@@ -530,6 +541,7 @@ class ResuxRenderer {
     renderSlot?: () => Promise<string>,
     props: ComponentProps = {}
   ): Promise<string> {
+    this.collectComponentStyles(definition);
     const scopeId = `s${this.nextScopeId++}`;
     const stateRefs: Record<string, Ref<unknown>> = {};
     const asyncDataRefs: Record<string, AsyncDataResource<unknown>> = {};
@@ -549,6 +561,7 @@ class ResuxRenderer {
       scope,
       scopeId,
       moduleId: definition.id,
+      styleScopeId: definition.styleScopeId,
       route: this.route,
       components: this.components,
       layouts: {},
@@ -556,6 +569,16 @@ class ResuxRenderer {
       renderPage,
       renderSlot
     });
+  }
+
+  private collectComponentStyles(definition: ComponentDefinition): void {
+    for (const style of definition.styles ?? []) {
+      if (this.styleIds.has(style.id)) {
+        continue;
+      }
+      this.styleIds.add(style.id);
+      this.headEntries.push({ style: [style] });
+    }
   }
 
   createPayload(): ResuxPayload {
@@ -881,6 +904,7 @@ function renderNativeElement(node: ElementTemplateNode, context: RenderTemplateC
   if (node.html) {
     attrs.push(`data-rx-html-${node.html.bindingId}="${context.scopeId}:${node.html.bindingId}"`);
   }
+  appendStyleScopeAttribute(attrs, context.styleScopeId);
 
   const attrText = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
   const children = node.html
@@ -1027,6 +1051,7 @@ async function renderNativeElementAsync(
   if (node.html) {
     attrs.push(`data-rx-html-${node.html.bindingId}="${context.scopeId}:${node.html.bindingId}"`);
   }
+  appendStyleScopeAttribute(attrs, context.styleScopeId);
 
   const attrText = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
   const children = node.html
@@ -1042,7 +1067,14 @@ function renderVueIsland(
 ): string {
   const name = resolveVueIslandName(node, context, locals);
   const props = resolveVueIslandProps(node, context, locals);
-  return `<div data-rx-vue-island="${escapeAttribute(name)}" data-rx-vue-props="${escapeAttribute(JSON.stringify(props))}"></div>`;
+  const scopeAttr = context.styleScopeId ? ` ${context.styleScopeId}=""` : "";
+  return `<div${scopeAttr} data-rx-vue-island="${escapeAttribute(name)}" data-rx-vue-props="${escapeAttribute(JSON.stringify(props))}"></div>`;
+}
+
+function appendStyleScopeAttribute(attrs: string[], styleScopeId?: string): void {
+  if (styleScopeId) {
+    attrs.push(`${styleScopeId}=""`);
+  }
 }
 
 function resolveVueIslandName(
@@ -1088,6 +1120,7 @@ function resolveVueIslandProps(
 export class AsyncResuxRenderer {
   private nextScopeId = 0;
   private readonly scopes: Record<string, ScopeRecord> = {};
+  private readonly styleIds = new Set<string>();
   readonly headEntries: HeadEntry[] = [];
   readonly resuxApp: ResuxAppLike;
 
@@ -1109,6 +1142,7 @@ export class AsyncResuxRenderer {
     renderSlot?: () => Promise<string>,
     props: ComponentProps = {}
   ): Promise<string> {
+    this.collectComponentStyles(definition);
     const scopeId = `s${this.nextScopeId++}`;
     const stateRefs: Record<string, Ref<unknown>> = {};
     const asyncDataRefs: Record<string, AsyncDataResource<unknown>> = {};
@@ -1137,6 +1171,7 @@ export class AsyncResuxRenderer {
         scope,
         scopeId,
         moduleId: definition.id,
+        styleScopeId: definition.styleScopeId,
         route: this.route,
         components: this.components,
         layouts: this.layouts,
@@ -1147,6 +1182,16 @@ export class AsyncResuxRenderer {
       },
       (component, props, slot) => this.renderComponent(component, undefined, slot, props)
     );
+  }
+
+  private collectComponentStyles(definition: ComponentDefinition): void {
+    for (const style of definition.styles ?? []) {
+      if (this.styleIds.has(style.id)) {
+        continue;
+      }
+      this.styleIds.add(style.id);
+      this.headEntries.push({ style: [style] });
+    }
   }
 
   async renderLayout(name: string | false | undefined, renderSlot: () => Promise<string>): Promise<string> {
@@ -1388,7 +1433,8 @@ function camelCaseToMetaName(value: string, separator: "-" | "_"): string {
 function mergeHead(entries: HeadEntry[]): HeadEntry {
   const merged: HeadEntry = {
     meta: [],
-    link: []
+    link: [],
+    style: []
   };
 
   for (const entry of entries) {
@@ -1400,6 +1446,9 @@ function mergeHead(entries: HeadEntry[]): HeadEntry {
     }
     if (entry.link) {
       merged.link!.push(...entry.link);
+    }
+    if (entry.style) {
+      merged.style!.push(...entry.style);
     }
   }
 
@@ -1418,7 +1467,15 @@ function renderHead(head: HeadEntry): string {
     tags.push(`<link data-rx-head="true" ${renderAttributes(link)}>`);
   }
 
+  for (const style of head.style ?? []) {
+    tags.push(`<style data-rx-head="true" data-rx-style="${escapeAttribute(style.id)}">${escapeStyleContent(style.css)}</style>`);
+  }
+
   return tags.join("");
+}
+
+function escapeStyleContent(css: string): string {
+  return css.replace(/<\/style/gi, "<\\/style");
 }
 
 function renderAttributes(attributes: Record<string, string>): string {
@@ -1476,10 +1533,11 @@ type ClientPatch =
 export function renderClientPatches(
   template: TemplateNode[],
   scope: Record<string, unknown>,
-  scopeId: string
+  scopeId: string,
+  styleScopeId?: string
 ): ClientPatch[] {
   const patches: ClientPatch[] = [];
-  collectPatches(template, scope, scopeId, {}, patches);
+  collectPatches(template, scope, scopeId, {}, patches, styleScopeId);
   return patches;
 }
 
@@ -1488,7 +1546,8 @@ function collectPatches(
   scope: Record<string, unknown>,
   scopeId: string,
   locals: Record<string, unknown>,
-  patches: ClientPatch[]
+  patches: ClientPatch[],
+  styleScopeId?: string
 ): void {
   for (const node of nodes) {
     if (node.type === "interpolation") {
@@ -1512,6 +1571,7 @@ function collectPatches(
           scope,
           scopeId,
           moduleId: "",
+          styleScopeId,
           route: { path: "", params: {}, query: {} },
           components: {},
           layouts: {},
@@ -1529,6 +1589,7 @@ function collectPatches(
           scope,
           scopeId,
           moduleId: "",
+          styleScopeId,
           route: { path: "", params: {}, query: {} },
           components: {},
           layouts: {},
@@ -1557,7 +1618,7 @@ function collectPatches(
       }
     }
 
-    collectPatches(node.children, scope, scopeId, locals, patches);
+    collectPatches(node.children, scope, scopeId, locals, patches, styleScopeId);
   }
 }
 
@@ -1704,10 +1765,10 @@ export function createClientComponent(definition) {
         throw new Error("Missing resumable handler " + handlerName + ".");
       }
       await handler(event);
-      return renderClientPatches(definition.template, scopeRecord.scope);
+      return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId);
     },
     render(scopeRecord) {
-      return renderClientPatches(definition.template, scopeRecord.scope);
+      return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId);
     },
     serialize(scopeRecord) {
       return {
@@ -2249,6 +2310,10 @@ function applyHead(head) {
     nextEntries.push({ tag: "link", attrs: link });
   }
 
+  for (const style of head.style ?? []) {
+    nextEntries.push({ tag: "style", attrs: { "data-rx-style": style.id }, text: style.css ?? "" });
+  }
+
   const existing = new Map();
   document.querySelectorAll("[data-rx-head]").forEach((element) => {
     existing.set(headElementKey(element), element);
@@ -2259,6 +2324,9 @@ function applyHead(head) {
     const key = headEntryKey(entry.tag, entry.attrs);
     const current = existing.get(key);
     if (current) {
+      if (entry.text !== undefined && current.textContent !== entry.text) {
+        current.textContent = entry.text;
+      }
       used.add(current);
       continue;
     }
@@ -2267,6 +2335,9 @@ function applyHead(head) {
     element.setAttribute("data-rx-head", "true");
     for (const [key, value] of Object.entries(entry.attrs)) {
       element.setAttribute(key, value);
+    }
+    if (entry.text !== undefined) {
+      element.textContent = entry.text;
     }
     document.head.appendChild(element);
     used.add(element);
@@ -2458,13 +2529,13 @@ function appendImportRevision(modulePath, revision) {
   return modulePath + separator + "t=" + encodeURIComponent(String(revision));
 }
 
-function renderClientPatches(template, scope) {
+function renderClientPatches(template, scope, styleScopeId) {
   const patches = [];
-  collectPatches(template, scope, {}, patches);
+  collectPatches(template, scope, {}, patches, styleScopeId);
   return patches;
 }
 
-function collectPatches(nodes, scope, locals, patches) {
+function collectPatches(nodes, scope, locals, patches, styleScopeId) {
   for (const node of nodes) {
     if (node.type === "interpolation") {
       patches.push({ type: "text", id: node.bindingId, value: stringifyValue(evaluateExpression(node.expression, scope, locals)) });
@@ -2474,11 +2545,11 @@ function collectPatches(nodes, scope, locals, patches) {
       continue;
     }
     if (node.for) {
-      patches.push({ type: "block", id: node.for.blockId, value: renderNode(node, scope, locals).replace(/^<span[^>]*>|<\/span>$/g, "") });
+      patches.push({ type: "block", id: node.for.blockId, value: renderNode(node, scope, locals, styleScopeId).replace(/^<span[^>]*>|<\/span>$/g, "") });
       continue;
     }
     if (node.if) {
-      patches.push({ type: "block", id: node.if.blockId, value: renderNode(node, scope, locals).replace(/^<span[^>]*>|<\/span>$/g, "") });
+      patches.push({ type: "block", id: node.if.blockId, value: renderNode(node, scope, locals, styleScopeId).replace(/^<span[^>]*>|<\/span>$/g, "") });
       continue;
     }
     if (node.html) {
@@ -2490,11 +2561,11 @@ function collectPatches(nodes, scope, locals, patches) {
         patches.push({ type: "attr", id: attr.bindingId, attr: attrName, value: stringifyAttributeValue(attrName, evaluateExpression(attr.value, scope, locals)) });
       }
     }
-    collectPatches(node.children, scope, locals, patches);
+    collectPatches(node.children, scope, locals, patches, styleScopeId);
   }
 }
 
-function renderNode(node, scope, locals) {
+function renderNode(node, scope, locals, styleScopeId) {
   if (node.type === "text") {
     return escapeHtml(node.value);
   }
@@ -2507,21 +2578,21 @@ function renderNode(node, scope, locals) {
       ? items.map((item, index) => {
           const nextLocals = { ...locals, [node.for.value]: item };
           if (node.for.index) nextLocals[node.for.index] = index;
-          return renderElement({ ...node, for: undefined, if: undefined }, scope, nextLocals);
+          return renderElement({ ...node, for: undefined, if: undefined }, scope, nextLocals, styleScopeId);
         }).join("")
       : "";
     return '<span data-rx-block=":' + node.for.blockId + '">' + rendered + '</span>';
   }
   if (node.if) {
     const rendered = evaluateExpression(node.if.expression, scope, locals)
-      ? renderElement({ ...node, if: undefined }, scope, locals)
+      ? renderElement({ ...node, if: undefined }, scope, locals, styleScopeId)
       : "";
     return '<span data-rx-block=":' + node.if.blockId + '">' + rendered + '</span>';
   }
-  return renderElement(node, scope, locals);
+  return renderElement(node, scope, locals, styleScopeId);
 }
 
-function renderElement(node, scope, locals) {
+function renderElement(node, scope, locals, styleScopeId) {
   const tag = nativeElementTag(node);
   const attrs = [];
   for (const attr of node.attrs) {
@@ -2545,10 +2616,13 @@ function renderElement(node, scope, locals) {
   if (node.html) {
     attrs.push('data-rx-html-' + node.html.bindingId + '=":' + node.html.bindingId + '"');
   }
+  if (styleScopeId) {
+    attrs.push(styleScopeId + '=""');
+  }
   const attrText = attrs.length ? " " + attrs.join(" ") : "";
   const children = node.html
     ? sanitizeHtml(evaluateExpression(node.html.expression, scope, locals))
-    : node.children.map((child) => renderNode(child, scope, locals)).join("");
+    : node.children.map((child) => renderNode(child, scope, locals, styleScopeId)).join("");
   return "<" + tag + attrText + ">" + children + "</" + tag + ">";
 }
 

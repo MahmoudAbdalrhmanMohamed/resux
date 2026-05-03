@@ -65,6 +65,48 @@ function increment() {
     expect(JSON.stringify(component.template)).toContain("count.value > 0");
   });
 
+  it("compiles plain and scoped style blocks from Resux SFCs", () => {
+    const component = compileVueSource(
+      `<script setup>
+const title = "Home"
+</script>
+<template><main class="page"><h1>{{ title }}</h1></main></template>
+<style>
+.page { color: red; }
+</style>
+<style scoped>
+h1 { font-weight: 700; }
+</style>`,
+      {
+        file: "Styled.vue",
+        id: "m0",
+        name: "Styled"
+      }
+    );
+
+    expect(component.styles).toHaveLength(2);
+    expect(component.styles[0]).toMatchObject({ id: "m0-0", scoped: false });
+    expect(component.styles[0].css).toContain(".page");
+    expect(component.styles[1]).toMatchObject({ id: "m0-1", scoped: true });
+    expect(component.styles[1].css).toContain("h1[data-v-rx-s-m0]");
+    expect(component.styleScopeId).toBe("data-v-rx-s-m0");
+    expect(component.serverSource).toContain("styles:");
+    expect(component.serverSource).toContain("data-v-rx-s-m0");
+  });
+
+  it("rejects unsupported SFC style languages", () => {
+    expect(() =>
+      compileVueSource(
+        `<template><main>Home</main></template><style lang="scss">.page { color: red; }</style>`,
+        {
+          file: "UnsupportedStyle.vue",
+          id: "m0",
+          name: "UnsupportedStyle"
+        }
+      )
+    ).toThrow(/only supports plain CSS/);
+  });
+
   it("compiles inline event expressions into resumable handlers", () => {
     const component = compileVueSource(
       `<script setup>

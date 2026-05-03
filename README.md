@@ -269,7 +269,7 @@ Server middleware can continue by returning nothing, use h3-style helpers such a
 
 ## What Works
 
-- `.vue`-style SFC files with `<template>` and `<script setup lang="ts">`.
+- `.vue`-style SFC files with `<template>`, `<script setup lang="ts">`, and plain CSS `<style>` blocks.
 - File-based routing from `pages/`.
 - Dynamic route params like `pages/post/[id].vue`.
 - Catch-all route params like `pages/docs/[...slug].vue`.
@@ -279,6 +279,7 @@ Server middleware can continue by returning nothing, use h3-style helpers such a
 - Static and dynamic component props with `defineProps()`.
 - Server-side rendering.
 - Head/meta rendering from `resux.config.ts`, `definePageMeta`, `useHead`, and `useSeoMeta`.
+- Component CSS from `<style>` and `<style scoped>`, included in SSR output and updated during client-side navigation.
 - Route middleware from `middleware/`, including `.global` middleware.
 - Request-time server middleware from `server/middleware`.
 - Plugins from `plugins/` with `defineResuxPlugin`.
@@ -405,6 +406,7 @@ The MVP compiler supports:
 - Static attributes: `class="box"`.
 - Dynamic attributes: `:class="className"`.
 - Dynamic class arrays/objects and style objects for `:class` and `:style`.
+- Plain CSS `<style>` blocks, including `<style scoped>`.
 - Plain named events: `@click="increment"`.
 - Inline event expressions that only capture resumable values, plus named handlers such as `@click="increment"`.
 - Resumability-safe event modifiers: `.prevent`, `.stop`, `.self`, `.once`, system/mouse modifiers, and key filters such as `.enter`.
@@ -437,6 +439,7 @@ Resux intentionally rejects or does not support many advanced framework/Vue feat
 
 - Vue runtime is island-only; Resux components still do not hydrate through Vue.
 - Nitro support is an adapter/deployment preset, not the primary dev server.
+- SFC styles support plain CSS only; preprocessors like SCSS and CSS modules are not implemented for resumable components yet.
 - Event `.capture` and `.passive` are accepted in templates, but the browser runtime still uses delegated resumable listeners.
 - No fallback hydration for unsupported components.
 

@@ -955,6 +955,7 @@ function inferTemplateRefBindings(script: string, file: string): Set<string> {
     }
 
     for (const declaration of statement.declarationList.declarations) {
+      const awaited = Boolean(declaration.initializer && ts.isAwaitExpression(declaration.initializer));
       const initializer = unwrapAwaitExpression(declaration.initializer);
       if (!initializer || !ts.isCallExpression(initializer)) {
         continue;
@@ -972,7 +973,7 @@ function inferTemplateRefBindings(script: string, file: string): Set<string> {
         continue;
       }
 
-      if (ts.isObjectBindingPattern(declaration.name) && isAsyncDataFactory(calleeName)) {
+      if (ts.isObjectBindingPattern(declaration.name) && isAsyncDataFactory(calleeName) && !awaited) {
         for (const element of declaration.name.elements) {
           if (!ts.isBindingElement(element) || !ts.isIdentifier(element.name)) {
             continue;

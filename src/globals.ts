@@ -1,5 +1,6 @@
 import type {
   AsyncDataResource,
+  AsyncDataHandlerContext,
   HeadEntry,
   ResuxAppLike,
   PageMeta,
@@ -29,7 +30,7 @@ type ResuxModule<TOptions = Record<string, unknown>> =
 
 declare global {
   const useState: <T = unknown>(key: string, factory?: () => T) => Ref<T>;
-  const useAsyncData: <T = unknown>(key: string, handler?: () => T | Promise<T>) => AsyncDataResource<T>;
+  const useAsyncData: <T = unknown>(key: string, handler?: (context: AsyncDataHandlerContext) => T | Promise<T>) => AsyncDataResource<T>;
   const useRoute: () => RouteContext;
   const useRouter: () => ResuxRouter;
   const useHead: (input: HeadEntry) => void;
@@ -37,8 +38,8 @@ declare global {
   const useRuntimeConfig: () => RuntimeConfig;
   const useResuxApp: () => ResuxAppLike;
   const apiURL: (path: string) => string;
-  const useFetch: <T = unknown>(url: string) => Promise<Ref<T>>;
-  const $fetch: <T = unknown>(url: string) => Promise<T>;
+  const useFetch: <T = unknown>(url: string, init?: RequestInit) => Promise<Ref<T>>;
+  const $fetch: <T = unknown>(url: string, init?: RequestInit) => Promise<T>;
   const onMounted: (callback: () => unknown | Promise<unknown>) => void;
   const definePageMeta: (_meta: PageMeta) => void;
   const defineResuxConfig: <T extends Record<string, unknown>>(config: T) => T;

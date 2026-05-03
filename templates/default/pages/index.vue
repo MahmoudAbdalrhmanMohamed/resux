@@ -1,13 +1,8 @@
 <script setup lang="ts">
 const count = useState("count", () => 0)
 const config = useRuntimeConfig()
-const { data, pending, error } = await useAsyncData("starter-stats", async () => {
-  await new Promise((resolve) => setTimeout(resolve, 700))
-  return {
-    response: "14 ms",
-    routes: "2",
-    mode: "Resumable"
-  }
+const { data, pending, error } = await useAsyncData("starter-stats", ({ signal }) => {
+  return $fetch(apiURL("/api/stats"), { signal })
 })
 
 useSeoMeta({

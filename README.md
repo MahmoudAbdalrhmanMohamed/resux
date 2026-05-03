@@ -31,7 +31,7 @@ Generated apps use a single Resux dependency, similar to Nuxt apps installing `n
 ```json
 {
   "dependencies": {
-    "resuxjs": "^0.2.10"
+    "resuxjs": "^0.2.11"
   }
 }
 ```
@@ -330,8 +330,8 @@ To fetch during SSR and render the resolved data in the first HTML response, awa
 
 ```vue
 <script setup lang="ts">
-const { data, pending, error } = await useAsyncData("stats", async () => {
-  return { response: "14 ms" }
+const { data, pending, error } = await useAsyncData("stats", ({ signal }) => {
+  return $fetch(apiURL("/api/stats"), { signal })
 })
 </script>
 
@@ -346,19 +346,19 @@ For a Next-style loading skeleton, call `useAsyncData` without `await` and branc
 
 ```vue
 <script setup lang="ts">
-const { data, pending } = useAsyncData("stats", async () => {
-  await new Promise((resolve) => setTimeout(resolve, 700))
-  return { response: "14 ms" }
+const { data, pending, error } = useAsyncData("stats", ({ signal }) => {
+  return $fetch("/api/stats", { signal })
 })
 </script>
 
 <template>
   <div v-if="pending" class="skeleton"></div>
-  <strong v-if="!pending && data">{{ data.response }}</strong>
+  <p v-if="error">{{ error.message }}</p>
+  <strong v-if="!pending && !error && data">{{ data.response }}</strong>
 </template>
 ```
 
-Resux serializes the pending state, renders the skeleton immediately, resumes only scopes with pending async data in the browser, and patches the marked DOM blocks after the data resolves.
+Resux serializes the pending state, renders the skeleton immediately, resumes only scopes with pending async data in the browser, and patches the marked DOM blocks after the data resolves. The handler receives an abort `signal`; pass it to `$fetch` or `fetch` so pending client requests are aborted when the user leaves the route before data resolves.
 
 Templates auto-unwrap refs returned from `useState`, `useAsyncData`, `useFetch`, Vue `ref`, and `computed`, so template examples use `count`, `pending`, and `data.response`. In `<script setup>`, keep using `.value` when mutating refs, such as `count.value++`.
 
@@ -374,8 +374,8 @@ Code that can run during SSR should use `apiURL()` or `$fetch()` so Node receive
 
 ```vue
 <script setup lang="ts">
-const { data, pending, error } = useAsyncData("test", () => {
-  return $fetch(apiURL("/api/test"))
+const { data, pending, error } = useAsyncData("test", ({ signal }) => {
+  return $fetch(apiURL("/api/test"), { signal })
 })
 </script>
 

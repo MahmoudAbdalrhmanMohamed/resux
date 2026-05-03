@@ -25,6 +25,10 @@ export interface AsyncDataResource<T = unknown> {
   then: any;
 }
 
+export interface AsyncDataHandlerContext {
+  signal?: AbortSignal;
+}
+
 export interface RouteContext {
   path: string;
   params: Record<string, string>;
@@ -209,7 +213,7 @@ export interface ElementTemplateNode {
 export interface SetupContext {
   props: Record<string, unknown>;
   useState<T>(key: string, factory?: () => T): Ref<T>;
-  useAsyncData<T>(key: string, handler?: () => T | Promise<T>): AsyncDataResource<T>;
+  useAsyncData<T>(key: string, handler?: (context: AsyncDataHandlerContext) => T | Promise<T>): AsyncDataResource<T>;
   defineProps<T extends Record<string, unknown> = Record<string, unknown>>(): T;
   useRoute(): RouteContext;
   useRouter(): ResuxRouter;
@@ -218,8 +222,8 @@ export interface SetupContext {
   useRuntimeConfig(): RuntimeConfig;
   useResuxApp(): ResuxAppLike;
   apiURL(path: string): string;
-  useFetch<T>(url: string): Promise<Ref<T>>;
-  $fetch<T>(url: string): Promise<T>;
+  useFetch<T>(url: string, init?: RequestInit): Promise<Ref<T>>;
+  $fetch<T>(url: string, init?: RequestInit): Promise<T>;
   onMounted(callback: () => unknown | Promise<unknown>): void;
   definePageMeta(_meta: PageMeta): void;
 }
@@ -577,9 +581,9 @@ function createServerSetupContext(
   runtimeConfig: RuntimeConfig
 ): SetupContext {
   const apiURL = (url: string): string => resolveServerApiURL(url, route, runtimeConfig);
-  const fetchJson = async <T>(url: string): Promise<T> => {
+  const fetchJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
     const requestUrl = apiURL(url);
-    const response = await fetch(requestUrl);
+    const response = await fetch(requestUrl, init);
     if (!response.ok) {
       throw new Error(`Fetch failed for ${requestUrl}: ${response.status}`);
     }
@@ -601,7 +605,7 @@ function createServerSetupContext(
       return ref;
     },
 
-    useAsyncData<T>(key: string, handler?: () => T | Promise<T>): AsyncDataResource<T> {
+    useAsyncData<T>(key: string, handler?: (context: AsyncDataHandlerContext) => T | Promise<T>): AsyncDataResource<T> {
       if (asyncDataRefs[key]) {
         return asyncDataRefs[key] as AsyncDataResource<T>;
       }
@@ -642,14 +646,14 @@ function createServerSetupContext(
 
     apiURL,
 
-    async useFetch<T>(url: string): Promise<Ref<T>> {
+    async useFetch<T>(url: string, init?: RequestInit): Promise<Ref<T>> {
       return {
-        value: await fetchJson<T>(url)
+        value: await fetchJson<T>(url, init)
       };
     },
 
-    $fetch<T>(url: string): Promise<T> {
-      return fetchJson<T>(url);
+    $fetch<T>(url: string, init?: RequestInit): Promise<T> {
+      return fetchJson<T>(url, init);
     },
 
     onMounted(): void {
@@ -698,11 +702,12 @@ function createPendingAsyncDataResource<T>(): {
 
 async function settleAsyncDataResource<T>(
   resource: AsyncDataResource<T>,
-  handler: (() => T | Promise<T>) | undefined,
+  handler: ((context: AsyncDataHandlerContext) => T | Promise<T>) | undefined,
   key: string
 ): Promise<void> {
   try {
-    const value = handler ? await handler() : undefined;
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : undefined;
+    const value = handler ? await handler({ signal: controller?.signal }) : undefined;
     assertJsonSerializable(value, `useAsyncData("${key}")`);
     resource.value.value = value as T;
     resource.error.value = null;
@@ -1576,6 +1581,7 @@ export function getClientRuntimeSource(): string {
 const scopeCache = new Map();
 const routePayloadCache = new Map();
 const mountedVueIslands = new Map();
+const pendingAsyncDataControllers = globalThis.__RESUX_PENDING_ASYNC_DATA_CONTROLLERS__ ||= new Set();
 let devImportRevision = 0;
 let routeTransitionToken = 0;
 let routeTransitionHideTimer = 0;
@@ -1607,7 +1613,18 @@ export function createClientComponent(definition) {
             );
             asyncDataRefs[key] = resource;
             if (resource.pending.value && typeof handler === "function") {
-              const completion = settleAsyncDataResource(resource, handler, key);
+              const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+              if (controller) {
+                pendingAsyncDataControllers.add(controller);
+                resource.abortController = controller;
+              }
+              const completion = settleAsyncDataResource(resource, handler, key, controller ? controller.signal : undefined)
+                .finally(() => {
+                  if (controller) {
+                    pendingAsyncDataControllers.delete(controller);
+                  }
+                  resource.abortController = null;
+                });
               resource.setCompletion(completion);
               pendingCompletions.push(completion);
             }
@@ -1644,11 +1661,11 @@ export function createClientComponent(definition) {
         apiURL(url) {
           return url;
         },
-        async useFetch(url) {
-          return { value: await setupContext.$fetch(url) };
+        async useFetch(url, init) {
+          return { value: await setupContext.$fetch(url, init) };
         },
-        async $fetch(url) {
-          const response = await fetch(url);
+        async $fetch(url, init) {
+          const response = await fetch(url, init);
           if (!response.ok) {
             throw new Error("Fetch failed for " + url + ": " + response.status);
           }
@@ -1752,9 +1769,9 @@ function createAsyncDataResource(value, pending = false, error = null) {
   return resource;
 }
 
-async function settleAsyncDataResource(resource, handler, key) {
+async function settleAsyncDataResource(resource, handler, key, signal) {
   try {
-    const value = await handler();
+    const value = await handler({ signal });
     assertJsonSerializable(value, 'useAsyncData("' + key + '")');
     resource.data.value = value;
     resource.error.value = null;
@@ -1917,6 +1934,7 @@ async function navigateTo(target, options = {}) {
   const routePath = nextUrl.pathname + nextUrl.search;
   const transitionToken = ++routeTransitionToken;
   let completed = false;
+  abortPendingAsyncData();
   setRouteTransition("start", { path: routePath });
 
   try {
@@ -1965,6 +1983,15 @@ async function navigateTo(target, options = {}) {
       setRouteTransition("idle", { path: routePath });
     }
   }
+}
+
+function abortPendingAsyncData() {
+  for (const controller of [...pendingAsyncDataControllers]) {
+    if (controller && !controller.signal.aborted) {
+      controller.abort();
+    }
+  }
+  pendingAsyncDataControllers.clear();
 }
 
 function createClientRouter() {

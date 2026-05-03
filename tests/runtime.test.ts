@@ -1169,6 +1169,89 @@ export default createClientComponent({ id: "m0", name: "Model", file: "Model.vue
     expect(window.document.head.innerHTML).toContain('name="route"');
   });
 
+  it("aborts pending async data when leaving the current route", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-abort-nav-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const handlerFile = path.join(tempDir, "handler.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+    await writeFile(
+      handlerFile,
+      `import { createClientComponent } from ${JSON.stringify(pathToFileURL(runtimeFile).href)};
+const __template = [
+  { type: "element", tag: "p", attrs: [], events: [], if: { expression: "stats.pending.value", blockId: "b0" }, children: [{ type: "text", value: "Loading stats" }] },
+  { type: "element", tag: "p", attrs: [], events: [], if: { expression: "stats.error.value", blockId: "b1" }, children: [{ type: "interpolation", expression: "stats.error.value.name", bindingId: "b2" }] }
+];
+async function script(ctx) {
+  const stats = ctx.useAsyncData("stats", ({ signal }) => new Promise((_resolve, reject) => {
+    globalThis.__RESUX_TEST_SIGNAL__ = signal;
+    signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+  }));
+  return { stats };
+}
+export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue", script, template: __template, handlers: [] });
+`,
+      "utf8"
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <a href="/about">About</a>
+        <span data-rx-block="s0:b0"><p>Loading stats</p></span>
+        <span data-rx-block="s0:b1"></span>
+      </div>
+    `;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      scrollTo: () => undefined,
+      DOMException: window.DOMException,
+      fetch: async () => new Response(
+        JSON.stringify({
+          html: "<main>About</main>",
+          head: { title: "About" },
+          payload: {
+            route: { path: "/about", params: {}, query: {} },
+            scopes: {},
+            modules: {}
+          }
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }
+      ),
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {
+          s0: {
+            id: "s0",
+            moduleId: "m0",
+            state: {},
+            asyncData: {
+              stats: { value: null, pending: true, error: null }
+            }
+          }
+        },
+        modules: {
+          m0: pathToFileURL(handlerFile).href
+        }
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await waitForSignal();
+    window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+    await waitForHtml(window, "<main>About</main>");
+
+    expect((globalThis as any).__RESUX_TEST_SIGNAL__.aborted).toBe(true);
+    expect(window.location.pathname).toBe("/about");
+  });
+
   it("preserves loaded global styles while navigating between routes", async () => {
     const tempDir = path.join(os.tmpdir(), `resux-style-nav-${Date.now()}`);
     await mkdir(tempDir, { recursive: true });
@@ -1475,6 +1558,15 @@ async function waitForText(window: Window, expected: string): Promise<void> {
 async function waitForHtml(window: Window, expected: string): Promise<void> {
   for (let attempt = 0; attempt < 20; attempt++) {
     if (window.document.body.innerHTML.includes(expected)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+async function waitForSignal(): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    if ((globalThis as any).__RESUX_TEST_SIGNAL__) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 10));

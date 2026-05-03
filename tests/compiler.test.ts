@@ -157,6 +157,34 @@ const { data, pending, error } = useAsyncData("stats", async () => ({ label: "Re
     expect(template).toContain('"expression":"data.value.label"');
   });
 
+  it("does not ref-unwrap awaited useAsyncData snapshots in templates", () => {
+    const component = compileVueSource(
+      `<script setup>
+const { data, pending, error } = await useAsyncData("stats", async () => ({ label: "Ready" }))
+</script>
+<template>
+  <p v-if="pending">Loading</p>
+  <p v-if="error">{{ error.message }}</p>
+  <strong v-if="!pending && !error && data" v-text="data.label">Label</strong>
+</template>`,
+      {
+        file: "AwaitedUnwrap.vue",
+        id: "m0",
+        name: "AwaitedUnwrap"
+      }
+    );
+
+    const template = JSON.stringify(component.template);
+    expect(template).toContain('"expression":"pending"');
+    expect(template).toContain('"expression":"error"');
+    expect(template).toContain('"expression":"error.message"');
+    expect(template).toContain('"expression":"!pending && !error && data"');
+    expect(template).toContain('"expression":"data.label"');
+    expect(template).not.toContain("data.value");
+    expect(template).not.toContain("pending.value");
+    expect(template).not.toContain("error.value");
+  });
+
   it("compiles advanced event modifiers", () => {
     const component = compileVueSource(
       `<script setup>

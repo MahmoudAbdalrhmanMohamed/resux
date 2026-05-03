@@ -1427,7 +1427,14 @@ function createAppHead(runtimeConfig: Record<string, unknown>) {
 
 function createRuntimeConfig(config: Record<string, unknown>): Record<string, unknown> {
   const runtimeConfig = (config as ResuxConfig).runtimeConfig;
-  return runtimeConfig ?? {};
+  return {
+    ...(runtimeConfig ?? {}),
+    public: {
+      ...((runtimeConfig?.public && typeof runtimeConfig.public === "object" && !Array.isArray(runtimeConfig.public))
+        ? runtimeConfig.public as Record<string, unknown>
+        : {})
+    }
+  };
 }
 
 function createRouteRules(config: Record<string, unknown>): Record<string, RouteRuleConfig> {

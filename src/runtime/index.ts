@@ -22,7 +22,17 @@ export interface AsyncDataResource<T = unknown> {
   value: Ref<T | undefined>;
   pending: Ref<boolean>;
   error: Ref<AsyncDataError | null>;
-  then: any;
+  then<TResult1 = AwaitedAsyncDataResource<T>, TResult2 = never>(
+    onfulfilled?: ((value: AwaitedAsyncDataResource<T>) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+  ): PromiseLike<TResult1 | TResult2>;
+}
+
+export interface AwaitedAsyncDataResource<T = unknown> {
+  data: Ref<T | undefined>;
+  value: Ref<T | undefined>;
+  pending: Ref<boolean>;
+  error: Ref<AsyncDataError | null>;
 }
 
 export interface AsyncDataHandlerContext {
@@ -94,7 +104,7 @@ export interface SeoMetaInput {
 }
 
 export interface RuntimeConfig {
-  public?: Record<string, JsonValue>;
+  public: Record<string, JsonValue>;
   [key: string]: unknown;
 }
 
@@ -512,7 +522,7 @@ class ResuxRenderer {
     private readonly route: RouteContext,
     private readonly components: Record<string, ComponentDefinition>,
     private readonly modules: Record<string, string>,
-    private readonly runtimeConfig: RuntimeConfig = {}
+    private readonly runtimeConfig: RuntimeConfig = { public: {} }
   ) {}
 
   async renderComponent(
@@ -606,8 +616,9 @@ function createServerSetupContext(
     },
 
     useAsyncData<T>(key: string, handler?: (context: AsyncDataHandlerContext) => T | Promise<T>): AsyncDataResource<T> {
-      if (asyncDataRefs[key]) {
-        return asyncDataRefs[key] as AsyncDataResource<T>;
+      const existing = asyncDataRefs[key] as AsyncDataResource<unknown> | undefined;
+      if (existing) {
+        return existing as AsyncDataResource<T>;
       }
 
       const pending = createPendingAsyncDataResource<T>();
@@ -733,7 +744,7 @@ function createServerRouter(): ResuxRouter {
 }
 
 function resolveServerApiURL(url: string, route: RouteContext, runtimeConfig: RuntimeConfig): string {
-  if (!url.startsWith("/")) {
+  if (!isInternalApiURL(url)) {
     return url;
   }
 
@@ -741,6 +752,10 @@ function resolveServerApiURL(url: string, route: RouteContext, runtimeConfig: Ru
     ?? runtimeOrigin(runtimeConfig)
     ?? "http://localhost:3000";
   return new URL(url, origin).href;
+}
+
+function isInternalApiURL(url: string): boolean {
+  return url === "/api" || url.startsWith("/api/");
 }
 
 function runtimeOrigin(runtimeConfig: RuntimeConfig): string | undefined {
@@ -1084,7 +1099,7 @@ export class AsyncResuxRenderer {
     private readonly vueIslands: Record<string, string> = {},
     private readonly layouts: Record<string, ComponentDefinition> = {},
     private readonly pageMeta: PageMeta = {},
-    private readonly runtimeConfig: RuntimeConfig = {}
+    private readonly runtimeConfig: RuntimeConfig = { public: {} }
   ) {
     this.resuxApp = createResuxApp(route, modules, runtimeConfig);
   }
@@ -1192,7 +1207,7 @@ export async function renderAppAsync(options: RenderAppOptions): Promise<RenderR
     options.vueIslands ?? {},
     options.layouts ?? {},
     pageMeta,
-    options.runtimeConfig ?? {}
+    options.runtimeConfig ?? { public: {} }
   );
 
   for (const plugin of options.plugins ?? []) {

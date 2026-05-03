@@ -1,14 +1,20 @@
 <script setup lang="ts">
 const count = useState("count", () => 0)
 const config = useRuntimeConfig()
+const appName = String(config.public.appName ?? "Resux App")
+type StarterStats = {
+  response: string
+  routes: string
+  mode: string
+}
 const { data, pending, error } = await useAsyncData("starter-stats", ({ signal }) => {
-  return $fetch(apiURL("/api/stats"), { signal })
+  return $fetch<StarterStats>("/api/stats", { signal })
 })
 
 useSeoMeta({
-  title: config.public.appName,
+  title: appName,
   description: "A Resux application.",
-  ogTitle: config.public.appName,
+  ogTitle: appName,
   ogDescription: "A Resux application.",
   twitterCard: "summary_large_image",
   themeColor: "#2563eb"
@@ -23,7 +29,7 @@ function increment() {
   <main class="page">
     <section class="hero">
       <p class="eyebrow">Resux starter</p>
-      <h1>{{ config.public.appName }}</h1>
+      <h1>{{ appName }}</h1>
       <p class="lede">Server-rendered Vue-like files with resumable client handlers.</p>
       <div class="actions">
         <button @click="increment">Count: {{ count }}</button>

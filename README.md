@@ -31,7 +31,7 @@ Generated apps use a single Resux dependency, similar to Nuxt apps installing `n
 ```json
 {
   "dependencies": {
-    "resuxjs": "^0.2.12"
+    "resuxjs": "^0.2.13"
   }
 }
 ```
@@ -330,8 +330,12 @@ To fetch during SSR and render the resolved data in the first HTML response, awa
 
 ```vue
 <script setup lang="ts">
+type Stats = {
+  response: string
+}
+
 const { data, pending, error } = await useAsyncData("stats", ({ signal }) => {
-  return $fetch(apiURL("/api/stats"), { signal })
+  return $fetch<Stats>("/api/stats", { signal })
 })
 </script>
 
@@ -346,8 +350,12 @@ For a Next-style loading skeleton, call `useAsyncData` without `await` and branc
 
 ```vue
 <script setup lang="ts">
+type Stats = {
+  response: string
+}
+
 const { data, pending, error } = useAsyncData("stats", ({ signal }) => {
-  return $fetch("/api/stats", { signal })
+  return $fetch<Stats>("/api/stats", { signal })
 })
 </script>
 
@@ -370,12 +378,12 @@ Browser-only fetches can use relative API URLs:
 await fetch("/api/test")
 ```
 
-Code that can run during SSR should use `apiURL()` or `$fetch()` so Node receives an absolute URL:
+Code that can run during SSR should use `$fetch()` for internal APIs. Resux automatically resolves internal `/api/...` URLs to an absolute request-origin URL on the server, while keeping them relative in the browser:
 
 ```vue
 <script setup lang="ts">
 const { data, pending, error } = useAsyncData("test", ({ signal }) => {
-  return $fetch(apiURL("/api/test"), { signal })
+  return $fetch("/api/test", { signal })
 })
 </script>
 
@@ -386,7 +394,7 @@ const { data, pending, error } = useAsyncData("test", ({ signal }) => {
 </template>
 ```
 
-On the server, `apiURL("/api/test")` uses the current request origin, then configured public origins such as `runtimeConfig.public.appOrigin`, and finally `http://localhost:3000`. In the browser it returns the original path, so client fetch behavior stays relative.
+On the server, `$fetch("/api/test")` uses the current request origin, then configured public origins such as `runtimeConfig.public.appOrigin`, and finally `http://localhost:3000`. In the browser it keeps `/api/test` relative. Use `apiURL("/api/test")` only when you call native `fetch()` yourself in code that can run during SSR.
 
 ## Supported Syntax
 

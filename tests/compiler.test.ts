@@ -12,12 +12,28 @@ describe("route manifest", () => {
       "/app/pages/index.vue",
       "/app/pages/about.vue",
       "/app/pages/post/[id].vue",
-      "/app/pages/docs/[section]/index.vue"
+      "/app/pages/docs/[section]/index.vue",
+      "/app/pages/docs/[...slug].vue"
     ]);
 
-    expect(routes.map((route) => route.path)).toEqual(["/docs/:section", "/post/:id", "/about", "/"]);
+    expect(routes.map((route) => route.path)).toEqual(["/docs/:section", "/docs/:slug*", "/post/:id", "/about", "/"]);
     expect(routes.find((route) => route.path === "/post/:id")?.params).toEqual(["id"]);
+    expect(routes.find((route) => route.path === "/docs/:slug*")?.params).toEqual(["slug"]);
   });
+
+  it("matches catch-all route params from generated manifests", async () => {
+    const root = path.join(os.tmpdir(), `resux-catch-all-${Date.now()}`);
+    await mkdir(path.join(root, "pages", "docs"), { recursive: true });
+    await writeFile(path.join(root, "pages", "docs", "[...slug].vue"), "<template><main>Docs</main></template>");
+
+    await buildProject(root);
+    const manifest = await import(`${pathToFileURL(path.join(root, ".resux", "server", "manifest.mjs")).href}?t=${Date.now()}`);
+
+    expect(manifest.routes[0].path).toBe("/docs/:slug*");
+    expect(manifest.routes[0].params).toEqual(["slug"]);
+    expect(manifest.matchRoute("/docs/guide/intro")?.params).toEqual({ slug: "guide/intro" });
+    expect(manifest.matchRoute("/docs")?.params).toEqual({ slug: "" });
+  }, 20000);
 });
 
 describe("sfc compiler", () => {
@@ -267,6 +283,23 @@ function goAbout() {
     expect(component.handlers).toEqual(["goAbout"]);
     expect(component.serverSource).toContain("useRouter");
     expect(component.clientSource).toContain("useRouter");
+  });
+
+  it("exposes apiURL to compiled setup code", () => {
+    const component = compileVueSource(
+      `<script setup>
+const { data } = useAsyncData("test", () => $fetch(apiURL("/api/test")))
+</script>
+<template><pre>{{ data }}</pre></template>`,
+      {
+        file: "Api.vue",
+        id: "m0",
+        name: "Api"
+      }
+    );
+
+    expect(component.serverSource).toContain("apiURL");
+    expect(component.clientSource).toContain("apiURL");
   });
 
   it("compiles defineProps for reusable components", () => {

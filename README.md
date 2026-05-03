@@ -31,7 +31,7 @@ Generated apps use a single Resux dependency, similar to Nuxt apps installing `n
 ```json
 {
   "dependencies": {
-    "resuxjs": "^0.2.8"
+    "resuxjs": "^0.2.9"
   }
 }
 ```
@@ -149,7 +149,7 @@ export default defineResuxConfig({
 Resux uses Vite in both main app commands:
 
 - `resux dev` emits Resux client modules into `.resux/vite-client` and serves the resume runtime plus handler modules through Vite middleware.
-- `resux dev` also opens a dev-only update channel at `/__resux/dev-events`; when source files change, Resux rebuilds, re-imports active client component modules with a cache-busting revision, and patches active resumable scopes without a full document reload.
+- `resux dev` also opens a dev-only update channel at `/__resux/dev-events`; when source files change, Resux rebuilds and reloads the browser so route, template, and style changes are visible without restarting the dev server.
 - `resux build` uses Vite production bundling for the resume runtime, handler chunks, and server manifest, then writes optimized output into `.resux/client` and `.resux/server-bundle` before producing a Nitro `.output` server.
 
 The generated starter keeps Resux-style scripts:
@@ -272,6 +272,7 @@ Server middleware can continue by returning nothing, end the Node response direc
 - `.vue`-style SFC files with `<template>` and `<script setup lang="ts">`.
 - File-based routing from `pages/`.
 - Dynamic route params like `pages/post/[id].vue`.
+- Catch-all route params like `pages/docs/[...slug].vue`.
 - `app.vue` with `<ResuxPage />`.
 - Layouts with `<ResuxLayout>`, `<slot />`, and `definePageMeta({ layout })`.
 - `<ResuxLink to="...">` rendered as an `<a href="...">` and intercepted for client-side navigation.
@@ -291,15 +292,15 @@ Server middleware can continue by returning nothing, end the Node response direc
 - Route rules for redirects, response headers, status codes, cache headers, and CORS headers.
 - Default production security headers with an opt-out flag.
 - Vite-powered dev serving, production client/server bundling, and minification for the resume runtime and handler chunks.
-- Component-level dev hot updates after successful rebuilds, without adding Vue hydration.
+- Dev rebuilds with automatic browser reloads, without adding Vue hydration.
 - `resux inspect` and `resux inspect --json` for route and build diagnostics.
 - `resux deploy --preset node|docker|nitro` for deployment file generation.
 - Serialized route, state, and async data payloads.
 - Resumable event handlers such as `@click="increment"`.
 - Lazy client handler chunks loaded on first interaction.
 - Client-side navigation, persistent same-layout DOM, built-in route transition progress, and hover/focus route payload prefetch for same-origin links.
-- MVP composables: `useState`, `useAsyncData`, `useRoute`, `useRouter`, `useHead`, `useSeoMeta`, `useRuntimeConfig`, `useResuxApp`, `useFetch`, `$fetch`, and `onMounted`.
-- `useAsyncData` returns a resource with reactive `data`, `pending`, and `error` refs, plus `value` as a data alias for compatibility. It still works with `await` when you want to block setup.
+- MVP composables: `useState`, `useAsyncData`, `useRoute`, `useRouter`, `useHead`, `useSeoMeta`, `useRuntimeConfig`, `useResuxApp`, `apiURL`, `useFetch`, `$fetch`, and `onMounted`.
+- `useAsyncData` returns a resource with reactive `data`, `pending`, and `error` refs, plus `value` as a data alias for compatibility. Use `await useAsyncData(...)` when you want SSR to fetch before rendering the page; omit `await` when you intentionally want an SSR skeleton that resumes in the browser.
 
 ## Component Syntax
 
@@ -314,7 +315,7 @@ function increment() {
 
 <template>
   <button @click="increment">
-    Count: {{ count.value }}
+    Count: {{ count }}
   </button>
 </template>
 ```
@@ -324,6 +325,22 @@ On the server, Resux renders the button as HTML and serializes `count`.
 In the browser, Resux installs a tiny delegated event listener. The component handler module is not imported until the user clicks the button. After that, the scope is resumed from serialized state and only the marked DOM bindings are patched.
 
 ## Async Data Skeletons
+
+To fetch during SSR and render the resolved data in the first HTML response, await the call:
+
+```vue
+<script setup lang="ts">
+const { data, pending, error } = await useAsyncData("stats", async () => {
+  return { response: "14 ms" }
+})
+</script>
+
+<template>
+  <p v-if="pending">Loading</p>
+  <p v-if="error">{{ error.message }}</p>
+  <strong v-if="data">{{ data.response }}</strong>
+</template>
+```
 
 For a Next-style loading skeleton, call `useAsyncData` without `await` and branch on `pending`:
 
@@ -336,12 +353,40 @@ const { data, pending } = useAsyncData("stats", async () => {
 </script>
 
 <template>
-  <div v-if="pending.value" class="skeleton"></div>
-  <strong v-if="!pending.value">{{ data.value.response }}</strong>
+  <div v-if="pending" class="skeleton"></div>
+  <strong v-if="!pending && data">{{ data.response }}</strong>
 </template>
 ```
 
 Resux serializes the pending state, renders the skeleton immediately, resumes only scopes with pending async data in the browser, and patches the marked DOM blocks after the data resolves.
+
+Templates auto-unwrap refs returned from `useState`, `useAsyncData`, `useFetch`, Vue `ref`, and `computed`, so template examples use `count`, `pending`, and `data.response`. In `<script setup>`, keep using `.value` when mutating refs, such as `count.value++`.
+
+## Server API Fetches
+
+Browser-only fetches can use relative API URLs:
+
+```ts
+await fetch("/api/test")
+```
+
+Code that can run during SSR should use `apiURL()` or `$fetch()` so Node receives an absolute URL:
+
+```vue
+<script setup lang="ts">
+const { data, pending, error } = useAsyncData("test", () => {
+  return $fetch(apiURL("/api/test"))
+})
+</script>
+
+<template>
+  <p v-if="pending">Loading</p>
+  <p v-if="error">{{ error.message }}</p>
+  <pre v-if="data">{{ data }}</pre>
+</template>
+```
+
+On the server, `apiURL("/api/test")` uses the current request origin, then configured public origins such as `runtimeConfig.public.appOrigin`, and finally `http://localhost:3000`. In the browser it returns the original path, so client fetch behavior stays relative.
 
 ## Supported Syntax
 
@@ -353,7 +398,7 @@ The MVP compiler supports:
 - Dynamic attributes: `:class="className"`.
 - Dynamic class arrays/objects and style objects for `:class` and `:style`.
 - Plain named events: `@click="increment"`.
-- Inline event expressions that only capture resumable values, such as `@click="count.value++"`.
+- Inline event expressions that only capture resumable values, plus named handlers such as `@click="increment"`.
 - Resumability-safe event modifiers: `.prevent`, `.stop`, `.self`, `.once`, system/mouse modifiers, and key filters such as `.enter`.
 - `v-if`.
 - `v-show`.
@@ -372,6 +417,7 @@ The MVP compiler supports:
 - `useRouter().push("/path")`, `replace`, `back`, `forward`, and `go`.
 - `useHead({ title, meta, link })`.
 - `useSeoMeta({ title, description, ogTitle, ogImage, twitterCard })`.
+- `apiURL("/api/path")` for SSR-safe API fetch URLs.
 - `onMounted()`, run when the component scope is first resumed in the browser.
 - Vue runtime islands via `<VueIsland name="CounterIsland" :props="{ start: 1 }" />` and files in `islands/vue`.
 
@@ -387,6 +433,14 @@ Resux intentionally rejects or does not support many advanced framework/Vue feat
 - No fallback hydration for unsupported components.
 
 Unsupported resumability patterns should fail at compile time instead of silently hydrating.
+
+## Troubleshooting
+
+- `Failed to parse URL from /api/...` during SSR: use `apiURL("/api/...")` or `$fetch("/api/...")` from Resux setup code so server-side fetches get an absolute URL.
+- Skeletons that never disappear: render `error` from `useAsyncData` and guard success UI with `!pending && !error && data`.
+- Dev edits do not appear: keep `resux dev .` running and make sure the browser is connected to `/__resux/dev-events`; Resux reloads the page after successful rebuilds.
+- Port already in use: pass another port, for example `resux dev --port 4000`.
+- Handler capture compile errors: move non-serializable values out of resumable handlers or store resumable state with `useState`.
 
 ## Architecture
 
@@ -416,7 +470,7 @@ The tests cover:
 - Compile errors for unsupported resumability captures.
 - Sanitized `v-html`, `v-model`, inline handlers, and mounted resume hooks.
 - SSR payload serialization.
-- Dynamic route params.
+- Dynamic route params and catch-all params.
 - Layout rendering.
 - Head/meta rendering.
 - Runtime config and plugin provides.

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 const count = useState("count", () => 0)
 const config = useRuntimeConfig()
-const { data, pending, error } = useAsyncData("starter-stats", async () => {
+const { data, pending, error } = await useAsyncData("starter-stats", async () => {
   await new Promise((resolve) => setTimeout(resolve, 700))
   return {
     response: "14 ms",

@@ -1,9 +1,9 @@
 # create-resuxjs
 
-Create a Resux app:
+Create a Resux app with the published `resuxjs` CLI:
 
 ```sh
-npm create resuxjs@latest my-app
+npx resuxjs@latest init my-app
 ```
 
-This package delegates to the `resuxjs` app scaffolder.
+This package is a compatibility wrapper for the Resux app scaffolder.

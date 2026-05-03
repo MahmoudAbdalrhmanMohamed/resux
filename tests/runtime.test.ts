@@ -81,6 +81,7 @@ describe("runtime SSR", () => {
 
     expect(documentHtml).toContain('/__resux/dev-events');
     expect(documentHtml).toContain('__RESUX_APPLY_DEV_UPDATE__');
+    expect(documentHtml).toContain('addEventListener("reload"');
     expect(documentHtml).toContain('/__resux/runtime-client.mjs');
   });
 
@@ -153,6 +154,76 @@ describe("runtime SSR", () => {
     expect(result.payload.scopes.s0.asyncData.broken.error).toEqual({
       name: "Error",
       message: "Backend unavailable"
+    });
+  });
+
+  it("resolves server-side API fetch URLs through apiURL", async () => {
+    const originalFetch = globalThis.fetch;
+    const requestedUrls: string[] = [];
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      requestedUrls.push(String(url));
+      return new Response(JSON.stringify({ message: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    }) as typeof fetch;
+
+    try {
+      const page = defineComponent({
+        id: "m-api",
+        name: "ApiPage",
+        file: "ApiPage.vue",
+        handlers: [],
+        async script(ctx) {
+          const data = await ctx.useAsyncData("test", () => ctx.$fetch("/api/test"));
+          return { data, direct: ctx.apiURL("/api/test") };
+        },
+        template: [
+          { type: "interpolation", expression: "data.value.message", bindingId: "b0" },
+          { type: "interpolation", expression: "direct", bindingId: "b1" }
+        ]
+      });
+
+      const result = await renderApp({
+        page,
+        route: { path: "/", params: {}, query: {}, origin: "https://example.test" }
+      });
+
+      expect(requestedUrls).toEqual(["https://example.test/api/test"]);
+      expect(result.html).toContain("ok");
+      expect(result.html).toContain("https://example.test/api/test");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("allows awaited useAsyncData to SSR data/pending/error snapshots", async () => {
+    const page = defineComponent({
+      id: "m-api-awaited",
+      name: "AwaitedApiPage",
+      file: "AwaitedApiPage.vue",
+      handlers: [],
+      async script(ctx) {
+        const { data, pending, error } = await ctx.useAsyncData("stats", async () => ({ response: "14 ms" }));
+        return { data, pending, error };
+      },
+      template: [
+        { type: "element", tag: "p", attrs: [], events: [], if: { expression: "pending", blockId: "b0" }, children: [{ type: "text", value: "Loading" }] },
+        { type: "element", tag: "p", attrs: [], events: [], if: { expression: "!pending && !error && data", blockId: "b1" }, children: [{ type: "interpolation", expression: "data.response", bindingId: "b2" }] }
+      ]
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/", params: {}, query: {} }
+    });
+
+    expect(result.html).toContain("14 ms");
+    expect(result.html).not.toContain("Loading");
+    expect(result.payload.scopes.s0.asyncData.stats).toEqual({
+      value: { response: "14 ms" },
+      pending: false,
+      error: null
     });
   });
 
@@ -513,6 +584,59 @@ describe("server event helpers", () => {
 });
 
 describe("client resume loader", () => {
+  it("keeps apiURL relative in browser/client scopes", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-client-api-url-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const handlerFile = path.join(tempDir, "handler.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+    await writeFile(
+      handlerFile,
+      `import { createClientComponent } from ${JSON.stringify(pathToFileURL(runtimeFile).href)};
+const __template = [{ type: "interpolation", expression: "direct", bindingId: "b0" }];
+async function script(ctx) {
+  function reveal() {}
+  return { direct: ctx.apiURL("/api/test"), reveal };
+}
+export default createClientComponent({ id: "m0", name: "ApiUrl", file: "ApiUrl.vue", script, template: __template, handlers: ["reveal"] });
+`,
+      "utf8"
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <button data-rx-on-click="s0:m0:reveal">Reveal</button>
+      <span data-rx-text="s0:b0"></span>
+    `;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {
+          s0: {
+            id: "s0",
+            moduleId: "m0",
+            state: {},
+            asyncData: {}
+          }
+        },
+        modules: {
+          m0: pathToFileURL(handlerFile).href
+        }
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    window.document.querySelector("button")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+    await waitForText(window, "/api/test");
+
+    expect(window.document.querySelector("[data-rx-text='s0:b0']")?.textContent).toBe("/api/test");
+  });
+
   it("resumes pending async data and patches skeleton blocks", async () => {
     const tempDir = path.join(os.tmpdir(), `resux-pending-${Date.now()}`);
     await mkdir(tempDir, { recursive: true });

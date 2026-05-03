@@ -476,6 +476,11 @@ export function createRouteManifest(
       const routeParts = parts
         .filter((part, partIndex) => !(part === "index" && partIndex === parts.length - 1))
         .map((part) => {
+          const catchAllMatch = /^\[\.\.\.([A-Za-z0-9_]+)\]$/.exec(part);
+          if (catchAllMatch) {
+            params.push(catchAllMatch[1]);
+            return `:${catchAllMatch[1]}*`;
+          }
           const match = /^\[([A-Za-z0-9_]+)\]$/.exec(part);
           if (match) {
             params.push(match[1]);
@@ -1088,7 +1093,7 @@ function validateTemplateHandlers(events: TemplateEvent[], analysis: ScriptAnaly
 
 function findUnsupportedCapture(node: ts.Node, handlerName: string, analysis: ScriptAnalysis): string | null {
   const locals = new Set<string>([handlerName, "event"]);
-  const allowedGlobals = new Set(["Math", "Number", "String", "Boolean", "Array", "Object", "Date", "JSON", "console", "undefined"]);
+  const allowedGlobals = new Set(["Math", "Number", "String", "Boolean", "Array", "Object", "Date", "JSON", "console", "undefined", "apiURL"]);
   const allowedTopLevel = new Set([...analysis.resumableBindings]);
 
   function registerPattern(name: ts.BindingName): void {
@@ -1201,7 +1206,7 @@ function createComponentModuleSource(options: {
     options.analysis.imports,
     `const __template = ${JSON.stringify(options.template, null, 2)};`,
     `async function __rx_setup(__ctx) {`,
-    `const { useState, useAsyncData, useRoute, useRouter, useHead, useSeoMeta, useRuntimeConfig, useResuxApp, useFetch, $fetch, onMounted, definePageMeta, defineProps } = __ctx;`,
+    `const { useState, useAsyncData, useRoute, useRouter, useHead, useSeoMeta, useRuntimeConfig, useResuxApp, apiURL, useFetch, $fetch, onMounted, definePageMeta, defineProps } = __ctx;`,
     options.analysis.setupBody,
     `return { ${options.analysis.bindings.join(", ")} };`,
     `}`,
@@ -1258,11 +1263,12 @@ function createServerManifestSource(
   runtimeConfig: Record<string, unknown> = {},
   buildOptions: BuildOptions = {}
 ): string {
-  const imports = components.map((component) => `import ${component.id} from "./${component.id}.mjs";`).join("\n");
-  const pluginImports = plugins.map((plugin) => `import ${plugin.id} from "./plugins/${plugin.id}.mjs";`).join("\n");
-  const middlewareImports = middleware.map((entry) => `import ${entry.id} from "./middleware/${entry.id}.mjs";`).join("\n");
-  const serverMiddlewareImports = serverMiddleware.map((entry) => `import ${entry.id} from "./request-middleware/${entry.id}.mjs";`).join("\n");
-  const handlerImports = serverHandlers.map((handler) => `import ${handler.id} from "./handlers/${handler.id}.mjs";`).join("\n");
+  const importSuffix = buildOptions.vite === "dev" ? `?t=${Date.now()}` : "";
+  const imports = components.map((component) => `import ${component.id} from "./${component.id}.mjs${importSuffix}";`).join("\n");
+  const pluginImports = plugins.map((plugin) => `import ${plugin.id} from "./plugins/${plugin.id}.mjs${importSuffix}";`).join("\n");
+  const middlewareImports = middleware.map((entry) => `import ${entry.id} from "./middleware/${entry.id}.mjs${importSuffix}";`).join("\n");
+  const serverMiddlewareImports = serverMiddleware.map((entry) => `import ${entry.id} from "./request-middleware/${entry.id}.mjs${importSuffix}";`).join("\n");
+  const handlerImports = serverHandlers.map((handler) => `import ${handler.id} from "./handlers/${handler.id}.mjs${importSuffix}";`).join("\n");
   const componentEntries = components.map((component) => `${JSON.stringify(component.name)}: ${component.id}`).join(",\n");
   const layoutEntries = layouts.map((layout) => `${JSON.stringify(layoutNameFromFile(layout.file))}: ${layout.id}`).join(",\n");
   const moduleEntries = components
@@ -1377,6 +1383,10 @@ function createMatcher(pattern) {
   const names = [];
   const source = pattern === "/" ? "^/$" : "^" + pattern.split("/").map((part) => {
     if (!part) return "";
+    if (part.startsWith(":") && part.endsWith("*")) {
+      names.push(part.slice(1, -1));
+      return "(?:/(.*))?";
+    }
     if (part.startsWith(":")) {
       names.push(part.slice(1));
       return "/([^/]+)";
@@ -1389,7 +1399,7 @@ function createMatcher(pattern) {
     if (!match) return null;
     const params = {};
     names.forEach((name, index) => {
-      params[name] = decodeURIComponent(match[index + 1]);
+      params[name] = decodeURIComponent(match[index + 1] ?? "");
     });
     return params;
   };
@@ -2036,6 +2046,7 @@ function normalizeRoutePath(value: string): string {
   const normalized = value
     .replaceAll("\\", "/")
     .replace(/\.[cm]?[tj]s$/, "")
+    .replace(/\[\.\.\.([A-Za-z0-9_]+)\]/g, ":$1*")
     .replace(/\[([A-Za-z0-9_]+)\]/g, ":$1")
     .replace(/\/index$/, "");
 
@@ -2046,7 +2057,7 @@ function collectRouteParams(routePath: string): string[] {
   return routePath
     .split("/")
     .filter((part) => part.startsWith(":"))
-    .map((part) => part.slice(1));
+    .map((part) => part.slice(1).replace(/\*$/, ""));
 }
 
 function locationFromVueNode(file: string, node: any): CompileErrorLocation {

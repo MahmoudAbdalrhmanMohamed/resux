@@ -27,6 +27,7 @@ export interface RouteContext {
   path: string;
   params: Record<string, string>;
   query: Record<string, string | string[]>;
+  origin?: string;
 }
 
 export interface ResuxRouter {
@@ -214,6 +215,7 @@ export interface SetupContext {
   useSeoMeta(input: SeoMetaInput): void;
   useRuntimeConfig(): RuntimeConfig;
   useResuxApp(): ResuxAppLike;
+  apiURL(path: string): string;
   useFetch<T>(url: string): Promise<Ref<T>>;
   $fetch<T>(url: string): Promise<T>;
   onMounted(callback: () => unknown | Promise<unknown>): void;
@@ -558,10 +560,12 @@ function createServerSetupContext(
   resuxApp: ResuxAppLike,
   runtimeConfig: RuntimeConfig
 ): SetupContext {
+  const apiURL = (url: string): string => resolveServerApiURL(url, route, runtimeConfig);
   const fetchJson = async <T>(url: string): Promise<T> => {
-    const response = await fetch(url);
+    const requestUrl = apiURL(url);
+    const response = await fetch(requestUrl);
     if (!response.ok) {
-      throw new Error(`Fetch failed for ${url}: ${response.status}`);
+      throw new Error(`Fetch failed for ${requestUrl}: ${response.status}`);
     }
     return response.json() as Promise<T>;
   };
@@ -620,6 +624,8 @@ function createServerSetupContext(
       return resuxApp;
     },
 
+    apiURL,
+
     async useFetch<T>(url: string): Promise<Ref<T>> {
       return {
         value: await fetchJson<T>(url)
@@ -656,6 +662,7 @@ function createPendingAsyncDataResource<T>(): {
     then(onfulfilled: any, onrejected: any) {
       return completion.then(() => {
         const snapshot = {
+          data: resource.value.value,
           value: resource.value.value,
           pending: resource.pending.value,
           error: resource.error.value
@@ -702,6 +709,28 @@ function createServerRouter(): ResuxRouter {
     forward: navigate,
     go: navigate
   };
+}
+
+function resolveServerApiURL(url: string, route: RouteContext, runtimeConfig: RuntimeConfig): string {
+  if (!url.startsWith("/")) {
+    return url;
+  }
+
+  const origin = route.origin
+    ?? runtimeOrigin(runtimeConfig)
+    ?? "http://localhost:3000";
+  return new URL(url, origin).href;
+}
+
+function runtimeOrigin(runtimeConfig: RuntimeConfig): string | undefined {
+  const publicConfig = runtimeConfig.public ?? {};
+  for (const key of ["appOrigin", "appURL", "siteURL", "origin"]) {
+    const value = publicConfig[key];
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 function renderTemplateNodes(nodes: TemplateNode[], context: RenderTemplateContext, locals: Record<string, unknown> = {}): string {
@@ -1596,6 +1625,9 @@ export function createClientComponent(definition) {
             provide() {}
           };
         },
+        apiURL(url) {
+          return url;
+        },
         async useFetch(url) {
           return { value: await setupContext.$fetch(url) };
         },
@@ -1688,6 +1720,7 @@ function createAsyncDataResource(value, pending = false, error = null) {
     then(onfulfilled, onrejected) {
       return completion.then(() => {
         const snapshot = {
+          data: resource.data.value,
           value: resource.data.value,
           pending: resource.pending.value,
           error: resource.error.value

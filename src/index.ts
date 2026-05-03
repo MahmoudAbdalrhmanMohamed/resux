@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import { readdirSync, statSync, watch } from "node:fs";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -17,6 +18,7 @@ let activeDevBuild: Promise<void> | null = null;
 let devBuildDirty = false;
 let devBuildRevision = 0;
 let devReloadRevision = 0;
+let devLastBuildSourceMtime = 0;
 const devReloadClients = new Set<ServerResponse>();
 
 interface RenderRedirect {
@@ -622,6 +624,7 @@ dist
 }
 
 async function startViteDevServer(outDir: string): Promise<ViteDevServer> {
+  const hmrPort = 30000 + Math.floor(Math.random() * 20000);
   const vite = await createViteServer({
     root: path.join(outDir, "vite-client"),
     configFile: false,
@@ -638,7 +641,9 @@ async function startViteDevServer(outDir: string): Promise<ViteDevServer> {
     },
     server: {
       middlewareMode: true,
-      hmr: false,
+      hmr: {
+        port: hmrPort
+      },
       watch: {
         ignored: ["**/.resux/**", "**/node_modules/**"]
       }
@@ -650,8 +655,8 @@ async function startViteDevServer(outDir: string): Promise<ViteDevServer> {
 }
 
 function startDevWatcher(vite: ViteDevServer, appRoot: string, outDir: string, buildOptions: BuildOptions): void {
-  vite.watcher.add(appRoot);
-  vite.watcher.on("all", (_event, changedPath) => {
+  let lastSourceMtime = latestSourceMtime(appRoot, outDir);
+  const handleChange = (changedPath: string) => {
     if (shouldSkipDevWatch(changedPath, appRoot, outDir)) {
       return;
     }
@@ -660,13 +665,39 @@ function startDevWatcher(vite: ViteDevServer, appRoot: string, outDir: string, b
     void ensureDevBuild(appRoot, outDir, buildOptions, vite)
       .then((rebuilt) => {
         if (rebuilt) {
-          notifyDevReloadClients("hmr");
+          notifyDevReloadClients("reload");
         }
       })
       .catch((error) => {
         console.error(error instanceof Error ? error.stack ?? error.message : error);
       });
+  };
+
+  vite.watcher.add([
+    appRoot,
+    path.join(appRoot, "**/*")
+  ]);
+  vite.watcher.on("all", (_event, changedPath) => {
+    handleChange(changedPath);
   });
+
+  try {
+    const nativeWatcher = watch(appRoot, { recursive: true }, (_event, filename) => {
+      if (filename) {
+        handleChange(path.join(appRoot, filename.toString()));
+      }
+    });
+  } catch {
+    // Vite's watcher above is still active on platforms without recursive fs.watch.
+  }
+
+  const poller = setInterval(() => {
+    const nextSourceMtime = latestSourceMtime(appRoot, outDir);
+    if (nextSourceMtime > lastSourceMtime) {
+      lastSourceMtime = nextSourceMtime;
+      handleChange(appRoot);
+    }
+  }, 500);
 }
 
 function shouldSkipDevWatch(changedPath: string, appRoot: string, outDir: string): boolean {
@@ -675,6 +706,42 @@ function shouldSkipDevWatch(changedPath: string, appRoot: string, outDir: string
     || resolved.includes(`${path.sep}node_modules${path.sep}`)
     || resolved.includes(`${path.sep}dist${path.sep}`)
     || !resolved.startsWith(path.resolve(appRoot));
+}
+
+function latestSourceMtime(root: string, outDir: string): number {
+  let latest = 0;
+
+  const visit = (current: string): void => {
+    if (shouldSkipDevWatch(current, root, outDir) && path.resolve(current) !== path.resolve(root)) {
+      return;
+    }
+
+    let stats;
+    try {
+      stats = statSync(current);
+    } catch {
+      return;
+    }
+
+    latest = Math.max(latest, stats.mtimeMs);
+    if (!stats.isDirectory()) {
+      return;
+    }
+
+    let entries;
+    try {
+      entries = readdirSync(current);
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      visit(path.join(current, entry));
+    }
+  };
+
+  visit(root);
+  return latest;
 }
 
 async function startServer(options: { appRoot: string; outDir: string; port: number; host?: string; dev: boolean; buildOptions: BuildOptions; vite?: ViteDevServer; securityHeaders: boolean }): Promise<void> {
@@ -729,6 +796,22 @@ function listen(server: ReturnType<typeof createHttpServer>, portToTry: number, 
 
 function isAddressInUse(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "EADDRINUSE";
+}
+
+function requestOriginFromHeaders(request: IncomingMessage): string {
+  const forwardedProto = firstHeaderValue(request.headers["x-forwarded-proto"]);
+  const forwardedHost = firstHeaderValue(request.headers["x-forwarded-host"]);
+  const encrypted = Boolean((request.socket as typeof request.socket & { encrypted?: boolean }).encrypted);
+  const proto = forwardedProto ?? (encrypted ? "https" : "http");
+  const host = forwardedHost ?? firstHeaderValue(request.headers.host) ?? "localhost:3000";
+  return `${proto}://${host}`;
+}
+
+function firstHeaderValue(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) {
+    return value[0]?.split(",")[0]?.trim();
+  }
+  return value?.split(",")[0]?.trim();
 }
 
 function readPort(value: string | undefined, fallback: number): number {
@@ -786,7 +869,8 @@ async function handleRequest(
   response: ServerResponse,
   options: { appRoot: string; outDir: string; dev: boolean; buildOptions: BuildOptions; vite?: ViteDevServer; securityHeaders: boolean }
 ): Promise<void> {
-  const requestUrl = new URL(request.url ?? "/", "http://localhost");
+  const requestOrigin = requestOriginFromHeaders(request);
+  const requestUrl = new URL(request.url ?? "/", requestOrigin);
 
   try {
     applyDefaultSecurityHeaders(response, options.securityHeaders);
@@ -807,7 +891,7 @@ async function handleRequest(
     }
 
     if (requestUrl.pathname === "/__resux/route") {
-      await serveRoutePayload(response, requestUrl, options);
+      await serveRoutePayload(response, requestUrl, options, requestOrigin);
       return;
     }
 
@@ -857,7 +941,7 @@ async function handleRequest(
       return;
     }
 
-    const rendered = await renderRoute(requestUrl, options, manifest);
+    const rendered = await renderRoute(requestUrl, options, manifest, requestOrigin);
 
     if (!rendered) {
       await serveErrorDocument(response, options, manifest, 404, "Page not found");
@@ -1023,7 +1107,8 @@ function createPlainErrorBody(error: { statusCode: number; message: string; stac
 async function serveRoutePayload(
   response: ServerResponse,
   requestUrl: URL,
-  options: { appRoot: string; outDir: string; dev: boolean; buildOptions: BuildOptions; vite?: ViteDevServer }
+  options: { appRoot: string; outDir: string; dev: boolean; buildOptions: BuildOptions; vite?: ViteDevServer },
+  requestOrigin: string
 ): Promise<void> {
   const targetPath = requestUrl.searchParams.get("path");
 
@@ -1033,7 +1118,7 @@ async function serveRoutePayload(
     return;
   }
 
-  const targetUrl = new URL(targetPath, "http://localhost");
+  const targetUrl = new URL(targetPath, requestOrigin);
   if (options.dev) {
     await ensureDevBuild(options.appRoot, options.outDir, options.buildOptions, options.vite);
   }
@@ -1047,7 +1132,7 @@ async function serveRoutePayload(
     return;
   }
 
-  const rendered = await renderRoute(targetUrl, options, manifest);
+  const rendered = await renderRoute(targetUrl, options, manifest, requestOrigin);
 
   if (!rendered) {
     response.writeHead(404, { "content-type": "application/json; charset=utf-8" });
@@ -1095,7 +1180,8 @@ function setHeaderIfUnset(response: ServerResponse, name: string, value: string)
 async function renderRoute(
   requestUrl: URL,
   options: { appRoot: string; outDir: string; dev: boolean; buildOptions: BuildOptions; vite?: ViteDevServer },
-  loadedManifest?: any
+  loadedManifest?: any,
+  requestOrigin?: string
 ): Promise<RenderRouteOutcome> {
   if (options.dev && !loadedManifest) {
     await ensureDevBuild(options.appRoot, options.outDir, options.buildOptions, options.vite);
@@ -1111,7 +1197,8 @@ async function renderRoute(
   const routeContext: RouteContext = {
     path: requestUrl.pathname,
     params: matched.params,
-    query: readQuery(requestUrl)
+    query: readQuery(requestUrl),
+    origin: requestOrigin ?? requestUrl.origin
   };
   const middlewareResult = await runRouteMiddleware(manifest, routeContext, matched.route.meta);
 
@@ -1445,6 +1532,11 @@ function mimeType(file: string): string {
 
 async function ensureDevBuild(appRoot: string, outDir: string, buildOptions: BuildOptions, vite?: ViteDevServer): Promise<boolean> {
   const startedAtRevision = devBuildRevision;
+  const sourceMtime = latestSourceMtime(appRoot, outDir);
+  if (sourceMtime > devLastBuildSourceMtime) {
+    devLastBuildSourceMtime = sourceMtime;
+    devBuildDirty = true;
+  }
 
   while (devBuildDirty || activeDevBuild) {
     if (!activeDevBuild) {

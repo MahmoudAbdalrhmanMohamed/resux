@@ -157,7 +157,7 @@ const { data, pending, error } = useAsyncData("stats", async () => ({ label: "Re
     expect(template).toContain('"expression":"data.value.label"');
   });
 
-  it("does not ref-unwrap awaited useAsyncData snapshots in templates", () => {
+  it("auto-unwraps awaited useAsyncData refs in template expressions", () => {
     const component = compileVueSource(
       `<script setup>
 const { data, pending, error } = await useAsyncData("stats", async () => ({ label: "Ready" }))
@@ -175,14 +175,11 @@ const { data, pending, error } = await useAsyncData("stats", async () => ({ labe
     );
 
     const template = JSON.stringify(component.template);
-    expect(template).toContain('"expression":"pending"');
-    expect(template).toContain('"expression":"error"');
-    expect(template).toContain('"expression":"error.message"');
-    expect(template).toContain('"expression":"!pending && !error && data"');
-    expect(template).toContain('"expression":"data.label"');
-    expect(template).not.toContain("data.value");
-    expect(template).not.toContain("pending.value");
-    expect(template).not.toContain("error.value");
+    expect(template).toContain('"expression":"pending.value"');
+    expect(template).toContain('"expression":"error.value"');
+    expect(template).toContain('"expression":"error.value.message"');
+    expect(template).toContain('"expression":"!pending.value && !error.value && data.value"');
+    expect(template).toContain('"expression":"data.value.label"');
   });
 
   it("compiles advanced event modifiers", () => {

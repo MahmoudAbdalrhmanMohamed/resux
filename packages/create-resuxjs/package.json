@@ -1,6 +1,6 @@
 {
   "name": "create-resuxjs",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "private": false,
   "type": "module",
   "description": "Create a Resux app.",
@@ -21,7 +21,7 @@
     "create-resuxjs": "index.js"
   },
   "dependencies": {
-    "resuxjs": "^0.2.11"
+    "resuxjs": "^0.2.12"
   },
   "engines": {
     "node": ">=20.19.0"

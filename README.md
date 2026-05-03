@@ -31,7 +31,7 @@ Generated apps use a single Resux dependency, similar to Nuxt apps installing `n
 ```json
 {
   "dependencies": {
-    "resuxjs": "^0.2.11"
+    "resuxjs": "^0.2.12"
   }
 }
 ```
@@ -300,7 +300,7 @@ Server middleware can continue by returning nothing, use h3-style helpers such a
 - Lazy client handler chunks loaded on first interaction.
 - Client-side navigation, persistent same-layout DOM, built-in route transition progress, and hover/focus route payload prefetch for same-origin links.
 - MVP composables: `useState`, `useAsyncData`, `useRoute`, `useRouter`, `useHead`, `useSeoMeta`, `useRuntimeConfig`, `useResuxApp`, `apiURL`, `useFetch`, `$fetch`, and `onMounted`.
-- `useAsyncData` returns a resource with reactive `data`, `pending`, and `error` refs, plus `value` as a data alias for compatibility. Use `await useAsyncData(...)` when you want SSR to fetch before rendering the page; omit `await` when you intentionally want an SSR skeleton that resumes in the browser.
+- `useAsyncData` returns a Nuxt-like resource with reactive `data`, `pending`, and `error` refs, plus `value` as a data alias for compatibility. Use `await useAsyncData(...)` when you want SSR to fetch before rendering the page; omit `await` when you intentionally want an SSR skeleton that resumes in the browser.
 
 ## Component Syntax
 

@@ -94,7 +94,7 @@ describe("runtime SSR", () => {
       handlers: [],
       async script(ctx) {
         const route = ctx.useRoute();
-        const title = await ctx.useAsyncData("title", async () => `Post ${route.params.id}`);
+        const { data: title } = await ctx.useAsyncData("title", async () => `Post ${route.params.id}`);
         return { route, title };
       },
       template: [{ type: "interpolation", expression: "title.value", bindingId: "b0" }]
@@ -138,7 +138,7 @@ describe("runtime SSR", () => {
               tag: "p",
               attrs: [],
               events: [],
-              children: [{ type: "interpolation", expression: 'data.error ? data.error.message : "ok"', bindingId: "b0" }]
+              children: [{ type: "interpolation", expression: 'data.error.value ? data.error.value.message : "ok"', bindingId: "b0" }]
             }
           ]
         }
@@ -176,7 +176,7 @@ describe("runtime SSR", () => {
         file: "ApiPage.vue",
         handlers: [],
         async script(ctx) {
-          const data = await ctx.useAsyncData("test", () => ctx.$fetch("/api/test"));
+          const { data } = await ctx.useAsyncData("test", () => ctx.$fetch("/api/test"));
           return { data, direct: ctx.apiURL("/api/test") };
         },
         template: [
@@ -198,7 +198,7 @@ describe("runtime SSR", () => {
     }
   });
 
-  it("allows awaited useAsyncData to SSR data/pending/error snapshots", async () => {
+  it("allows awaited useAsyncData to SSR Nuxt-like data/pending/error refs", async () => {
     const page = defineComponent({
       id: "m-api-awaited",
       name: "AwaitedApiPage",
@@ -209,8 +209,8 @@ describe("runtime SSR", () => {
         return { data, pending, error };
       },
       template: [
-        { type: "element", tag: "p", attrs: [], events: [], if: { expression: "pending", blockId: "b0" }, children: [{ type: "text", value: "Loading" }] },
-        { type: "element", tag: "p", attrs: [], events: [], if: { expression: "!pending && !error && data", blockId: "b1" }, children: [{ type: "interpolation", expression: "data.response", bindingId: "b2" }] }
+        { type: "element", tag: "p", attrs: [], events: [], if: { expression: "pending.value", blockId: "b0" }, children: [{ type: "text", value: "Loading" }] },
+        { type: "element", tag: "p", attrs: [], events: [], if: { expression: "!pending.value && !error.value && data.value", blockId: "b1" }, children: [{ type: "interpolation", expression: "data.value.response", bindingId: "b2" }] }
       ]
     });
 

@@ -681,13 +681,13 @@ function createPendingAsyncDataResource<T>(): {
     error,
     then(onfulfilled: any, onrejected: any) {
       return completion.then(() => {
-        const snapshot = {
-          data: resource.value.value,
-          value: resource.value.value,
-          pending: resource.pending.value,
-          error: resource.error.value
+        const resolved = {
+          data: resource.data,
+          value: resource.value,
+          pending: resource.pending,
+          error: resource.error
         };
-        return onfulfilled ? onfulfilled(snapshot) : snapshot;
+        return onfulfilled ? onfulfilled(resolved) : resolved;
       }, onrejected);
     }
   };
@@ -1752,13 +1752,13 @@ function createAsyncDataResource(value, pending = false, error = null) {
     error: { value: error },
     then(onfulfilled, onrejected) {
       return completion.then(() => {
-        const snapshot = {
-          data: resource.data.value,
-          value: resource.data.value,
-          pending: resource.pending.value,
-          error: resource.error.value
+        const resolved = {
+          data: resource.data,
+          value: resource.value,
+          pending: resource.pending,
+          error: resource.error
         };
-        return onfulfilled ? onfulfilled(snapshot) : snapshot;
+        return onfulfilled ? onfulfilled(resolved) : resolved;
       }, onrejected);
     },
     setCompletion(nextCompletion) {

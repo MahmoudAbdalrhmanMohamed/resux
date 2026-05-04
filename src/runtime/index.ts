@@ -438,6 +438,9 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
     '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<style>
+[data-rx-block] {
+  display: contents !important;
+}
 #__resux-loading {
   position: fixed;
   inset: 0 0 auto;

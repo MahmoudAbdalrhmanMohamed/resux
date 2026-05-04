@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { readdirSync, statSync, watch } from "node:fs";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
@@ -59,6 +59,13 @@ interface CliOptions {
   force: boolean;
 }
 
+interface TailwindPipeline {
+  cliFile: string;
+  inputFile: string;
+  outputFile: string;
+  configFile?: string;
+}
+
 export interface ResuxNodeHandlerOptions {
   appRoot?: string;
   outDir?: string;
@@ -110,14 +117,17 @@ async function runCli(args: string[]): Promise<void> {
   const buildOptions: BuildOptions = {};
   const securityHeaders = cliOptions.securityHeaders ?? command !== "dev";
   const port = readPort(cliOptions.port ?? process.env.PORT, 3000);
+  const tailwind = await resolveTailwindPipeline(appRoot);
 
   try {
   if (command === "build") {
+    await runTailwindBuild(appRoot, tailwind, true);
     const result = await buildProject(appRoot, outDir, { ...buildOptions, vite: "build" });
     console.log(`Built ${result.routes.length} route(s) into ${path.relative(process.cwd(), outDir)}`);
     await ensureNitroBuildFiles(appRoot);
     await runNitroBuild(appRoot);
   } else if (command === "compile") {
+    await runTailwindBuild(appRoot, tailwind, true);
     const result = await buildProject(appRoot, outDir, { ...buildOptions, vite: "build" });
     console.log(`Compiled ${result.routes.length} route(s) into ${path.relative(process.cwd(), outDir)}`);
   } else if (command === "deploy") {
@@ -125,12 +135,15 @@ async function runCli(args: string[]): Promise<void> {
   } else if (command === "inspect") {
     await inspectProject(appRoot, outDir, buildOptions, cliOptions.json);
   } else if (command === "dev") {
+    await runTailwindBuild(appRoot, tailwind, false);
+    startTailwindWatch(appRoot, tailwind);
     await buildProject(appRoot, outDir, { ...buildOptions, vite: "dev" });
     const vite = await startViteDevServer(outDir);
     startDevWatcher(vite, appRoot, outDir, buildOptions);
     await startServer({ appRoot, outDir, port, host: cliOptions.host, dev: true, buildOptions, vite, securityHeaders });
   } else if (command === "preview" || command === "start") {
     if (await previewNeedsBuild(outDir, buildOptions)) {
+      await runTailwindBuild(appRoot, tailwind, true);
       await buildProject(appRoot, outDir, { ...buildOptions, vite: "build" });
     }
     await startServer({ appRoot, outDir, port, host: cliOptions.host, dev: false, buildOptions, securityHeaders });
@@ -142,6 +155,147 @@ async function runCli(args: string[]): Promise<void> {
   console.error(error instanceof Error ? error.stack ?? error.message : error);
   process.exitCode = 1;
 }
+}
+
+async function resolveTailwindPipeline(appRoot: string): Promise<TailwindPipeline | null> {
+  const inputFile = path.join(appRoot, "assets", "css", "tailwind.css");
+  if (!(await exists(inputFile))) {
+    return null;
+  }
+
+  const outputFile = path.join(appRoot, "public", "tailwind.css");
+  const configFile = await firstExistingPath([
+    path.join(appRoot, "tailwind.config.ts"),
+    path.join(appRoot, "tailwind.config.js"),
+    path.join(appRoot, "tailwind.config.mjs"),
+    path.join(appRoot, "tailwind.config.cjs")
+  ]);
+  const cliFile = await resolveTailwindCliFile(appRoot);
+
+  return {
+    cliFile,
+    inputFile,
+    outputFile,
+    configFile: configFile ?? undefined
+  };
+}
+
+async function resolveTailwindCliFile(appRoot: string): Promise<string> {
+  try {
+    const appRequire = createRequire(path.join(appRoot, "package.json"));
+    const packageJsonPath = appRequire.resolve("tailwindcss/package.json");
+    const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8")) as {
+      bin?: string | Record<string, string>;
+    };
+    const binValue = typeof packageJson.bin === "string"
+      ? packageJson.bin
+      : typeof packageJson.bin?.tailwindcss === "string"
+        ? packageJson.bin.tailwindcss
+        : Object.values(packageJson.bin ?? {})[0];
+
+    if (!binValue) {
+      throw new Error("tailwindcss package does not expose a CLI binary.");
+    }
+
+    return path.resolve(path.dirname(packageJsonPath), binValue);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Detected assets/css/tailwind.css but could not resolve tailwindcss CLI from this app. Install it in app dependencies. ${reason}`
+    );
+  }
+}
+
+async function runTailwindBuild(appRoot: string, pipeline: TailwindPipeline | null, minify: boolean): Promise<void> {
+  if (!pipeline) {
+    return;
+  }
+
+  await mkdir(path.dirname(pipeline.outputFile), { recursive: true });
+  const args = [
+    pipeline.cliFile,
+    "-i", pipeline.inputFile,
+    "-o", pipeline.outputFile,
+    ...(pipeline.configFile ? ["--config", pipeline.configFile] : []),
+    ...(minify ? ["--minify"] : [])
+  ];
+
+  await runChildProcess(process.execPath, args, appRoot);
+  console.log(`Tailwind build ${minify ? "(minified) " : ""}${path.relative(appRoot, pipeline.inputFile)} -> ${path.relative(appRoot, pipeline.outputFile)}`);
+}
+
+function startTailwindWatch(appRoot: string, pipeline: TailwindPipeline | null): ChildProcess | null {
+  if (!pipeline) {
+    return null;
+  }
+
+  const args = [
+    pipeline.cliFile,
+    "-i", pipeline.inputFile,
+    "-o", pipeline.outputFile,
+    ...(pipeline.configFile ? ["--config", pipeline.configFile] : []),
+    "--watch"
+  ];
+  const child = spawn(process.execPath, args, {
+    cwd: appRoot,
+    stdio: "inherit",
+    env: process.env,
+    shell: false
+  });
+
+  console.log(`Tailwind watch ${path.relative(appRoot, pipeline.inputFile)} -> ${path.relative(appRoot, pipeline.outputFile)}`);
+
+  child.on("exit", (code, signal) => {
+    if (signal || code === null || code === 0) {
+      return;
+    }
+
+    console.error(`Tailwind watch exited with code ${code}.`);
+    process.exit(code ?? 1);
+  });
+
+  const stop = () => {
+    if (!child.killed && child.exitCode === null) {
+      child.kill("SIGTERM");
+    }
+  };
+
+  process.once("exit", stop);
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  process.once("SIGHUP", stop);
+
+  return child;
+}
+
+async function runChildProcess(command: string, args: string[], cwd: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      stdio: "inherit",
+      env: process.env,
+      shell: false
+    });
+
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`${path.basename(command)} ${args.join(" ")} exited with code ${code ?? "unknown"}.`));
+      }
+    });
+  });
+}
+
+async function firstExistingPath(paths: string[]): Promise<string | null> {
+  for (const candidate of paths) {
+    if (await exists(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 function isMainModule(): boolean {

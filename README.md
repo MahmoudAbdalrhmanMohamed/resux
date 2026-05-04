@@ -166,6 +166,8 @@ The generated starter keeps Resux-style scripts:
 }
 ```
 
+Tailwind can stay Nuxt-style simple too. If your app has `assets/css/tailwind.css` and `tailwindcss` installed, `resux dev` automatically runs Tailwind in watch mode and `resux build` generates a minified `public/tailwind.css` before bundling. No separate `concurrently` script is required.
+
 ## Deployment
 
 Build and serve with the Node server:

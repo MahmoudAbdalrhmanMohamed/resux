@@ -827,14 +827,14 @@ function renderTemplateNode(node: TemplateNode, context: RenderTemplateContext, 
       })
       .join("");
 
-    return `<span data-rx-block="${context.scopeId}:${node.for.blockId}">${rendered}</span>`;
+    return `<span data-rx-block="${context.scopeId}:${node.for.blockId}" style="display: contents;">${rendered}</span>`;
   }
 
   if (node.if) {
     const rendered = evaluateExpression(node.if.expression, context.scope, locals)
       ? renderElement({ ...node, if: undefined }, context, locals)
       : "";
-    return `<span data-rx-block="${context.scopeId}:${node.if.blockId}">${rendered}</span>`;
+    return `<span data-rx-block="${context.scopeId}:${node.if.blockId}" style="display: contents;">${rendered}</span>`;
   }
 
   return renderElement(node, context, locals);
@@ -956,14 +956,14 @@ async function renderTemplateNodeAsync(
       );
     }
 
-    return `<span data-rx-block="${context.scopeId}:${node.for.blockId}">${rendered.join("")}</span>`;
+    return `<span data-rx-block="${context.scopeId}:${node.for.blockId}" style="display: contents;">${rendered.join("")}</span>`;
   }
 
   if (node.if) {
     const rendered = evaluateExpression(node.if.expression, context.scope, locals)
       ? await renderElementAsync({ ...node, if: undefined }, context, renderComponent, locals)
       : "";
-    return `<span data-rx-block="${context.scopeId}:${node.if.blockId}">${rendered}</span>`;
+    return `<span data-rx-block="${context.scopeId}:${node.if.blockId}" style="display: contents;">${rendered}</span>`;
   }
 
   return renderElementAsync(node, context, renderComponent, locals);
@@ -2584,13 +2584,13 @@ function renderNode(node, scope, locals, styleScopeId) {
           return renderElement({ ...node, for: undefined, if: undefined }, scope, nextLocals, styleScopeId);
         }).join("")
       : "";
-    return '<span data-rx-block=":' + node.for.blockId + '">' + rendered + '</span>';
+    return '<span data-rx-block=":' + node.for.blockId + '" style="display: contents;">' + rendered + '</span>';
   }
   if (node.if) {
     const rendered = evaluateExpression(node.if.expression, scope, locals)
       ? renderElement({ ...node, if: undefined }, scope, locals, styleScopeId)
       : "";
-    return '<span data-rx-block=":' + node.if.blockId + '">' + rendered + '</span>';
+    return '<span data-rx-block=":' + node.if.blockId + '" style="display: contents;">' + rendered + '</span>';
   }
   return renderElement(node, scope, locals, styleScopeId);
 }

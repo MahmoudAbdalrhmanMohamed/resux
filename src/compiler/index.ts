@@ -195,7 +195,20 @@ const RESUMABLE_HANDLER_ALLOWED_GLOBALS = new Set([
   "setInterval",
   "clearInterval",
   "queueMicrotask",
-  "apiURL"
+  "useState",
+  "useAsyncData",
+  "useRoute",
+  "useRouter",
+  "useHead",
+  "useSeoMeta",
+  "useRuntimeConfig",
+  "useResuxApp",
+  "apiURL",
+  "useFetch",
+  "$fetch",
+  "onMounted",
+  "definePageMeta",
+  "defineProps"
 ]);
 
 export async function buildProject(appRoot: string, outDir = path.join(appRoot, ".resux"), options: BuildOptions = {}): Promise<BuildResult> {

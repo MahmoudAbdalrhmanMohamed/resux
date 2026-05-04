@@ -393,6 +393,26 @@ function goAbout() {
     expect(component.clientSource).toContain("useRouter");
   });
 
+  it("allows calling useRouter directly inside resumable handlers", () => {
+    const component = compileVueSource(
+      `<script setup>
+function goHome() {
+  useRouter().push("/")
+}
+</script>
+<template><button @click="goHome">Home</button></template>`,
+      {
+        file: "RouterDirect.vue",
+        id: "m0",
+        name: "RouterDirect"
+      }
+    );
+
+    expect(component.handlers).toEqual(["goHome"]);
+    expect(component.serverSource).toContain("useRouter");
+    expect(component.clientSource).toContain("useRouter");
+  });
+
   it("exposes apiURL to compiled setup code", () => {
     const component = compileVueSource(
       `<script setup>

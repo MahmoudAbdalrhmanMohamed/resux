@@ -55,6 +55,32 @@ jobs:
             echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is not published yet."
           fi
 
-      - name: Publish package
+      - name: Check NPM token availability
+        id: npm-token
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.NPM_TOKEN }}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish package (OIDC)
+        id: publish-oidc
         if: steps.npm-version.outputs.published == 'false'
+        continue-on-error: true
         run: npm publish --access public --provenance
+
+      - name: Publish package (NPM_TOKEN fallback)
+        if: steps.npm-version.outputs.published == 'false' && steps.publish-oidc.outcome == 'failure' && steps.npm-token.outputs.available == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+      - name: Fail with publish setup guidance
+        if: steps.npm-version.outputs.published == 'false' && steps.publish-oidc.outcome == 'failure' && steps.npm-token.outputs.available != 'true'
+        shell: bash
+        run: |
+          echo "Publish failed with OIDC and NPM_TOKEN is not set."
+          echo "Configure npm trusted publisher for .github/workflows/npm-publish.yml or add repository secret NPM_TOKEN."
+          exit 1

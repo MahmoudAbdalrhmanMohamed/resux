@@ -284,6 +284,47 @@ function increment() {
     ).toThrow(/not resumable/);
   });
 
+  it("allows browser globals in resumable handlers", () => {
+    const component = compileVueSource(
+      `<script setup lang="ts">
+const clicks = useState("perf-clicks", () => 0)
+const last = useState("perf-last", () => "No browser measurement yet")
+const average = useState("perf-average", () => "Run API benchmark")
+function measureClick() {
+  const start = performance.now()
+  clicks.value++
+  const end = performance.now()
+  last.value = (end - start).toFixed(3) + " ms state patch"
+}
+async function runApiBench() {
+  const start = performance.now()
+  let total = 0
+  for (let index = 0; index < 5; index++) {
+    const response = await fetch("/api/stats?source=browser-bench&n=" + index)
+    if (response.ok) total++
+  }
+  const end = performance.now()
+  average.value = ((end - start) / 5).toFixed(2) + " ms avg across " + total + " API calls"
+}
+</script>
+<template>
+  <section>
+    <button @click="measureClick">Measure state patch</button>
+    <button @click="runApiBench">Run API benchmark</button>
+  </section>
+</template>`,
+      {
+        file: "Performance.vue",
+        id: "m0",
+        name: "Performance"
+      }
+    );
+
+    expect(component.handlers).toEqual(["measureClick", "runApiBench"]);
+    expect(component.serverSource).toContain("performance.now");
+    expect(component.serverSource).toContain('fetch("/api/stats?source=browser-bench&n=" + index)');
+  });
+
   it("extracts page meta and keeps definePageMeta out of setup code", () => {
     const component = compileVueSource(
       `<script setup>

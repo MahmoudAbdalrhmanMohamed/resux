@@ -168,6 +168,36 @@ interface BuiltinResuxModule {
   setup: ResuxModuleSetup;
 }
 
+const RESUMABLE_HANDLER_ALLOWED_GLOBALS = new Set([
+  "Math",
+  "Number",
+  "String",
+  "Boolean",
+  "Array",
+  "Object",
+  "Date",
+  "JSON",
+  "Intl",
+  "Promise",
+  "console",
+  "undefined",
+  "globalThis",
+  "performance",
+  "fetch",
+  "Headers",
+  "Request",
+  "Response",
+  "URL",
+  "URLSearchParams",
+  "AbortController",
+  "setTimeout",
+  "clearTimeout",
+  "setInterval",
+  "clearInterval",
+  "queueMicrotask",
+  "apiURL"
+]);
+
 export async function buildProject(appRoot: string, outDir = path.join(appRoot, ".resux"), options: BuildOptions = {}): Promise<BuildResult> {
   const absoluteRoot = path.resolve(appRoot);
   const absoluteOut = path.resolve(outDir);
@@ -1177,7 +1207,6 @@ function validateTemplateHandlers(events: TemplateEvent[], analysis: ScriptAnaly
 
 function findUnsupportedCapture(node: ts.Node, handlerName: string, analysis: ScriptAnalysis): string | null {
   const locals = new Set<string>([handlerName, "event"]);
-  const allowedGlobals = new Set(["Math", "Number", "String", "Boolean", "Array", "Object", "Date", "JSON", "console", "undefined", "apiURL"]);
   const allowedTopLevel = new Set([...analysis.resumableBindings]);
 
   function registerPattern(name: ts.BindingName): void {
@@ -1211,7 +1240,7 @@ function findUnsupportedCapture(node: ts.Node, handlerName: string, analysis: Sc
 
     if (ts.isIdentifier(current) && isValueIdentifier(current)) {
       const name = current.text;
-      if (!locals.has(name) && !allowedGlobals.has(name) && !allowedTopLevel.has(name)) {
+      if (!locals.has(name) && !RESUMABLE_HANDLER_ALLOWED_GLOBALS.has(name) && !allowedTopLevel.has(name)) {
         unsupported = name;
         return;
       }

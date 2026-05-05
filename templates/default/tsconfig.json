@@ -5,12 +5,9 @@
     "moduleResolution": "NodeNext",
     "strict": true,
     "skipLibCheck": true,
-    "types": ["resuxjs/globals"],
+    "types": ["node", "resuxjs/globals"],
     "lib": ["ES2022", "DOM"]
   },
-  "include": [
-    "**/*.ts",
-    "**/*.vue",
-    "env.d.ts"
-  ]
+  "include": ["**/*.ts", "**/*.vue", "env.d.ts"],
+  "exclude": ["node_modules", ".resux", ".output"]
 }

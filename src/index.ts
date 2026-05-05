@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 import { spawn, type ChildProcess } from "node:child_process";
 import { readdirSync, statSync, watch } from "node:fs";
-import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
+import {
+  createServer as createHttpServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -10,10 +14,18 @@ import vuePlugin from "@vitejs/plugin-vue";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 import { buildProject, type BuildOptions } from "./compiler/index.js";
 import { runCreateResux } from "./create.js";
-import { renderApp, renderDocument, type RenderResult, type RouteContext, type RouteMiddlewareResult } from "./runtime/index.js";
+import {
+  renderApp,
+  renderDocument,
+  type RenderResult,
+  type RouteContext,
+  type RouteMiddlewareResult,
+} from "./runtime/index.js";
+export * from "./runtime/index.js";
 
 const require = createRequire(import.meta.url);
-const version = (require("../package.json") as { version?: string }).version ?? "0.0.0";
+const version =
+  (require("../package.json") as { version?: string }).version ?? "0.0.0";
 let activeDevBuild: Promise<void> | null = null;
 let devBuildDirty = false;
 let devBuildRevision = 0;
@@ -38,12 +50,14 @@ interface RouteRule {
   redirect?: string | { to: string; statusCode?: number };
   statusCode?: number;
   cache?: false | string | { maxAge?: number; swr?: number };
-  cors?: boolean | {
-    origin?: string;
-    methods?: string[];
-    headers?: string[];
-    credentials?: boolean;
-  };
+  cors?:
+    | boolean
+    | {
+        origin?: string;
+        methods?: string[];
+        headers?: string[];
+        credentials?: boolean;
+      };
 }
 
 type RenderRouteOutcome = RenderResult | RenderRedirect | RenderAbort | null;
@@ -83,7 +97,7 @@ export function createResuxNodeHandler(options: ResuxNodeHandlerOptions = {}) {
       outDir,
       dev: false,
       buildOptions,
-      securityHeaders: options.securityHeaders ?? true
+      securityHeaders: options.securityHeaders ?? true,
     });
   };
 }
@@ -120,44 +134,81 @@ async function runCli(args: string[]): Promise<void> {
   const tailwind = await resolveTailwindPipeline(appRoot);
 
   try {
-  if (command === "build") {
-    await runTailwindBuild(appRoot, tailwind, true);
-    const result = await buildProject(appRoot, outDir, { ...buildOptions, vite: "build" });
-    console.log(`Built ${result.routes.length} route(s) into ${path.relative(process.cwd(), outDir)}`);
-    await ensureNitroBuildFiles(appRoot);
-    await runNitroBuild(appRoot);
-  } else if (command === "compile") {
-    await runTailwindBuild(appRoot, tailwind, true);
-    const result = await buildProject(appRoot, outDir, { ...buildOptions, vite: "build" });
-    console.log(`Compiled ${result.routes.length} route(s) into ${path.relative(process.cwd(), outDir)}`);
-  } else if (command === "deploy") {
-    await generateDeploymentFiles(appRoot, cliOptions.deployPreset, cliOptions.force);
-  } else if (command === "inspect") {
-    await inspectProject(appRoot, outDir, buildOptions, cliOptions.json);
-  } else if (command === "dev") {
-    await runTailwindBuild(appRoot, tailwind, false);
-    startTailwindWatch(appRoot, tailwind);
-    await buildProject(appRoot, outDir, { ...buildOptions, vite: "dev" });
-    const vite = await startViteDevServer(outDir);
-    startDevWatcher(vite, appRoot, outDir, buildOptions);
-    await startServer({ appRoot, outDir, port, host: cliOptions.host, dev: true, buildOptions, vite, securityHeaders });
-  } else if (command === "preview" || command === "start") {
-    if (await previewNeedsBuild(outDir, buildOptions)) {
+    if (command === "build") {
       await runTailwindBuild(appRoot, tailwind, true);
-      await buildProject(appRoot, outDir, { ...buildOptions, vite: "build" });
+      const result = await buildProject(appRoot, outDir, {
+        ...buildOptions,
+        vite: "build",
+      });
+      console.log(
+        `Built ${result.routes.length} route(s) into ${path.relative(process.cwd(), outDir)}`,
+      );
+      await ensureNitroBuildFiles(appRoot);
+      await runNitroBuild(appRoot);
+    } else if (command === "compile") {
+      await runTailwindBuild(appRoot, tailwind, true);
+      const result = await buildProject(appRoot, outDir, {
+        ...buildOptions,
+        vite: "build",
+      });
+      console.log(
+        `Compiled ${result.routes.length} route(s) into ${path.relative(process.cwd(), outDir)}`,
+      );
+    } else if (command === "deploy") {
+      await generateDeploymentFiles(
+        appRoot,
+        cliOptions.deployPreset,
+        cliOptions.force,
+      );
+    } else if (command === "inspect") {
+      await inspectProject(appRoot, outDir, buildOptions, cliOptions.json);
+    } else if (command === "dev") {
+      await runTailwindBuild(appRoot, tailwind, false);
+      startTailwindWatch(appRoot, tailwind);
+      await buildProject(appRoot, outDir, { ...buildOptions, vite: "dev" });
+      const vite = await startViteDevServer(outDir);
+      startDevWatcher(vite, appRoot, outDir, buildOptions);
+      await startServer({
+        appRoot,
+        outDir,
+        port,
+        host: cliOptions.host,
+        dev: true,
+        buildOptions,
+        vite,
+        securityHeaders,
+      });
+    } else if (command === "preview" || command === "start") {
+      if (await previewNeedsBuild(outDir, buildOptions)) {
+        await runTailwindBuild(appRoot, tailwind, true);
+        await buildProject(appRoot, outDir, { ...buildOptions, vite: "build" });
+      }
+      await startServer({
+        appRoot,
+        outDir,
+        port,
+        host: cliOptions.host,
+        dev: false,
+        buildOptions,
+        securityHeaders,
+      });
+    } else {
+      console.error(
+        `Unknown command "${command}". Run resux --help for usage.`,
+      );
+      process.exitCode = 1;
     }
-    await startServer({ appRoot, outDir, port, host: cliOptions.host, dev: false, buildOptions, securityHeaders });
-  } else {
-    console.error(`Unknown command "${command}". Run resux --help for usage.`);
+  } catch (error) {
+    console.error(
+      error instanceof Error ? (error.stack ?? error.message) : error,
+    );
     process.exitCode = 1;
   }
-} catch (error) {
-  console.error(error instanceof Error ? error.stack ?? error.message : error);
-  process.exitCode = 1;
-}
 }
 
-async function resolveTailwindPipeline(appRoot: string): Promise<TailwindPipeline | null> {
+async function resolveTailwindPipeline(
+  appRoot: string,
+): Promise<TailwindPipeline | null> {
   const inputFile = path.join(appRoot, "assets", "css", "tailwind.css");
   if (!(await exists(inputFile))) {
     return null;
@@ -168,7 +219,7 @@ async function resolveTailwindPipeline(appRoot: string): Promise<TailwindPipelin
     path.join(appRoot, "tailwind.config.ts"),
     path.join(appRoot, "tailwind.config.js"),
     path.join(appRoot, "tailwind.config.mjs"),
-    path.join(appRoot, "tailwind.config.cjs")
+    path.join(appRoot, "tailwind.config.cjs"),
   ]);
   const cliFile = await resolveTailwindCliFile(appRoot);
 
@@ -176,7 +227,7 @@ async function resolveTailwindPipeline(appRoot: string): Promise<TailwindPipelin
     cliFile,
     inputFile,
     outputFile,
-    configFile: configFile ?? undefined
+    configFile: configFile ?? undefined,
   };
 }
 
@@ -187,11 +238,12 @@ async function resolveTailwindCliFile(appRoot: string): Promise<string> {
     const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8")) as {
       bin?: string | Record<string, string>;
     };
-    const binValue = typeof packageJson.bin === "string"
-      ? packageJson.bin
-      : typeof packageJson.bin?.tailwindcss === "string"
-        ? packageJson.bin.tailwindcss
-        : Object.values(packageJson.bin ?? {})[0];
+    const binValue =
+      typeof packageJson.bin === "string"
+        ? packageJson.bin
+        : typeof packageJson.bin?.tailwindcss === "string"
+          ? packageJson.bin.tailwindcss
+          : Object.values(packageJson.bin ?? {})[0];
 
     if (!binValue) {
       throw new Error("tailwindcss package does not expose a CLI binary.");
@@ -201,12 +253,16 @@ async function resolveTailwindCliFile(appRoot: string): Promise<string> {
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Detected assets/css/tailwind.css but could not resolve tailwindcss CLI from this app. Install it in app dependencies. ${reason}`
+      `Detected assets/css/tailwind.css but could not resolve tailwindcss CLI from this app. Install it in app dependencies. ${reason}`,
     );
   }
 }
 
-async function runTailwindBuild(appRoot: string, pipeline: TailwindPipeline | null, minify: boolean): Promise<void> {
+async function runTailwindBuild(
+  appRoot: string,
+  pipeline: TailwindPipeline | null,
+  minify: boolean,
+): Promise<void> {
   if (!pipeline) {
     return;
   }
@@ -214,36 +270,47 @@ async function runTailwindBuild(appRoot: string, pipeline: TailwindPipeline | nu
   await mkdir(path.dirname(pipeline.outputFile), { recursive: true });
   const args = [
     pipeline.cliFile,
-    "-i", pipeline.inputFile,
-    "-o", pipeline.outputFile,
+    "-i",
+    pipeline.inputFile,
+    "-o",
+    pipeline.outputFile,
     ...(pipeline.configFile ? ["--config", pipeline.configFile] : []),
-    ...(minify ? ["--minify"] : [])
+    ...(minify ? ["--minify"] : []),
   ];
 
   await runChildProcess(process.execPath, args, appRoot);
-  console.log(`Tailwind build ${minify ? "(minified) " : ""}${path.relative(appRoot, pipeline.inputFile)} -> ${path.relative(appRoot, pipeline.outputFile)}`);
+  console.log(
+    `Tailwind build ${minify ? "(minified) " : ""}${path.relative(appRoot, pipeline.inputFile)} -> ${path.relative(appRoot, pipeline.outputFile)}`,
+  );
 }
 
-function startTailwindWatch(appRoot: string, pipeline: TailwindPipeline | null): ChildProcess | null {
+function startTailwindWatch(
+  appRoot: string,
+  pipeline: TailwindPipeline | null,
+): ChildProcess | null {
   if (!pipeline) {
     return null;
   }
 
   const args = [
     pipeline.cliFile,
-    "-i", pipeline.inputFile,
-    "-o", pipeline.outputFile,
+    "-i",
+    pipeline.inputFile,
+    "-o",
+    pipeline.outputFile,
     ...(pipeline.configFile ? ["--config", pipeline.configFile] : []),
-    "--watch"
+    "--watch",
   ];
   const child = spawn(process.execPath, args, {
     cwd: appRoot,
     stdio: "inherit",
     env: process.env,
-    shell: false
+    shell: false,
   });
 
-  console.log(`Tailwind watch ${path.relative(appRoot, pipeline.inputFile)} -> ${path.relative(appRoot, pipeline.outputFile)}`);
+  console.log(
+    `Tailwind watch ${path.relative(appRoot, pipeline.inputFile)} -> ${path.relative(appRoot, pipeline.outputFile)}`,
+  );
 
   child.on("exit", (code, signal) => {
     if (signal || code === null || code === 0) {
@@ -268,13 +335,17 @@ function startTailwindWatch(appRoot: string, pipeline: TailwindPipeline | null):
   return child;
 }
 
-async function runChildProcess(command: string, args: string[], cwd: string): Promise<void> {
+async function runChildProcess(
+  command: string,
+  args: string[],
+  cwd: string,
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
       stdio: "inherit",
       env: process.env,
-      shell: false
+      shell: false,
     });
 
     child.on("error", reject);
@@ -282,7 +353,11 @@ async function runChildProcess(command: string, args: string[], cwd: string): Pr
       if (code === 0) {
         resolve();
       } else {
-        reject(new Error(`${path.basename(command)} ${args.join(" ")} exited with code ${code ?? "unknown"}.`));
+        reject(
+          new Error(
+            `${path.basename(command)} ${args.join(" ")} exited with code ${code ?? "unknown"}.`,
+          ),
+        );
       }
     });
   });
@@ -299,7 +374,9 @@ async function firstExistingPath(paths: string[]): Promise<string | null> {
 }
 
 function isMainModule(): boolean {
-  return process.argv[1] ? path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) : false;
+  return process.argv[1]
+    ? path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+    : false;
 }
 
 function readCommand(args: string[]): string {
@@ -346,7 +423,9 @@ function readCliOptions(args: string[]): CliOptions {
     } else if (arg === "--json") {
       json = true;
     } else if (arg === "--preset") {
-      deployPreset = readDeployPreset(readRequiredOptionValue(args[++index], arg));
+      deployPreset = readDeployPreset(
+        readRequiredOptionValue(args[++index], arg),
+      );
     } else if (arg.startsWith("--preset=")) {
       deployPreset = readDeployPreset(arg.slice("--preset=".length));
     } else if (arg === "--force") {
@@ -369,7 +448,10 @@ function readCliOptions(args: string[]): CliOptions {
   return { appRoot, port, host, securityHeaders, json, deployPreset, force };
 }
 
-function readRequiredOptionValue(value: string | undefined, option: string): string {
+function readRequiredOptionValue(
+  value: string | undefined,
+  option: string,
+): string {
   if (!value || value.startsWith("-")) {
     throw new Error(`${option} needs a value.`);
   }
@@ -380,28 +462,45 @@ function readDeployPreset(value: string): DeployPreset {
   if (value === "node" || value === "docker" || value === "nitro") {
     return value;
   }
-  throw new Error(`Unknown deploy preset "${value}". Expected "node", "docker", or "nitro".`);
+  throw new Error(
+    `Unknown deploy preset "${value}". Expected "node", "docker", or "nitro".`,
+  );
 }
 
-async function previewNeedsBuild(outDir: string, buildOptions: BuildOptions): Promise<boolean> {
+async function previewNeedsBuild(
+  outDir: string,
+  buildOptions: BuildOptions,
+): Promise<boolean> {
   if (!(await exists(path.join(outDir, "server", "manifest.mjs")))) {
     return true;
   }
 
   try {
-    const manifest = JSON.parse(await readFile(path.join(outDir, "manifest.json"), "utf8")) as { features?: BuildOptions };
-    return manifest.features?.vite !== "build" || manifest.features?.server !== "bundle";
+    const manifest = JSON.parse(
+      await readFile(path.join(outDir, "manifest.json"), "utf8"),
+    ) as { features?: BuildOptions };
+    return (
+      manifest.features?.vite !== "build" ||
+      manifest.features?.server !== "bundle"
+    );
   } catch {
     return true;
   }
 }
 
-async function inspectProject(appRoot: string, outDir: string, buildOptions: BuildOptions, json = false): Promise<void> {
+async function inspectProject(
+  appRoot: string,
+  outDir: string,
+  buildOptions: BuildOptions,
+  json = false,
+): Promise<void> {
   if (await previewNeedsBuild(outDir, buildOptions)) {
     await buildProject(appRoot, outDir, { ...buildOptions, vite: "build" });
   }
 
-  const manifest = JSON.parse(await readFile(path.join(outDir, "manifest.json"), "utf8")) as {
+  const manifest = JSON.parse(
+    await readFile(path.join(outDir, "manifest.json"), "utf8"),
+  ) as {
     routes?: Array<{ path: string; file: string }>;
     components?: unknown[];
     layouts?: unknown[];
@@ -425,16 +524,16 @@ async function inspectProject(appRoot: string, outDir: string, buildOptions: Bui
       middleware: manifest.middleware?.length ?? 0,
       serverMiddleware: manifest.serverMiddleware?.length ?? 0,
       serverHandlers: manifest.serverHandlers?.length ?? 0,
-      routeRules: Object.keys(routeRules).length
+      routeRules: Object.keys(routeRules).length,
     },
     features: {
       vite: manifest.features?.vite ?? "build",
-      server: manifest.features?.server ?? "modules"
+      server: manifest.features?.server ?? "modules",
     },
     routes: manifest.routes ?? [],
     serverHandlers: manifest.serverHandlers ?? [],
     routeRules,
-    diagnostics: createInspectDiagnostics(manifest)
+    diagnostics: createInspectDiagnostics(manifest),
   };
 
   if (json) {
@@ -452,7 +551,9 @@ async function inspectProject(appRoot: string, outDir: string, buildOptions: Bui
   console.log(`Server middleware: ${summary.counts.serverMiddleware}`);
   console.log(`Server handlers: ${summary.counts.serverHandlers}`);
   console.log(`Route rules: ${summary.counts.routeRules}`);
-  console.log(`Features: vite=${summary.features.vite}, server=${summary.features.server}`);
+  console.log(
+    `Features: vite=${summary.features.vite}, server=${summary.features.server}`,
+  );
 
   if (summary.diagnostics.length) {
     console.log("\nDiagnostics");
@@ -471,7 +572,9 @@ async function inspectProject(appRoot: string, outDir: string, buildOptions: Bui
   if (summary.serverHandlers.length) {
     console.log("\nServer handlers");
     for (const handler of summary.serverHandlers) {
-      console.log(`  ${handler.path} -> ${path.relative(appRoot, handler.file)}`);
+      console.log(
+        `  ${handler.path} -> ${path.relative(appRoot, handler.file)}`,
+      );
     }
   }
 
@@ -491,55 +594,76 @@ function createInspectDiagnostics(manifest: {
   const diagnostics: Array<{ level: "info" | "warning"; message: string }> = [];
 
   if (!manifest.routes?.length) {
-    diagnostics.push({ level: "warning", message: "No pages were discovered. Add .vue files under pages/." });
+    diagnostics.push({
+      level: "warning",
+      message: "No pages were discovered. Add .vue files under pages/.",
+    });
   }
   if (!manifest.serverHandlers?.length) {
-    diagnostics.push({ level: "info", message: "No server handlers were discovered under server/api or server/routes." });
+    diagnostics.push({
+      level: "info",
+      message:
+        "No server handlers were discovered under server/api or server/routes.",
+    });
   }
   if (!Object.keys(manifest.routeRules ?? {}).length) {
-    diagnostics.push({ level: "info", message: "No route rules are configured." });
+    diagnostics.push({
+      level: "info",
+      message: "No route rules are configured.",
+    });
   }
 
   return diagnostics;
 }
 
-async function generateDeploymentFiles(appRoot: string, preset: DeployPreset, force: boolean): Promise<void> {
+async function generateDeploymentFiles(
+  appRoot: string,
+  preset: DeployPreset,
+  force: boolean,
+): Promise<void> {
   await assertDirectory(appRoot);
 
   const files = [
     {
       relativePath: "DEPLOYMENT.md",
-      contents: createDeploymentGuide(preset)
+      contents: createDeploymentGuide(preset),
     },
     ...(preset === "nitro"
       ? [
           {
             relativePath: "nitro.config.ts",
-            contents: createNitroConfig()
+            contents: createNitroConfig(),
           },
           {
             relativePath: ".resux-nitro/handler.ts",
-            contents: createNitroHandler()
-          }
+            contents: createNitroHandler(),
+          },
         ]
       : []),
     ...(preset === "docker"
       ? [
           {
             relativePath: "Dockerfile",
-            contents: createDockerfile()
+            contents: createDockerfile(),
           },
           {
             relativePath: ".dockerignore",
-            contents: createDockerignore()
-          }
+            contents: createDockerignore(),
+          },
         ]
-      : [])
+      : []),
   ];
   const written: string[] = [];
 
   for (const file of files) {
-    written.push(await writeDeploymentFile(appRoot, file.relativePath, file.contents, force));
+    written.push(
+      await writeDeploymentFile(
+        appRoot,
+        file.relativePath,
+        file.contents,
+        force,
+      ),
+    );
   }
 
   console.log(`Generated Resux ${preset} deployment file(s):`);
@@ -550,17 +674,32 @@ async function generateDeploymentFiles(appRoot: string, preset: DeployPreset, fo
 
 async function ensureNitroBuildFiles(appRoot: string): Promise<void> {
   if (!(await exists(path.join(appRoot, "nitro.config.ts")))) {
-    await writeDeploymentFile(appRoot, "nitro.config.ts", createNitroConfig(), false);
+    await writeDeploymentFile(
+      appRoot,
+      "nitro.config.ts",
+      createNitroConfig(),
+      false,
+    );
   }
 
   if (!(await exists(path.join(appRoot, ".resux-nitro", "handler.ts")))) {
-    await writeDeploymentFile(appRoot, ".resux-nitro/handler.ts", createNitroHandler(), false);
+    await writeDeploymentFile(
+      appRoot,
+      ".resux-nitro/handler.ts",
+      createNitroHandler(),
+      false,
+    );
   }
 }
 
 async function runNitroBuild(appRoot: string): Promise<void> {
   const nitroPackageJson = require.resolve("nitropack/package.json");
-  const nitroCli = path.join(path.dirname(nitroPackageJson), "dist", "cli", "index.mjs");
+  const nitroCli = path.join(
+    path.dirname(nitroPackageJson),
+    "dist",
+    "cli",
+    "index.mjs",
+  );
 
   console.log("Building Nitro output into .output");
 
@@ -568,7 +707,7 @@ async function runNitroBuild(appRoot: string): Promise<void> {
     const child = spawn(process.execPath, [nitroCli, "build"], {
       cwd: appRoot,
       stdio: "inherit",
-      env: process.env
+      env: process.env,
     });
 
     child.on("error", reject);
@@ -589,11 +728,18 @@ async function assertDirectory(directory: string): Promise<void> {
   }
 }
 
-async function writeDeploymentFile(appRoot: string, relativePath: string, contents: string, force: boolean): Promise<string> {
+async function writeDeploymentFile(
+  appRoot: string,
+  relativePath: string,
+  contents: string,
+  force: boolean,
+): Promise<string> {
   const file = path.join(appRoot, relativePath);
 
-  if (!force && await exists(file)) {
-    throw new Error(`${relativePath} already exists. Re-run with --force to overwrite it.`);
+  if (!force && (await exists(file))) {
+    throw new Error(
+      `${relativePath} already exists. Re-run with --force to overwrite it.`,
+    );
   }
 
   await mkdir(path.dirname(file), { recursive: true });
@@ -602,8 +748,9 @@ async function writeDeploymentFile(appRoot: string, relativePath: string, conten
 }
 
 function createDeploymentGuide(preset: DeployPreset): string {
-  const dockerSection = preset === "docker"
-    ? `
+  const dockerSection =
+    preset === "docker"
+      ? `
 ## Docker
 
 \`\`\`sh
@@ -611,9 +758,10 @@ docker build -t resux-app .
 docker run --rm -p 3000:3000 resux-app
 \`\`\`
 `
-    : "";
-  const nitroSection = preset === "nitro"
-    ? `
+      : "";
+  const nitroSection =
+    preset === "nitro"
+      ? `
 ## Nitro
 
 Install the Nitro build dependencies:
@@ -637,7 +785,7 @@ NITRO_PRESET=vercel npx nitro build
 
 The generated Nitro handler wraps the Resux Node request handler. \`resux build\` runs Nitro from the project root so \`.output\` can be started with Node.
 `
-    : "";
+      : "";
 
   return `# Deployment
 
@@ -789,26 +937,35 @@ async function startViteDevServer(outDir: string): Promise<ViteDevServer> {
     plugins: [vuePlugin()],
     resolve: {
       alias: {
-        "/__resux/runtime-client.mjs": path.join(outDir, "vite-client", "runtime-client.mjs"),
-        vue: require.resolve("vue")
-      }
+        "/__resux/runtime-client.mjs": path.join(
+          outDir,
+          "vite-client",
+          "runtime-client.mjs",
+        ),
+        vue: require.resolve("vue"),
+      },
     },
     server: {
       middlewareMode: true,
       hmr: {
-        port: hmrPort
+        port: hmrPort,
       },
       watch: {
-        ignored: ["**/.resux/**", "**/node_modules/**"]
-      }
-    }
+        ignored: ["**/.resux/**", "**/node_modules/**"],
+      },
+    },
   });
 
   console.log("Vite dev middleware ready for Resux client modules.");
   return vite;
 }
 
-function startDevWatcher(vite: ViteDevServer, appRoot: string, outDir: string, buildOptions: BuildOptions): void {
+function startDevWatcher(
+  vite: ViteDevServer,
+  appRoot: string,
+  outDir: string,
+  buildOptions: BuildOptions,
+): void {
   let lastSourceMtime = latestSourceMtime(appRoot, outDir);
   const handleChange = (changedPath: string) => {
     if (shouldSkipDevWatch(changedPath, appRoot, outDir)) {
@@ -823,24 +980,27 @@ function startDevWatcher(vite: ViteDevServer, appRoot: string, outDir: string, b
         }
       })
       .catch((error) => {
-        console.error(error instanceof Error ? error.stack ?? error.message : error);
+        console.error(
+          error instanceof Error ? (error.stack ?? error.message) : error,
+        );
       });
   };
 
-  vite.watcher.add([
-    appRoot,
-    path.join(appRoot, "**/*")
-  ]);
+  vite.watcher.add([appRoot, path.join(appRoot, "**/*")]);
   vite.watcher.on("all", (_event, changedPath) => {
     handleChange(changedPath);
   });
 
   try {
-    const nativeWatcher = watch(appRoot, { recursive: true }, (_event, filename) => {
-      if (filename) {
-        handleChange(path.join(appRoot, filename.toString()));
-      }
-    });
+    const nativeWatcher = watch(
+      appRoot,
+      { recursive: true },
+      (_event, filename) => {
+        if (filename) {
+          handleChange(path.join(appRoot, filename.toString()));
+        }
+      },
+    );
   } catch {
     // Vite's watcher above is still active on platforms without recursive fs.watch.
   }
@@ -854,19 +1014,28 @@ function startDevWatcher(vite: ViteDevServer, appRoot: string, outDir: string, b
   }, 500);
 }
 
-function shouldSkipDevWatch(changedPath: string, appRoot: string, outDir: string): boolean {
+function shouldSkipDevWatch(
+  changedPath: string,
+  appRoot: string,
+  outDir: string,
+): boolean {
   const resolved = path.resolve(changedPath);
-  return resolved.startsWith(path.resolve(outDir))
-    || resolved.includes(`${path.sep}node_modules${path.sep}`)
-    || resolved.includes(`${path.sep}dist${path.sep}`)
-    || !resolved.startsWith(path.resolve(appRoot));
+  return (
+    resolved.startsWith(path.resolve(outDir)) ||
+    resolved.includes(`${path.sep}node_modules${path.sep}`) ||
+    resolved.includes(`${path.sep}dist${path.sep}`) ||
+    !resolved.startsWith(path.resolve(appRoot))
+  );
 }
 
 function latestSourceMtime(root: string, outDir: string): number {
   let latest = 0;
 
   const visit = (current: string): void => {
-    if (shouldSkipDevWatch(current, root, outDir) && path.resolve(current) !== path.resolve(root)) {
+    if (
+      shouldSkipDevWatch(current, root, outDir) &&
+      path.resolve(current) !== path.resolve(root)
+    ) {
       return;
     }
 
@@ -898,21 +1067,40 @@ function latestSourceMtime(root: string, outDir: string): number {
   return latest;
 }
 
-async function startServer(options: { appRoot: string; outDir: string; port: number; host?: string; dev: boolean; buildOptions: BuildOptions; vite?: ViteDevServer; securityHeaders: boolean }): Promise<void> {
+async function startServer(options: {
+  appRoot: string;
+  outDir: string;
+  port: number;
+  host?: string;
+  dev: boolean;
+  buildOptions: BuildOptions;
+  vite?: ViteDevServer;
+  securityHeaders: boolean;
+}): Promise<void> {
   const server = createHttpServer((request, response) => {
     void handleRequest(request, response, options);
   });
 
-  const boundPort = await listenOnAvailablePort(server, options.port, options.host);
+  const boundPort = await listenOnAvailablePort(
+    server,
+    options.port,
+    options.host,
+  );
 
   if (boundPort !== options.port) {
     console.log(`Port ${options.port} is busy, using ${boundPort} instead.`);
   }
 
-  console.log(`Resux ${options.dev ? "dev" : "preview"} server running at http://${options.host ?? "localhost"}:${boundPort}`);
+  console.log(
+    `Resux ${options.dev ? "dev" : "preview"} server running at http://${options.host ?? "localhost"}:${boundPort}`,
+  );
 }
 
-async function listenOnAvailablePort(server: ReturnType<typeof createHttpServer>, requestedPort: number, host?: string): Promise<number> {
+async function listenOnAvailablePort(
+  server: ReturnType<typeof createHttpServer>,
+  requestedPort: number,
+  host?: string,
+): Promise<number> {
   const maxAttempts = 20;
 
   for (let offset = 0; offset < maxAttempts; offset++) {
@@ -928,10 +1116,16 @@ async function listenOnAvailablePort(server: ReturnType<typeof createHttpServer>
     }
   }
 
-  throw new Error(`No available port found from ${requestedPort} to ${requestedPort + maxAttempts - 1}.`);
+  throw new Error(
+    `No available port found from ${requestedPort} to ${requestedPort + maxAttempts - 1}.`,
+  );
 }
 
-function listen(server: ReturnType<typeof createHttpServer>, portToTry: number, host?: string): Promise<void> {
+function listen(
+  server: ReturnType<typeof createHttpServer>,
+  portToTry: number,
+  host?: string,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const onError = (error: Error & { code?: string }) => {
       server.off("listening", onListening);
@@ -949,19 +1143,27 @@ function listen(server: ReturnType<typeof createHttpServer>, portToTry: number, 
 }
 
 function isAddressInUse(error: unknown): boolean {
-  return error instanceof Error && "code" in error && error.code === "EADDRINUSE";
+  return (
+    error instanceof Error && "code" in error && error.code === "EADDRINUSE"
+  );
 }
 
 function requestOriginFromHeaders(request: IncomingMessage): string {
   const forwardedProto = firstHeaderValue(request.headers["x-forwarded-proto"]);
   const forwardedHost = firstHeaderValue(request.headers["x-forwarded-host"]);
-  const encrypted = Boolean((request.socket as typeof request.socket & { encrypted?: boolean }).encrypted);
+  const encrypted = Boolean(
+    (request.socket as typeof request.socket & { encrypted?: boolean })
+      .encrypted,
+  );
   const proto = forwardedProto ?? (encrypted ? "https" : "http");
-  const host = forwardedHost ?? firstHeaderValue(request.headers.host) ?? "localhost:3000";
+  const host =
+    forwardedHost ?? firstHeaderValue(request.headers.host) ?? "localhost:3000";
   return `${proto}://${host}`;
 }
 
-function firstHeaderValue(value: string | string[] | undefined): string | undefined {
+function firstHeaderValue(
+  value: string | string[] | undefined,
+): string | undefined {
   if (Array.isArray(value)) {
     return value[0]?.split(",")[0]?.trim();
   }
@@ -975,7 +1177,9 @@ function readPort(value: string | undefined, fallback: number): number {
 
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
-    throw new Error(`PORT must be an integer from 1 to 65535. Received "${value}".`);
+    throw new Error(
+      `PORT must be an integer from 1 to 65535. Received "${value}".`,
+    );
   }
 
   return parsed;
@@ -1021,7 +1225,14 @@ Options:
 async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  options: { appRoot: string; outDir: string; dev: boolean; buildOptions: BuildOptions; vite?: ViteDevServer; securityHeaders: boolean }
+  options: {
+    appRoot: string;
+    outDir: string;
+    dev: boolean;
+    buildOptions: BuildOptions;
+    vite?: ViteDevServer;
+    securityHeaders: boolean;
+  },
 ): Promise<void> {
   const requestOrigin = requestOriginFromHeaders(request);
   const requestUrl = new URL(request.url ?? "/", requestOrigin);
@@ -1029,7 +1240,11 @@ async function handleRequest(
   try {
     applyDefaultSecurityHeaders(response, options.securityHeaders);
 
-    if (options.dev && options.vite && isViteInternalRequest(requestUrl.pathname)) {
+    if (
+      options.dev &&
+      options.vite &&
+      isViteInternalRequest(requestUrl.pathname)
+    ) {
       await serveViteMiddleware(request, response, options.vite);
       return;
     }
@@ -1053,7 +1268,11 @@ async function handleRequest(
       if (activeDevBuild) {
         await activeDevBuild;
       }
-      if (options.dev && options.vite && resolveResuxViteAssetUrl(requestUrl.pathname)) {
+      if (
+        options.dev &&
+        options.vite &&
+        resolveResuxViteAssetUrl(requestUrl.pathname)
+      ) {
         await serveViteResuxAsset(response, options.vite, requestUrl.pathname);
         return;
       }
@@ -1062,7 +1281,12 @@ async function handleRequest(
     }
 
     if (options.dev) {
-      await ensureDevBuild(options.appRoot, options.outDir, options.buildOptions, options.vite);
+      await ensureDevBuild(
+        options.appRoot,
+        options.outDir,
+        options.buildOptions,
+        options.vite,
+      );
     }
 
     const manifest = await importManifest(options.outDir, options.dev);
@@ -1075,7 +1299,12 @@ async function handleRequest(
       return;
     }
 
-    const middlewareHandled = await runServerMiddleware(request, response, requestUrl, manifest);
+    const middlewareHandled = await runServerMiddleware(
+      request,
+      response,
+      requestUrl,
+      manifest,
+    );
     if (middlewareHandled) {
       return;
     }
@@ -1085,20 +1314,41 @@ async function handleRequest(
       return;
     }
 
-    const serverHandled = await serveServerHandler(request, response, requestUrl, manifest, routeRule);
+    const serverHandled = await serveServerHandler(
+      request,
+      response,
+      requestUrl,
+      manifest,
+      routeRule,
+    );
     if (serverHandled) {
       return;
     }
 
-    const publicHandled = await servePublicFile(response, options.appRoot, requestUrl.pathname);
+    const publicHandled = await servePublicFile(
+      response,
+      options.appRoot,
+      requestUrl.pathname,
+    );
     if (publicHandled) {
       return;
     }
 
-    const rendered = await renderRoute(requestUrl, options, manifest, requestOrigin);
+    const rendered = await renderRoute(
+      requestUrl,
+      options,
+      manifest,
+      requestOrigin,
+    );
 
     if (!rendered) {
-      await serveErrorDocument(response, options, manifest, 404, "Page not found");
+      await serveErrorDocument(
+        response,
+        options,
+        manifest,
+        404,
+        "Page not found",
+      );
       return;
     }
 
@@ -1109,14 +1359,20 @@ async function handleRequest(
     }
 
     if ("type" in rendered && rendered.type === "abort") {
-      response.writeHead(rendered.statusCode, { "content-type": "text/plain; charset=utf-8" });
+      response.writeHead(rendered.statusCode, {
+        "content-type": "text/plain; charset=utf-8",
+      });
       response.end(rendered.message);
       return;
     }
 
-    const html = renderDocument(rendered, "Resux App", { devReload: options.dev });
+    const html = renderDocument(rendered, "Resux App", {
+      devReload: options.dev,
+    });
 
-    response.writeHead(routeRule?.statusCode ?? 200, { "content-type": "text/html; charset=utf-8" });
+    response.writeHead(routeRule?.statusCode ?? 200, {
+      "content-type": "text/html; charset=utf-8",
+    });
     response.end(html);
   } catch (error) {
     if (response.writableEnded) {
@@ -1128,27 +1384,41 @@ async function handleRequest(
 
 async function serveErrorDocument(
   response: ServerResponse,
-  options: { appRoot: string; outDir: string; dev: boolean; buildOptions: BuildOptions; vite?: ViteDevServer; securityHeaders: boolean },
+  options: {
+    appRoot: string;
+    outDir: string;
+    dev: boolean;
+    buildOptions: BuildOptions;
+    vite?: ViteDevServer;
+    securityHeaders: boolean;
+  },
   loadedManifest: any | undefined,
   statusCode: number,
-  error: unknown
+  error: unknown,
 ): Promise<void> {
-  const statusMessage = statusCode === 404 ? "Not Found" : "Internal Server Error";
-  const errorPayload = createErrorPayload(error, statusCode, statusMessage, options.dev);
+  const statusMessage =
+    statusCode === 404 ? "Not Found" : "Internal Server Error";
+  const errorPayload = createErrorPayload(
+    error,
+    statusCode,
+    statusMessage,
+    options.dev,
+  );
 
   try {
-    const manifest = loadedManifest ?? await importManifest(options.outDir, options.dev);
+    const manifest =
+      loadedManifest ?? (await importManifest(options.outDir, options.dev));
     if (manifest.errorComponent) {
       const rendered = await renderApp({
         app: manifest.app,
         page: manifest.errorComponent,
         pageProps: {
-          error: errorPayload
+          error: errorPayload,
         },
         route: {
           path: statusCode === 404 ? "/404" : "/500",
           params: {},
-          query: {}
+          query: {},
         },
         components: manifest.components,
         layouts: manifest.layouts,
@@ -1156,29 +1426,48 @@ async function serveErrorDocument(
         vueIslands: manifest.vueIslands,
         runtimeConfig: manifest.runtimeConfig,
         appHead: manifest.appHead,
-        plugins: manifest.plugins
+        plugins: manifest.plugins,
       });
-      response.writeHead(statusCode, { "content-type": "text/html; charset=utf-8" });
-      response.end(renderDocument(rendered, statusMessage, { devReload: options.dev }));
+      response.writeHead(statusCode, {
+        "content-type": "text/html; charset=utf-8",
+      });
+      response.end(
+        renderDocument(rendered, statusMessage, { devReload: options.dev }),
+      );
       return;
     }
   } catch {
     // Fall back to plain text below if the error component cannot render.
   }
 
-  response.writeHead(statusCode, { "content-type": "text/plain; charset=utf-8" });
+  response.writeHead(statusCode, {
+    "content-type": "text/plain; charset=utf-8",
+  });
   response.end(createPlainErrorBody(errorPayload, options.dev));
 }
 
 async function serveHealthCheck(
   response: ServerResponse,
-  options: { appRoot: string; outDir: string; dev: boolean; buildOptions: BuildOptions; vite?: ViteDevServer }
+  options: {
+    appRoot: string;
+    outDir: string;
+    dev: boolean;
+    buildOptions: BuildOptions;
+    vite?: ViteDevServer;
+  },
 ): Promise<void> {
   if (options.dev) {
-    await ensureDevBuild(options.appRoot, options.outDir, options.buildOptions, options.vite);
+    await ensureDevBuild(
+      options.appRoot,
+      options.outDir,
+      options.buildOptions,
+      options.vite,
+    );
   }
 
-  const manifest = JSON.parse(await readFile(path.join(options.outDir, "manifest.json"), "utf8")) as {
+  const manifest = JSON.parse(
+    await readFile(path.join(options.outDir, "manifest.json"), "utf8"),
+  ) as {
     routes?: unknown[];
     serverMiddleware?: unknown[];
     serverHandlers?: unknown[];
@@ -1193,22 +1482,27 @@ async function serveHealthCheck(
       routes: manifest.routes?.length ?? 0,
       serverMiddleware: manifest.serverMiddleware?.length ?? 0,
       serverHandlers: manifest.serverHandlers?.length ?? 0,
-      routeRules: Object.keys(manifest.routeRules ?? {}).length
+      routeRules: Object.keys(manifest.routeRules ?? {}).length,
     },
     features: {
       vite: manifest.features?.vite ?? (options.dev ? "dev" : "build"),
-      server: manifest.features?.server ?? (options.dev ? "modules" : "bundle")
-    }
+      server: manifest.features?.server ?? (options.dev ? "modules" : "bundle"),
+    },
   };
 
   response.writeHead(200, {
     "content-type": "application/json; charset=utf-8",
-    "cache-control": "no-store"
+    "cache-control": "no-store",
   });
   response.end(JSON.stringify(body));
 }
 
-function createErrorPayload(error: unknown, statusCode: number, statusMessage: string, dev: boolean) {
+function createErrorPayload(
+  error: unknown,
+  statusCode: number,
+  statusMessage: string,
+  dev: boolean,
+) {
   const message = error instanceof Error ? error.message : String(error);
   const payload: {
     statusCode: number;
@@ -1220,7 +1514,7 @@ function createErrorPayload(error: unknown, statusCode: number, statusMessage: s
   } = {
     statusCode,
     statusMessage,
-    message
+    message,
   };
 
   if (dev && error instanceof Error) {
@@ -1239,14 +1533,17 @@ function serializeErrorCause(cause: unknown): unknown {
     return {
       name: cause.name,
       message: cause.message,
-      stack: cause.stack
+      stack: cause.stack,
     };
   }
 
   return cause;
 }
 
-function createPlainErrorBody(error: { statusCode: number; message: string; stack?: string }, dev: boolean): string {
+function createPlainErrorBody(
+  error: { statusCode: number; message: string; stack?: string },
+  dev: boolean,
+): string {
   if (error.statusCode === 404) {
     return "Not found";
   }
@@ -1261,71 +1558,127 @@ function createPlainErrorBody(error: { statusCode: number; message: string; stac
 async function serveRoutePayload(
   response: ServerResponse,
   requestUrl: URL,
-  options: { appRoot: string; outDir: string; dev: boolean; buildOptions: BuildOptions; vite?: ViteDevServer },
-  requestOrigin: string
+  options: {
+    appRoot: string;
+    outDir: string;
+    dev: boolean;
+    buildOptions: BuildOptions;
+    vite?: ViteDevServer;
+  },
+  requestOrigin: string,
 ): Promise<void> {
   const targetPath = requestUrl.searchParams.get("path");
 
   if (!targetPath || !targetPath.startsWith("/")) {
-    response.writeHead(400, { "content-type": "application/json; charset=utf-8" });
-    response.end(JSON.stringify({ error: "Route payload requests need a path query like /__resux/route?path=/post/42." }));
+    response.writeHead(400, {
+      "content-type": "application/json; charset=utf-8",
+    });
+    response.end(
+      JSON.stringify({
+        error:
+          "Route payload requests need a path query like /__resux/route?path=/post/42.",
+      }),
+    );
     return;
   }
 
   const targetUrl = new URL(targetPath, requestOrigin);
   if (options.dev) {
-    await ensureDevBuild(options.appRoot, options.outDir, options.buildOptions, options.vite);
+    await ensureDevBuild(
+      options.appRoot,
+      options.outDir,
+      options.buildOptions,
+      options.vite,
+    );
   }
   const manifest = await importManifest(options.outDir, options.dev);
   const routeRule = matchRouteRule(manifest.routeRules, targetUrl.pathname);
 
   if (routeRule?.redirect) {
     const redirect = normalizeRouteRuleRedirect(routeRule.redirect);
-    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-    response.end(JSON.stringify({ redirect: redirect.to, statusCode: redirect.statusCode }));
+    response.writeHead(200, {
+      "content-type": "application/json; charset=utf-8",
+    });
+    response.end(
+      JSON.stringify({
+        redirect: redirect.to,
+        statusCode: redirect.statusCode,
+      }),
+    );
     return;
   }
 
-  const rendered = await renderRoute(targetUrl, options, manifest, requestOrigin);
+  const rendered = await renderRoute(
+    targetUrl,
+    options,
+    manifest,
+    requestOrigin,
+  );
 
   if (!rendered) {
-    response.writeHead(404, { "content-type": "application/json; charset=utf-8" });
+    response.writeHead(404, {
+      "content-type": "application/json; charset=utf-8",
+    });
     response.end(JSON.stringify({ error: "Not found" }));
     return;
   }
 
   if ("type" in rendered && rendered.type === "redirect") {
-    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-    response.end(JSON.stringify({ redirect: rendered.to, statusCode: rendered.statusCode }));
+    response.writeHead(200, {
+      "content-type": "application/json; charset=utf-8",
+    });
+    response.end(
+      JSON.stringify({
+        redirect: rendered.to,
+        statusCode: rendered.statusCode,
+      }),
+    );
     return;
   }
 
   if ("type" in rendered && rendered.type === "abort") {
-    response.writeHead(rendered.statusCode, { "content-type": "application/json; charset=utf-8" });
+    response.writeHead(rendered.statusCode, {
+      "content-type": "application/json; charset=utf-8",
+    });
     response.end(JSON.stringify({ error: rendered.message }));
     return;
   }
 
   response.writeHead(200, {
     "content-type": "application/json; charset=utf-8",
-    "cache-control": "no-store"
+    "cache-control": "no-store",
   });
   response.end(JSON.stringify(rendered));
 }
 
-function applyDefaultSecurityHeaders(response: ServerResponse, enabled: boolean): void {
+function applyDefaultSecurityHeaders(
+  response: ServerResponse,
+  enabled: boolean,
+): void {
   if (!enabled) {
     return;
   }
 
   setHeaderIfUnset(response, "x-content-type-options", "nosniff");
-  setHeaderIfUnset(response, "referrer-policy", "strict-origin-when-cross-origin");
+  setHeaderIfUnset(
+    response,
+    "referrer-policy",
+    "strict-origin-when-cross-origin",
+  );
   setHeaderIfUnset(response, "x-frame-options", "SAMEORIGIN");
   setHeaderIfUnset(response, "cross-origin-opener-policy", "same-origin");
-  setHeaderIfUnset(response, "permissions-policy", "camera=(), microphone=(), geolocation=()");
+  setHeaderIfUnset(
+    response,
+    "permissions-policy",
+    "camera=(), microphone=(), geolocation=()",
+  );
 }
 
-function setHeaderIfUnset(response: ServerResponse, name: string, value: string): void {
+function setHeaderIfUnset(
+  response: ServerResponse,
+  name: string,
+  value: string,
+): void {
   if (!response.hasHeader(name)) {
     response.setHeader(name, value);
   }
@@ -1333,15 +1686,27 @@ function setHeaderIfUnset(response: ServerResponse, name: string, value: string)
 
 async function renderRoute(
   requestUrl: URL,
-  options: { appRoot: string; outDir: string; dev: boolean; buildOptions: BuildOptions; vite?: ViteDevServer },
+  options: {
+    appRoot: string;
+    outDir: string;
+    dev: boolean;
+    buildOptions: BuildOptions;
+    vite?: ViteDevServer;
+  },
   loadedManifest?: any,
-  requestOrigin?: string
+  requestOrigin?: string,
 ): Promise<RenderRouteOutcome> {
   if (options.dev && !loadedManifest) {
-    await ensureDevBuild(options.appRoot, options.outDir, options.buildOptions, options.vite);
+    await ensureDevBuild(
+      options.appRoot,
+      options.outDir,
+      options.buildOptions,
+      options.vite,
+    );
   }
 
-  const manifest = loadedManifest ?? await importManifest(options.outDir, options.dev);
+  const manifest =
+    loadedManifest ?? (await importManifest(options.outDir, options.dev));
   const matched = manifest.matchRoute(requestUrl.pathname);
 
   if (!matched) {
@@ -1352,9 +1717,13 @@ async function renderRoute(
     path: requestUrl.pathname,
     params: matched.params,
     query: readQuery(requestUrl),
-    origin: requestOrigin ?? requestUrl.origin
+    origin: requestOrigin ?? requestUrl.origin,
   };
-  const middlewareResult = await runRouteMiddleware(manifest, routeContext, matched.route.meta);
+  const middlewareResult = await runRouteMiddleware(
+    manifest,
+    routeContext,
+    matched.route.meta,
+  );
 
   if (middlewareResult) {
     return middlewareResult;
@@ -1371,20 +1740,28 @@ async function renderRoute(
     vueIslands: manifest.vueIslands,
     runtimeConfig: manifest.runtimeConfig,
     appHead: manifest.appHead,
-    plugins: manifest.plugins
+    plugins: manifest.plugins,
   });
 }
 
-async function runRouteMiddleware(manifest: any, to: RouteContext, pageMeta: any): Promise<RenderRedirect | RenderAbort | null> {
+async function runRouteMiddleware(
+  manifest: any,
+  to: RouteContext,
+  pageMeta: any,
+): Promise<RenderRedirect | RenderAbort | null> {
   const from: RouteContext = { path: "", params: {}, query: {} };
   const names = normalizeMiddlewareNames(pageMeta?.middleware);
   const selected = [
     ...manifest.middleware.filter((entry: any) => entry.global),
-    ...names.map((name) => manifest.middleware.find((entry: any) => entry.name === name)).filter(Boolean)
+    ...names
+      .map((name) =>
+        manifest.middleware.find((entry: any) => entry.name === name),
+      )
+      .filter(Boolean),
   ];
 
   for (const entry of selected) {
-    const result = await entry.handler(to, from) as RouteMiddlewareResult;
+    const result = (await entry.handler(to, from)) as RouteMiddlewareResult;
     const normalized = normalizeMiddlewareResult(result);
     if (normalized) {
       return normalized;
@@ -1398,10 +1775,12 @@ async function runServerMiddleware(
   request: IncomingMessage,
   response: ServerResponse,
   requestUrl: URL,
-  manifest: any
+  manifest: any,
 ): Promise<boolean> {
   for (const entry of manifest.serverMiddleware ?? []) {
-    const result = await entry.handler(createServerEvent(request, response, requestUrl, {}));
+    const result = await entry.handler(
+      createServerEvent(request, response, requestUrl, {}),
+    );
 
     if (response.writableEnded) {
       return true;
@@ -1425,7 +1804,9 @@ function normalizeMiddlewareNames(value: unknown): string[] {
   return (Array.isArray(value) ? value : [value]).map((name) => String(name));
 }
 
-function normalizeMiddlewareResult(result: RouteMiddlewareResult): RenderRedirect | RenderAbort | null {
+function normalizeMiddlewareResult(
+  result: RouteMiddlewareResult,
+): RenderRedirect | RenderAbort | null {
   if (!result) {
     return result === false
       ? { type: "abort", statusCode: 403, message: "Navigation aborted" }
@@ -1437,17 +1818,28 @@ function normalizeMiddlewareResult(result: RouteMiddlewareResult): RenderRedirec
   }
 
   if (result.type === "redirect") {
-    return { type: "redirect", to: result.to, statusCode: result.statusCode ?? 302 };
+    return {
+      type: "redirect",
+      to: result.to,
+      statusCode: result.statusCode ?? 302,
+    };
   }
 
   if (result.type === "abort") {
-    return { type: "abort", message: result.message ?? "Navigation aborted", statusCode: result.statusCode ?? 403 };
+    return {
+      type: "abort",
+      message: result.message ?? "Navigation aborted",
+      statusCode: result.statusCode ?? 403,
+    };
   }
 
   return null;
 }
 
-function matchRouteRule(routeRules: Record<string, RouteRule> | undefined, pathname: string): RouteRule | null {
+function matchRouteRule(
+  routeRules: Record<string, RouteRule> | undefined,
+  pathname: string,
+): RouteRule | null {
   if (!routeRules) {
     return null;
   }
@@ -1481,14 +1873,19 @@ function routeRuleMatches(pattern: string, pathname: string): boolean {
 }
 
 function routeRuleScore(pattern: string): number {
-  return pattern.replace(/\*/g, "").length * 10 - (pattern.match(/\*/g)?.length ?? 0);
+  return (
+    pattern.replace(/\*/g, "").length * 10 - (pattern.match(/\*/g)?.length ?? 0)
+  );
 }
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function applyRouteRuleHeaders(response: ServerResponse, rule: RouteRule | null): void {
+function applyRouteRuleHeaders(
+  response: ServerResponse,
+  rule: RouteRule | null,
+): void {
   for (const [name, value] of Object.entries(rule?.headers ?? {})) {
     response.setHeader(name, value);
   }
@@ -1501,7 +1898,9 @@ function applyRouteRuleHeaders(response: ServerResponse, rule: RouteRule | null)
   applyCorsRule(response, rule?.cors);
 }
 
-function routeRuleCacheControl(cache: RouteRule["cache"] | undefined): string | null {
+function routeRuleCacheControl(
+  cache: RouteRule["cache"] | undefined,
+): string | null {
   if (cache === undefined) {
     return null;
   }
@@ -1522,34 +1921,59 @@ function routeRuleCacheControl(cache: RouteRule["cache"] | undefined): string | 
   return parts.join(", ") || null;
 }
 
-function applyCorsRule(response: ServerResponse, cors: RouteRule["cors"] | undefined): void {
+function applyCorsRule(
+  response: ServerResponse,
+  cors: RouteRule["cors"] | undefined,
+): void {
   if (!cors) {
     return;
   }
 
   const config = cors === true ? {} : cors;
   response.setHeader("access-control-allow-origin", config.origin ?? "*");
-  response.setHeader("access-control-allow-methods", (config.methods ?? ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]).join(", "));
-  response.setHeader("access-control-allow-headers", (config.headers ?? ["content-type", "authorization"]).join(", "));
+  response.setHeader(
+    "access-control-allow-methods",
+    (
+      config.methods ?? [
+        "GET",
+        "HEAD",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "OPTIONS",
+      ]
+    ).join(", "),
+  );
+  response.setHeader(
+    "access-control-allow-headers",
+    (config.headers ?? ["content-type", "authorization"]).join(", "),
+  );
   if (config.credentials) {
     response.setHeader("access-control-allow-credentials", "true");
   }
 }
 
-function serveRouteRuleRedirect(response: ServerResponse, redirect: RouteRule["redirect"]): void {
+function serveRouteRuleRedirect(
+  response: ServerResponse,
+  redirect: RouteRule["redirect"],
+): void {
   const normalized = normalizeRouteRuleRedirect(redirect);
   response.writeHead(normalized.statusCode, { location: normalized.to });
   response.end();
 }
 
-function normalizeRouteRuleRedirect(redirect: RouteRule["redirect"]): { to: string; statusCode: number } {
+function normalizeRouteRuleRedirect(redirect: RouteRule["redirect"]): {
+  to: string;
+  statusCode: number;
+} {
   if (typeof redirect === "string") {
     return { to: redirect, statusCode: 307 };
   }
 
   return {
     to: redirect?.to ?? "/",
-    statusCode: redirect?.statusCode ?? 307
+    statusCode: redirect?.statusCode ?? 307,
   };
 }
 
@@ -1558,14 +1982,16 @@ async function serveServerHandler(
   response: ServerResponse,
   requestUrl: URL,
   manifest: any,
-  routeRule: RouteRule | null
+  routeRule: RouteRule | null,
 ): Promise<boolean> {
   const matched = manifest.matchServerHandler?.(requestUrl.pathname);
   if (!matched) {
     return false;
   }
 
-  const result = await matched.route.handler(createServerEvent(request, response, requestUrl, matched.params));
+  const result = await matched.route.handler(
+    createServerEvent(request, response, requestUrl, matched.params),
+  );
 
   if (response.writableEnded) {
     return true;
@@ -1579,7 +2005,7 @@ function createServerEvent(
   request: IncomingMessage,
   response: ServerResponse,
   requestUrl: URL,
-  params: Record<string, string>
+  params: Record<string, string>,
 ) {
   return {
     path: requestUrl.pathname,
@@ -1588,12 +2014,16 @@ function createServerEvent(
     params,
     node: {
       req: request,
-      res: response
-    }
+      res: response,
+    },
   };
 }
 
-async function sendServerResult(response: ServerResponse, result: unknown, statusCode = 200): Promise<void> {
+async function sendServerResult(
+  response: ServerResponse,
+  result: unknown,
+  statusCode = 200,
+): Promise<void> {
   if (result instanceof Response) {
     const headers: Record<string, string> = {};
     result.headers.forEach((value, key) => {
@@ -1617,30 +2047,53 @@ async function sendServerResult(response: ServerResponse, result: unknown, statu
   }
 
   if (isServerAbortResult(result)) {
-    response.writeHead(result.statusCode ?? 403, { "content-type": "text/plain; charset=utf-8" });
+    response.writeHead(result.statusCode ?? 403, {
+      "content-type": "text/plain; charset=utf-8",
+    });
     response.end(result.message ?? "Request aborted");
     return;
   }
 
   if (typeof result === "string") {
-    response.writeHead(statusCode, { "content-type": "text/plain; charset=utf-8" });
+    response.writeHead(statusCode, {
+      "content-type": "text/plain; charset=utf-8",
+    });
     response.end(result);
     return;
   }
 
-  response.writeHead(statusCode, { "content-type": "application/json; charset=utf-8" });
+  response.writeHead(statusCode, {
+    "content-type": "application/json; charset=utf-8",
+  });
   response.end(JSON.stringify(result ?? null));
 }
 
-function isServerRedirectResult(value: unknown): value is { type: "redirect"; to: string; statusCode?: number } {
-  return Boolean(value && typeof value === "object" && (value as { type?: unknown }).type === "redirect" && typeof (value as { to?: unknown }).to === "string");
+function isServerRedirectResult(
+  value: unknown,
+): value is { type: "redirect"; to: string; statusCode?: number } {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    (value as { type?: unknown }).type === "redirect" &&
+    typeof (value as { to?: unknown }).to === "string",
+  );
 }
 
-function isServerAbortResult(value: unknown): value is { type: "abort"; message?: string; statusCode?: number } {
-  return Boolean(value && typeof value === "object" && (value as { type?: unknown }).type === "abort");
+function isServerAbortResult(
+  value: unknown,
+): value is { type: "abort"; message?: string; statusCode?: number } {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    (value as { type?: unknown }).type === "abort",
+  );
 }
 
-async function servePublicFile(response: ServerResponse, appRoot: string, pathname: string): Promise<boolean> {
+async function servePublicFile(
+  response: ServerResponse,
+  appRoot: string,
+  pathname: string,
+): Promise<boolean> {
   const publicRoot = path.resolve(appRoot, "public");
   const resolved = path.resolve(publicRoot, `.${decodeURIComponent(pathname)}`);
 
@@ -1659,7 +2112,9 @@ async function servePublicFile(response: ServerResponse, appRoot: string, pathna
 
   response.writeHead(200, {
     "content-type": mimeType(resolved),
-    ...(!response.hasHeader("cache-control") ? { "cache-control": "no-store" } : {})
+    ...(!response.hasHeader("cache-control")
+      ? { "cache-control": "no-store" }
+      : {}),
   });
   response.end(await readFile(resolved));
   return true;
@@ -1679,12 +2134,17 @@ function mimeType(file: string): string {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".webp": "image/webp",
-    ".ico": "image/x-icon"
+    ".ico": "image/x-icon",
   };
   return types[ext] ?? "application/octet-stream";
 }
 
-async function ensureDevBuild(appRoot: string, outDir: string, buildOptions: BuildOptions, vite?: ViteDevServer): Promise<boolean> {
+async function ensureDevBuild(
+  appRoot: string,
+  outDir: string,
+  buildOptions: BuildOptions,
+  vite?: ViteDevServer,
+): Promise<boolean> {
   const startedAtRevision = devBuildRevision;
   const sourceMtime = latestSourceMtime(appRoot, outDir);
   if (sourceMtime > devLastBuildSourceMtime) {
@@ -1695,7 +2155,10 @@ async function ensureDevBuild(appRoot: string, outDir: string, buildOptions: Bui
   while (devBuildDirty || activeDevBuild) {
     if (!activeDevBuild) {
       devBuildDirty = false;
-      activeDevBuild = buildProject(appRoot, outDir, { ...buildOptions, vite: "dev" })
+      activeDevBuild = buildProject(appRoot, outDir, {
+        ...buildOptions,
+        vite: "dev",
+      })
         .then(() => {
           devBuildRevision++;
           vite?.moduleGraph.invalidateAll();
@@ -1711,11 +2174,14 @@ async function ensureDevBuild(appRoot: string, outDir: string, buildOptions: Bui
   return devBuildRevision !== startedAtRevision;
 }
 
-function serveDevEvents(request: IncomingMessage, response: ServerResponse): void {
+function serveDevEvents(
+  request: IncomingMessage,
+  response: ServerResponse,
+): void {
   response.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
     "cache-control": "no-store, no-transform",
-    connection: "keep-alive"
+    connection: "keep-alive",
   });
   response.write("retry: 1000\n\n");
   devReloadClients.add(response);
@@ -1743,7 +2209,11 @@ function notifyDevReloadClients(eventName: "hmr" | "reload" = "hmr"): void {
   }
 }
 
-async function serveViteResuxAsset(response: ServerResponse, vite: ViteDevServer, pathname: string): Promise<void> {
+async function serveViteResuxAsset(
+  response: ServerResponse,
+  vite: ViteDevServer,
+  pathname: string,
+): Promise<void> {
   const viteUrl = resolveResuxViteAssetUrl(pathname);
 
   if (!viteUrl) {
@@ -1762,12 +2232,16 @@ async function serveViteResuxAsset(response: ServerResponse, vite: ViteDevServer
 
   response.writeHead(200, {
     "content-type": "text/javascript; charset=utf-8",
-    "cache-control": "no-store"
+    "cache-control": "no-store",
   });
   response.end(transformed.code);
 }
 
-async function serveViteMiddleware(request: IncomingMessage, response: ServerResponse, vite: ViteDevServer): Promise<void> {
+async function serveViteMiddleware(
+  request: IncomingMessage,
+  response: ServerResponse,
+  vite: ViteDevServer,
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     let settled = false;
     const finish = () => {
@@ -1802,7 +2276,11 @@ async function serveViteMiddleware(request: IncomingMessage, response: ServerRes
   });
 }
 
-async function serveResuxAsset(response: ServerResponse, outDir: string, pathname: string): Promise<void> {
+async function serveResuxAsset(
+  response: ServerResponse,
+  outDir: string,
+  pathname: string,
+): Promise<void> {
   const relative = resolveResuxAssetPath(pathname);
 
   if (!relative) {
@@ -1828,7 +2306,7 @@ async function serveResuxAsset(response: ServerResponse, outDir: string, pathnam
 
   response.writeHead(200, {
     "content-type": mimeType(resolved),
-    "cache-control": "no-store"
+    "cache-control": "no-store",
   });
   response.end(await readFile(resolved, "utf8"));
 }
@@ -1866,15 +2344,18 @@ function resolveResuxViteAssetUrl(pathname: string): string | null {
 }
 
 function isViteInternalRequest(pathname: string): boolean {
-  return pathname === "/runtime-client.mjs"
-    || pathname.startsWith("/@")
-    || pathname.startsWith("/node_modules/.vite/");
+  return (
+    pathname === "/runtime-client.mjs" ||
+    pathname.startsWith("/@") ||
+    pathname.startsWith("/node_modules/.vite/")
+  );
 }
 
 async function importManifest(outDir: string, dev = false): Promise<any> {
-  const file = !dev && await exists(path.join(outDir, "server-bundle", "index.mjs"))
-    ? path.join(outDir, "server-bundle", "index.mjs")
-    : path.join(outDir, "server", "manifest.mjs");
+  const file =
+    !dev && (await exists(path.join(outDir, "server-bundle", "index.mjs")))
+      ? path.join(outDir, "server-bundle", "index.mjs")
+      : path.join(outDir, "server", "manifest.mjs");
   const stats = await stat(file);
   return import(`${pathToFileURL(file).href}?t=${stats.mtimeMs}`);
 }

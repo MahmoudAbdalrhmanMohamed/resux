@@ -1,5 +1,20 @@
 import { getQuery as h3GetQuery, readBody as h3ReadBody, setHeader as h3SetHeader } from "h3";
-import type { Ref as VueRef } from "vue";
+import {
+  computed,
+  isReactive,
+  isReadonly,
+  isRef,
+  nextTick,
+  reactive,
+  readonly,
+  ref,
+  toRef,
+  toRefs,
+  unref,
+  watch,
+  watchEffect
+} from "../reactivity/index.js";
+import type { ComputedRef, Ref, WatchCallback, WatchOptions, WatchSource, WatchStopHandle } from "../reactivity/index.js";
 
 export type JsonValue =
   | null
@@ -9,7 +24,33 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export type Ref<T = unknown> = VueRef<T>;
+export {
+  ref,
+  reactive,
+  computed,
+  watch,
+  watchEffect,
+  readonly,
+  toRef,
+  toRefs,
+  unref,
+  isRef,
+  isReactive,
+  isReadonly,
+  nextTick
+};
+export type {
+  Ref,
+  ComputedRef,
+  MaybeRef,
+  MaybeRefOrGetter,
+  WatchSource,
+  WatchOptions,
+  WatchCallback,
+  WatchStopHandle,
+  ReactiveEffectOptions,
+  ReactiveEffectRunner
+} from "../reactivity/index.js";
 
 export interface AsyncDataError {
   name: string;
@@ -228,6 +269,19 @@ export interface ElementTemplateNode {
 
 export interface SetupContext {
   props: Record<string, unknown>;
+  ref: typeof ref;
+  reactive: typeof reactive;
+  computed: typeof computed;
+  watch<T = unknown>(source: WatchSource<T> | WatchSource<T>[], callback: WatchCallback<T>, options?: WatchOptions): WatchStopHandle;
+  watchEffect(effect: (onCleanup: (cleanup: () => void) => void) => void, options?: WatchOptions): WatchStopHandle;
+  readonly: typeof readonly;
+  toRef: typeof toRef;
+  toRefs: typeof toRefs;
+  unref: typeof unref;
+  isRef: typeof isRef;
+  isReactive: typeof isReactive;
+  isReadonly: typeof isReadonly;
+  nextTick: typeof nextTick;
   useState<T>(key: string, factory?: () => T): Ref<T>;
   useAsyncData<T>(key: string, handler?: (context: AsyncDataHandlerContext) => T | Promise<T>): AsyncDataResource<T>;
   defineProps<T extends Record<string, unknown> = Record<string, unknown>>(): T;
@@ -627,6 +681,19 @@ function createServerSetupContext(
 
   return {
     props,
+    ref,
+    reactive,
+    computed,
+    watch,
+    watchEffect,
+    readonly,
+    toRef,
+    toRefs,
+    unref,
+    isRef,
+    isReactive,
+    isReadonly,
+    nextTick,
 
     useState<T>(key: string, factory?: () => T): Ref<T> {
       if (stateRefs[key]) {
@@ -635,9 +702,9 @@ function createServerSetupContext(
 
       const value = factory ? factory() : undefined;
       assertJsonSerializable(value, `useState("${key}")`);
-      const ref = { value: value as T } as Ref<T>;
-      stateRefs[key] = ref as Ref<unknown>;
-      return ref;
+      const stateRef = ref(value as T);
+      stateRefs[key] = stateRef as Ref<unknown>;
+      return stateRef;
     },
 
     useAsyncData<T>(key: string, handler?: (context: AsyncDataHandlerContext) => T | Promise<T>): AsyncDataResource<T> {
@@ -683,9 +750,7 @@ function createServerSetupContext(
     apiURL,
 
     async useFetch<T>(url: string, init?: RequestInit): Promise<Ref<T>> {
-      return {
-        value: await fetchJson<T>(url, init)
-      } as Ref<T>;
+      return ref(await fetchJson<T>(url, init));
     },
 
     $fetch<T>(url: string, init?: RequestInit): Promise<T> {
@@ -706,24 +771,27 @@ function createPendingAsyncDataResource<T>(): {
   resource: AsyncDataResource<T>;
   setCompletion: (completion: Promise<void>) => void;
 } {
-  const value = { value: undefined } as Ref<T | undefined>;
-  const pending = { value: true } as Ref<boolean>;
-  const error = { value: null } as Ref<AsyncDataError | null>;
+  const value = ref<T | undefined>(undefined);
+  const pending = ref(true);
+  const error = ref<AsyncDataError | null>(null);
   let completion: Promise<void> = Promise.resolve();
   const resource: AsyncDataResource<T> = {
     data: value,
     value,
     pending,
     error,
-    then(onfulfilled: any, onrejected: any) {
+    then<TResult1 = AwaitedAsyncDataResource<T>, TResult2 = never>(
+      onfulfilled?: ((value: AwaitedAsyncDataResource<T>) => TResult1 | PromiseLike<TResult1>) | null,
+      onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+    ): PromiseLike<TResult1 | TResult2> {
       return completion.then(() => {
-        const resolved = {
+        const resolved: AwaitedAsyncDataResource<T> = {
           data: resource.data,
           value: resource.value,
           pending: resource.pending,
           error: resource.error
         };
-        return onfulfilled ? onfulfilled(resolved) : resolved;
+        return onfulfilled ? onfulfilled(resolved) : resolved as unknown as TResult1;
       }, onrejected);
     }
   };
@@ -1664,6 +1732,452 @@ let devImportRevision = 0;
 let routeTransitionToken = 0;
 let routeTransitionHideTimer = 0;
 
+const __rxFlags = {
+  isReactive: "__v_isReactive",
+  isReadonly: "__v_isReadonly",
+  raw: "__v_raw",
+  isRef: "__v_isRef"
+};
+const __rxTargetMap = new WeakMap();
+const __rxReactiveMap = new WeakMap();
+const __rxReadonlyMap = new WeakMap();
+let __rxActiveEffect;
+let __rxShouldTrack = true;
+const __rxTrackStack = [];
+const __rxQueue = new Set();
+let __rxFlushing = false;
+const __rxResolvedPromise = Promise.resolve();
+let __rxFlushPromise = null;
+
+function __rxIsObject(value) {
+  return value !== null && typeof value === "object";
+}
+
+function __rxHasChanged(value, oldValue) {
+  return !Object.is(value, oldValue);
+}
+
+function __rxQueueJob(job) {
+  __rxQueue.add(job);
+  if (__rxFlushing) {
+    return;
+  }
+  __rxFlushing = true;
+  __rxFlushPromise = __rxResolvedPromise.then(() => {
+    try {
+      for (const queued of __rxQueue) {
+        queued();
+      }
+    } finally {
+      __rxQueue.clear();
+      __rxFlushing = false;
+      __rxFlushPromise = null;
+    }
+  });
+}
+
+function nextTick(fn) {
+  const promise = __rxFlushPromise || __rxResolvedPromise;
+  return fn ? promise.then(fn) : promise;
+}
+
+class __rxReactiveEffect {
+  constructor(fn, scheduler, onStop) {
+    this.fn = fn;
+    this.scheduler = scheduler;
+    this.onStop = onStop;
+    this.active = true;
+    this.deps = [];
+  }
+
+  run() {
+    if (!this.active) {
+      return this.fn();
+    }
+    const previous = __rxActiveEffect;
+    __rxActiveEffect = this;
+    __rxTrackStack.push(__rxShouldTrack);
+    __rxShouldTrack = true;
+    try {
+      return this.fn();
+    } finally {
+      __rxShouldTrack = __rxTrackStack.pop() ?? true;
+      __rxActiveEffect = previous;
+    }
+  }
+
+  stop() {
+    if (!this.active) {
+      return;
+    }
+    for (const dep of this.deps) {
+      dep.delete(this);
+    }
+    this.deps.length = 0;
+    if (typeof this.onStop === "function") {
+      this.onStop();
+    }
+    this.active = false;
+  }
+}
+
+function effect(fn, options = {}) {
+  const _effect = new __rxReactiveEffect(fn, options.scheduler, options.onStop);
+  if (!options.lazy) {
+    _effect.run();
+  }
+  const runner = _effect.run.bind(_effect);
+  runner.effect = _effect;
+  return runner;
+}
+
+function __rxTrack(target, key) {
+  if (!__rxShouldTrack || !__rxActiveEffect) {
+    return;
+  }
+  let depsMap = __rxTargetMap.get(target);
+  if (!depsMap) {
+    depsMap = new Map();
+    __rxTargetMap.set(target, depsMap);
+  }
+  let dep = depsMap.get(key);
+  if (!dep) {
+    dep = new Set();
+    depsMap.set(key, dep);
+  }
+  if (dep.has(__rxActiveEffect)) {
+    return;
+  }
+  dep.add(__rxActiveEffect);
+  __rxActiveEffect.deps.push(dep);
+}
+
+function __rxTrigger(target, key) {
+  const depsMap = __rxTargetMap.get(target);
+  if (!depsMap) {
+    return;
+  }
+  const dep = depsMap.get(key);
+  if (!dep) {
+    return;
+  }
+  for (const reactiveEffect of [...dep]) {
+    if (reactiveEffect.scheduler) {
+      reactiveEffect.scheduler();
+    } else {
+      reactiveEffect.run();
+    }
+  }
+}
+
+function reactive(target) {
+  return __rxCreateReactiveObject(target, false, __rxReactiveMap, false);
+}
+
+function readonly(target) {
+  return __rxCreateReactiveObject(target, true, __rxReadonlyMap, false);
+}
+
+function __rxCreateReactiveObject(target, isReadonlyValue, proxyMap, isShallow) {
+  if (!__rxIsObject(target)) {
+    return target;
+  }
+  const existing = proxyMap.get(target);
+  if (existing) {
+    return existing;
+  }
+  const proxy = new Proxy(target, {
+    get(rawTarget, key, receiver) {
+      if (key === __rxFlags.isReactive) {
+        return !isReadonlyValue;
+      }
+      if (key === __rxFlags.isReadonly) {
+        return isReadonlyValue;
+      }
+      if (key === __rxFlags.raw) {
+        return rawTarget;
+      }
+      const value = Reflect.get(rawTarget, key, receiver);
+      if (!isReadonlyValue) {
+        __rxTrack(rawTarget, key);
+      }
+      if (isShallow || !__rxIsObject(value)) {
+        return value;
+      }
+      return isReadonlyValue ? readonly(value) : reactive(value);
+    },
+    set(rawTarget, key, value, receiver) {
+      if (isReadonlyValue) {
+        return true;
+      }
+      const oldValue = Reflect.get(rawTarget, key, receiver);
+      const success = Reflect.set(rawTarget, key, value, receiver);
+      if (success && __rxHasChanged(value, oldValue)) {
+        __rxTrigger(rawTarget, key);
+      }
+      return success;
+    },
+    deleteProperty(rawTarget, key) {
+      if (isReadonlyValue) {
+        return true;
+      }
+      const hadKey = Reflect.has(rawTarget, key);
+      const success = Reflect.deleteProperty(rawTarget, key);
+      if (hadKey && success) {
+        __rxTrigger(rawTarget, key);
+      }
+      return success;
+    }
+  });
+  proxyMap.set(target, proxy);
+  return proxy;
+}
+
+function isReactive(value) {
+  return Boolean(__rxIsObject(value) && value[__rxFlags.isReactive]);
+}
+
+function isReadonly(value) {
+  return Boolean(__rxIsObject(value) && value[__rxFlags.isReadonly]);
+}
+
+class __rxRefImpl {
+  constructor(value) {
+    this.__v_isRef = true;
+    this._rawValue = value;
+    this._value = __rxIsObject(value) ? reactive(value) : value;
+    this.dep = new Set();
+  }
+
+  get value() {
+    if (__rxShouldTrack && __rxActiveEffect) {
+      if (!this.dep.has(__rxActiveEffect)) {
+        this.dep.add(__rxActiveEffect);
+        __rxActiveEffect.deps.push(this.dep);
+      }
+    }
+    return this._value;
+  }
+
+  set value(newValue) {
+    if (!__rxHasChanged(newValue, this._rawValue)) {
+      return;
+    }
+    this._rawValue = newValue;
+    this._value = __rxIsObject(newValue) ? reactive(newValue) : newValue;
+    for (const reactiveEffect of [...this.dep]) {
+      if (reactiveEffect.scheduler) {
+        reactiveEffect.scheduler();
+      } else {
+        reactiveEffect.run();
+      }
+    }
+  }
+}
+
+function ref(value) {
+  return isRef(value) ? value : new __rxRefImpl(value);
+}
+
+function isRef(value) {
+  return Boolean(value && typeof value === "object" && value[__rxFlags.isRef] === true);
+}
+
+function unref(value) {
+  return isRef(value) ? value.value : value;
+}
+
+class __rxObjectRef {
+  constructor(object, key, defaultValue) {
+    this.__v_isRef = true;
+    this.object = object;
+    this.key = key;
+    this.defaultValue = defaultValue;
+  }
+
+  get value() {
+    const value = this.object[this.key];
+    return value === undefined ? this.defaultValue : value;
+  }
+
+  set value(newValue) {
+    this.object[this.key] = newValue;
+  }
+}
+
+function toRef(object, key, defaultValue) {
+  const value = object[key];
+  return isRef(value) ? value : new __rxObjectRef(object, key, defaultValue);
+}
+
+function toRefs(object) {
+  const output = {};
+  for (const key of Object.keys(object)) {
+    output[key] = toRef(object, key);
+  }
+  return output;
+}
+
+function computed(getterOrOptions) {
+  const getter = typeof getterOrOptions === "function"
+    ? getterOrOptions
+    : getterOrOptions.get;
+  const setter = typeof getterOrOptions === "function"
+    ? undefined
+    : getterOrOptions.set;
+  const dep = new Set();
+  let dirty = true;
+  let value;
+  const runner = effect(getter, {
+    lazy: true,
+    scheduler: () => {
+      if (!dirty) {
+        dirty = true;
+        for (const reactiveEffect of [...dep]) {
+          if (reactiveEffect.scheduler) {
+            reactiveEffect.scheduler();
+          } else {
+            reactiveEffect.run();
+          }
+        }
+      }
+    }
+  });
+
+  return {
+    __v_isRef: true,
+    __v_isReadonly: true,
+    get value() {
+      if (__rxShouldTrack && __rxActiveEffect && !dep.has(__rxActiveEffect)) {
+        dep.add(__rxActiveEffect);
+        __rxActiveEffect.deps.push(dep);
+      }
+      if (dirty) {
+        dirty = false;
+        value = runner();
+      }
+      return value;
+    },
+    set value(newValue) {
+      if (setter) {
+        setter(newValue);
+      }
+    }
+  };
+}
+
+const __rxInitialWatchValue = Symbol("initial-watch-value");
+
+function watch(source, callback, options = {}) {
+  return __rxDoWatch(source, callback, options);
+}
+
+function watchEffect(effectFn, options = {}) {
+  return __rxDoWatch(effectFn, null, options);
+}
+
+function __rxDoWatch(source, callback, options) {
+  const deep = options.deep === true;
+  const immediate = options.immediate === true;
+  const flush = options.flush ?? "post";
+  let cleanup;
+  const onCleanup = (fn) => {
+    cleanup = fn;
+  };
+
+  let getter;
+  if (callback === null) {
+    getter = () => {
+      if (cleanup) {
+        cleanup();
+        cleanup = undefined;
+      }
+      source(onCleanup);
+    };
+  } else {
+    getter = () => __rxResolveWatchSource(source);
+  }
+
+  if (deep) {
+    const baseGetter = getter;
+    getter = () => __rxTraverse(baseGetter());
+  }
+
+  let oldValue = __rxInitialWatchValue;
+
+  const job = () => {
+    if (callback === null) {
+      runner();
+      return;
+    }
+    const newValue = runner();
+    if (deep || oldValue === __rxInitialWatchValue || __rxHasChanged(newValue, oldValue)) {
+      if (cleanup) {
+        cleanup();
+        cleanup = undefined;
+      }
+      callback(newValue, oldValue === __rxInitialWatchValue ? undefined : oldValue, onCleanup);
+      oldValue = newValue;
+    }
+  };
+
+  const scheduler = flush === "sync"
+    ? job
+    : () => __rxQueueJob(job);
+
+  const runner = effect(getter, {
+    scheduler,
+    lazy: callback !== null
+  });
+
+  if (callback) {
+    if (immediate) {
+      job();
+    } else {
+      oldValue = runner();
+    }
+  }
+
+  return () => {
+    if (cleanup) {
+      cleanup();
+      cleanup = undefined;
+    }
+    runner.effect.stop();
+  };
+}
+
+function __rxResolveWatchSource(source) {
+  if (Array.isArray(source)) {
+    return source.map((entry) => __rxResolveWatchEntry(entry));
+  }
+  return __rxResolveWatchEntry(source);
+}
+
+function __rxResolveWatchEntry(source) {
+  if (isRef(source)) {
+    return source.value;
+  }
+  if (isReactive(source)) {
+    return source;
+  }
+  if (typeof source === "function") {
+    return source();
+  }
+  return source;
+}
+
+function __rxTraverse(value, seen = new Set()) {
+  if (!__rxIsObject(value) || seen.has(value)) {
+    return value;
+  }
+  seen.add(value);
+  for (const key of Object.keys(value)) {
+    __rxTraverse(value[key], seen);
+  }
+  return value;
+}
+
 export function createClientComponent(definition) {
   return {
     async createScope(serializedScope, route) {
@@ -1674,10 +2188,23 @@ export function createClientComponent(definition) {
       const props = serializedScope.props ?? {};
       const setupContext = {
         props,
+        ref,
+        reactive,
+        computed,
+        watch,
+        watchEffect,
+        readonly,
+        toRef,
+        toRefs,
+        unref,
+        isRef,
+        isReactive,
+        isReadonly,
+        nextTick,
         useState(key, factory) {
           if (!stateRefs[key]) {
             const hasValue = serializedScope.state && Object.prototype.hasOwnProperty.call(serializedScope.state, key);
-            stateRefs[key] = { value: hasValue ? serializedScope.state[key] : factory?.() };
+            stateRefs[key] = ref(hasValue ? serializedScope.state[key] : factory?.());
           }
           return stateRefs[key];
         },
@@ -1719,10 +2246,10 @@ export function createClientComponent(definition) {
           return createClientRouter();
         },
         useHead() {
-          // Head updates are server-rendered in the MVP.
+          // Head updates are server-rendered by Resux.
         },
         useSeoMeta() {
-          // SEO meta updates are server-rendered in the MVP.
+          // SEO meta updates are server-rendered by Resux.
         },
         useRuntimeConfig() {
           return globalThis.__RESUX__?.config ?? { public: {} };
@@ -1740,7 +2267,7 @@ export function createClientComponent(definition) {
           return url;
         },
         async useFetch(url, init) {
-          return { value: await setupContext.$fetch(url, init) };
+          return ref(await setupContext.$fetch(url, init));
         },
         async $fetch(url, init) {
           const response = await fetch(url, init);
@@ -1821,13 +2348,13 @@ function installResux() {
 }
 
 function createAsyncDataResource(value, pending = false, error = null) {
-  const data = { value };
+  const data = ref(value);
   let completion = Promise.resolve();
   const resource = {
     data,
     value: data,
-    pending: { value: pending },
-    error: { value: error },
+    pending: ref(pending),
+    error: ref(error),
     then(onfulfilled, onrejected) {
       return completion.then(() => {
         const resolved = {

@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { NodeTypes, parse as parseTemplate } from "@vue/compiler-dom";
+import { NodeTypes, parse as parseTemplate, type AttributeNode, type DirectiveNode, type ElementNode, type Node as VueCompilerNode, type SimpleExpressionNode, type TemplateChildNode } from "@vue/compiler-dom";
 import { compileStyle, parse as parseSfc, type SFCStyleBlock } from "@vue/compiler-sfc";
 import vuePlugin from "@vitejs/plugin-vue";
 import ts from "typescript";
@@ -195,6 +195,19 @@ const RESUMABLE_HANDLER_ALLOWED_GLOBALS = new Set([
   "setInterval",
   "clearInterval",
   "queueMicrotask",
+  "ref",
+  "reactive",
+  "computed",
+  "watch",
+  "watchEffect",
+  "readonly",
+  "toRef",
+  "toRefs",
+  "unref",
+  "isRef",
+  "isReactive",
+  "isReadonly",
+  "nextTick",
   "useState",
   "useAsyncData",
   "useRoute",
@@ -651,7 +664,14 @@ function compileTemplate(
   };
 }
 
-function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNode | null {
+function expressionContent(node: unknown): string {
+  if (node && typeof node === "object" && "content" in node && typeof node.content === "string") {
+    return node.content;
+  }
+  return "";
+}
+
+function compileTemplateNode(node: TemplateChildNode, state: CompileTemplateState): TemplateNode | null {
   if (node.type === NodeTypes.TEXT) {
     return {
       type: "text",
@@ -662,7 +682,7 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
   if (node.type === NodeTypes.INTERPOLATION) {
     return {
       type: "interpolation",
-      expression: transformTemplateExpression(node.content.content, state.templateRefBindings, state.file, node),
+      expression: transformTemplateExpression(expressionContent(node.content), state.templateRefBindings, state.file, node),
       bindingId: nextBindingId(state)
     };
   }
@@ -678,7 +698,7 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
     tag: node.tag,
     attrs,
     events,
-    children: node.children.map((child: any) => compileTemplateNode(child, state)).filter(Boolean) as TemplateNode[]
+    children: node.children.map((child) => compileTemplateNode(child, state)).filter(Boolean) as TemplateNode[]
   };
 
   for (const prop of node.props) {
@@ -696,8 +716,8 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
     }
 
     if (prop.name === "bind") {
-      const arg = prop.arg?.content;
-      const expression = prop.exp?.content;
+      const arg = expressionContent(prop.arg);
+      const expression = expressionContent(prop.exp);
       if (!arg || !expression) {
         throw new ResuxCompileError("Dynamic bindings need an argument and expression.", locationFromVueNode(state.file, prop));
       }
@@ -711,8 +731,8 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
     }
 
     if (prop.name === "on") {
-      const arg = prop.arg?.content;
-      const expression = prop.exp?.content;
+      const arg = expressionContent(prop.arg);
+      const expression = expressionContent(prop.exp);
       const modifiers = normalizeEventModifiers(prop.modifiers ?? [], state.file, prop);
       if (!arg || !expression) {
         throw new ResuxCompileError("Events need an argument and expression.", locationFromVueNode(state.file, prop));
@@ -731,7 +751,7 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
     }
 
     if (prop.name === "if") {
-      const expression = prop.exp?.content;
+      const expression = expressionContent(prop.exp);
       if (!expression) {
         throw new ResuxCompileError("v-if needs an expression.", locationFromVueNode(state.file, prop));
       }
@@ -743,7 +763,7 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
     }
 
     if (prop.name === "for") {
-      const expression = prop.exp?.content;
+      const expression = expressionContent(prop.exp);
       if (!expression) {
         throw new ResuxCompileError("v-for needs an expression.", locationFromVueNode(state.file, prop));
       }
@@ -753,7 +773,7 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
     }
 
     if (prop.name === "show") {
-      const expression = prop.exp?.content;
+      const expression = expressionContent(prop.exp);
       if (!expression) {
         throw new ResuxCompileError("v-show needs an expression.", locationFromVueNode(state.file, prop));
       }
@@ -767,7 +787,7 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
     }
 
     if (prop.name === "text") {
-      const expression = prop.exp?.content;
+      const expression = expressionContent(prop.exp);
       if (!expression) {
         throw new ResuxCompileError("v-text needs an expression.", locationFromVueNode(state.file, prop));
       }
@@ -780,7 +800,7 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
     }
 
     if (prop.name === "html") {
-      const expression = prop.exp?.content;
+      const expression = expressionContent(prop.exp);
       if (!expression) {
         throw new ResuxCompileError("v-html needs an expression.", locationFromVueNode(state.file, prop));
       }
@@ -793,7 +813,7 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
     }
 
     if (prop.name === "model") {
-      const expression = prop.exp?.content;
+      const expression = expressionContent(prop.exp);
       if (!expression) {
         throw new ResuxCompileError("v-model needs an expression.", locationFromVueNode(state.file, prop));
       }
@@ -817,7 +837,7 @@ function compileTemplateNode(node: any, state: CompileTemplateState): TemplateNo
       continue;
     }
 
-    throw new ResuxCompileError(`v-${prop.name} is not supported in the MVP.`, locationFromVueNode(state.file, prop));
+    throw new ResuxCompileError(`v-${prop.name} is not supported in the v1 compiler.`, locationFromVueNode(state.file, prop));
   }
 
   return element;
@@ -834,7 +854,7 @@ function createInlineEventHandler(expression: string, state: CompileTemplateStat
 
 function createModelBinding(
   tag: string,
-  props: any[],
+  props: Array<AttributeNode | DirectiveNode>,
   expression: string,
   state: CompileTemplateState
 ): { attribute: string; value: string; event: string; handler: string } {
@@ -861,8 +881,8 @@ function createModelBinding(
   };
 }
 
-function staticAttributeValue(props: any[], name: string): string | undefined {
-  const attr = props.find((prop) => prop.type === NodeTypes.ATTRIBUTE && prop.name === name);
+function staticAttributeValue(props: Array<AttributeNode | DirectiveNode>, name: string): string | undefined {
+  const attr = props.find((prop): prop is AttributeNode => prop.type === NodeTypes.ATTRIBUTE && prop.name === name);
   return attr?.value?.content;
 }
 
@@ -870,7 +890,7 @@ function transformTemplateExpression(
   expression: string,
   templateRefBindings: Set<string>,
   file: string,
-  node: any
+  node: VueCompilerNode
 ): string {
   if (templateRefBindings.size === 0) {
     return expression;
@@ -935,10 +955,8 @@ function isAssignableExpression(expression: string): boolean {
   return /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[[^\]]+\])*$/.test(expression.trim());
 }
 
-function normalizeEventModifiers(modifiers: any[], file: string, node: any): string[] {
-  const modifierNames = modifiers.map((modifier) => typeof modifier === "string"
-    ? modifier
-    : String(modifier.content ?? modifier.name ?? modifier));
+function normalizeEventModifiers(modifiers: SimpleExpressionNode[], file: string, node: VueCompilerNode): string[] {
+  const modifierNames = modifiers.map((modifier) => String(modifier.content));
   const supported = new Set([
     "prevent",
     "stop",
@@ -977,7 +995,7 @@ function normalizeEventModifiers(modifiers: any[], file: string, node: any): str
   return modifierNames;
 }
 
-function parseForExpression(expression: string, file: string, node: any, state: CompileTemplateState) {
+function parseForExpression(expression: string, file: string, node: VueCompilerNode, state: CompileTemplateState) {
   const match = /^\s*(?:\(([^)]+)\)|([A-Za-z_$][\w$]*))\s+(?:in|of)\s+(.+)\s*$/.exec(expression);
   if (!match) {
     throw new ResuxCompileError("v-for must look like \"item in items\" or \"(item, index) in items\".", locationFromVueNode(file, node));
@@ -1099,7 +1117,7 @@ function inferTemplateRefBindings(script: string, file: string): Set<string> {
         continue;
       }
 
-      if (ts.isObjectBindingPattern(declaration.name) && isAsyncDataFactory(calleeName)) {
+      if (ts.isObjectBindingPattern(declaration.name) && isObjectTemplateRefFactory(calleeName)) {
         for (const element of declaration.name.elements) {
           if (!ts.isBindingElement(element) || !ts.isIdentifier(element.name)) {
             continue;
@@ -1107,7 +1125,7 @@ function inferTemplateRefBindings(script: string, file: string): Set<string> {
           const propertyName = element.propertyName && ts.isIdentifier(element.propertyName)
             ? element.propertyName.text
             : element.name.text;
-          if (["data", "pending", "error", "value"].includes(propertyName)) {
+          if (calleeName === "toRefs" || ["data", "pending", "error", "value"].includes(propertyName)) {
             bindings.add(element.name.text);
           }
         }
@@ -1123,11 +1141,15 @@ function unwrapAwaitExpression(node: ts.Expression | undefined): ts.Expression |
 }
 
 function isTemplateRefFactory(name: string): boolean {
-  return ["ref", "computed", "shallowRef", "useState", "useAsyncData", "useFetch"].includes(name);
+  return ["ref", "computed", "toRef", "useState", "useAsyncData", "useFetch"].includes(name);
 }
 
 function isAsyncDataFactory(name: string): boolean {
   return ["useAsyncData", "useFetch"].includes(name);
+}
+
+function isObjectTemplateRefFactory(name: string): boolean {
+  return isAsyncDataFactory(name) || name === "toRefs";
 }
 
 function isDefinePageMetaStatement(statement: ts.Statement): boolean {
@@ -1211,7 +1233,7 @@ function validateTemplateHandlers(events: TemplateEvent[], analysis: ScriptAnaly
     const unsupportedCapture = findUnsupportedCapture(handlerNode, event.handler, analysis);
     if (unsupportedCapture) {
       throw new ResuxCompileError(
-        `Handler "${event.handler}" captures "${unsupportedCapture}", which is not resumable in the MVP.`,
+        `Handler "${event.handler}" captures "${unsupportedCapture}", which is not resumable in Resux.`,
         locationFromTsNode(file, analysis.sourceFile, handlerNode)
       );
     }
@@ -1295,7 +1317,23 @@ function isResumableInitializer(node: ts.Expression | undefined): boolean {
     return false;
   }
   if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
-    return ["useState", "useAsyncData", "useRoute", "useRouter", "useRuntimeConfig", "useResuxApp", "defineProps"].includes(node.expression.text);
+    return [
+      "ref",
+      "reactive",
+      "computed",
+      "readonly",
+      "toRef",
+      "toRefs",
+      "watch",
+      "watchEffect",
+      "useState",
+      "useAsyncData",
+      "useRoute",
+      "useRouter",
+      "useRuntimeConfig",
+      "useResuxApp",
+      "defineProps"
+    ].includes(node.expression.text);
   }
   if (ts.isAwaitExpression(node) && ts.isCallExpression(node.expression) && ts.isIdentifier(node.expression.expression)) {
     return ["useAsyncData", "useFetch"].includes(node.expression.expression.text);
@@ -1334,7 +1372,7 @@ function createComponentModuleSource(options: {
     options.analysis.imports,
     `const __template = ${JSON.stringify(options.template, null, 2)};`,
     `async function __rx_setup(__ctx) {`,
-    `const { useState, useAsyncData, useRoute, useRouter, useHead, useSeoMeta, useRuntimeConfig, useResuxApp, apiURL, useFetch, $fetch, onMounted, definePageMeta, defineProps } = __ctx;`,
+    `const { ref, reactive, computed, watch, watchEffect, readonly, toRef, toRefs, unref, isRef, isReactive, isReadonly, nextTick, useState, useAsyncData, useRoute, useRouter, useHead, useSeoMeta, useRuntimeConfig, useResuxApp, apiURL, useFetch, $fetch, onMounted, definePageMeta, defineProps } = __ctx;`,
     options.analysis.setupBody,
     `return { ${options.analysis.bindings.join(", ")} };`,
     `}`,
@@ -1748,6 +1786,7 @@ async function readRuntimeConfig(root: string, outDir: string): Promise<Record<s
     const config = (imported.default ?? {}) as ResuxConfig;
     await applyConfiguredModules(config, root, outDir);
     delete config.modules;
+    await writeFile(outputFile, `export default ${JSON.stringify(config, null, 2)};`, "utf8");
     return config;
   }
 
@@ -2197,7 +2236,7 @@ function collectRouteParams(routePath: string): string[] {
     .map((part) => part.slice(1).replace(/\*$/, ""));
 }
 
-function locationFromVueNode(file: string, node: any): CompileErrorLocation {
+function locationFromVueNode(file: string, node: VueCompilerNode): CompileErrorLocation {
   return {
     file,
     line: node.loc?.start?.line ?? 1,

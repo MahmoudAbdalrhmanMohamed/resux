@@ -1,8 +1,19 @@
 {
   "name": "resuxjs",
-  "version": "0.2.22",
+  "version": "0.2.23",
   "private": false,
+  "description": "Experimental resumable web framework with Vue-like SFC routing and a custom SSR/runtime pipeline.",
   "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "resux",
+    "resumable",
+    "framework",
+    "ssr",
+    "vite",
+    "vue",
+    "routing"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/MahmoudAbdalrhmanMohamed/resux.git"
@@ -17,38 +28,57 @@
     "README.md"
   ],
   "bin": {
-    "resuxjs": "dist/index.js",
-    "resux": "dist/index.js",
+    "resuxjs": "dist/cli.js",
+    "resux": "dist/cli.js",
     "create-resux": "dist/create.js"
   },
   "main": "./dist/index.js",
+  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
     "./node": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js",
+      "default": "./dist/node.js"
     },
     "./globals": {
       "types": "./dist/globals.d.ts",
+      "import": "./dist/globals.js",
       "default": "./dist/globals.js"
     },
     "./runtime": {
       "types": "./dist/runtime/index.d.ts",
+      "import": "./dist/runtime/index.js",
       "default": "./dist/runtime/index.js"
+    },
+    "./reactivity": {
+      "types": "./dist/reactivity/index.d.ts",
+      "import": "./dist/reactivity/index.js",
+      "default": "./dist/reactivity/index.js"
     },
     "./compiler": {
       "types": "./dist/compiler/index.d.ts",
+      "import": "./dist/compiler/index.js",
       "default": "./dist/compiler/index.js"
-    }
+    },
+    "./create": {
+      "types": "./dist/create.d.ts",
+      "import": "./dist/create.js",
+      "default": "./dist/create.js"
+    },
+    "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "build": "npm run typecheck",
     "test": "vitest run",
-    "create:local": "npm run build && node dist/index.js init",
+    "create:local": "npm run build && node dist/cli.js init",
     "pack:check": "npm run build && npm test && npm pack --dry-run"
   },
   "engines": {

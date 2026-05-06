@@ -4,6 +4,8 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   resolve: {
     alias: {
+      "resuxjs/create": path.resolve(__dirname, "src/create.ts"),
+      "resuxjs/reactivity": path.resolve(__dirname, "src/reactivity/index.ts"),
       "resuxjs/runtime": path.resolve(__dirname, "src/runtime/index.ts"),
       "resuxjs/compiler": path.resolve(__dirname, "src/compiler/index.ts")
     }

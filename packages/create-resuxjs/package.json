@@ -1,9 +1,15 @@
 {
   "name": "create-resuxjs",
-  "version": "0.2.14",
+  "version": "0.2.23",
   "private": false,
   "type": "module",
   "description": "Create a Resux app.",
+  "license": "MIT",
+  "keywords": [
+    "resux",
+    "create-resux",
+    "scaffolder"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/MahmoudAbdalrhmanMohamed/resux.git",
@@ -21,7 +27,7 @@
     "create-resuxjs": "index.js"
   },
   "dependencies": {
-    "resuxjs": "^0.2.14"
+    "resuxjs": "^0.2.23"
   },
   "engines": {
     "node": ">=20.19.0"

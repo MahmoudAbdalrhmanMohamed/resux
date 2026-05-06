@@ -37,7 +37,7 @@ describe("route manifest", () => {
 });
 
 describe("sfc compiler", () => {
-  it("compiles the supported MVP template and script subset", () => {
+  it("compiles the supported Resux template and script subset", () => {
     const component = compileVueSource(
       `<script setup lang="ts">
 const count = useState("count", () => 0)

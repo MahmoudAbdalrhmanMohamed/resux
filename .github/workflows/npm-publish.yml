@@ -2,7 +2,10 @@ name: Publish to npm
 
 on:
   push:
-  workflow_dispatch:
+    tags:
+      - "v*.*.*"
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -10,10 +13,10 @@ permissions:
 
 jobs:
   publish:
-    name: Publish to npm
+    name: Publish npm Package
     runs-on: ubuntu-latest
     concurrency:
-      group: npm-publish-${{ github.ref }}
+      group: npm-publish-${{ github.event.release.tag_name || github.ref_name }}
       cancel-in-progress: false
 
     steps:
@@ -28,14 +31,33 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Upgrade npm for trusted publishing
-        run: npm install --global npm@^11.5.1
-
       - name: Install dependencies
-        run: npm install --include=optional
+        run: npm ci
 
-      - name: Install Linux Rolldown binding
-        run: npm install --no-save --package-lock=false @rolldown/binding-linux-x64-gnu@1.0.0-rc.17
+      - name: Validate release tag
+        id: release
+        shell: bash
+        run: |
+          PACKAGE_NAME="$(node -p "require('./package.json').name")"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          RELEASE_TAG="${GITHUB_REF_NAME}"
+
+          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+            RELEASE_TAG="${{ github.event.release.tag_name }}"
+          fi
+
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag ${RELEASE_TAG} is not a semver tag like v1.0.0."
+            exit 1
+          fi
+
+          if [ "${RELEASE_TAG}" != "v${PACKAGE_VERSION}" ]; then
+            echo "Release tag ${RELEASE_TAG} does not match package version ${PACKAGE_VERSION}."
+            exit 1
+          fi
+
+          echo "package-name=${PACKAGE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "package-version=${PACKAGE_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Check package
         run: npm run pack:check
@@ -44,43 +66,22 @@ jobs:
         id: npm-version
         shell: bash
         run: |
-          PACKAGE_NAME="$(node -p "require('./package.json').name")"
-          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
-
-          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
+          if npm view "${{ steps.release.outputs.package-name }}@${{ steps.release.outputs.package-version }}" version >/dev/null 2>&1; then
             echo "published=true" >> "$GITHUB_OUTPUT"
-            echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is already published."
+            echo "${{ steps.release.outputs.package-name }}@${{ steps.release.outputs.package-version }} is already published."
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
-            echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is not published yet."
+            echo "${{ steps.release.outputs.package-name }}@${{ steps.release.outputs.package-version }} is not published yet."
           fi
 
-      - name: Check NPM token availability
-        id: npm-token
-        shell: bash
-        run: |
-          if [ -n "${{ secrets.NPM_TOKEN }}" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Publish package (OIDC)
-        id: publish-oidc
+      - name: Publish package
         if: steps.npm-version.outputs.published == 'false'
-        continue-on-error: true
-        run: npm publish --access public --provenance
-
-      - name: Publish package (NPM_TOKEN fallback)
-        if: steps.npm-version.outputs.published == 'false' && steps.publish-oidc.outcome == 'failure' && steps.npm-token.outputs.available == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
-
-      - name: Fail with publish setup guidance
-        if: steps.npm-version.outputs.published == 'false' && steps.publish-oidc.outcome == 'failure' && steps.npm-token.outputs.available != 'true'
-        shell: bash
         run: |
-          echo "Publish failed with OIDC and NPM_TOKEN is not set."
-          echo "Configure npm trusted publisher for .github/workflows/npm-publish.yml or add repository secret NPM_TOKEN."
-          exit 1
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "NPM_TOKEN is required to publish."
+            exit 1
+          fi
+
+          npm publish --access public --provenance

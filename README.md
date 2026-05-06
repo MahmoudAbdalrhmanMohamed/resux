@@ -1,10 +1,10 @@
 # Resux
 
-Resux is an experimental web framework prototype with a custom resumable runtime.
+Resux is an experimental web framework with a custom resumable runtime.
 
 It uses familiar `.vue` files and `pages/` routing, but normal Resux components do not use Vue hydration or the Vue runtime. The compiler parses a small Vue-like SFC subset, renders HTML on the server, serializes route and component state, then loads client code only when an event is triggered. Vue runtime is available as an opt-in island escape hatch for complex client widgets.
 
-This is an MVP, not a production-ready framework.
+The v1 release line treats the documented compiler, SSR renderer, resume runtime, routing, and CLI commands as the stable core. Advanced Vue compatibility, Vue islands, Nitro adapter behavior, and unsupported Vue SFC syntax are still experimental and should fail loudly instead of silently falling back to hydration.
 
 ## Create App
 
@@ -31,7 +31,7 @@ Generated apps use a single Resux dependency, similar to Nuxt apps installing `n
 ```json
 {
   "dependencies": {
-    "resuxjs": "^0.2.14"
+    "resuxjs": "^<current-version>"
   }
 }
 ```
@@ -40,6 +40,7 @@ For local development before publishing:
 
 ```sh
 npm install
+npm run typecheck
 npm run build
 npm run create:local -- my-app --no-install
 ```
@@ -58,17 +59,27 @@ npm run dev
 src/
   compiler/   SFC parser, route manifest builder, code generator
   runtime/    SSR renderer, composables, client resume loader source
-  index.ts    Resux CLI, Node server, and public node handler
+  index.ts    Runtime-only public root export
+  cli.ts      Resux CLI, dev server, preview server, deploy helpers
+  node.ts     Node server handler export for adapters
   create.ts   App scaffolder used by `resux init`
 
 templates/    Starter files copied by `resux init`
 tests/        Compiler, SSR, and client resume tests
 ```
 
+Public imports are split so browser/client bundles do not accidentally pull compiler or server code:
+
+```ts
+import { renderApp } from "resuxjs/runtime"
+import { createResuxNodeHandler } from "resuxjs/node"
+```
+
 ## Development
 
 ```sh
 npm install
+npm run typecheck
 npm run build
 npm test
 ```
@@ -80,6 +91,21 @@ npm run pack:check
 ```
 
 This builds, tests, and dry-runs npm packing for the single `resuxjs` package.
+
+CI runs on every push and pull request with `npm ci`, optional linting, typecheck, build, tests, and package dry-run checks.
+
+## Release Process
+
+Normal pushes never publish to npm. They only run CI. Publishing is intentionally gated to version tags or GitHub Releases so an ordinary `main` push cannot publish a broken package.
+
+To release:
+
+1. Update the version and create the release commit/tag with `npm version 1.0.0`.
+2. Push the release commit with `git push origin main`.
+3. Push the version tag with `git push origin v1.0.0`.
+4. The GitHub Action publishes `resuxjs@1.0.0` to npm.
+
+The npm publish workflow validates that the tag matches `package.json`, runs `npm ci` and `npm run pack:check`, skips publishing if the package version already exists, then publishes with `NPM_TOKEN` and npm provenance.
 
 ## CLI
 
@@ -143,6 +169,36 @@ export default defineResuxConfig({
   }
 })
 ```
+
+## Reactivity APIs
+
+Resux includes a native reactivity layer for resumable components. You can use it with globals in app files, or import directly:
+
+```ts
+import {
+  ref,
+  reactive,
+  computed,
+  watch,
+  watchEffect,
+  readonly,
+  toRef,
+  toRefs,
+  unref,
+  isRef,
+  isReactive,
+  isReadonly,
+  nextTick
+} from "resuxjs"
+```
+
+Or from the focused subpath:
+
+```ts
+import { ref, reactive, computed } from "resuxjs/reactivity"
+```
+
+These APIs are Resux-native. Normal Resux components do not depend on Vue hydration runtime.
 
 ## Vite
 
@@ -302,7 +358,7 @@ Server middleware can continue by returning nothing, use h3-style helpers such a
 - Resumable event handlers such as `@click="increment"`.
 - Lazy client handler chunks loaded on first interaction.
 - Client-side navigation, persistent same-layout DOM, built-in route transition progress, and hover/focus route payload prefetch for same-origin links.
-- MVP composables: `useState`, `useAsyncData`, `useRoute`, `useRouter`, `useHead`, `useSeoMeta`, `useRuntimeConfig`, `useResuxApp`, `apiURL`, `useFetch`, `$fetch`, and `onMounted`.
+- Stable core composables: `useState`, `useAsyncData`, `useRoute`, `useRouter`, `useHead`, `useSeoMeta`, `useRuntimeConfig`, `useResuxApp`, `apiURL`, `useFetch`, `$fetch`, and `onMounted`.
 - `useAsyncData` returns a Nuxt-like resource with reactive `data`, `pending`, and `error` refs, plus `value` as a data alias for compatibility. Use `await useAsyncData(...)` when you want SSR to fetch before rendering the page; omit `await` when you intentionally want an SSR skeleton that resumes in the browser.
 
 ## Component Syntax
@@ -401,7 +457,7 @@ On the server, `$fetch("/api/test")` uses the current request origin, then confi
 
 ## Supported Syntax
 
-The MVP compiler supports:
+The v1 compiler supports:
 
 - Static elements and text.
 - Interpolation: `{{ value }}`.
@@ -457,12 +513,13 @@ Unsupported resumability patterns should fail at compile time instead of silentl
 
 ## Architecture
 
-Resux is one package with four internal parts:
+Resux is one package with five internal parts:
 
 - Compiler: parses `.vue` files, creates routes, validates resumable handlers, and emits server/client modules.
 - Runtime: renders HTML on the server, provides Resux-style composables, runs plugins, applies layouts, collects head entries, and serializes payloads.
-- CLI: builds apps, starts the dev server, and previews generated output.
+- CLI and Node server: builds apps, starts the dev server, previews generated output, and exposes `resuxjs/node`.
 - Create CLI: scaffolds a starter app for `resux init`.
+- Package entrypoints: keep the root runtime-only while `resuxjs/compiler`, `resuxjs/runtime`, `resuxjs/node`, `resuxjs/globals`, and `resuxjs/create` expose focused surfaces.
 
 The browser initially receives only server-rendered HTML, the serialized payload, and the small resume loader.
 

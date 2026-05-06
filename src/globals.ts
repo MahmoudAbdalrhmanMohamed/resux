@@ -1,36 +1,55 @@
 import type {
   AsyncDataResource,
   AsyncDataHandlerContext,
+  ComputedRef,
+  EventHandler,
+  EventHandlerEvent,
   HeadEntry,
+  MaybeRef,
   ResuxAppLike,
+  ResuxModule,
   PageMeta,
   Ref,
   RouteContext,
+  RouteMiddlewareResult,
+  ResuxPlugin,
+  ResuxRouteMiddleware,
   ResuxRouter,
   RuntimeConfig,
-  SeoMetaInput
+  SeoMetaInput,
+  ServerMiddleware,
+  WatchCallback,
+  WatchOptions,
+  WatchSource,
+  WatchStopHandle
 } from "./runtime/index.js";
-
-interface ResuxModuleContext {
-  rootDir: string;
-  buildDir: string;
-  options: Record<string, unknown>;
-  addCss(href: string): void;
-  addHead(head: Record<string, unknown>): void;
-  addRouteRule(path: string, rule: Record<string, unknown>): void;
-  extendRuntimeConfig(config: Record<string, unknown>): void;
-}
-
-type ResuxModule<TOptions = Record<string, unknown>> =
-  | ((options: TOptions, context: ResuxModuleContext) => unknown | Promise<unknown>)
-  | {
-      defaults?: TOptions;
-      setup: (options: TOptions, context: ResuxModuleContext) => unknown | Promise<unknown>;
-    };
 
 declare global {
   const useState: <T = unknown>(key: string, factory?: () => T) => Ref<T>;
   const useAsyncData: <T = unknown>(key: string, handler?: (context: AsyncDataHandlerContext) => T | Promise<T>) => AsyncDataResource<T>;
+  const ref: <T = unknown>(value: T) => Ref<T>;
+  const reactive: <T extends object>(value: T) => T;
+  const computed: {
+    <T>(getter: () => T): ComputedRef<T>;
+    <T>(options: { get: () => T; set?: (value: T) => void }): ComputedRef<T>;
+  };
+  const watch: <T = unknown>(
+    source: WatchSource<T> | WatchSource<T>[],
+    callback: WatchCallback<T>,
+    options?: WatchOptions
+  ) => WatchStopHandle;
+  const watchEffect: (
+    effect: (onCleanup: (cleanup: () => void) => void) => void,
+    options?: WatchOptions
+  ) => WatchStopHandle;
+  const readonly: <T>(value: T) => Readonly<T>;
+  const toRef: <T extends object, K extends keyof T>(object: T, key: K, defaultValue?: T[K]) => Ref<T[K]>;
+  const toRefs: <T extends object>(object: T) => { [K in keyof T]: Ref<T[K]> };
+  const unref: <T>(value: MaybeRef<T>) => T;
+  const isRef: (value: unknown) => value is Ref<unknown>;
+  const isReactive: (value: unknown) => boolean;
+  const isReadonly: (value: unknown) => boolean;
+  const nextTick: <T = void>(fn?: () => T | PromiseLike<T>) => Promise<T | void>;
   const useRoute: () => RouteContext;
   const useRouter: () => ResuxRouter;
   const useHead: (input: HeadEntry) => void;
@@ -43,18 +62,16 @@ declare global {
   const onMounted: (callback: () => unknown | Promise<unknown>) => void;
   const definePageMeta: (_meta: PageMeta) => void;
   const defineResuxConfig: <T extends Record<string, unknown>>(config: T) => T;
-  const defineResuxPlugin: (plugin: (resuxApp: ResuxAppLike) => unknown | Promise<unknown>) => (resuxApp: ResuxAppLike) => unknown | Promise<unknown>;
-  const defineResuxRouteMiddleware: (
-    middleware: (to: RouteContext, from: RouteContext) => unknown | Promise<unknown>
-  ) => (to: RouteContext, from: RouteContext) => unknown | Promise<unknown>;
-  const defineEventHandler: <T>(handler: T) => T;
-  const eventHandler: <T>(handler: T) => T;
-  const defineServerMiddleware: <T>(middleware: T) => T;
-  const readBody: <T = unknown>(event: unknown) => Promise<T>;
-  const getQuery: (event: unknown) => Record<string, string | string[]>;
-  const setHeader: (event: unknown, name: string, value: number | string | string[]) => void;
-  const navigateTo: (to: string, options?: { statusCode?: number }) => unknown;
-  const abortNavigation: (message?: string, options?: { statusCode?: number }) => unknown;
+  const defineResuxPlugin: (plugin: ResuxPlugin) => ResuxPlugin;
+  const defineResuxRouteMiddleware: (middleware: ResuxRouteMiddleware) => ResuxRouteMiddleware;
+  const defineEventHandler: (handler: EventHandler) => EventHandler;
+  const eventHandler: (handler: EventHandler) => EventHandler;
+  const defineServerMiddleware: (middleware: ServerMiddleware) => ServerMiddleware;
+  const readBody: <T = unknown>(event: EventHandlerEvent) => Promise<T>;
+  const getQuery: (event: EventHandlerEvent) => Record<string, string | string[]>;
+  const setHeader: (event: EventHandlerEvent, name: string, value: number | string | string[]) => void;
+  const navigateTo: (to: string, options?: { statusCode?: number }) => RouteMiddlewareResult;
+  const abortNavigation: (message?: string, options?: { statusCode?: number }) => RouteMiddlewareResult;
   const defineResuxModule: <TOptions = Record<string, unknown>>(module: ResuxModule<TOptions>) => ResuxModule<TOptions>;
 }
 

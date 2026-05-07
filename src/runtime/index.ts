@@ -3231,7 +3231,25 @@ function stringifyValue(value) {
   if (value === null || value === undefined) {
     return "";
   }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value) || isPlainDisplayObject(value)) {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
   return String(value);
+}
+
+function isPlainDisplayObject(value) {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function stringifyAttributeValue(name, value) {
@@ -3477,7 +3495,25 @@ function stringifyValue(value: unknown): string {
   if (value === null || value === undefined) {
     return "";
   }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value) || isPlainDisplayObject(value)) {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
   return String(value);
+}
+
+function isPlainDisplayObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function stringifyAttributeValue(name: string, value: unknown): string {

@@ -15,6 +15,41 @@ import {
 } from "resuxjs/runtime";
 
 describe("runtime SSR", () => {
+  it("renders object interpolation as JSON text instead of [object Object]", async () => {
+    const page: ComponentDefinition = defineComponent({
+      id: "m-object-display",
+      name: "ObjectDisplayPage",
+      file: "ObjectDisplayPage.vue",
+      handlers: [],
+      async script() {
+        return {
+          payload: {
+            ok: true,
+            framework: "resux"
+          }
+        };
+      },
+      template: [
+        {
+          type: "element",
+          tag: "pre",
+          attrs: [],
+          events: [],
+          children: [{ type: "interpolation", expression: "payload", bindingId: "b0" }]
+        }
+      ]
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/", params: {}, query: {} }
+    });
+
+    expect(result.html).toContain('"ok": true');
+    expect(result.html).toContain('"framework": "resux"');
+    expect(result.html).not.toContain("[object Object]");
+  });
+
   it("renders HTML and serialized state without eagerly loading handler chunks", async () => {
     const page: ComponentDefinition = defineComponent({
       id: "m0",

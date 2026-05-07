@@ -485,6 +485,10 @@ describe("project build manifest", () => {
     expect(result.plugins[0].id).toBe("p0");
     expect(result.serverHandlers[0].path).toBe("/api/hello");
     expect(result.routes[0].meta?.middleware).toBe("auth");
+    expect((manifest as { resuxPlugins?: unknown[] }).resuxPlugins).toHaveLength(1);
+    expect((manifest as { plugins?: unknown[] }).plugins).toBeUndefined();
+    expect((bundledManifest as { resuxPlugins?: unknown[] }).resuxPlugins).toHaveLength(1);
+    expect((bundledManifest as { plugins?: unknown[] }).plugins).toBeUndefined();
     expect(manifest.runtimeConfig.public.apiBase).toBe("/api");
     expect(manifest.appHead.title).toBe("Test");
     expect(bundledManifest.appHead.title).toBe("Test");

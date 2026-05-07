@@ -111,7 +111,8 @@ interface LoadedManifest {
   layouts: Record<string, ComponentDefinition>;
   modules: Record<string, string>;
   vueIslands: Record<string, string>;
-  plugins: ResuxPlugin[];
+  resuxPlugins?: ResuxPlugin[];
+  plugins?: ResuxPlugin[];
   middleware: LoadedRouteMiddlewareRecord[];
   serverMiddleware: LoadedServerMiddlewareRecord[];
   serverHandlers: LoadedServerHandlerRecord[];
@@ -1486,7 +1487,7 @@ async function serveErrorDocument(
         vueIslands: manifest.vueIslands,
         runtimeConfig: manifest.runtimeConfig,
         appHead: manifest.appHead,
-        plugins: manifest.plugins,
+        plugins: resolveManifestPlugins(manifest),
       });
       response.writeHead(statusCode, {
         "content-type": "text/html; charset=utf-8",
@@ -1800,8 +1801,12 @@ async function renderRoute(
     vueIslands: manifest.vueIslands,
     runtimeConfig: manifest.runtimeConfig,
     appHead: manifest.appHead,
-    plugins: manifest.plugins,
+    plugins: resolveManifestPlugins(manifest),
   });
+}
+
+function resolveManifestPlugins(manifest: LoadedManifest): ResuxPlugin[] {
+  return manifest.resuxPlugins ?? manifest.plugins ?? [];
 }
 
 async function runRouteMiddleware(

@@ -1515,7 +1515,7 @@ ${moduleEntries}
 export const vueIslands = {
 ${vueIslandEntries}
 };
-export const plugins = [
+export const resuxPlugins = [
 ${pluginEntries}
 ];
 export const middleware = [

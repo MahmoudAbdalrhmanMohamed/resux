@@ -35,6 +35,16 @@ export default defineNitroConfig({
         "cache-control": "public, max-age=31536000, immutable"
       }
     },
+    "/__resux/plugins/**": {
+      headers: {
+        "cache-control": "public, max-age=31536000, immutable"
+      }
+    },
+    "/__resux/middleware/**": {
+      headers: {
+        "cache-control": "public, max-age=31536000, immutable"
+      }
+    },
     "/__resux/vue-islands/**": {
       headers: {
         "cache-control": "public, max-age=31536000, immutable"

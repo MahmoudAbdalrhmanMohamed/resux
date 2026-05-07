@@ -309,6 +309,98 @@ export default defineResuxModule({
 
 The module API includes `addCss`, `addHead`, `addRouteRule`, and `extendRuntimeConfig`. Route rules currently support redirects, response headers, status codes, cache headers, and CORS headers.
 
+## Plugins
+
+Resux auto-discovers app plugins from `plugins/` (and `app/plugins/`) without manual imports:
+
+- `plugins/*.ts`
+- `plugins/**/*.ts`
+- `plugins/*.client.ts`
+- `plugins/*.server.ts`
+
+Use `defineResuxPlugin`:
+
+```ts
+// plugins/01.api.ts
+export default defineResuxPlugin((resuxApp) => {
+  resuxApp.provide("apiBase", "/api")
+})
+```
+
+Plugin execution order is deterministic and sorted by discovered filename path. Numeric prefixes are supported, for example `01.auth.ts` runs before `02.analytics.ts`.
+
+Mode behavior:
+
+- `.client` plugins run only in the browser.
+- `.server` plugins run only on the server.
+- Unsuffixed plugins run on both server and client.
+
+Use `useResuxApp()` inside setup code to access provided values:
+
+```ts
+const app = useResuxApp()
+const apiBase = String(app.provides.apiBase ?? "/api")
+```
+
+TypeScript app helpers are available globally when your app includes:
+
+```ts
+/// <reference types="resuxjs/globals" />
+```
+
+For typed plugin injections, augment `ResuxAppInjections`:
+
+```ts
+declare module "resuxjs/runtime" {
+  interface ResuxAppInjections {
+    apiBase: string
+  }
+}
+```
+
+## Route Middleware
+
+Resux auto-discovers route middleware from `middleware/` (and `app/middleware/`) without manual imports:
+
+- `middleware/*.ts`
+- `middleware/**/*.ts`
+- `middleware/*.global.ts`
+- `middleware/*.client.ts`
+- `middleware/*.server.ts`
+
+Create middleware with `defineResuxRouteMiddleware`:
+
+```ts
+// middleware/auth.ts
+export default defineResuxRouteMiddleware((to) => {
+  if (to.path.startsWith("/admin")) {
+    return navigateTo("/login")
+  }
+})
+```
+
+Apply named middleware from page meta:
+
+```ts
+definePageMeta({ middleware: "auth" })
+definePageMeta({ middleware: ["auth", "admin"] })
+```
+
+Global middleware (`*.global.ts`) runs for every route. Middleware return handling:
+
+- `undefined` or no return: continue
+- `false`: abort with `403`
+- `"/path"`: redirect
+- `{ redirect: "/path" }` or `{ redirect: { to: "/path", statusCode: 302 } }`: redirect
+- `navigateTo("/path")`: redirect helper
+- `abortNavigation("message")`: abort helper
+
+Mode behavior:
+
+- `.client` middleware runs in browser navigation.
+- `.server` middleware runs only during server rendering/navigation handling.
+- Unsuffixed middleware runs on server route resolution.
+
 ## Server Middleware
 
 Files in `server/middleware` run for each request before server handlers, public files, and page rendering:
@@ -325,6 +417,8 @@ export default defineServerMiddleware((event) => {
 
 Server middleware can continue by returning nothing, use h3-style helpers such as `setHeader(event, name, value)`, end the Node response directly when necessary, return a `Response`, return a JSON-serializable value, return `false` to send `403`, or return a redirect/abort object.
 
+`server/middleware` is request middleware for raw HTTP handling and API/page requests. Route middleware in `middleware/` is navigation middleware for page routing decisions (`definePageMeta({ middleware })` + globals).
+
 ## What Works
 
 - `.vue`-style SFC files with `<template>`, `<script setup lang="ts">`, and plain CSS `<style>` blocks.
@@ -338,9 +432,9 @@ Server middleware can continue by returning nothing, use h3-style helpers such a
 - Server-side rendering.
 - Head/meta rendering from `resux.config.ts`, `definePageMeta`, `useHead`, and `useSeoMeta`.
 - Component CSS from `<style>` and `<style scoped>`, included in SSR output and updated during client-side navigation.
-- Route middleware from `middleware/`, including `.global` middleware.
+- Auto-discovered route middleware from `middleware/**/*`, including `.global`, `.client`, and `.server` files.
 - Request-time server middleware from `server/middleware`.
-- Plugins from `plugins/` with `defineResuxPlugin`.
+- Auto-discovered plugins from `plugins/**/*` with `.client` / `.server` mode suffix support and stable filename ordering.
 - Server API/routes from `server/api` and `server/routes`.
 - Server handler helpers: `readBody(event)`, `getQuery(event)`, and `setHeader(event, name, value)`, backed by h3.
 - `error.vue` for custom 404/500 rendering.
@@ -544,6 +638,8 @@ The tests cover:
 - Layout rendering.
 - Head/meta rendering.
 - Runtime config and plugin provides.
-- Project discovery for layouts, middleware, server middleware, plugins, API routes, and config.
+- Recursive project discovery for layouts, middleware, server middleware, plugins, API routes, and config.
+- Plugin order and client/server mode filtering.
+- Route middleware execution for SSR and client navigation.
 - Extended route-rule serialization.
 - Client resume behavior after interaction.

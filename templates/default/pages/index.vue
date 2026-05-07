@@ -1,7 +1,12 @@
 <script setup lang="ts">
+definePageMeta({
+  middleware: "auth"
+})
+
 const count = useState("count", () => 0)
 const config = useRuntimeConfig()
 const appName = String(config.public.appName ?? "Resux App")
+const pluginLabel = String(useResuxApp().provides.starterPlugin ?? "Starter plugin")
 type StarterStats = {
   response: string
   routes: string
@@ -41,6 +46,7 @@ function increment() {
       <p class="eyebrow">Resux starter</p>
       <h1>{{ appName }}</h1>
       <p class="lede">Server-rendered Vue-like files with resumable client handlers.</p>
+      <p class="eyebrow">{{ pluginLabel }}</p>
       <div class="actions">
         <button @click="increment">Count: {{ count }}</button>
         <ResuxLink to="/about">About this app</ResuxLink>

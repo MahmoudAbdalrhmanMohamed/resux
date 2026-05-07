@@ -15,6 +15,8 @@ import { createServer as createViteServer, type ViteDevServer } from "vite";
 import { buildProject, type BuildOptions } from "./compiler/index.js";
 import { runCreateResux } from "./create.js";
 import {
+  type ClientPluginManifestRecord,
+  type ClientRouteMiddlewareManifestRecord,
   renderApp,
   renderDocument,
   type ComponentDefinition,
@@ -95,6 +97,7 @@ interface LoadedRouteMiddlewareRecord {
   name: string;
   file: string;
   global: boolean;
+  mode: "all" | "server" | "client";
   handler: ResuxRouteMiddleware;
 }
 
@@ -113,7 +116,9 @@ interface LoadedManifest {
   vueIslands: Record<string, string>;
   resuxPlugins?: ResuxPlugin[];
   plugins?: ResuxPlugin[];
+  clientPlugins?: ClientPluginManifestRecord[];
   middleware: LoadedRouteMiddlewareRecord[];
+  clientMiddleware?: ClientRouteMiddlewareManifestRecord[];
   serverMiddleware: LoadedServerMiddlewareRecord[];
   serverHandlers: LoadedServerHandlerRecord[];
   runtimeConfig?: RuntimeConfig;
@@ -920,6 +925,16 @@ export default defineNitroConfig({
       }
     },
     "/__resux/handlers/**": {
+      headers: {
+        "cache-control": "public, max-age=31536000, immutable"
+      }
+    },
+    "/__resux/plugins/**": {
+      headers: {
+        "cache-control": "public, max-age=31536000, immutable"
+      }
+    },
+    "/__resux/middleware/**": {
       headers: {
         "cache-control": "public, max-age=31536000, immutable"
       }
@@ -1812,7 +1827,7 @@ async function renderRoute(
     return middlewareResult;
   }
 
-  return renderApp({
+  const rendered = await renderApp({
     app: manifest.app,
     page: matched.route.component,
     pageMeta: matched.route.meta,
@@ -1825,6 +1840,11 @@ async function renderRoute(
     appHead: manifest.appHead,
     plugins: resolveManifestPlugins(manifest),
   });
+
+  rendered.payload.pageMeta = matched.route.meta ?? {};
+  rendered.payload.plugins = manifest.clientPlugins ?? [];
+  rendered.payload.middleware = manifest.clientMiddleware ?? [];
+  return rendered;
 }
 
 function resolveManifestPlugins(manifest: LoadedManifest): ResuxPlugin[] {
@@ -1838,16 +1858,22 @@ async function runRouteMiddleware(
 ): Promise<RenderRedirect | RenderAbort | null> {
   const from: RouteContext = { path: "", params: {}, query: {} };
   const names = normalizeMiddlewareNames(pageMeta?.middleware);
+  const available = manifest.middleware.filter((entry) => entry.mode !== "client");
   const selected = [
-    ...manifest.middleware.filter((entry) => entry.global),
+    ...available.filter((entry) => entry.global),
     ...names
       .map((name) =>
-        manifest.middleware.find((entry) => entry.name === name),
+        available.find((entry) => entry.name === name),
       )
       .filter((entry): entry is LoadedRouteMiddlewareRecord => Boolean(entry)),
   ];
+  const seen = new Set<string>();
 
   for (const entry of selected) {
+    if (seen.has(entry.id)) {
+      continue;
+    }
+    seen.add(entry.id);
     const result = (await entry.handler(to, from)) as RouteMiddlewareResult;
     const normalized = normalizeMiddlewareResult(result);
     if (normalized) {
@@ -1894,29 +1920,56 @@ function normalizeMiddlewareNames(value: unknown): string[] {
 function normalizeMiddlewareResult(
   result: RouteMiddlewareResult,
 ): RenderRedirect | RenderAbort | null {
-  if (!result) {
-    return result === false
-      ? { type: "abort", statusCode: 403, message: "Navigation aborted" }
-      : null;
+  if (result === undefined || result === null) {
+    return null;
+  }
+
+  if (result === false) {
+    return { type: "abort", statusCode: 403, message: "Navigation aborted" };
   }
 
   if (typeof result === "string") {
     return { type: "redirect", to: result, statusCode: 302 };
   }
 
-  if (result.type === "redirect") {
+  if (
+    typeof result === "object"
+    && "redirect" in result
+    && typeof (result as { redirect?: unknown }).redirect === "string"
+  ) {
+    return { type: "redirect", to: (result as { redirect: string }).redirect, statusCode: 302 };
+  }
+
+  if (
+    typeof result === "object"
+    && "redirect" in result
+    && typeof (result as { redirect?: unknown }).redirect === "object"
+    && (result as { redirect?: { to?: unknown } }).redirect
+    && typeof (result as { redirect: { to: string; statusCode?: number } }).redirect.to === "string"
+  ) {
+    const redirect = (result as { redirect: { to: string; statusCode?: number } }).redirect;
     return {
       type: "redirect",
-      to: result.to,
-      statusCode: result.statusCode ?? 302,
+      to: redirect.to,
+      statusCode: redirect.statusCode ?? 302,
     };
   }
 
-  if (result.type === "abort") {
+  if (typeof result === "object" && "type" in result && result.type === "redirect") {
+    const redirect = result as { type: "redirect"; to: string; statusCode?: number };
+    return {
+      type: "redirect",
+      to: redirect.to,
+      statusCode: redirect.statusCode ?? 302,
+    };
+  }
+
+  if (typeof result === "object" && "type" in result && result.type === "abort") {
+    const abort = result as { type: "abort"; message?: string; statusCode?: number };
     return {
       type: "abort",
-      message: result.message ?? "Navigation aborted",
-      statusCode: result.statusCode ?? 403,
+      message: abort.message ?? "Navigation aborted",
+      statusCode: abort.statusCode ?? 403,
     };
   }
 
@@ -2403,6 +2456,14 @@ function resolveResuxAssetPath(pathname: string): string | null {
     return "client/runtime-client.mjs";
   }
 
+  if (pathname.startsWith("/__resux/plugins/")) {
+    return pathname.replace(/^\/__resux\/plugins\//, "client/plugins/");
+  }
+
+  if (pathname.startsWith("/__resux/middleware/")) {
+    return pathname.replace(/^\/__resux\/middleware\//, "client/middleware/");
+  }
+
   if (pathname.startsWith("/__resux/handlers/")) {
     return pathname.replace(/^\/__resux\/handlers\//, "client/handlers/");
   }
@@ -2417,6 +2478,14 @@ function resolveResuxAssetPath(pathname: string): string | null {
 function resolveResuxViteAssetUrl(pathname: string): string | null {
   if (pathname === "/__resux/runtime-client.mjs") {
     return "/runtime-client.mjs";
+  }
+
+  if (pathname.startsWith("/__resux/plugins/")) {
+    return pathname.replace(/^\/__resux\/plugins\//, "/plugins/");
+  }
+
+  if (pathname.startsWith("/__resux/middleware/")) {
+    return pathname.replace(/^\/__resux\/middleware\//, "/middleware/");
   }
 
   if (pathname.startsWith("/__resux/handlers/")) {

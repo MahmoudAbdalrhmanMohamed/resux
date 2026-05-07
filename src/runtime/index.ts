@@ -155,12 +155,35 @@ export interface RuntimeConfig {
   [key: string]: unknown;
 }
 
+export interface ResuxAppInjections {}
+
+export type ResuxSupportMode = "all" | "server" | "client";
+
+export interface ClientPluginManifestRecord {
+  id: string;
+  file: string;
+  mode: ResuxSupportMode;
+  src: string;
+}
+
+export interface ClientRouteMiddlewareManifestRecord {
+  id: string;
+  name: string;
+  file: string;
+  global: boolean;
+  mode: ResuxSupportMode;
+  src: string;
+}
+
+export type ResuxAppProvides = ResuxAppInjections & Record<string, unknown>;
+
 export interface ResuxAppLike {
   route: RouteContext;
   payload: ResuxPayload;
   $config: RuntimeConfig;
-  provides: Record<string, unknown>;
-  provide(key: string, value: unknown): void;
+  provides: ResuxAppProvides;
+  provide<Key extends keyof ResuxAppInjections & string>(key: Key, value: ResuxAppInjections[Key]): void;
+  provide<Key extends string, Value>(key: Key, value: Value): void;
 }
 
 export type ResuxPlugin = (resuxApp: ResuxAppLike) => unknown | Promise<unknown>;
@@ -186,6 +209,7 @@ export type RouteMiddlewareResult =
   | void
   | string
   | false
+  | { redirect: string | { to: string; statusCode?: number } }
   | { type: "redirect"; to: string; statusCode?: number }
   | { type: "abort"; message?: string; statusCode?: number };
 
@@ -330,6 +354,9 @@ export interface ResuxPayload {
   modules: Record<string, string>;
   vueIslands?: Record<string, string>;
   config?: RuntimeConfig;
+  plugins?: ClientPluginManifestRecord[];
+  middleware?: ClientRouteMiddlewareManifestRecord[];
+  pageMeta?: PageMeta;
 }
 
 export interface RouteRecord {
@@ -389,6 +416,17 @@ interface RenderTemplateContext {
 }
 
 type ComponentProps = Record<string, unknown>;
+let activeResuxApp: ResuxAppLike | null = null;
+
+async function withActiveResuxApp<T>(resuxApp: ResuxAppLike, run: () => Promise<T> | T): Promise<T> {
+  const previous = activeResuxApp;
+  activeResuxApp = resuxApp;
+  try {
+    return await run();
+  } finally {
+    activeResuxApp = previous;
+  }
+}
 
 export function defineComponent(definition: ComponentDefinition): ComponentDefinition {
   return definition;
@@ -408,6 +446,19 @@ export function defineResuxPlugin(plugin: ResuxPlugin): ResuxPlugin {
 
 export function defineResuxRouteMiddleware(middleware: ResuxRouteMiddleware): ResuxRouteMiddleware {
   return middleware;
+}
+
+export function useResuxApp(): ResuxAppLike {
+  if (activeResuxApp) {
+    return activeResuxApp;
+  }
+
+  const globalApp = (globalThis as { __RESUX_APP__?: ResuxAppLike }).__RESUX_APP__;
+  if (globalApp) {
+    return globalApp;
+  }
+
+  throw new Error("useResuxApp() is only available while executing a Resux setup or middleware context.");
 }
 
 export function navigateTo(to: string, options: { statusCode?: number } = {}): RouteMiddlewareResult {
@@ -604,7 +655,7 @@ class ResuxRenderer {
     const asyncDataRefs: Record<string, AsyncDataResource<unknown>> = {};
     const resuxApp = createResuxApp(this.route, this.modules, this.runtimeConfig);
     const setupContext = createServerSetupContext(this.route, props, stateRefs, asyncDataRefs, this.headEntries, resuxApp, this.runtimeConfig);
-    const scope = await definition.script(setupContext);
+    const scope = await withActiveResuxApp(resuxApp, () => definition.script(setupContext));
 
     this.scopes[scopeId] = {
       id: scopeId,
@@ -1226,7 +1277,7 @@ export class AsyncResuxRenderer {
       this.resuxApp,
       this.runtimeConfig
     );
-    const scope = await definition.script(setupContext);
+    const scope = await withActiveResuxApp(this.resuxApp, () => definition.script(setupContext));
 
     this.scopes[scopeId] = {
       id: scopeId,
@@ -1326,7 +1377,7 @@ export async function renderAppAsync(options: RenderAppOptions): Promise<RenderR
   );
 
   for (const plugin of options.plugins ?? []) {
-    await plugin(renderer.resuxApp);
+    await withActiveResuxApp(renderer.resuxApp, () => plugin(renderer.resuxApp));
   }
 
   renderer.headEntries.push(appHead);
@@ -1349,7 +1400,7 @@ function createResuxApp(route: RouteContext, modules: Record<string, string>, ru
     modules,
     config: publicRuntimeConfig(runtimeConfig)
   };
-  const provides: Record<string, unknown> = {};
+  const provides = {} as ResuxAppProvides;
 
   return {
     route,
@@ -1357,7 +1408,7 @@ function createResuxApp(route: RouteContext, modules: Record<string, string>, ru
     $config: runtimeConfig,
     provides,
     provide(key: string, value: unknown): void {
-      provides[key] = value;
+      (provides as Record<string, unknown>)[key] = value;
       (this as unknown as Record<string, unknown>)[`$${key}`] = value;
     }
   };
@@ -1731,6 +1782,9 @@ const pendingAsyncDataControllers = globalThis.__RESUX_PENDING_ASYNC_DATA_CONTRO
 let devImportRevision = 0;
 let routeTransitionToken = 0;
 let routeTransitionHideTimer = 0;
+const clientPluginIds = new Set();
+const clientMiddlewareById = new Map();
+const clientProvides = globalThis.__RESUX_PROVIDES__ ||= {};
 
 const __rxFlags = {
   isReactive: "__v_isReactive",
@@ -2178,6 +2232,186 @@ function __rxTraverse(value, seen = new Set()) {
   return value;
 }
 
+export function defineResuxPlugin(plugin) {
+  return plugin;
+}
+
+export function defineResuxRouteMiddleware(middleware) {
+  return middleware;
+}
+
+export function defineClientRouteRedirect(to, options = {}) {
+  return {
+    type: "redirect",
+    to,
+    statusCode: options.statusCode
+  };
+}
+
+export function defineClientRouteAbort(message, options = {}) {
+  return {
+    type: "abort",
+    message,
+    statusCode: options.statusCode
+  };
+}
+
+export function useResuxApp() {
+  return getClientResuxApp();
+}
+
+function getClientResuxApp(routeOverride) {
+  const payload = globalThis.__RESUX__ ?? {
+    route: routeOverride ?? { path: "/", params: {}, query: {} },
+    scopes: {},
+    modules: {},
+    config: { public: {} }
+  };
+  const route = routeOverride ?? payload.route ?? { path: "/", params: {}, query: {} };
+  const config = payload.config ?? { public: {} };
+  let app = globalThis.__RESUX_APP__;
+
+  if (!app) {
+    app = {
+      route,
+      payload,
+      $config: config,
+      provides: clientProvides,
+      provide(key, value) {
+        clientProvides[key] = value;
+        this["$" + key] = value;
+      }
+    };
+    for (const [key, value] of Object.entries(clientProvides)) {
+      app["$" + key] = value;
+    }
+    globalThis.__RESUX_APP__ = app;
+  } else {
+    app.route = route;
+    app.payload = payload;
+    app.$config = config;
+    app.provides = clientProvides;
+  }
+
+  return app;
+}
+
+async function ensureClientPlugins(payload) {
+  if (!payload || !Array.isArray(payload.plugins)) {
+    return;
+  }
+  const app = getClientResuxApp(payload.route);
+
+  for (const entry of payload.plugins) {
+    if (!entry || entry.mode === "server" || typeof entry.id !== "string" || typeof entry.src !== "string") {
+      continue;
+    }
+    if (clientPluginIds.has(entry.id)) {
+      continue;
+    }
+    const imported = await import(/* @vite-ignore */ entry.src);
+    const plugin = imported?.default ?? imported;
+    if (typeof plugin === "function") {
+      await plugin(app);
+      getClientResuxApp(payload.route);
+    }
+    clientPluginIds.add(entry.id);
+  }
+}
+
+async function ensureClientMiddleware(payload) {
+  if (!payload || !Array.isArray(payload.middleware)) {
+    return;
+  }
+
+  for (const entry of payload.middleware) {
+    if (!entry || entry.mode !== "client" || typeof entry.id !== "string" || typeof entry.src !== "string") {
+      continue;
+    }
+    if (clientMiddlewareById.has(entry.id)) {
+      continue;
+    }
+    const imported = await import(/* @vite-ignore */ entry.src);
+    const handler = imported?.default ?? imported;
+    if (typeof handler === "function") {
+      clientMiddlewareById.set(entry.id, {
+        id: entry.id,
+        name: String(entry.name ?? ""),
+        global: Boolean(entry.global),
+        handler
+      });
+    }
+  }
+}
+
+function normalizeMiddlewareNames(value) {
+  if (!value) {
+    return [];
+  }
+  return (Array.isArray(value) ? value : [value]).map((name) => String(name));
+}
+
+function normalizeClientMiddlewareResult(result) {
+  if (result === undefined || result === null) {
+    return null;
+  }
+  if (result === false) {
+    return { type: "abort", statusCode: 403, message: "Navigation aborted" };
+  }
+  if (typeof result === "string") {
+    return { type: "redirect", to: result, statusCode: 302 };
+  }
+  if (result.type === "redirect") {
+    return {
+      type: "redirect",
+      to: result.to,
+      statusCode: result.statusCode ?? 302
+    };
+  }
+  if (result.type === "abort") {
+    return {
+      type: "abort",
+      message: result.message ?? "Navigation aborted",
+      statusCode: result.statusCode ?? 403
+    };
+  }
+  if (typeof result.redirect === "string") {
+    return { type: "redirect", to: result.redirect, statusCode: 302 };
+  }
+  if (result.redirect && typeof result.redirect === "object" && typeof result.redirect.to === "string") {
+    return {
+      type: "redirect",
+      to: result.redirect.to,
+      statusCode: result.redirect.statusCode ?? 302
+    };
+  }
+  return null;
+}
+
+async function runClientRouteMiddleware(payload, fromRoute) {
+  await ensureClientMiddleware(payload);
+  const toRoute = payload?.route ?? fromRoute ?? { path: "/", params: {}, query: {} };
+  const from = fromRoute ?? { path: "", params: {}, query: {} };
+  const names = normalizeMiddlewareNames(payload?.pageMeta?.middleware);
+  const allEntries = [...clientMiddlewareById.values()];
+  const selected = [
+    ...allEntries.filter((entry) => entry.global),
+    ...names
+      .map((name) => allEntries.find((entry) => entry.name === name))
+      .filter(Boolean)
+  ];
+
+  for (const entry of selected) {
+    const result = await entry.handler(toRoute, from);
+    const normalized = normalizeClientMiddlewareResult(result);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
 export function createClientComponent(definition) {
   return {
     async createScope(serializedScope, route) {
@@ -2252,16 +2486,10 @@ export function createClientComponent(definition) {
           // SEO meta updates are server-rendered by Resux.
         },
         useRuntimeConfig() {
-          return globalThis.__RESUX__?.config ?? { public: {} };
+          return getClientResuxApp(route).$config;
         },
         useResuxApp() {
-          return {
-            route,
-            payload: globalThis.__RESUX__,
-            $config: globalThis.__RESUX__?.config ?? { public: {} },
-            provides: {},
-            provide() {}
-          };
+          return getClientResuxApp(route);
         },
         apiURL(url) {
           return url;
@@ -2342,6 +2570,23 @@ function installResux() {
   }
   if (typeof window !== "undefined") {
     window.__RESUX_APPLY_DEV_UPDATE__ = applyDevUpdate;
+  }
+  void initializeClientRuntime();
+}
+
+async function initializeClientRuntime() {
+  const payload = globalThis.__RESUX__;
+  if (!payload) {
+    return;
+  }
+  await ensureClientPlugins(payload);
+  const middlewareResult = await runClientRouteMiddleware(payload, { path: "", params: {}, query: {} });
+  if (middlewareResult?.type === "redirect") {
+    await navigateTo(middlewareResult.to, { replace: true });
+    return;
+  }
+  if (middlewareResult?.type === "abort") {
+    return;
   }
   void resumePendingAsyncData();
   void mountVueIslands();
@@ -2549,6 +2794,23 @@ async function navigateTo(target, options = {}) {
       await navigateTo(result.redirect, { replace: true });
       return;
     }
+    const nextPayload = result.payload;
+    if (!nextPayload) {
+      throw new Error("Route payload response is missing payload data.");
+    }
+    await ensureClientPlugins(nextPayload);
+    const previousPayload = globalThis.__RESUX__;
+    const middlewareResult = await runClientRouteMiddleware(
+      nextPayload,
+      previousPayload?.route ?? { path: "", params: {}, query: {} }
+    );
+    if (middlewareResult?.type === "redirect") {
+      await navigateTo(middlewareResult.to, { replace: true });
+      return;
+    }
+    if (middlewareResult?.type === "abort") {
+      return;
+    }
 
     const root = document.getElementById("__resux");
     if (!root) {
@@ -2563,9 +2825,9 @@ async function navigateTo(target, options = {}) {
     }
 
     setRouteTransition("swapping", { path: routePath });
-    const previousPayload = globalThis.__RESUX__;
     const preserved = replaceRouteHtml(root, result.html);
-    globalThis.__RESUX__ = mergePersistentLayoutPayload(previousPayload, result.payload, preserved.scopeIds);
+    globalThis.__RESUX__ = mergePersistentLayoutPayload(previousPayload, nextPayload, preserved.scopeIds);
+    getClientResuxApp(globalThis.__RESUX__.route);
     applyHead(result.head);
     clearScopeCacheExcept(preserved.scopeIds);
     void resumePendingAsyncData();

@@ -53,15 +53,18 @@ export interface CompiledPlugin {
   id: string;
   file: string;
   mode: "all" | "server" | "client";
-  source: string;
+  serverSource: string;
+  clientSource: string;
 }
 
 export interface CompiledMiddleware {
   id: string;
   name: string;
   file: string;
+  mode: "all" | "server" | "client";
   global: boolean;
-  source: string;
+  serverSource: string;
+  clientSource: string;
 }
 
 export interface CompiledServerMiddleware {
@@ -240,8 +243,12 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
   await mkdir(path.join(absoluteOut, "server", "config-modules"), { recursive: true });
   await mkdir(path.join(absoluteOut, "client", "handlers"), { recursive: true });
   await mkdir(path.join(absoluteOut, "client", "vue-islands"), { recursive: true });
+  await mkdir(path.join(absoluteOut, "client", "plugins"), { recursive: true });
+  await mkdir(path.join(absoluteOut, "client", "middleware"), { recursive: true });
   await mkdir(path.join(absoluteOut, "vite-client", "handlers"), { recursive: true });
   await mkdir(path.join(absoluteOut, "vite-client", "vue-islands"), { recursive: true });
+  await mkdir(path.join(absoluteOut, "vite-client", "plugins"), { recursive: true });
+  await mkdir(path.join(absoluteOut, "vite-client", "middleware"), { recursive: true });
 
   const runtimeConfig = await readRuntimeConfig(absoluteRoot, absoluteOut);
   const routeRules = createRouteRules(runtimeConfig);
@@ -252,9 +259,9 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
     ?? await optionalFile(path.join(absoluteRoot, "app", "app.vue"));
   const errorFile = await optionalFile(path.join(absoluteRoot, "error.vue"))
     ?? await optionalFile(path.join(absoluteRoot, "app", "error.vue"));
-  const pluginFiles = await discoverTopLevelTsFiles(absoluteRoot, "plugins");
-  const middlewareFiles = await discoverTopLevelTsFiles(absoluteRoot, "middleware");
-  const serverMiddlewareFiles = await discoverTopLevelTsFiles(absoluteRoot, path.join("server", "middleware"));
+  const pluginFiles = await discoverSupportTsFiles(absoluteRoot, "plugins");
+  const middlewareFiles = await discoverSupportTsFiles(absoluteRoot, "middleware");
+  const serverMiddlewareFiles = await discoverSupportTsFiles(absoluteRoot, path.join("server", "middleware"));
   const serverHandlerFiles = [
     ...await discoverServerFiles(path.join(absoluteRoot, "server", "api"), "/api"),
     ...await discoverServerFiles(path.join(absoluteRoot, "server", "routes"), "")
@@ -290,11 +297,21 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
   const error = errorFile ? compiledByFile.get(errorFile) : undefined;
 
   for (const plugin of plugins) {
-    await writeFile(path.join(absoluteOut, "server", "plugins", `${plugin.id}.mjs`), plugin.source, "utf8");
+    if (plugin.mode !== "client") {
+      await writeFile(path.join(absoluteOut, "server", "plugins", `${plugin.id}.mjs`), plugin.serverSource, "utf8");
+    }
+    if (plugin.mode !== "server") {
+      await writeFile(path.join(absoluteOut, "vite-client", "plugins", `${plugin.id}.mjs`), plugin.clientSource, "utf8");
+    }
   }
 
   for (const entry of middleware) {
-    await writeFile(path.join(absoluteOut, "server", "middleware", `${entry.id}.mjs`), entry.source, "utf8");
+    if (entry.mode !== "client") {
+      await writeFile(path.join(absoluteOut, "server", "middleware", `${entry.id}.mjs`), entry.serverSource, "utf8");
+    }
+    if (entry.mode !== "server") {
+      await writeFile(path.join(absoluteOut, "vite-client", "middleware", `${entry.id}.mjs`), entry.clientSource, "utf8");
+    }
   }
 
   for (const entry of serverMiddleware) {
@@ -313,7 +330,7 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
   if (buildOptions.vite === "dev") {
     await writeViteClientRuntime(absoluteOut);
   } else {
-    await buildClientAssets(absoluteRoot, absoluteOut, components, vueIslands);
+    await buildClientAssets(absoluteRoot, absoluteOut, components, plugins, middleware, vueIslands);
   }
   await writeFile(
     path.join(absoluteOut, "server", "manifest.mjs"),
@@ -328,7 +345,7 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
     components: components.map(({ id, name, file, handlers, styles, styleScopeId, meta }) => ({ id, name, file, handlers, styles, styleScopeId, meta })),
     layouts: layouts.map(({ id, name, file, styles, styleScopeId }) => ({ id, name, file, styles, styleScopeId })),
     plugins: plugins.map(({ id, file, mode }) => ({ id, file, mode })),
-    middleware: middleware.map(({ id, name, file, global }) => ({ id, name, file, global })),
+    middleware: middleware.map(({ id, name, file, global, mode }) => ({ id, name, file, global, mode })),
     serverMiddleware: serverMiddleware.map(({ id, file }) => ({ id, file })),
     serverHandlers: serverHandlers.map(({ id, path: routePath, file, params }) => ({ id, path: routePath, file, params })),
     vueIslands,
@@ -397,7 +414,14 @@ async function buildServerBundle(root: string, outDir: string): Promise<void> {
   }
 }
 
-async function buildClientAssets(root: string, outDir: string, components: CompiledComponent[], vueIslands: VueIslandRecord[]): Promise<void> {
+async function buildClientAssets(
+  root: string,
+  outDir: string,
+  components: CompiledComponent[],
+  plugins: CompiledPlugin[],
+  middleware: CompiledMiddleware[],
+  vueIslands: VueIslandRecord[]
+): Promise<void> {
   const inputRoot = path.join(outDir, "vite-client");
   const runtimeInput = await writeViteClientRuntime(outDir);
 
@@ -407,6 +431,14 @@ async function buildClientAssets(root: string, outDir: string, components: Compi
 
   for (const component of components) {
     input[`handlers/${component.id}`] = path.join(inputRoot, "handlers", `${component.id}.mjs`);
+  }
+
+  for (const plugin of plugins.filter((entry) => entry.mode !== "server")) {
+    input[`plugins/${plugin.id}`] = path.join(inputRoot, "plugins", `${plugin.id}.mjs`);
+  }
+
+  for (const entry of middleware.filter((candidate) => candidate.mode !== "server")) {
+    input[`middleware/${entry.id}`] = path.join(inputRoot, "middleware", `${entry.id}.mjs`);
   }
 
   for (const island of vueIslands) {
@@ -1432,9 +1464,13 @@ function createServerManifestSource(
   buildOptions: BuildOptions = {}
 ): string {
   const importSuffix = buildOptions.vite === "dev" ? `?t=${Date.now()}` : "";
+  const serverPlugins = plugins.filter((entry) => entry.mode !== "client");
+  const clientPlugins = plugins.filter((entry) => entry.mode !== "server");
+  const serverRouteMiddleware = middleware.filter((entry) => entry.mode !== "client");
+  const clientRouteMiddleware = middleware.filter((entry) => entry.mode !== "server");
   const imports = components.map((component) => `import ${component.id} from "./${component.id}.mjs${importSuffix}";`).join("\n");
-  const pluginImports = plugins.map((plugin) => `import ${plugin.id} from "./plugins/${plugin.id}.mjs${importSuffix}";`).join("\n");
-  const middlewareImports = middleware.map((entry) => `import ${entry.id} from "./middleware/${entry.id}.mjs${importSuffix}";`).join("\n");
+  const pluginImports = serverPlugins.map((plugin) => `import ${plugin.id} from "./plugins/${plugin.id}.mjs${importSuffix}";`).join("\n");
+  const middlewareImports = serverRouteMiddleware.map((entry) => `import ${entry.id} from "./middleware/${entry.id}.mjs${importSuffix}";`).join("\n");
   const serverMiddlewareImports = serverMiddleware.map((entry) => `import ${entry.id} from "./request-middleware/${entry.id}.mjs${importSuffix}";`).join("\n");
   const handlerImports = serverHandlers.map((handler) => `import ${handler.id} from "./handlers/${handler.id}.mjs${importSuffix}";`).join("\n");
   const componentEntries = components.map((component) => `${JSON.stringify(component.name)}: ${component.id}`).join(",\n");
@@ -1445,17 +1481,35 @@ function createServerManifestSource(
   const vueIslandEntries = vueIslands
     .map((island) => `${JSON.stringify(island.name)}: ${JSON.stringify(`/__resux/vue-islands/${island.name}.mjs`)}`)
     .join(",\n");
-  const pluginEntries = plugins
-    .filter((plugin) => plugin.mode !== "client")
+  const pluginEntries = serverPlugins
     .map((plugin) => plugin.id)
     .join(",\n");
-  const middlewareEntries = middleware
+  const clientPluginEntries = clientPlugins
+    .map((plugin) => `{
+      id: ${JSON.stringify(plugin.id)},
+      file: ${JSON.stringify(normalizePath(plugin.file))},
+      mode: ${JSON.stringify(plugin.mode)},
+      src: ${JSON.stringify(`/__resux/plugins/${plugin.id}.mjs`)}
+    }`)
+    .join(",\n");
+  const middlewareEntries = serverRouteMiddleware
     .map((entry) => `{
       id: ${JSON.stringify(entry.id)},
       name: ${JSON.stringify(entry.name)},
       file: ${JSON.stringify(normalizePath(entry.file))},
       global: ${JSON.stringify(entry.global)},
+      mode: ${JSON.stringify(entry.mode)},
       handler: ${entry.id}
+    }`)
+    .join(",\n");
+  const clientMiddlewareEntries = clientRouteMiddleware
+    .map((entry) => `{
+      id: ${JSON.stringify(entry.id)},
+      name: ${JSON.stringify(entry.name)},
+      file: ${JSON.stringify(normalizePath(entry.file))},
+      global: ${JSON.stringify(entry.global)},
+      mode: ${JSON.stringify(entry.mode)},
+      src: ${JSON.stringify(`/__resux/middleware/${entry.id}.mjs`)}
     }`)
     .join(",\n");
   const serverMiddlewareEntries = serverMiddleware
@@ -1518,8 +1572,14 @@ ${vueIslandEntries}
 export const resuxPlugins = [
 ${pluginEntries}
 ];
+export const clientPlugins = [
+${clientPluginEntries}
+];
 export const middleware = [
 ${middlewareEntries}
+];
+export const clientMiddleware = [
+${clientMiddlewareEntries}
 ];
 export const serverMiddleware = [
 ${serverMiddlewareEntries}
@@ -1703,28 +1763,50 @@ function layoutNameFromFile(file: string): string {
   return kebabCase(path.basename(file, ".vue"));
 }
 
+function supportFileMode(file: string): "all" | "server" | "client" {
+  if (file.includes(".client.")) {
+    return "client";
+  }
+  if (file.includes(".server.")) {
+    return "server";
+  }
+  return "all";
+}
+
+function supportFileBaseName(file: string): string {
+  const extensionStripped = path.basename(file).replace(/\.[cm]?[tj]s$/, "");
+  return extensionStripped.replace(/(?:\.global|\.client|\.server)+$/, "");
+}
+
 function compilePluginFile(file: string, index: number): CompiledPlugin {
-  const mode = file.includes(".client.") ? "client" : file.includes(".server.") ? "server" : "all";
+  const mode = supportFileMode(file);
   return {
     id: `p${index}`,
     file,
     mode,
-    source: transpileSupportModule(file, `import { defineResuxPlugin } from "resuxjs/runtime";\n`)
+    serverSource: transpileSupportModule(file, `import { defineResuxPlugin } from "resuxjs/runtime";\n`),
+    clientSource: transpileSupportModule(file, `import { defineResuxPlugin } from "/__resux/runtime-client.mjs";\n`)
   };
 }
 
 function compileMiddlewareFile(file: string, index: number): CompiledMiddleware {
-  const baseName = path.basename(file).replace(/\.(global\.)?[cm]?[tj]s$/, "");
-  const global = /\.global\.[cm]?[tj]s$/.test(file);
+  const baseName = supportFileBaseName(file);
+  const mode = supportFileMode(file);
+  const global = /\.global(?:\.(?:client|server))?\.[cm]?[tj]s$/.test(file);
 
   return {
     id: `w${index}`,
     name: kebabCase(baseName),
     file,
+    mode,
     global,
-    source: transpileSupportModule(
+    serverSource: transpileSupportModule(
       file,
       `import { defineResuxRouteMiddleware, navigateTo, abortNavigation } from "resuxjs/runtime";\n`
+    ),
+    clientSource: transpileSupportModule(
+      file,
+      `import { defineResuxRouteMiddleware, defineClientRouteRedirect as navigateTo, defineClientRouteAbort as abortNavigation } from "/__resux/runtime-client.mjs";\n`
     )
   };
 }
@@ -2096,34 +2178,44 @@ async function discoverAppVueFiles(root: string, dirName: string): Promise<strin
   ]);
 }
 
-async function discoverTopLevelTsFiles(root: string, dirName: string): Promise<string[]> {
+async function discoverSupportTsFiles(root: string, dirName: string): Promise<string[]> {
   const dirs = [path.join(root, dirName), path.join(root, "app", dirName)];
   const files: string[] = [];
 
   for (const dir of dirs) {
-    try {
-      const entries = await readdir(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-        if (entry.isFile() && /\.[cm]?[tj]s$/.test(entry.name)) {
-          files.push(fullPath);
-        } else if (entry.isDirectory()) {
-          const indexFile = await findFirstExisting([
-            path.join(fullPath, "index.ts"),
-            path.join(fullPath, "index.js"),
-            path.join(fullPath, "index.mjs")
-          ]);
-          if (indexFile) {
-            files.push(indexFile);
-          }
-        }
-      }
-    } catch {
-      continue;
-    }
+    files.push(...await discoverSupportTsFilesInDir(dir));
   }
 
-  return unique(files).sort();
+  return unique(files).sort((left, right) => normalizePath(left).localeCompare(normalizePath(right)));
+}
+
+async function discoverSupportTsFilesInDir(dir: string): Promise<string[]> {
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    const files: string[] = [];
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        files.push(...await discoverSupportTsFilesInDir(fullPath));
+        continue;
+      }
+      if (!entry.isFile()) {
+        continue;
+      }
+      if (!/\.[cm]?[tj]s$/.test(entry.name)) {
+        continue;
+      }
+      if (/\.d\.[cm]?[tj]s$/.test(entry.name)) {
+        continue;
+      }
+      files.push(fullPath);
+    }
+
+    return files;
+  } catch {
+    return [];
+  }
 }
 
 async function discoverServerFiles(dir: string, routePrefix: string): Promise<Array<{ file: string; path: string }>> {

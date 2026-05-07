@@ -535,6 +535,7 @@ describe("runtime SSR", () => {
       ]
     });
 
+    let provideType = "";
     const result = await renderApp({
       app,
       page,
@@ -543,11 +544,13 @@ describe("runtime SSR", () => {
       runtimeConfig: { public: { apiBase: "/api" } },
       plugins: [
         async (resuxApp) => {
+          provideType = typeof resuxApp.provide;
           resuxApp.provide("appName", "TestApp");
         }
       ]
     });
 
+    expect(provideType).toBe("function");
     expect(result.html).toContain('class="layout"');
     expect(result.html).toContain("/api:TestApp");
     expect(result.head.title).toBe("Home");

@@ -236,8 +236,8 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
   };
   await cleanGeneratedOutput(absoluteOut);
   await mkdir(path.join(absoluteOut, "server"), { recursive: true });
-  await mkdir(path.join(absoluteOut, "server", "plugins"), { recursive: true });
-  await mkdir(path.join(absoluteOut, "server", "middleware"), { recursive: true });
+  await mkdir(path.join(absoluteOut, "server", "resux-plugins"), { recursive: true });
+  await mkdir(path.join(absoluteOut, "server", "resux-middleware"), { recursive: true });
   await mkdir(path.join(absoluteOut, "server", "request-middleware"), { recursive: true });
   await mkdir(path.join(absoluteOut, "server", "handlers"), { recursive: true });
   await mkdir(path.join(absoluteOut, "server", "config-modules"), { recursive: true });
@@ -298,7 +298,7 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
 
   for (const plugin of plugins) {
     if (plugin.mode !== "client") {
-      await writeFile(path.join(absoluteOut, "server", "plugins", `${plugin.id}.mjs`), plugin.serverSource, "utf8");
+      await writeFile(path.join(absoluteOut, "server", "resux-plugins", `${plugin.id}.mjs`), plugin.serverSource, "utf8");
     }
     if (plugin.mode !== "server") {
       await writeFile(path.join(absoluteOut, "vite-client", "plugins", `${plugin.id}.mjs`), plugin.clientSource, "utf8");
@@ -307,7 +307,7 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
 
   for (const entry of middleware) {
     if (entry.mode !== "client") {
-      await writeFile(path.join(absoluteOut, "server", "middleware", `${entry.id}.mjs`), entry.serverSource, "utf8");
+      await writeFile(path.join(absoluteOut, "server", "resux-middleware", `${entry.id}.mjs`), entry.serverSource, "utf8");
     }
     if (entry.mode !== "server") {
       await writeFile(path.join(absoluteOut, "vite-client", "middleware", `${entry.id}.mjs`), entry.clientSource, "utf8");
@@ -1469,8 +1469,8 @@ function createServerManifestSource(
   const serverRouteMiddleware = middleware.filter((entry) => entry.mode !== "client");
   const clientRouteMiddleware = middleware.filter((entry) => entry.mode !== "server");
   const imports = components.map((component) => `import ${component.id} from "./${component.id}.mjs${importSuffix}";`).join("\n");
-  const pluginImports = serverPlugins.map((plugin) => `import ${plugin.id} from "./plugins/${plugin.id}.mjs${importSuffix}";`).join("\n");
-  const middlewareImports = serverRouteMiddleware.map((entry) => `import ${entry.id} from "./middleware/${entry.id}.mjs${importSuffix}";`).join("\n");
+  const pluginImports = serverPlugins.map((plugin) => `import ${plugin.id} from "./resux-plugins/${plugin.id}.mjs${importSuffix}";`).join("\n");
+  const middlewareImports = serverRouteMiddleware.map((entry) => `import ${entry.id} from "./resux-middleware/${entry.id}.mjs${importSuffix}";`).join("\n");
   const serverMiddlewareImports = serverMiddleware.map((entry) => `import ${entry.id} from "./request-middleware/${entry.id}.mjs${importSuffix}";`).join("\n");
   const handlerImports = serverHandlers.map((handler) => `import ${handler.id} from "./handlers/${handler.id}.mjs${importSuffix}";`).join("\n");
   const componentEntries = components.map((component) => `${JSON.stringify(component.name)}: ${component.id}`).join(",\n");

@@ -560,10 +560,29 @@ describe("project build manifest", () => {
     expect(serverOnlyPlugin).toBeDefined();
     expect(clientOnlyMiddleware).toBeDefined();
     expect(serverOnlyMiddleware).toBeDefined();
-    await expect(readFile(path.join(root, ".resux", "server", "plugins", `${clientOnlyPlugin!.id}.mjs`), "utf8")).rejects.toThrow();
+    await expect(readFile(path.join(root, ".resux", "server", "resux-plugins", `${clientOnlyPlugin!.id}.mjs`), "utf8")).rejects.toThrow();
     await expect(readFile(path.join(root, ".resux", "client", "plugins", `${serverOnlyPlugin!.id}.mjs`), "utf8")).rejects.toThrow();
-    await expect(readFile(path.join(root, ".resux", "server", "middleware", `${clientOnlyMiddleware!.id}.mjs`), "utf8")).rejects.toThrow();
+    await expect(readFile(path.join(root, ".resux", "server", "resux-middleware", `${clientOnlyMiddleware!.id}.mjs`), "utf8")).rejects.toThrow();
     await expect(readFile(path.join(root, ".resux", "client", "middleware", `${serverOnlyMiddleware!.id}.mjs`), "utf8")).rejects.toThrow();
+  }, 20000);
+
+  it("keeps Resux plugins separate from Nitro plugin auto-discovery folders", async () => {
+    const root = path.join(os.tmpdir(), `resux-nitro-separation-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await mkdir(path.join(root, "plugins"), { recursive: true });
+    await mkdir(path.join(root, "server", "plugins"), { recursive: true });
+    await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Home</main></template>");
+    await writeFile(path.join(root, "plugins", "01.lab.ts"), "export default defineResuxPlugin((app) => app.provide('labPlugin', { ok: true }))");
+    await writeFile(path.join(root, "server", "plugins", "01.nitro.ts"), "export default () => {}");
+
+    const result = await buildProject(root);
+    const manifestSource = await readFile(path.join(root, ".resux", "server", "manifest.mjs"), "utf8");
+
+    expect(result.plugins.map((entry) => path.relative(root, entry.file).replaceAll("\\", "/"))).toEqual(["plugins/01.lab.ts"]);
+    expect(manifestSource).toContain('./resux-plugins/');
+    expect(manifestSource).not.toContain('./plugins/');
+    await expect(readFile(path.join(root, ".resux", "server", "resux-plugins", "p0.mjs"), "utf8")).resolves.toContain("defineResuxPlugin");
+    await expect(readFile(path.join(root, ".resux", "server", "plugins", "p0.mjs"), "utf8")).rejects.toThrow();
   }, 20000);
 
   it("runs configured modules and emits route rules", async () => {

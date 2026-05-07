@@ -1235,6 +1235,121 @@ export default createClientComponent({ id: "m0", name: "Model", file: "Model.vue
     expect(window.document.head.innerHTML).toContain('name="route"');
   });
 
+  it("runs client route middleware during client-side navigation", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-client-mw-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const middlewareFile = path.join(tempDir, "auth.client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+    await writeFile(
+      middlewareFile,
+      `import { defineResuxRouteMiddleware, defineClientRouteRedirect as navigateTo } from ${JSON.stringify(pathToFileURL(runtimeFile).href)};
+export default defineResuxRouteMiddleware((to, from) => {
+  globalThis.__CLIENT_MW_RUNS__ = globalThis.__CLIENT_MW_RUNS__ || [];
+  globalThis.__CLIENT_MW_RUNS__.push({ to: to.path, from: from.path });
+  if (to.path === "/protected") {
+    return navigateTo("/login");
+  }
+});
+`,
+      "utf8"
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <a href="/protected">Protected</a>
+        <main>Home</main>
+      </div>
+      <div id="__resux-loading" hidden data-state="idle" aria-live="polite" aria-busy="false">
+        <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Idle"><span></span></div>
+        <div class="panel" data-rx-transition-message>Ready</div>
+      </div>
+    `;
+
+    const middlewareEntry = {
+      id: "w0",
+      name: "auth",
+      file: "middleware/auth.client.ts",
+      global: false,
+      mode: "client",
+      src: pathToFileURL(middlewareFile).href
+    };
+    const requestedPaths: string[] = [];
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      scrollTo: () => undefined,
+      fetch: async (url: string) => {
+        const request = new URL(url, "http://localhost");
+        const routePath = decodeURIComponent(request.searchParams.get("path") ?? "");
+        requestedPaths.push(routePath);
+        if (routePath === "/protected") {
+          return new Response(
+            JSON.stringify({
+              html: "<main>Protected</main>",
+              head: { title: "Protected" },
+              payload: {
+                route: { path: "/protected", params: {}, query: {} },
+                scopes: {},
+                modules: {},
+                plugins: [],
+                middleware: [middlewareEntry],
+                pageMeta: { middleware: "auth" }
+              }
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" }
+            }
+          );
+        }
+
+        return new Response(
+          JSON.stringify({
+            html: "<main>Login</main>",
+            head: { title: "Login" },
+            payload: {
+              route: { path: "/login", params: {}, query: {} },
+              scopes: {},
+              modules: {},
+              plugins: [],
+              middleware: [middlewareEntry],
+              pageMeta: {}
+            }
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      },
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {},
+        plugins: [],
+        middleware: [middlewareEntry],
+        pageMeta: {}
+      },
+      __CLIENT_MW_RUNS__: [],
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+    await waitForHtml(window, "<main>Login</main>");
+
+    expect(requestedPaths).toEqual(["/protected", "/login"]);
+    expect(window.location.pathname).toBe("/login");
+    expect(window.document.getElementById("__resux")?.innerHTML).toContain("Login");
+    expect((globalThis as any).__CLIENT_MW_RUNS__).toEqual([
+      { to: "/protected", from: "/" }
+    ]);
+  });
+
   it("aborts pending async data when leaving the current route", async () => {
     const tempDir = path.join(os.tmpdir(), `resux-abort-nav-${Date.now()}`);
     await mkdir(tempDir, { recursive: true });

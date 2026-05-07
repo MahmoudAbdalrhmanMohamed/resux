@@ -498,6 +498,74 @@ describe("project build manifest", () => {
     expect(runtimeClient).toContain("createClientComponent");
   }, 20000);
 
+  it("discovers plugins and route middleware recursively with stable mode-aware outputs", async () => {
+    const root = path.join(os.tmpdir(), `resux-support-files-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await mkdir(path.join(root, "plugins", "nested"), { recursive: true });
+    await mkdir(path.join(root, "middleware", "nested"), { recursive: true });
+    await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Home</main></template>");
+    await writeFile(path.join(root, "plugins", "01.auth.ts"), "export default defineResuxPlugin(() => {})");
+    await writeFile(path.join(root, "plugins", "02.analytics.ts"), "export default defineResuxPlugin(() => {})");
+    await writeFile(path.join(root, "plugins", "client-only.client.ts"), "const browserPath = window.location.pathname; export default defineResuxPlugin((app) => { app.provide('browserPath', browserPath) })");
+    await writeFile(path.join(root, "plugins", "server-only.server.ts"), "export default defineResuxPlugin((app) => { app.provide('serverOnly', true) })");
+    await writeFile(path.join(root, "plugins", "nested", "03.shared.ts"), "export default defineResuxPlugin(() => {})");
+    await writeFile(path.join(root, "middleware", "log.global.ts"), "export default defineResuxRouteMiddleware(() => {})");
+    await writeFile(path.join(root, "middleware", "auth.ts"), "export default defineResuxRouteMiddleware(() => {})");
+    await writeFile(path.join(root, "middleware", "nested", "admin.client.ts"), "const browserPath = window.location.pathname; export default defineResuxRouteMiddleware(() => browserPath)");
+    await writeFile(path.join(root, "middleware", "secret.server.ts"), "export default defineResuxRouteMiddleware(() => {})");
+
+    const result = await buildProject(root);
+    const manifest = await import(`${pathToFileURL(path.join(root, ".resux", "server", "manifest.mjs")).href}?t=${Date.now()}`);
+    const relativePlugins = result.plugins.map((entry) => path.relative(root, entry.file).replaceAll("\\", "/"));
+    const relativeMiddleware = result.middleware.map((entry) => path.relative(root, entry.file).replaceAll("\\", "/"));
+
+    expect(relativePlugins).toEqual([
+      "plugins/01.auth.ts",
+      "plugins/02.analytics.ts",
+      "plugins/client-only.client.ts",
+      "plugins/nested/03.shared.ts",
+      "plugins/server-only.server.ts"
+    ]);
+    expect(relativeMiddleware).toEqual([
+      "middleware/auth.ts",
+      "middleware/log.global.ts",
+      "middleware/nested/admin.client.ts",
+      "middleware/secret.server.ts"
+    ]);
+    expect(manifest.clientPlugins.map((entry: { file: string }) => path.relative(root, entry.file).replaceAll("\\", "/"))).toEqual([
+      "plugins/01.auth.ts",
+      "plugins/02.analytics.ts",
+      "plugins/client-only.client.ts",
+      "plugins/nested/03.shared.ts"
+    ]);
+    expect(manifest.clientMiddleware.map((entry: { file: string }) => path.relative(root, entry.file).replaceAll("\\", "/"))).toEqual([
+      "middleware/auth.ts",
+      "middleware/log.global.ts",
+      "middleware/nested/admin.client.ts"
+    ]);
+    expect(manifest.middleware.map((entry: { file: string }) => path.relative(root, entry.file).replaceAll("\\", "/"))).toEqual([
+      "middleware/auth.ts",
+      "middleware/log.global.ts",
+      "middleware/secret.server.ts"
+    ]);
+
+    const pluginByFile = new Map(result.plugins.map((entry) => [path.basename(entry.file), entry]));
+    const middlewareByFile = new Map(result.middleware.map((entry) => [path.basename(entry.file), entry]));
+    const clientOnlyPlugin = pluginByFile.get("client-only.client.ts");
+    const serverOnlyPlugin = pluginByFile.get("server-only.server.ts");
+    const clientOnlyMiddleware = middlewareByFile.get("admin.client.ts");
+    const serverOnlyMiddleware = middlewareByFile.get("secret.server.ts");
+
+    expect(clientOnlyPlugin).toBeDefined();
+    expect(serverOnlyPlugin).toBeDefined();
+    expect(clientOnlyMiddleware).toBeDefined();
+    expect(serverOnlyMiddleware).toBeDefined();
+    await expect(readFile(path.join(root, ".resux", "server", "plugins", `${clientOnlyPlugin!.id}.mjs`), "utf8")).rejects.toThrow();
+    await expect(readFile(path.join(root, ".resux", "client", "plugins", `${serverOnlyPlugin!.id}.mjs`), "utf8")).rejects.toThrow();
+    await expect(readFile(path.join(root, ".resux", "server", "middleware", `${clientOnlyMiddleware!.id}.mjs`), "utf8")).rejects.toThrow();
+    await expect(readFile(path.join(root, ".resux", "client", "middleware", `${serverOnlyMiddleware!.id}.mjs`), "utf8")).rejects.toThrow();
+  }, 20000);
+
   it("runs configured modules and emits route rules", async () => {
     const root = path.join(os.tmpdir(), `resux-modules-${Date.now()}`);
     await mkdir(path.join(root, "pages"), { recursive: true });

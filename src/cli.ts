@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { spawn, type ChildProcess } from "node:child_process";
-import { readdirSync, statSync, watch } from "node:fs";
+import { existsSync, readdirSync, statSync, watch } from "node:fs";
 import {
   createServer as createHttpServer,
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -758,6 +758,182 @@ async function ensureNitroBuildFiles(appRoot: string): Promise<void> {
   }
 }
 
+function normalizeProviderPreset(provider: string): string {
+  switch (provider) {
+    case "aws_amplify":
+      return "aws-amplify";
+    case "azure_static":
+      return "azure";
+    case "cloudflare_pages":
+      return "cloudflare-pages";
+    case "netlify":
+      return "netlify";
+    case "render":
+      return "render-com";
+    case "stormkit":
+      return "stormkit";
+    case "vercel":
+      return "vercel";
+    case "cleavr":
+      return "cleavr";
+    case "zeabur":
+      return "zeabur";
+    default:
+      return provider;
+  }
+}
+
+function detectDeployProviderFromEnv(env: NodeJS.ProcessEnv): string | null {
+  if (env.NOW_BUILDER || env.VERCEL || env.VERCEL_ENV) {
+    return "vercel";
+  }
+  if (env.NETLIFY && !env.NETLIFY_LOCAL) {
+    return "netlify";
+  }
+  if (env.CF_PAGES || env.CLOUDFLARE_PAGES) {
+    return "cloudflare_pages";
+  }
+  if (env.INPUT_AZURE_STATIC_WEB_APPS_API_TOKEN || env.AZURE_STATIC) {
+    return "azure_static";
+  }
+  if (env.AWS_AMPLIFY || env.AWS_APP_ID) {
+    return "aws_amplify";
+  }
+  if (env.STORMKIT) {
+    return "stormkit";
+  }
+  if (env.RENDER) {
+    return "render";
+  }
+  if (env.CLEAVR) {
+    return "cleavr";
+  }
+  if (env.ZEABUR) {
+    return "zeabur";
+  }
+  return null;
+}
+
+function resolveNitroPreset(
+  appRoot: string,
+  env: NodeJS.ProcessEnv,
+): string | null {
+  const explicitPreset = (env.NITRO_PRESET ?? env.RESUX_NITRO_PRESET)?.trim();
+  if (explicitPreset) {
+    return explicitPreset;
+  }
+
+  const provider = detectDeployProviderFromEnv(env);
+  if (provider) {
+    return normalizeProviderPreset(provider);
+  }
+
+  // Vercel build containers expose /vercel paths even when system env vars are hidden.
+  const normalizedRoot = appRoot.replace(/\\/g, "/");
+  if (normalizedRoot.startsWith("/vercel/path") || existsSync("/vercel/output")) {
+    return "vercel";
+  }
+
+  return null;
+}
+
+function resolveVercelNodeRuntime(): string {
+  const supportedNodeVersions = [18, 20, 22];
+  const systemNodeVersion = Number.parseInt(process.versions.node.split(".")[0] ?? "22");
+  const runtimeVersion =
+    supportedNodeVersions.find((version) => version >= systemNodeVersion)
+    ?? supportedNodeVersions[supportedNodeVersions.length - 1];
+  return `nodejs${runtimeVersion}.x`;
+}
+
+function resolveFallbackFunctionName(functionNames: string[]): string | null {
+  if (functionNames.includes("__fallback.func")) {
+    return "__fallback";
+  }
+  if (functionNames.includes("[...].func")) {
+    return "[...]";
+  }
+  const fallback = functionNames.find((name) => name.endsWith(".func"));
+  return fallback ? fallback.slice(0, -5) : null;
+}
+
+async function patchVercelBuildOutput(appRoot: string): Promise<void> {
+  const outputDir = path.join(appRoot, ".vercel", "output");
+  const functionsDir = path.join(outputDir, "functions");
+  const functionNames = await readdir(functionsDir, { withFileTypes: true })
+    .then((entries) =>
+      entries
+        .filter((entry) => entry.isDirectory() && entry.name.endsWith(".func"))
+        .map((entry) => entry.name),
+    )
+    .catch(() => []);
+
+  if (!functionNames.length) {
+    return;
+  }
+
+  const resuxServerDir = path.join(appRoot, ".resux", "server");
+  const hasResuxServer = await exists(resuxServerDir);
+  const defaultFunctionConfig = {
+    runtime: resolveVercelNodeRuntime(),
+    handler: "index.mjs",
+    launcherType: "Nodejs",
+    shouldAddHelpers: false,
+    supportsResponseStreaming: true
+  };
+
+  for (const functionName of functionNames) {
+    const functionDir = path.join(functionsDir, functionName);
+
+    if (hasResuxServer) {
+      await cp(resuxServerDir, path.join(functionDir, ".resux", "server"), {
+        recursive: true,
+        force: true
+      });
+    }
+
+    const functionConfigPath = path.join(functionDir, ".vc-config.json");
+    if (!(await exists(functionConfigPath))) {
+      await writeFile(
+        functionConfigPath,
+        JSON.stringify(defaultFunctionConfig, null, 2),
+        "utf8",
+      );
+    }
+  }
+
+  const outputConfigPath = path.join(outputDir, "config.json");
+  const parsedOutputConfig = await readFile(outputConfigPath, "utf8")
+    .then((contents) => JSON.parse(contents))
+    .catch(() => ({}));
+  const safeOutputConfig =
+    typeof parsedOutputConfig === "object"
+    && parsedOutputConfig !== null
+    && !Array.isArray(parsedOutputConfig)
+      ? parsedOutputConfig as { routes?: Array<Record<string, unknown>>; [key: string]: unknown }
+      : {};
+  const routes = Array.isArray(safeOutputConfig.routes)
+    ? [...safeOutputConfig.routes]
+    : [];
+  const hasFilesystemRoute = routes.some((route) => route?.handle === "filesystem");
+  if (!hasFilesystemRoute) {
+    routes.push({ handle: "filesystem" });
+  }
+
+  const fallbackFunctionName = resolveFallbackFunctionName(functionNames);
+  const hasCatchAllRoute = routes.some((route) => route?.src === "/(.*)");
+  if (fallbackFunctionName && !hasCatchAllRoute) {
+    routes.push({ src: "/(.*)", dest: `/${fallbackFunctionName}` });
+  }
+
+  const outputConfig = {
+    ...safeOutputConfig,
+    version: 3,
+    routes
+  };
+  await writeFile(outputConfigPath, JSON.stringify(outputConfig, null, 2), "utf8");
+}
+
 async function runNitroBuild(appRoot: string): Promise<void> {
   const nitroPackageJson = require.resolve("nitropack/package.json");
   const nitroCli = path.join(
@@ -766,6 +942,12 @@ async function runNitroBuild(appRoot: string): Promise<void> {
     "cli",
     "index.mjs",
   );
+  const nitroEnv = { ...process.env };
+  const resolvedPreset = resolveNitroPreset(appRoot, nitroEnv);
+  if (resolvedPreset && !nitroEnv.NITRO_PRESET) {
+    nitroEnv.NITRO_PRESET = resolvedPreset;
+    console.log(`Detected Nitro preset: ${resolvedPreset}`);
+  }
 
   console.log("Building Nitro output into .output");
 
@@ -773,7 +955,7 @@ async function runNitroBuild(appRoot: string): Promise<void> {
     const child = spawn(process.execPath, [nitroCli, "build"], {
       cwd: appRoot,
       stdio: "inherit",
-      env: process.env,
+      env: nitroEnv,
     });
 
     child.on("error", reject);
@@ -785,6 +967,10 @@ async function runNitroBuild(appRoot: string): Promise<void> {
       }
     });
   });
+
+  if (resolvedPreset?.startsWith("vercel")) {
+    await patchVercelBuildOutput(appRoot);
+  }
 }
 
 async function assertDirectory(directory: string): Promise<void> {
@@ -905,6 +1091,12 @@ export default defineNitroConfig({
     {
       dir: "public",
       baseURL: "/"
+    }
+  ],
+  serverAssets: [
+    {
+      baseName: "resux",
+      dir: ".resux/server"
     }
   ],
   handlers: [

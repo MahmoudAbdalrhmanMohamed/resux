@@ -13,6 +13,12 @@ export default defineNitroConfig({
       baseURL: "/"
     }
   ],
+  serverAssets: [
+    {
+      baseName: "resux",
+      dir: ".resux/server"
+    }
+  ],
   handlers: [
     {
       route: "/**",

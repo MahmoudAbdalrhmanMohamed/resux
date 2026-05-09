@@ -1,6 +1,6 @@
 {
   "name": "resuxjs",
-  "version": "0.2.32",
+  "version": "0.2.33",
   "private": false,
   "description": "Experimental resumable web framework with Vue-like SFC routing and a custom SSR/runtime pipeline.",
   "type": "module",
@@ -28,9 +28,9 @@
     "README.md"
   ],
   "bin": {
-    "resuxjs": "dist/cli.js",
-    "resux": "dist/cli.js",
-    "create-resux": "dist/create.js"
+    "resuxjs": "dist/bin.js",
+    "resux": "dist/bin.js",
+    "create-resux": "dist/create-bin.js"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -79,6 +79,7 @@
     "build": "npm run typecheck",
     "test": "vitest run",
     "verify:vercel-output": "npm run build && node scripts/verify-vercel-output.mjs",
+    "verify:deploy-targets": "npm run build && node scripts/verify-deploy-targets.mjs",
     "create:local": "npm run build && node dist/cli.js init",
     "pack:check": "npm run build && npm test && npm pack --dry-run"
   },

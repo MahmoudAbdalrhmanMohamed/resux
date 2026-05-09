@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import { spawn, type ChildProcess } from "node:child_process";
 import { readdirSync, statSync, watch } from "node:fs";
 import {
@@ -14,10 +13,9 @@ import type { ViteDevServer } from "vite";
 import type { BuildOptions } from "./compiler/index.js";
 import { runCreateResux } from "./create.js";
 import {
-  patchNitroPublicClientAssets,
-  patchVercelBuildOutput,
-  shouldPreferVercelPreset,
-} from "./deploy/vercel.js";
+  applyDeploymentPostBuild,
+  resolveDeployment,
+} from "./deploy/index.js";
 import {
   type ClientPluginManifestRecord,
   type ClientRouteMiddlewareManifestRecord,
@@ -182,10 +180,10 @@ export function createResuxNodeHandler(options: ResuxNodeHandlerOptions = {}) {
 }
 
 if (isMainModule()) {
-  await runCli(process.argv.slice(2));
+  await runResuxCli(process.argv.slice(2));
 }
 
-async function runCli(args: string[]): Promise<void> {
+export async function runResuxCli(args: string[]): Promise<void> {
   const command = readCommand(args);
   const commandArgs = command === args[0] ? args.slice(1) : args;
 
@@ -223,7 +221,7 @@ async function runCli(args: string[]): Promise<void> {
         `Built ${result.routes.length} route(s) into ${path.relative(process.cwd(), outDir)}`,
       );
       await ensureNitroBuildFiles(appRoot);
-      await runNitroBuild(appRoot);
+      await runNitroBuild(appRoot, outDir);
     } else if (command === "compile") {
       await runTailwindBuild(appRoot, tailwind, true);
       const result = await runCompilerBuild(appRoot, outDir, {
@@ -771,84 +769,7 @@ async function ensureNitroBuildFiles(appRoot: string): Promise<void> {
   }
 }
 
-function normalizeProviderPreset(provider: string): string {
-  switch (provider) {
-    case "aws_amplify":
-      return "aws-amplify";
-    case "azure_static":
-      return "azure";
-    case "cloudflare_pages":
-      return "cloudflare-pages";
-    case "netlify":
-      return "netlify";
-    case "render":
-      return "render-com";
-    case "stormkit":
-      return "stormkit";
-    case "vercel":
-      return "vercel";
-    case "cleavr":
-      return "cleavr";
-    case "zeabur":
-      return "zeabur";
-    default:
-      return provider;
-  }
-}
-
-function detectDeployProviderFromEnv(env: NodeJS.ProcessEnv): string | null {
-  if (env.NOW_BUILDER || env.VERCEL || env.VERCEL_ENV) {
-    return "vercel";
-  }
-  if (env.NETLIFY && !env.NETLIFY_LOCAL) {
-    return "netlify";
-  }
-  if (env.CF_PAGES || env.CLOUDFLARE_PAGES) {
-    return "cloudflare_pages";
-  }
-  if (env.INPUT_AZURE_STATIC_WEB_APPS_API_TOKEN || env.AZURE_STATIC) {
-    return "azure_static";
-  }
-  if (env.AWS_AMPLIFY || env.AWS_APP_ID) {
-    return "aws_amplify";
-  }
-  if (env.STORMKIT) {
-    return "stormkit";
-  }
-  if (env.RENDER) {
-    return "render";
-  }
-  if (env.CLEAVR) {
-    return "cleavr";
-  }
-  if (env.ZEABUR) {
-    return "zeabur";
-  }
-  return null;
-}
-
-async function resolveNitroPreset(
-  appRoot: string,
-  env: NodeJS.ProcessEnv,
-): Promise<string | null> {
-  const explicitPreset = (env.NITRO_PRESET ?? env.RESUX_NITRO_PRESET)?.trim();
-  if (explicitPreset) {
-    return explicitPreset;
-  }
-
-  const provider = detectDeployProviderFromEnv(env);
-  if (provider) {
-    return normalizeProviderPreset(provider);
-  }
-
-  if (await shouldPreferVercelPreset(appRoot, env)) {
-    return "vercel";
-  }
-
-  return null;
-}
-
-async function runNitroBuild(appRoot: string): Promise<void> {
+async function runNitroBuild(appRoot: string, outDir: string): Promise<void> {
   const nitroPackageJson = require.resolve("nitropack/package.json");
   const nitroCli = path.join(
     path.dirname(nitroPackageJson),
@@ -856,17 +777,16 @@ async function runNitroBuild(appRoot: string): Promise<void> {
     "cli",
     "index.mjs",
   );
-  const nitroEnv = { ...process.env };
-  const resolvedPreset = await resolveNitroPreset(appRoot, nitroEnv);
-  if (resolvedPreset && !nitroEnv.NITRO_PRESET) {
-    nitroEnv.NITRO_PRESET = resolvedPreset;
-    console.log(`Detected Nitro preset: ${resolvedPreset}`);
+  const nitroEnv: NodeJS.ProcessEnv = { ...process.env };
+  const deployment = await resolveDeployment(appRoot, outDir, nitroEnv);
+  if (deployment.nitroPreset && !nitroEnv.NITRO_PRESET) {
+    nitroEnv.NITRO_PRESET = deployment.nitroPreset;
+    console.log(
+      `Detected deploy target: ${deployment.target} (${deployment.reason})`,
+    );
+    console.log(`Detected Nitro preset: ${deployment.nitroPreset}`);
   }
-
-  const outputLabel = resolvedPreset?.startsWith("vercel")
-    ? ".vercel/output"
-    : ".output";
-  console.log(`Building Nitro output into ${outputLabel}`);
+  console.log(`Building Nitro output into ${deployment.outputLabel}`);
 
   await new Promise<void>((resolve, reject) => {
     const child = spawn(process.execPath, [nitroCli, "build"], {
@@ -885,11 +805,13 @@ async function runNitroBuild(appRoot: string): Promise<void> {
     });
   });
 
-  await patchNitroPublicClientAssets(appRoot);
-
-  if (resolvedPreset?.startsWith("vercel")) {
-    await patchVercelBuildOutput(appRoot);
-  }
+  await applyDeploymentPostBuild({
+    appRoot,
+    outDir,
+    env: nitroEnv,
+    nitroPreset: deployment.nitroPreset,
+    target: deployment.target,
+  });
 }
 
 async function assertDirectory(directory: string): Promise<void> {

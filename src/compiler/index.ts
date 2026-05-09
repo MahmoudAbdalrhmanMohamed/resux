@@ -150,6 +150,10 @@ type ResuxConfig = Record<string, unknown> & {
   app?: { head?: unknown };
   css?: unknown;
   modules?: unknown;
+  deploy?: {
+    target?: "auto" | "node" | "vercel" | "netlify" | "cloudflare" | "static";
+    nitroPreset?: string;
+  };
   routeRules?: Record<string, RouteRuleConfig>;
   runtimeConfig?: Record<string, unknown>;
 };

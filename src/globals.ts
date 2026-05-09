@@ -7,6 +7,7 @@ import type {
   HeadEntry,
   MaybeRef,
   ResuxAppLike,
+  ResuxConfigInput,
   ResuxModule,
   PageMeta,
   Ref,
@@ -61,7 +62,7 @@ declare global {
   const $fetch: <T = unknown>(url: string, init?: RequestInit) => Promise<T>;
   const onMounted: (callback: () => unknown | Promise<unknown>) => void;
   const definePageMeta: (_meta: PageMeta) => void;
-  const defineResuxConfig: <T extends Record<string, unknown>>(config: T) => T;
+  const defineResuxConfig: <T extends ResuxConfigInput>(config: T) => T;
   const defineResuxPlugin: (plugin: ResuxPlugin) => ResuxPlugin;
   const defineResuxRouteMiddleware: (middleware: ResuxRouteMiddleware) => ResuxRouteMiddleware;
   const defineEventHandler: (handler: EventHandler) => EventHandler;

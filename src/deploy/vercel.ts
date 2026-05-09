@@ -1,6 +1,18 @@
 import { existsSync } from "node:fs";
-import { cp, lstat, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  ensureResuxClientAssets,
+  ensureResuxServerPayload,
+  pathExists,
+  readJsonRecord,
+  writeJson,
+} from "./common.js";
+import type {
+  DeployBuildContext,
+  DeployDetectionContext,
+  DeployTargetModule,
+} from "./types.js";
 
 const SUPPORTED_NODE_VERSIONS = [18, 20, 22] as const;
 
@@ -15,22 +27,13 @@ interface VercelProjectConfig extends Record<string, unknown> {
   framework?: unknown;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-async function pathExists(file: string): Promise<boolean> {
-  try {
-    await stat(file);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function parseMajorNodeVersion(version: string): number {
   const major = Number.parseInt(version.split(".")[0] ?? "", 10);
   return Number.isNaN(major) ? 22 : major;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function resolveVercelNodeRuntime(nodeVersion = process.versions.node): string {
@@ -76,18 +79,37 @@ function normalizeBuildOutputConfig(value: unknown): BuildOutputConfig {
   return value;
 }
 
-async function readJsonRecord(file: string): Promise<Record<string, unknown> | null> {
-  const raw = await readFile(file, "utf8").catch(() => null);
-  if (raw === null) {
-    return null;
+function isRunningInsideVercelContainer(appRoot: string): boolean {
+  const normalizedRoot = appRoot.replace(/\\/g, "/");
+  if (normalizedRoot.startsWith("/vercel/path")) {
+    return true;
   }
 
-  try {
-    const parsed: unknown = JSON.parse(raw);
-  return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
+  return (
+    existsSync("/vercel")
+    || existsSync("/vercel/path")
+    || existsSync("/vercel/path0")
+    || existsSync("/vercel/output")
+  );
+}
+
+async function detect(context: DeployDetectionContext): Promise<boolean> {
+  if (isRunningInsideVercelContainer(context.appRoot)) {
+    return true;
   }
+
+  if (context.env.NOW_BUILDER || context.env.VERCEL || context.env.VERCEL_ENV) {
+    return true;
+  }
+
+  const vercelConfigPath = path.join(context.appRoot, "vercel.json");
+  const config = (await readJsonRecord(vercelConfigPath)) as VercelProjectConfig | null;
+  if (!config) {
+    return false;
+  }
+
+  const framework = typeof config.framework === "string" ? config.framework.trim().toLowerCase() : "";
+  return framework === "nitro";
 }
 
 async function materializeLinkedFunctions(functionsDir: string): Promise<void> {
@@ -112,123 +134,85 @@ async function materializeLinkedFunctions(functionsDir: string): Promise<void> {
     await rm(functionPath, { recursive: true, force: true });
     await cp(resolvedTarget, functionPath, {
       recursive: true,
-      force: true
+      force: true,
     });
   }
 }
 
-async function isNitroVercelProject(appRoot: string): Promise<boolean> {
-  const vercelConfigPath = path.join(appRoot, "vercel.json");
-  const config = (await readJsonRecord(vercelConfigPath)) as VercelProjectConfig | null;
-  if (!config) {
-    return false;
-  }
+async function listFunctionDirectories(functionsDir: string): Promise<string[]> {
+  const entries = await readdir(functionsDir, { withFileTypes: true }).catch(() => []);
+  const functionNames: string[] = [];
 
-  const framework = typeof config.framework === "string" ? config.framework.trim().toLowerCase() : "";
-  return framework === "nitro";
-}
-
-function isRunningInsideVercelContainer(appRoot: string): boolean {
-  const normalizedRoot = appRoot.replace(/\\/g, "/");
-  if (normalizedRoot.startsWith("/vercel/path")) {
-    return true;
-  }
-
-  return (
-    existsSync("/vercel")
-    || existsSync("/vercel/path")
-    || existsSync("/vercel/path0")
-    || existsSync("/vercel/output")
-  );
-}
-
-export async function shouldPreferVercelPreset(
-  appRoot: string,
-  _env: NodeJS.ProcessEnv,
-): Promise<boolean> {
-  if (isRunningInsideVercelContainer(appRoot)) {
-    return true;
-  }
-
-  return isNitroVercelProject(appRoot);
-}
-
-export async function patchNitroPublicClientAssets(appRoot: string): Promise<void> {
-  const resuxClientDir = path.join(appRoot, ".resux", "client");
-  if (!(await pathExists(resuxClientDir))) {
-    return;
-  }
-
-  const publicTargets = [
-    {
-      root: path.join(appRoot, ".output"),
-      target: path.join(appRoot, ".output", "public", "__resux")
-    },
-    {
-      root: path.join(appRoot, ".vercel", "output"),
-      target: path.join(appRoot, ".vercel", "output", "static", "__resux")
-    }
-  ];
-
-  for (const { root, target } of publicTargets) {
-    if (!(await pathExists(root))) {
+  for (const entry of entries) {
+    if (!entry.name.endsWith(".func")) {
       continue;
     }
 
-    await mkdir(path.dirname(target), { recursive: true });
-    await cp(resuxClientDir, target, {
-      recursive: true,
-      force: true
-    });
+    const functionPath = path.join(functionsDir, entry.name);
+    if (entry.isDirectory()) {
+      functionNames.push(entry.name);
+      continue;
+    }
+
+    if (!entry.isSymbolicLink()) {
+      continue;
+    }
+
+    const linkedStats = await stat(functionPath).catch(() => null);
+    if (linkedStats?.isDirectory()) {
+      functionNames.push(entry.name);
+    }
   }
+
+  return functionNames;
 }
 
-export async function patchVercelBuildOutput(appRoot: string): Promise<void> {
-  const outputDir = path.join(appRoot, ".vercel", "output");
+async function postBuild(context: DeployBuildContext): Promise<void> {
+  await ensureResuxClientAssets(context.appRoot, [
+    {
+      root: path.join(context.appRoot, ".output"),
+      target: path.join(context.appRoot, ".output", "public", "__resux"),
+    },
+    {
+      root: path.join(context.appRoot, ".vercel", "output"),
+      target: path.join(context.appRoot, ".vercel", "output", "static", "__resux"),
+    },
+  ]);
+
+  const outputDir = path.join(context.appRoot, ".vercel", "output");
   const functionsDir = path.join(outputDir, "functions");
   await materializeLinkedFunctions(functionsDir);
-  const functionNames: string[] = await readdir(functionsDir, { withFileTypes: true })
-    .then((entries) =>
-      entries
-        .filter((entry) => entry.isDirectory() && entry.name.endsWith(".func"))
-        .map((entry) => entry.name),
-    )
-    .catch((): string[] => []);
 
+  const functionNames = await listFunctionDirectories(functionsDir);
   if (!functionNames.length) {
     return;
   }
 
-  const resuxServerDir = path.join(appRoot, ".resux", "server");
-  const resuxClientDir = path.join(appRoot, ".resux", "client");
-  const hasResuxServer = await pathExists(resuxServerDir);
-  const hasResuxClient = await pathExists(resuxClientDir);
+  const functionRoots = functionNames.map((functionName) =>
+    path.join(functionsDir, functionName)
+  );
+  await ensureResuxServerPayload(
+    context.appRoot,
+    functionRoots.map((root) => path.join(root, ".resux", "server")),
+  );
+  await ensureResuxClientAssets(
+    context.appRoot,
+    functionRoots.map((root) => ({
+      root,
+      target: path.join(root, ".resux", "client"),
+    })),
+  );
+
   const defaultFunctionConfig = {
     runtime: resolveVercelNodeRuntime(),
     handler: "index.mjs",
     launcherType: "Nodejs",
     shouldAddHelpers: false,
-    supportsResponseStreaming: true
+    supportsResponseStreaming: true,
   };
 
-  for (const functionName of functionNames) {
-    const functionDir = path.join(functionsDir, functionName);
-
-    if (hasResuxServer) {
-      await cp(resuxServerDir, path.join(functionDir, ".resux", "server"), {
-        recursive: true,
-        force: true
-      });
-    }
-
-    if (hasResuxClient) {
-      await cp(resuxClientDir, path.join(functionDir, ".resux", "client"), {
-        recursive: true,
-        force: true
-      });
-    }
-
-    const functionConfigPath = path.join(functionDir, ".vc-config.json");
+  for (const functionRoot of functionRoots) {
+    const functionConfigPath = path.join(functionRoot, ".vc-config.json");
     if (!(await pathExists(functionConfigPath))) {
       await writeFile(
         functionConfigPath,
@@ -239,10 +223,8 @@ export async function patchVercelBuildOutput(appRoot: string): Promise<void> {
   }
 
   const outputConfigPath = path.join(outputDir, "config.json");
-  const parsedOutputConfig = await readFile(outputConfigPath, "utf8")
-    .then((contents): unknown => JSON.parse(contents))
-    .catch((): unknown => ({}));
-  const safeOutputConfig = normalizeBuildOutputConfig(parsedOutputConfig);
+  const parsedOutputConfig = await readJsonRecord(outputConfigPath);
+  const safeOutputConfig = normalizeBuildOutputConfig(parsedOutputConfig ?? {});
   const routes = Array.isArray(safeOutputConfig.routes)
     ? [...safeOutputConfig.routes as BuildOutputRoute[]]
     : [];
@@ -265,7 +247,18 @@ export async function patchVercelBuildOutput(appRoot: string): Promise<void> {
   const outputConfig: BuildOutputConfig = {
     ...safeOutputConfig,
     version: 3,
-    routes
+    routes,
   };
-  await writeFile(outputConfigPath, JSON.stringify(outputConfig, null, 2), "utf8");
+  await mkdir(path.dirname(outputConfigPath), { recursive: true });
+  await writeJson(outputConfigPath, outputConfig);
 }
+
+export const vercelDeployModule: DeployTargetModule = {
+  target: "vercel",
+  presetAliases: ["vercel", "vercel-edge"],
+  outputLabel: ".vercel/output",
+  detect,
+  inferPreset: () => "vercel",
+  postBuild,
+};
+

@@ -205,6 +205,23 @@ export type ResuxModule<TOptions = Record<string, unknown>> =
       setup: (options: TOptions, context: ResuxModuleContext) => unknown | Promise<unknown>;
     };
 
+export type ResuxDeployTarget =
+  | "auto"
+  | "node"
+  | "vercel"
+  | "netlify"
+  | "cloudflare"
+  | "static";
+
+export interface ResuxDeployOptions {
+  target?: ResuxDeployTarget;
+  nitroPreset?: string;
+}
+
+export interface ResuxConfigInput extends Record<string, unknown> {
+  deploy?: ResuxDeployOptions;
+}
+
 export type RouteMiddlewareResult =
   | void
   | string
@@ -432,7 +449,7 @@ export function defineComponent(definition: ComponentDefinition): ComponentDefin
   return definition;
 }
 
-export function defineResuxConfig<T extends Record<string, unknown>>(config: T): T {
+export function defineResuxConfig<T extends ResuxConfigInput>(config: T): T {
   return config;
 }
 

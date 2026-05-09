@@ -258,6 +258,27 @@ node .output/server/index.mjs
 
 The generated Nitro config is conservative for resumability: SSR pages, API routes, and route payloads use `cache-control: no-store`, while build-stable Resux runtime and handler assets use long immutable caching. Nitro prerender crawling is disabled by default.
 
+Deployment target selection is automatic by default (`deploy.target = "auto"`). Resux resolves target/preset from:
+
+- explicit `deploy.target` / `deploy.nitroPreset` in `resux.config.ts`
+- `NITRO_PRESET` / `RESUX_NITRO_PRESET`
+- provider environment variables
+- project build config detection (`vercel.json`, `netlify.toml`, `wrangler.*`)
+- package scripts heuristics
+
+You can pin target behavior explicitly:
+
+```ts
+export default defineResuxConfig({
+  deploy: {
+    target: "vercel", // "auto" | "node" | "netlify" | "cloudflare" | "static"
+    nitroPreset: "vercel"
+  }
+})
+```
+
+Cloudflare worker presets are opt-in via `deploy.target = "cloudflare"` (or explicit `deploy.nitroPreset`) so Node-style Nitro adapters do not get selected automatically in auto mode.
+
 Production and dev servers expose a health endpoint for hosts and uptime checks:
 
 ```txt

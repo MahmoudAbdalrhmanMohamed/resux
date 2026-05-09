@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import { spawn } from "node:child_process";
 import type { Dirent } from "node:fs";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";

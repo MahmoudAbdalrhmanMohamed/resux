@@ -1,4 +1,7 @@
 export default defineResuxConfig({
+  deploy: {
+    target: "auto"
+  },
   modules: [
     "resux:security",
     "resux:performance"

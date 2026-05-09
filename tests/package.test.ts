@@ -27,8 +27,9 @@ describe("package exports", () => {
     const nodeEntry = await readFile(path.join(repoRoot, "src", "node.ts"), "utf8");
     const createWrapper = await readFile(path.join(repoRoot, "packages", "create-resuxjs", "index.js"), "utf8");
 
-    expect(packageJson.bin.resux).toBe("dist/cli.js");
-    expect(packageJson.bin.resuxjs).toBe("dist/cli.js");
+    expect(packageJson.bin.resux).toBe("dist/bin.js");
+    expect(packageJson.bin.resuxjs).toBe("dist/bin.js");
+    expect(packageJson.bin["create-resux"]).toBe("dist/create-bin.js");
     expect(exportRecord(packageJson, ".").import).toBe("./dist/index.js");
     expect(exportRecord(packageJson, "./node").import).toBe("./dist/node.js");
     expect(packageJson.license).toBe("MIT");

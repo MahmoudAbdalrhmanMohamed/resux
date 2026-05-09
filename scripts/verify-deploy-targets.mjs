@@ -183,6 +183,21 @@ async function assertVercelOutput(appRoot) {
   if (!Array.isArray(outputConfig.routes)) {
     fail("vercel config.json routes are missing.");
   }
+  for (const route of outputConfig.routes) {
+    if (
+      route
+      && typeof route.src === "string"
+      && route.headers
+      && route.continue !== true
+      && route.dest === undefined
+      && route.handle === undefined
+      && route.status === undefined
+      && route.check === undefined
+      && route.middlewarePath === undefined
+    ) {
+      fail(`vercel config.json route ${route.src} is header-only and must set continue=true.`);
+    }
+  }
   if (!outputConfig.routes.some((route) => route?.handle === "filesystem")) {
     fail("vercel config.json is missing { handle: \"filesystem\" }.");
   }

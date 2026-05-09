@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import {
+  assertRuntimeClientAsset,
   ensureResuxClientAssets,
   ensureResuxServerPayload,
   pathExists,
@@ -40,10 +41,16 @@ async function postBuild(context: DeployBuildContext): Promise<void> {
   ]);
 
   const functionRoots = await listInternalFunctionRoots(context.appRoot);
+  if (!functionRoots.length) {
+    throw new Error(
+      "Resux netlify deployment output is missing .netlify/functions-internal server functions.",
+    );
+  }
   const payloadTargets = functionRoots.map((functionRoot) =>
     path.join(functionRoot, ".resux", "server")
   );
   await ensureResuxServerPayload(context.appRoot, payloadTargets);
+  await assertRuntimeClientAsset(path.join(context.appRoot, "dist"));
 }
 
 export const netlifyDeployModule: DeployTargetModule = {
@@ -54,4 +61,3 @@ export const netlifyDeployModule: DeployTargetModule = {
   inferPreset: () => "netlify",
   postBuild,
 };
-

@@ -17,6 +17,7 @@ import type {
   ResuxRouteMiddleware,
   ResuxRouter,
   RuntimeConfig,
+  ResuxImageBuilder,
   SeoMetaInput,
   ServerMiddleware,
   WatchCallback,
@@ -57,6 +58,7 @@ declare global {
   const useSeoMeta: (input: SeoMetaInput) => void;
   const useRuntimeConfig: () => RuntimeConfig;
   const useResuxApp: () => ResuxAppLike;
+  const useResuxImage: () => ResuxImageBuilder;
   const apiURL: (path: string) => string;
   const useFetch: <T = unknown>(url: string, init?: RequestInit) => Promise<Ref<T>>;
   const $fetch: <T = unknown>(url: string, init?: RequestInit) => Promise<T>;

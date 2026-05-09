@@ -1,5 +1,5 @@
 import path from "node:path";
-import { ensureResuxClientAssets, pathExists } from "./common.js";
+import { pathExists } from "./common.js";
 import type {
   DeployBuildContext,
   DeployDetectionContext,
@@ -26,16 +26,10 @@ function inferPreset(context: DeployDetectionContext): string {
 }
 
 async function postBuild(context: DeployBuildContext): Promise<void> {
-  await ensureResuxClientAssets(context.appRoot, [
-    {
-      root: path.join(context.appRoot, "dist"),
-      target: path.join(context.appRoot, "dist", "__resux"),
-    },
-    {
-      root: path.join(context.appRoot, ".output"),
-      target: path.join(context.appRoot, ".output", "public", "__resux"),
-    },
-  ]);
+  const targetLabel = context.nitroPreset ?? "cloudflare";
+  throw new Error(
+    `Resux deploy target "${targetLabel}" is not implemented yet. Use deploy.target="node" or "vercel".`,
+  );
 }
 
 export const cloudflareDeployModule: DeployTargetModule = {
@@ -46,4 +40,3 @@ export const cloudflareDeployModule: DeployTargetModule = {
   inferPreset,
   postBuild,
 };
-

@@ -145,6 +145,21 @@ async function main() {
   if (!Array.isArray(outputConfig.routes) || outputConfig.routes.length === 0) {
     fail("config.json routes are missing or empty.");
   }
+  for (const route of outputConfig.routes) {
+    if (
+      route
+      && typeof route.src === "string"
+      && route.headers
+      && route.continue !== true
+      && route.dest === undefined
+      && route.handle === undefined
+      && route.status === undefined
+      && route.check === undefined
+      && route.middlewarePath === undefined
+    ) {
+      fail(`Header-only route ${route.src} must set continue=true.`);
+    }
+  }
   if (!outputConfig.routes.some((route) => route?.handle === "filesystem")) {
     fail("config.json is missing { handle: \"filesystem\" } route.");
   }

@@ -986,6 +986,11 @@ export default defineNitroConfig({
         "cache-control": "public, max-age=31536000, immutable"
       }
     },
+    "/__resux/image": {
+      headers: {
+        "cache-control": "public, max-age=31536000, immutable"
+      }
+    },
     "/api/**": {
       headers: {
         "cache-control": "no-store"
@@ -1401,6 +1406,11 @@ async function handleRequest(
       return;
     }
 
+    if (requestUrl.pathname === "/__resux/image") {
+      await serveResuxImage(request, response, requestUrl, requestOrigin);
+      return;
+    }
+
     if (requestUrl.pathname.startsWith("/__resux/")) {
       if (activeDevBuild) {
         await activeDevBuild;
@@ -1786,6 +1796,330 @@ async function serveRoutePayload(
     "cache-control": "no-store",
   });
   response.end(JSON.stringify(rendered));
+}
+
+type ResuxImageFit = "cover" | "contain" | "fill" | "inside" | "outside";
+
+interface ResuxImageRequestOptions {
+  width?: number;
+  height?: number;
+  quality?: number;
+  format?: string;
+  fit?: ResuxImageFit;
+}
+
+type SharpFactory = (
+  input: Buffer | Uint8Array,
+  options?: Record<string, unknown>,
+) => {
+  resize(options: {
+    width?: number;
+    height?: number;
+    fit?: ResuxImageFit;
+    withoutEnlargement?: boolean;
+  }): unknown;
+  toFormat(format: string, options?: Record<string, unknown>): unknown;
+  toBuffer(): Promise<Buffer>;
+};
+
+const RESUX_IMAGE_SUPPORTED_FORMATS = new Set([
+  "avif",
+  "gif",
+  "jpeg",
+  "jpg",
+  "png",
+  "webp",
+]);
+let sharpFactoryPromise: Promise<SharpFactory | null> | null = null;
+
+function parseImageInteger(
+  value: string | null,
+  min: number,
+  max: number,
+): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) {
+    return undefined;
+  }
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function normalizeImageFormat(value: string | null): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  if (!RESUX_IMAGE_SUPPORTED_FORMATS.has(normalized)) {
+    return undefined;
+  }
+  return normalized === "jpg" ? "jpeg" : normalized;
+}
+
+function normalizeImageFit(value: string | null): ResuxImageFit | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "cover"
+    || normalized === "contain"
+    || normalized === "fill"
+    || normalized === "inside"
+    || normalized === "outside"
+  ) {
+    return normalized;
+  }
+  return undefined;
+}
+
+function parseFormatFromContentType(
+  contentType: string | null,
+): string | undefined {
+  if (!contentType) {
+    return undefined;
+  }
+  const normalized = contentType.toLowerCase();
+  if (normalized.includes("image/jpeg")) {
+    return "jpeg";
+  }
+  if (normalized.includes("image/png")) {
+    return "png";
+  }
+  if (normalized.includes("image/webp")) {
+    return "webp";
+  }
+  if (normalized.includes("image/avif")) {
+    return "avif";
+  }
+  if (normalized.includes("image/gif")) {
+    return "gif";
+  }
+  return undefined;
+}
+
+function mimeTypeFromImageFormat(format: string): string {
+  if (format === "jpeg") {
+    return "image/jpeg";
+  }
+  return `image/${format}`;
+}
+
+function shouldTransformImage(options: ResuxImageRequestOptions): boolean {
+  return Boolean(
+    options.width
+    || options.height
+    || options.quality
+    || options.format,
+  );
+}
+
+function resolveResuxImageSource(
+  rawSource: string,
+  requestOrigin: string,
+): URL | null {
+  const source = rawSource.trim();
+  if (!source) {
+    return null;
+  }
+  if (source.startsWith("/")) {
+    return new URL(source, requestOrigin);
+  }
+  try {
+    const parsed = new URL(source);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return parsed;
+    }
+  } catch {
+    // Ignore invalid absolute URLs.
+  }
+  return null;
+}
+
+async function loadSharpFactory(): Promise<SharpFactory | null> {
+  if (sharpFactoryPromise) {
+    return sharpFactoryPromise;
+  }
+
+  sharpFactoryPromise = (async () => {
+    try {
+      const sharpPath = require.resolve("sharp");
+      const sharpModule = await import(pathToFileURL(sharpPath).href);
+      const factory = (sharpModule as { default?: unknown }).default
+        ?? (sharpModule as unknown);
+      return typeof factory === "function"
+        ? (factory as SharpFactory)
+        : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  return sharpFactoryPromise;
+}
+
+async function transformResuxImage(
+  source: Buffer,
+  contentType: string | null,
+  options: ResuxImageRequestOptions,
+): Promise<{ buffer: Buffer; contentType: string } | null> {
+  if (!shouldTransformImage(options)) {
+    return null;
+  }
+
+  const sharp = await loadSharpFactory();
+  if (!sharp) {
+    return null;
+  }
+
+  const inputFormat = parseFormatFromContentType(contentType);
+  const outputFormat = options.format
+    ?? (options.quality && inputFormat ? inputFormat : undefined);
+
+  try {
+    let pipeline: any = sharp(source, { failOn: "none" });
+
+    if (options.width || options.height) {
+      pipeline = pipeline.resize({
+        ...(options.width ? { width: options.width } : {}),
+        ...(options.height ? { height: options.height } : {}),
+        fit: options.fit ?? "cover",
+        withoutEnlargement: true,
+      });
+    }
+
+    if (outputFormat) {
+      const quality = options.quality;
+      const formatOptions = Number.isFinite(quality)
+        ? { quality: Math.min(100, Math.max(1, quality as number)) }
+        : undefined;
+      pipeline = pipeline.toFormat(outputFormat, formatOptions);
+    }
+
+    const transformed = await pipeline.toBuffer();
+    return {
+      buffer: transformed,
+      contentType: outputFormat
+        ? mimeTypeFromImageFormat(outputFormat)
+        : contentType ?? "application/octet-stream",
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function serveResuxImage(
+  request: IncomingMessage,
+  response: ServerResponse,
+  requestUrl: URL,
+  requestOrigin: string,
+): Promise<void> {
+  const method = request.method ?? "GET";
+  if (method !== "GET" && method !== "HEAD") {
+    response.writeHead(405, {
+      "content-type": "text/plain; charset=utf-8",
+      allow: "GET, HEAD",
+    });
+    response.end("Method Not Allowed");
+    return;
+  }
+
+  const sourceParam =
+    requestUrl.searchParams.get("src")
+    ?? requestUrl.searchParams.get("url")
+    ?? "";
+  const sourceUrl = resolveResuxImageSource(sourceParam, requestOrigin);
+  if (!sourceUrl) {
+    response.writeHead(400, {
+      "content-type": "application/json; charset=utf-8",
+    });
+    response.end(
+      JSON.stringify({
+        error:
+          'Image requests require "src" (or "url") with an absolute path or http(s) URL.',
+      }),
+    );
+    return;
+  }
+
+  const options: ResuxImageRequestOptions = {
+    width:
+      parseImageInteger(requestUrl.searchParams.get("w"), 1, 8192)
+      ?? parseImageInteger(requestUrl.searchParams.get("width"), 1, 8192),
+    height:
+      parseImageInteger(requestUrl.searchParams.get("h"), 1, 8192)
+      ?? parseImageInteger(requestUrl.searchParams.get("height"), 1, 8192),
+    quality:
+      parseImageInteger(requestUrl.searchParams.get("q"), 1, 100)
+      ?? parseImageInteger(requestUrl.searchParams.get("quality"), 1, 100),
+    format:
+      normalizeImageFormat(requestUrl.searchParams.get("f"))
+      ?? normalizeImageFormat(requestUrl.searchParams.get("format")),
+    fit:
+      normalizeImageFit(requestUrl.searchParams.get("fit"))
+      ?? normalizeImageFit(requestUrl.searchParams.get("mode")),
+  };
+
+  const forwardedAccept = firstHeaderValue(request.headers.accept);
+  const upstream = await fetch(sourceUrl, {
+    headers: forwardedAccept ? { accept: forwardedAccept } : undefined,
+    redirect: "follow",
+  }).catch(() => null);
+
+  if (!upstream) {
+    response.writeHead(502, {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    response.end(JSON.stringify({ error: "Failed to fetch image source." }));
+    return;
+  }
+
+  if (!upstream.ok) {
+    response.writeHead(upstream.status, {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    response.end(
+      JSON.stringify({
+        error: `Image source request failed with status ${upstream.status}.`,
+      }),
+    );
+    return;
+  }
+
+  const sourceBuffer = Buffer.from(await upstream.arrayBuffer());
+  const sourceContentType = upstream.headers.get("content-type");
+  const transformed = await transformResuxImage(
+    sourceBuffer,
+    sourceContentType,
+    options,
+  );
+
+  const body = transformed?.buffer ?? sourceBuffer;
+  const contentType =
+    transformed?.contentType ?? sourceContentType ?? "application/octet-stream";
+  const cacheControl = shouldTransformImage(options)
+    ? "public, max-age=31536000, immutable"
+    : "public, max-age=86400";
+
+  response.writeHead(200, {
+    "content-type": contentType,
+    "cache-control": cacheControl,
+    vary: "Accept",
+  });
+
+  if (method === "HEAD") {
+    response.end();
+    return;
+  }
+
+  response.end(body);
 }
 
 function applyDefaultSecurityHeaders(

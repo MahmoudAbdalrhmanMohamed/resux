@@ -223,6 +223,7 @@ const RESUMABLE_HANDLER_ALLOWED_GLOBALS = new Set([
   "useSeoMeta",
   "useRuntimeConfig",
   "useResuxApp",
+  "useResuxImage",
   "apiURL",
   "useFetch",
   "$fetch",
@@ -1177,7 +1178,7 @@ function unwrapAwaitExpression(node: ts.Expression | undefined): ts.Expression |
 }
 
 function isTemplateRefFactory(name: string): boolean {
-  return ["ref", "computed", "toRef", "useState", "useAsyncData", "useFetch"].includes(name);
+    return ["ref", "computed", "toRef", "useState", "useAsyncData", "useFetch", "useResuxImage"].includes(name);
 }
 
 function isAsyncDataFactory(name: string): boolean {
@@ -1368,6 +1369,7 @@ function isResumableInitializer(node: ts.Expression | undefined): boolean {
       "useRouter",
       "useRuntimeConfig",
       "useResuxApp",
+      "useResuxImage",
       "defineProps"
     ].includes(node.expression.text);
   }
@@ -1408,7 +1410,7 @@ function createComponentModuleSource(options: {
     options.analysis.imports,
     `const __template = ${JSON.stringify(options.template, null, 2)};`,
     `async function __rx_setup(__ctx) {`,
-    `const { ref, reactive, computed, watch, watchEffect, readonly, toRef, toRefs, unref, isRef, isReactive, isReadonly, nextTick, useState, useAsyncData, useRoute, useRouter, useHead, useSeoMeta, useRuntimeConfig, useResuxApp, apiURL, useFetch, $fetch, onMounted, definePageMeta, defineProps } = __ctx;`,
+    `const { ref, reactive, computed, watch, watchEffect, readonly, toRef, toRefs, unref, isRef, isReactive, isReadonly, nextTick, useState, useAsyncData, useRoute, useRouter, useHead, useSeoMeta, useRuntimeConfig, useResuxApp, useResuxImage, apiURL, useFetch, $fetch, onMounted, definePageMeta, defineProps } = __ctx;`,
     options.analysis.setupBody,
     `return { ${options.analysis.bindings.join(", ")} };`,
     `}`,
@@ -2068,6 +2070,7 @@ const builtinModules: Record<string, BuiltinResuxModule> = {
       resux.addRouteRule("/__resux/runtime-client.mjs", { cache: assetCache });
       resux.addRouteRule("/__resux/handlers/**", { cache: assetCache });
       resux.addRouteRule("/__resux/vue-islands/**", { cache: assetCache });
+      resux.addRouteRule("/__resux/image", { cache: assetCache });
 
       if (input.routePayloadNoStore !== false) {
         resux.addRouteRule("/__resux/route", { cache: false });

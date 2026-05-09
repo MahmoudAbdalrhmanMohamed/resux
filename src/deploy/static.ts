@@ -1,5 +1,5 @@
 import path from "node:path";
-import { ensureResuxClientAssets } from "./common.js";
+import { assertRuntimeClientAsset, ensureResuxClientAssets } from "./common.js";
 import type { DeployBuildContext, DeployTargetModule } from "./types.js";
 
 async function postBuild(context: DeployBuildContext): Promise<void> {
@@ -9,6 +9,8 @@ async function postBuild(context: DeployBuildContext): Promise<void> {
       target: path.join(context.appRoot, ".output", "public", "__resux"),
     },
   ]);
+
+  await assertRuntimeClientAsset(path.join(context.appRoot, ".output", "public"));
 }
 
 export const staticDeployModule: DeployTargetModule = {
@@ -18,4 +20,3 @@ export const staticDeployModule: DeployTargetModule = {
   inferPreset: () => "static",
   postBuild,
 };
-

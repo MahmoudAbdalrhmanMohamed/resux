@@ -185,9 +185,15 @@ export async function ensureResuxClientAssets(
   appRoot: string,
   targets: AssetCopyTarget[],
 ): Promise<void> {
+  if (!targets.length) {
+    return;
+  }
+
   const source = path.join(appRoot, ".resux", "client");
   if (!(await pathExists(source))) {
-    return;
+    throw new Error(
+      "Resux deployment is missing .resux/client output. Run `resux build` and retry.",
+    );
   }
 
   for (const { root, target } of targets) {
@@ -206,9 +212,15 @@ export async function ensureResuxServerPayload(
   appRoot: string,
   targets: string[],
 ): Promise<void> {
+  if (!targets.length) {
+    return;
+  }
+
   const source = path.join(appRoot, ".resux", "server");
   if (!(await pathExists(source))) {
-    return;
+    throw new Error(
+      "Resux deployment is missing .resux/server output. Run `resux build` and retry.",
+    );
   }
 
   for (const target of targets) {
@@ -220,3 +232,34 @@ export async function ensureResuxServerPayload(
   }
 }
 
+export async function assertResuxServerManifest(
+  appRoot: string,
+): Promise<void> {
+  const serverRoot = path.join(appRoot, ".resux", "server");
+  if (!(await pathExists(serverRoot))) {
+    throw new Error(
+      "Resux deployment is missing .resux/server output. Run `resux build` and retry.",
+    );
+  }
+
+  const manifestPath = path.join(serverRoot, "manifest.mjs");
+  if (!(await pathExists(manifestPath))) {
+    throw new Error(
+      "Resux deployment is missing .resux/server/manifest.mjs. Run `resux build` and retry.",
+    );
+  }
+}
+
+export async function assertRuntimeClientAsset(
+  root: string,
+  relativePath = path.join("__resux", "runtime-client.mjs"),
+): Promise<void> {
+  const asset = path.join(root, relativePath);
+  if (await pathExists(asset)) {
+    return;
+  }
+
+  throw new Error(
+    `Resux deployment output is missing ${relativePath.replaceAll("\\", "/")} in ${root}.`,
+  );
+}

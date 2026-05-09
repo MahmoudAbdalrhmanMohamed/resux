@@ -155,6 +155,50 @@ export interface RuntimeConfig {
   [key: string]: unknown;
 }
 
+export type ResuxImageFit =
+  | "cover"
+  | "contain"
+  | "fill"
+  | "inside"
+  | "outside";
+
+export interface ResuxImageModifiers {
+  width?: number;
+  height?: number;
+  quality?: number;
+  format?: string;
+  fit?: ResuxImageFit;
+  [key: string]: string | number | boolean | undefined;
+}
+
+export interface ResuxImageProviderConfig {
+  baseURL?: string;
+  modifiers?: ResuxImageModifiers;
+}
+
+export interface ResuxImageConfig {
+  provider?: string;
+  quality?: number;
+  format?: string;
+  densities?: number[];
+  providers?: Record<string, ResuxImageProviderConfig>;
+}
+
+export interface UseResuxImageOptions {
+  provider?: string;
+  modifiers?: ResuxImageModifiers;
+  width?: number;
+  height?: number;
+  quality?: number;
+  fit?: ResuxImageFit;
+  format?: string;
+}
+
+export type ResuxImageBuilder = (
+  src: string,
+  options?: UseResuxImageOptions,
+) => string;
+
 export interface ResuxAppInjections {}
 
 export type ResuxSupportMode = "all" | "server" | "client";
@@ -333,6 +377,7 @@ export interface SetupContext {
   useRuntimeConfig(): RuntimeConfig;
   useResuxApp(): ResuxAppLike;
   apiURL(path: string): string;
+  useResuxImage(): ResuxImageBuilder;
   useFetch<T>(url: string, init?: RequestInit): Promise<Ref<T>>;
   $fetch<T>(url: string, init?: RequestInit): Promise<T>;
   onMounted(callback: () => unknown | Promise<unknown>): void;
@@ -424,9 +469,11 @@ interface RenderTemplateContext {
   moduleId: string;
   styleScopeId?: string;
   route: RouteContext;
+  runtimeConfig: RuntimeConfig;
   components: Record<string, ComponentDefinition>;
   layouts: Record<string, ComponentDefinition>;
   pageMeta: PageMeta;
+  addHeadEntry?: (entry: HeadEntry) => void;
   renderPage?: () => Promise<string>;
   renderSlot?: () => Promise<string>;
   renderLayout?: (name: string | false | undefined, slot: () => Promise<string>) => Promise<string>;
@@ -476,6 +523,15 @@ export function useResuxApp(): ResuxAppLike {
   }
 
   throw new Error("useResuxApp() is only available while executing a Resux setup or middleware context.");
+}
+
+export function useResuxImage(): ResuxImageBuilder {
+  const app = useResuxApp();
+  return createResuxImageBuilder(
+    app.route,
+    app.$config,
+    typeof window !== "undefined",
+  );
 }
 
 export function navigateTo(to: string, options: { statusCode?: number } = {}): RouteMiddlewareResult {
@@ -563,31 +619,29 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
 [data-rx-block] {
   display: contents !important;
 }
-#__resux-loading {
+[data-rx-loading-indicator] {
   position: fixed;
   inset: 0 0 auto;
   z-index: 9999;
-  color: #18181b;
-  font: 600 13px/1.4 ui-sans-serif, system-ui, sans-serif;
   pointer-events: none;
 }
-#__resux-loading[hidden] {
+[data-rx-loading-indicator][hidden] {
   display: none;
 }
-#__resux-loading .bar {
-  height: 3px;
+[data-rx-loading-indicator] .rx-loading-bar {
+  height: var(--resux-loader-height, 3px);
   overflow: hidden;
   background: rgba(24, 24, 27, 0.12);
 }
-#__resux-loading .bar span {
+[data-rx-loading-indicator] .rx-loading-progress {
   display: block;
   width: var(--resux-progress, 8%);
   height: 100%;
-  background: #2563eb;
+  background: var(--resux-loader-color, #2563eb);
   box-shadow: 0 0 18px rgba(37, 99, 235, 0.45);
   transition: width 160ms ease, background 160ms ease;
 }
-#__resux-loading .panel {
+[data-rx-loading-indicator] .rx-loading-slot {
   width: fit-content;
   max-width: min(28rem, calc(100vw - 2rem));
   margin: 0.75rem auto 0;
@@ -597,11 +651,12 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
   background: rgba(255, 255, 255, 0.92);
   box-shadow: 0 12px 32px rgba(24, 24, 27, 0.12);
   backdrop-filter: blur(12px);
+  pointer-events: auto;
 }
-#__resux-loading[data-state="error"] .bar span {
-  background: #dc2626;
+[data-rx-loading-indicator][data-state="error"] .rx-loading-progress {
+  background: var(--resux-loader-error-color, #dc2626);
 }
-#__resux-loading[data-state="complete"] .bar span {
+[data-rx-loading-indicator][data-state="complete"] .rx-loading-progress {
   background: #16a34a;
 }
 #__resux[data-route-transition="loading"] {
@@ -609,7 +664,7 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
   transition: opacity 120ms ease;
 }
 @media (prefers-reduced-motion: reduce) {
-  #__resux-loading .bar span,
+  [data-rx-loading-indicator] .rx-loading-progress,
   #__resux[data-route-transition="loading"] {
     transition: none;
   }
@@ -620,7 +675,6 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
     '<div id="__resux">',
     result.html,
     "</div>",
-    '<div id="__resux-loading" hidden data-state="idle" aria-live="polite" aria-busy="false"><div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Idle"><span></span></div><div class="panel" data-rx-transition-message>Ready</div></div>',
     `<script>window.__RESUX__=${payload}</script>`,
     options.devReload ? getDevReloadScript() : "",
     '<script type="module" src="/__resux/runtime-client.mjs"></script>',
@@ -688,9 +742,11 @@ class ResuxRenderer {
       moduleId: definition.id,
       styleScopeId: definition.styleScopeId,
       route: this.route,
+      runtimeConfig: this.runtimeConfig,
       components: this.components,
       layouts: {},
       pageMeta: definition.meta ?? {},
+      addHeadEntry: (entry) => this.headEntries.push(entry),
       renderPage,
       renderSlot
     });
@@ -817,6 +873,10 @@ function createServerSetupContext(
 
     apiURL,
 
+    useResuxImage(): ResuxImageBuilder {
+      return createResuxImageBuilder(route, runtimeConfig, false);
+    },
+
     async useFetch<T>(url: string, init?: RequestInit): Promise<Ref<T>> {
       return ref(await fetchJson<T>(url, init));
     },
@@ -919,6 +979,213 @@ function isInternalApiURL(url: string): boolean {
   return url === "/api" || url.startsWith("/api/");
 }
 
+function createResuxImageBuilder(
+  route: RouteContext,
+  runtimeConfig: RuntimeConfig,
+  client: boolean,
+): ResuxImageBuilder {
+  return (src: string, options: UseResuxImageOptions = {}): string => {
+    const normalizedSrc = normalizeImageSource(src, route);
+    const imageConfig = resolveRuntimeImageConfig(runtimeConfig);
+    const providerName = (options.provider ?? imageConfig.provider ?? "resux").trim();
+    const providerConfig = resolveImageProviderConfig(providerName, imageConfig);
+    const modifiers = normalizeImageModifiers({
+      ...(providerConfig.modifiers ?? {}),
+      ...(typeof imageConfig.quality === "number" ? { quality: imageConfig.quality } : {}),
+      ...(typeof imageConfig.format === "string" ? { format: imageConfig.format } : {}),
+      ...(options.modifiers ?? {}),
+      ...(typeof options.width === "number" ? { width: options.width } : {}),
+      ...(typeof options.height === "number" ? { height: options.height } : {}),
+      ...(typeof options.quality === "number" ? { quality: options.quality } : {}),
+      ...(typeof options.fit === "string" ? { fit: options.fit } : {}),
+      ...(typeof options.format === "string" ? { format: options.format } : {}),
+    });
+
+    return buildResuxImageURL(
+      providerName,
+      providerConfig.baseURL,
+      normalizedSrc,
+      modifiers,
+      client,
+    );
+  };
+}
+
+function normalizeImageSource(src: string, route: RouteContext): string {
+  const value = String(src ?? "").trim();
+  if (!value) {
+    return "";
+  }
+
+  if (
+    value.startsWith("http://")
+    || value.startsWith("https://")
+    || value.startsWith("data:")
+    || value.startsWith("blob:")
+    || value.startsWith("file:")
+  ) {
+    return value;
+  }
+
+  if (value.startsWith("/")) {
+    return value;
+  }
+
+  const basePath = route.path.startsWith("/") ? route.path : `/${route.path}`;
+  const directory = basePath.endsWith("/")
+    ? basePath
+    : `${basePath.slice(0, Math.max(basePath.lastIndexOf("/") + 1, 1))}`;
+  const normalized = new URL(value, `https://resux.local${directory}`);
+  return `${normalized.pathname}${normalized.search}${normalized.hash}`;
+}
+
+function resolveRuntimeImageConfig(runtimeConfig: RuntimeConfig): ResuxImageConfig {
+  const publicConfig = runtimeConfig.public ?? {};
+  const candidate = (publicConfig.image ?? publicConfig.resuxImage) as unknown;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+    return {};
+  }
+  const input = candidate as Record<string, unknown>;
+  const providers = resolveImageProviders(input.providers);
+  const densities = resolveImageDensities(input.densities);
+
+  return {
+    provider: typeof input.provider === "string" ? input.provider : undefined,
+    quality: typeof input.quality === "number" ? input.quality : undefined,
+    format: typeof input.format === "string" ? input.format : undefined,
+    ...(densities.length ? { densities } : {}),
+    ...(Object.keys(providers).length ? { providers } : {}),
+  };
+}
+
+function resolveImageProviders(value: unknown): Record<string, ResuxImageProviderConfig> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  const providers: Record<string, ResuxImageProviderConfig> = {};
+  for (const [name, provider] of Object.entries(value as Record<string, unknown>)) {
+    if (!provider || typeof provider !== "object" || Array.isArray(provider)) {
+      continue;
+    }
+    const record = provider as Record<string, unknown>;
+    providers[name] = {
+      ...(typeof record.baseURL === "string" ? { baseURL: record.baseURL } : {}),
+      ...(record.modifiers && typeof record.modifiers === "object" && !Array.isArray(record.modifiers)
+        ? { modifiers: normalizeImageModifiers(record.modifiers as ResuxImageModifiers) }
+        : {}),
+    };
+  }
+  return providers;
+}
+
+function resolveImageDensities(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => Number(entry))
+    .filter((entry) => Number.isFinite(entry) && entry > 0)
+    .map((entry) => Math.round(entry));
+}
+
+function resolveImageProviderConfig(
+  providerName: string,
+  imageConfig: ResuxImageConfig,
+): ResuxImageProviderConfig {
+  return imageConfig.providers?.[providerName] ?? {};
+}
+
+function normalizeImageModifiers(modifiers: ResuxImageModifiers): ResuxImageModifiers {
+  const normalized: ResuxImageModifiers = {};
+  for (const [key, value] of Object.entries(modifiers ?? {})) {
+    if (value === undefined || value === null || value === false) {
+      continue;
+    }
+    if (key === "width" || key === "height" || key === "quality") {
+      const numeric = Number(value);
+      if (Number.isFinite(numeric) && numeric > 0) {
+        normalized[key] = Math.round(numeric);
+      }
+      continue;
+    }
+    normalized[key] = value as string | number | boolean;
+  }
+  return normalized;
+}
+
+function buildResuxImageURL(
+  providerName: string,
+  providerBaseURL: string | undefined,
+  src: string,
+  modifiers: ResuxImageModifiers,
+  client: boolean,
+): string {
+  const trimmedProvider = providerName.trim().toLowerCase();
+  const baseURL = providerBaseURL?.trim()
+    || (trimmedProvider === "vercel" ? "/_vercel/image" : "/__resux/image");
+
+  if (baseURL.includes("{src}")) {
+    return injectImageTemplateSource(baseURL, src, modifiers);
+  }
+
+  const query = new URLSearchParams();
+  if (trimmedProvider === "vercel") {
+    query.set("url", src);
+  } else {
+    query.set("src", src);
+  }
+
+  const width = Number(modifiers.width);
+  const height = Number(modifiers.height);
+  const quality = Number(modifiers.quality);
+  if (Number.isFinite(width) && width > 0) {
+    query.set("w", String(Math.round(width)));
+  }
+  if (Number.isFinite(height) && height > 0) {
+    query.set("h", String(Math.round(height)));
+  }
+  if (Number.isFinite(quality) && quality > 0) {
+    query.set("q", String(Math.round(quality)));
+  }
+  if (typeof modifiers.fit === "string" && modifiers.fit.length > 0) {
+    query.set("fit", modifiers.fit);
+  }
+  if (typeof modifiers.format === "string" && modifiers.format.length > 0) {
+    query.set("f", modifiers.format);
+  }
+
+  for (const [key, value] of Object.entries(modifiers)) {
+    if (["width", "height", "quality", "fit", "format"].includes(key)) {
+      continue;
+    }
+    query.set(key, String(value));
+  }
+
+  const separator = baseURL.includes("?") ? "&" : "?";
+  const queryString = query.toString();
+  if (!queryString) {
+    return baseURL;
+  }
+  const resolved = `${baseURL}${separator}${queryString}`;
+  if (client) {
+    return resolved;
+  }
+  return resolved;
+}
+
+function injectImageTemplateSource(
+  template: string,
+  src: string,
+  modifiers: ResuxImageModifiers,
+): string {
+  let resolved = template.replaceAll("{src}", encodeURIComponent(src));
+  for (const [key, value] of Object.entries(modifiers)) {
+    resolved = resolved.replaceAll(`{${key}}`, encodeURIComponent(String(value)));
+  }
+  return resolved;
+}
+
 function runtimeOrigin(runtimeConfig: RuntimeConfig): string | undefined {
   const publicConfig = runtimeConfig.public ?? {};
   for (const key of ["appOrigin", "appURL", "siteURL", "origin"]) {
@@ -995,6 +1262,23 @@ function renderElement(node: ElementTemplateNode, context: RenderTemplateContext
 
   if (node.tag === "ResuxLink") {
     return renderNativeElement(node, context, locals);
+  }
+
+  if (node.tag === "ResuxImg") {
+    return renderResuxImg(node, context, locals);
+  }
+
+  if (node.tag === "ResuxPicture") {
+    return renderResuxPicture(node, context, locals);
+  }
+
+  if (node.tag === "ResuxLoadingIndicator") {
+    return renderResuxLoadingIndicatorSync(
+      node,
+      context,
+      locals,
+      renderTemplateNodes(node.children, context, locals),
+    );
   }
 
   if (node.tag === "VueIsland") {
@@ -1138,6 +1422,23 @@ async function renderElementAsync(
     return renderNativeElementAsync(node, context, renderComponent, locals);
   }
 
+  if (node.tag === "ResuxImg") {
+    return renderResuxImg(node, context, locals);
+  }
+
+  if (node.tag === "ResuxPicture") {
+    return renderResuxPicture(node, context, locals);
+  }
+
+  if (node.tag === "ResuxLoadingIndicator") {
+    return renderResuxLoadingIndicatorAsync(
+      node,
+      context,
+      locals,
+      renderTemplateNodesAsync(node.children, context, renderComponent, locals),
+    );
+  }
+
   if (node.tag === "VueIsland") {
     return renderVueIsland(node, context, locals);
   }
@@ -1199,6 +1500,401 @@ async function renderNativeElementAsync(
   return `<${tag}${attrText}>${children}</${tag}>`;
 }
 
+interface ResuxImageRenderInput {
+  src: string;
+  alt: string;
+  width?: number;
+  height?: number;
+  sizes?: string;
+  densities: number[];
+  widths: number[];
+  loading: string;
+  decoding: string;
+  fetchPriority?: string;
+  provider?: string;
+  quality?: number;
+  fit?: ResuxImageFit;
+  format?: string;
+  formats: string[];
+  preload: boolean;
+  modifiers: ResuxImageModifiers;
+  attrs: Record<string, string>;
+}
+
+const resuxImageReservedProps = new Set([
+  "src",
+  "alt",
+  "provider",
+  "modifiers",
+  "quality",
+  "fit",
+  "format",
+  "formats",
+  "width",
+  "height",
+  "widths",
+  "sizes",
+  "densities",
+  "priority",
+  "preload",
+  "lazy",
+  "loading",
+  "decoding",
+  "fetchpriority",
+  "fetchPriority",
+]);
+
+function renderResuxImg(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+): string {
+  const input = resolveResuxImageRenderInput(node, context, locals);
+  if (!input.src) {
+    return "";
+  }
+
+  const builder = createResuxImageBuilder(context.route, context.runtimeConfig, false);
+  const src = builder(input.src, {
+    provider: input.provider,
+    width: input.width,
+    height: input.height,
+    quality: input.quality,
+    fit: input.fit,
+    format: input.format,
+    modifiers: input.modifiers,
+  });
+  const srcset = buildResuxImageSrcset(builder, input);
+
+  registerResuxImagePreload(context, src, srcset, input.sizes, input.preload);
+  return renderResuxImgTag(input, src, srcset, context.styleScopeId);
+}
+
+function renderResuxPicture(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+): string {
+  const input = resolveResuxImageRenderInput(node, context, locals);
+  if (!input.src) {
+    return "";
+  }
+
+  const builder = createResuxImageBuilder(context.route, context.runtimeConfig, false);
+  const fallbackSrc = builder(input.src, {
+    provider: input.provider,
+    width: input.width,
+    height: input.height,
+    quality: input.quality,
+    fit: input.fit,
+    modifiers: input.modifiers,
+  });
+  const fallbackSrcset = buildResuxImageSrcset(builder, {
+    ...input,
+    format: undefined,
+  });
+  registerResuxImagePreload(context, fallbackSrc, fallbackSrcset, input.sizes, input.preload);
+
+  const manualChildren = renderTemplateNodes(node.children, context, locals);
+  const generatedSources = input.formats
+    .map((format) => {
+      const sourceSrcset = buildResuxImageSrcset(builder, {
+        ...input,
+        format,
+      });
+      const resolvedSrcset = sourceSrcset
+        || builder(input.src, {
+          provider: input.provider,
+          width: input.width,
+          height: input.height,
+          quality: input.quality,
+          fit: input.fit,
+          format,
+          modifiers: input.modifiers,
+        });
+      if (!resolvedSrcset) {
+        return "";
+      }
+      const sourceAttrs: string[] = [
+        `type="${escapeAttribute(resuxImageMimeType(format))}"`,
+        `srcset="${escapeAttribute(resolvedSrcset)}"`,
+      ];
+      if (input.sizes) {
+        sourceAttrs.push(`sizes="${escapeAttribute(input.sizes)}"`);
+      }
+      return `<source ${sourceAttrs.join(" ")}>`;
+    })
+    .filter(Boolean)
+    .join("");
+
+  const img = renderResuxImgTag(input, fallbackSrc, fallbackSrcset, undefined);
+  const attrs: string[] = [];
+  appendStyleScopeAttribute(attrs, context.styleScopeId);
+  const attrText = attrs.length ? ` ${attrs.join(" ")}` : "";
+  return `<picture${attrText}>${manualChildren}${generatedSources}${img}</picture>`;
+}
+
+function resolveResuxImageRenderInput(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+): ResuxImageRenderInput {
+  const props = collectComponentProps(node, context.scope, locals);
+  const runtimeImageConfig = resolveRuntimeImageConfig(context.runtimeConfig);
+  const modifiers = resolveResuxImageModifierProps(props.modifiers);
+  const explicitFormat = readStringProp(props.format);
+  const explicitFormats = parseImageFormats(
+    props.formats
+    ?? (explicitFormat?.includes(",") ? explicitFormat : undefined),
+  );
+  const provider = readStringProp(props.provider);
+  const quality = readNumberProp(props.quality) ?? runtimeImageConfig.quality;
+  const fit = readStringProp(props.fit) as ResuxImageFit | undefined;
+  const width = readNumberProp(props.width);
+  const height = readNumberProp(props.height);
+  const priority = readBooleanProp(props.priority, false);
+  const preload = readBooleanProp(props.preload, priority);
+  const lazy = readBooleanProp(props.lazy, !priority);
+  const loading = readStringProp(props.loading) ?? (lazy ? "lazy" : "eager");
+  const decoding = readStringProp(props.decoding) ?? "async";
+  const fetchPriority = readStringProp(props.fetchpriority ?? props.fetchPriority)
+    ?? (priority ? "high" : undefined);
+  const densities = parseImageNumberList(props.densities)
+    || runtimeImageConfig.densities
+    || [1, 2];
+  const widths = parseImageNumberList(props.widths) ?? [];
+  const passthrough = collectResuxImagePassthroughAttributes(props);
+  const src = readStringProp(props.src) ?? "";
+  const alt = readStringProp(props.alt) ?? "";
+
+  return {
+    src,
+    alt,
+    width,
+    height,
+    sizes: readStringProp(props.sizes),
+    densities,
+    widths,
+    loading,
+    decoding,
+    fetchPriority,
+    provider,
+    quality,
+    fit,
+    format: explicitFormats.length ? undefined : explicitFormat ?? runtimeImageConfig.format,
+    formats: explicitFormats,
+    preload,
+    modifiers,
+    attrs: passthrough,
+  };
+}
+
+function collectResuxImagePassthroughAttributes(
+  props: ComponentProps,
+): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  for (const [name, rawValue] of Object.entries(props)) {
+    if (resuxImageReservedProps.has(name)) {
+      continue;
+    }
+    if (rawValue === undefined || rawValue === null || rawValue === false) {
+      continue;
+    }
+    const attrName = name === "className"
+      ? "class"
+      : name === "referrerPolicy"
+        ? "referrerpolicy"
+        : name === "crossOrigin"
+          ? "crossorigin"
+          : name;
+    attrs[attrName] = stringifyAttributeValue(attrName, rawValue);
+  }
+  return attrs;
+}
+
+function resolveResuxImageModifierProps(value: unknown): ResuxImageModifiers {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return normalizeImageModifiers(value as ResuxImageModifiers);
+}
+
+function buildResuxImageSrcset(
+  builder: ResuxImageBuilder,
+  input: ResuxImageRenderInput,
+): string | undefined {
+  const widthCandidates = input.widths.length
+    ? [...new Set(input.widths)].sort((left, right) => left - right)
+    : [];
+  if (widthCandidates.length) {
+    return widthCandidates
+      .map((width) => `${builder(input.src, {
+        provider: input.provider,
+        width,
+        height: input.height,
+        quality: input.quality,
+        fit: input.fit,
+        format: input.format,
+        modifiers: input.modifiers,
+      })} ${width}w`)
+      .join(", ");
+  }
+
+  if (!input.width || !input.densities.length) {
+    return undefined;
+  }
+
+  return [...new Set(input.densities)]
+    .sort((left, right) => left - right)
+    .map((density) => {
+      const width = Math.max(1, Math.round(input.width! * density));
+      return `${builder(input.src, {
+        provider: input.provider,
+        width,
+        height: input.height ? Math.max(1, Math.round(input.height * density)) : undefined,
+        quality: input.quality,
+        fit: input.fit,
+        format: input.format,
+        modifiers: input.modifiers,
+      })} ${density}x`;
+    })
+    .join(", ");
+}
+
+function registerResuxImagePreload(
+  context: RenderTemplateContext,
+  href: string,
+  srcset: string | undefined,
+  sizes: string | undefined,
+  enabled: boolean,
+): void {
+  if (!enabled || !href || !context.addHeadEntry) {
+    return;
+  }
+
+  const link: Record<string, string> = {
+    rel: "preload",
+    as: "image",
+    href,
+  };
+  if (srcset) {
+    link.imagesrcset = srcset;
+  }
+  if (sizes) {
+    link.imagesizes = sizes;
+  }
+  context.addHeadEntry({ link: [link] });
+}
+
+function renderResuxImgTag(
+  input: ResuxImageRenderInput,
+  src: string,
+  srcset: string | undefined,
+  styleScopeId?: string,
+): string {
+  const attrs: string[] = [];
+  const mergedAttrs = {
+    ...input.attrs,
+    src,
+    alt: input.alt,
+    loading: input.loading,
+    decoding: input.decoding,
+    ...(input.fetchPriority ? { fetchpriority: input.fetchPriority } : {}),
+    ...(input.width ? { width: String(input.width) } : {}),
+    ...(input.height ? { height: String(input.height) } : {}),
+    ...(srcset ? { srcset } : {}),
+    ...(input.sizes ? { sizes: input.sizes } : {}),
+  };
+
+  for (const [name, value] of Object.entries(mergedAttrs)) {
+    if (value === undefined || value === null) {
+      continue;
+    }
+    attrs.push(`${name}="${escapeAttribute(String(value))}"`);
+  }
+  appendStyleScopeAttribute(attrs, styleScopeId);
+  const attrText = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
+  return `<img${attrText}>`;
+}
+
+function parseImageFormats(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => String(entry).trim().toLowerCase())
+      .filter(Boolean);
+  }
+  if (typeof value !== "string") {
+    return [];
+  }
+  return value
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function parseImageNumberList(value: unknown): number[] | undefined {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : null;
+  if (!values) {
+    return undefined;
+  }
+  const numbers = values
+    .map((entry) => Number(entry))
+    .filter((entry) => Number.isFinite(entry) && entry > 0)
+    .map((entry) => Math.round(entry));
+  return numbers.length ? numbers : undefined;
+}
+
+function readStringProp(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readNumberProp(value: unknown): number | undefined {
+  const parsed = typeof value === "number"
+    ? value
+    : typeof value === "string"
+      ? Number(value)
+      : Number.NaN;
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+  return Math.round(parsed);
+}
+
+function readBooleanProp(value: unknown, fallback: boolean): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1" || normalized === "yes") {
+      return true;
+    }
+    if (normalized === "false" || normalized === "0" || normalized === "no") {
+      return false;
+    }
+  }
+  return fallback;
+}
+
+function resuxImageMimeType(format: string): string {
+  const normalized = format.toLowerCase();
+  if (normalized === "jpg") {
+    return "image/jpeg";
+  }
+  return normalized.startsWith("image/") ? normalized : `image/${normalized}`;
+}
+
 function renderVueIsland(
   node: ElementTemplateNode,
   context: RenderTemplateContext,
@@ -1214,6 +1910,132 @@ function appendStyleScopeAttribute(attrs: string[], styleScopeId?: string): void
   if (styleScopeId) {
     attrs.push(`${styleScopeId}=""`);
   }
+}
+
+const loadingIndicatorDefaults = {
+  color: "#2563eb",
+  errorColor: "#dc2626",
+  height: 3,
+  duration: 2000,
+  throttle: 200,
+} as const;
+
+function renderResuxLoadingIndicatorSync(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+  slotHtml: string,
+): string {
+  const options = resolveResuxLoadingIndicatorOptions(node, context, locals);
+  return renderResuxLoadingIndicatorMarkup(options, slotHtml);
+}
+
+async function renderResuxLoadingIndicatorAsync(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+  slotHtml: Promise<string>,
+): Promise<string> {
+  const options = resolveResuxLoadingIndicatorOptions(node, context, locals);
+  return renderResuxLoadingIndicatorMarkup(options, await slotHtml);
+}
+
+function resolveResuxLoadingIndicatorOptions(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+): {
+  color: string | false;
+  errorColor: string | false;
+  height: number;
+  duration: number;
+  throttle: number;
+  estimatedProgress: "default" | "custom";
+} {
+  const props = collectComponentProps(node, context.scope, locals);
+  const color = normalizeLoadingColor(props.color, loadingIndicatorDefaults.color);
+  const errorColor = normalizeLoadingColor(
+    props.errorColor,
+    loadingIndicatorDefaults.errorColor,
+  );
+
+  return {
+    color,
+    errorColor,
+    height: normalizeLoadingNumber(props.height, loadingIndicatorDefaults.height, 1),
+    duration: normalizeLoadingNumber(props.duration, loadingIndicatorDefaults.duration, 1),
+    throttle: normalizeLoadingNumber(props.throttle, loadingIndicatorDefaults.throttle, 0),
+    estimatedProgress:
+      typeof props.estimatedProgress === "function" ? "custom" : "default",
+  };
+}
+
+function normalizeLoadingColor(
+  value: unknown,
+  fallback: string,
+): string | false {
+  if (value === false) {
+    return false;
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value.trim();
+  }
+  return fallback;
+}
+
+function normalizeLoadingNumber(
+  value: unknown,
+  fallback: number,
+  min: number,
+): number {
+  const numeric = typeof value === "number"
+    ? value
+    : typeof value === "string"
+      ? Number(value)
+      : Number.NaN;
+
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.max(min, Math.round(numeric));
+}
+
+function renderResuxLoadingIndicatorMarkup(
+  options: {
+    color: string | false;
+    errorColor: string | false;
+    height: number;
+    duration: number;
+    throttle: number;
+    estimatedProgress: "default" | "custom";
+  },
+  slotHtml: string,
+): string {
+  const styleParts = [`--resux-loader-height: ${options.height}px`];
+  if (options.color !== false) {
+    styleParts.push(`--resux-loader-color: ${options.color}`);
+  }
+  if (options.errorColor !== false) {
+    styleParts.push(`--resux-loader-error-color: ${options.errorColor}`);
+  }
+
+  const attrs = [
+    `data-rx-loading-indicator="true"`,
+    "hidden",
+    `data-state="idle"`,
+    `aria-live="polite"`,
+    `aria-busy="false"`,
+    `data-duration="${options.duration}"`,
+    `data-throttle="${options.throttle}"`,
+    `data-estimated-progress="${options.estimatedProgress}"`,
+    `style="${escapeAttribute(styleParts.join("; "))}"`,
+  ];
+
+  const slot = slotHtml.trim().length > 0
+    ? `<div class="rx-loading-slot" data-rx-loading-slot>${slotHtml}</div>`
+    : "";
+
+  return `<div ${attrs.join(" ")}><div class="rx-loading-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Idle"><span class="rx-loading-progress"></span></div>${slot}</div>`;
 }
 
 function resolveVueIslandName(
@@ -1312,9 +2134,11 @@ export class AsyncResuxRenderer {
         moduleId: definition.id,
         styleScopeId: definition.styleScopeId,
         route: this.route,
+        runtimeConfig: this.runtimeConfig,
         components: this.components,
         layouts: this.layouts,
         pageMeta: this.pageMeta,
+        addHeadEntry: (entry) => this.headEntries.push(entry),
         renderPage,
         renderSlot,
         renderLayout: (name, slot) => this.renderLayout(name, slot)
@@ -1712,6 +2536,7 @@ function collectPatches(
           moduleId: "",
           styleScopeId,
           route: { path: "", params: {}, query: {} },
+          runtimeConfig: { public: {} },
           components: {},
           layouts: {},
           pageMeta: {}
@@ -1730,6 +2555,7 @@ function collectPatches(
           moduleId: "",
           styleScopeId,
           route: { path: "", params: {}, query: {} },
+          runtimeConfig: { public: {} },
           components: {},
           layouts: {},
           pageMeta: {}
@@ -1746,14 +2572,16 @@ function collectPatches(
       });
     }
 
-    for (const attr of node.attrs) {
-      if (attr.kind === "dynamic" && attr.bindingId) {
-        patches.push({
-          type: "attr",
-          id: attr.bindingId,
-          attr: nativeAttributeName(node, attr.name),
-          value: stringifyAttributeValue(nativeAttributeName(node, attr.name), evaluateExpression(attr.value, scope, locals))
-        });
+    if (node.tag !== "ResuxImg" && node.tag !== "ResuxPicture") {
+      for (const attr of node.attrs) {
+        if (attr.kind === "dynamic" && attr.bindingId) {
+          patches.push({
+            type: "attr",
+            id: attr.bindingId,
+            attr: nativeAttributeName(node, attr.name),
+            value: stringifyAttributeValue(nativeAttributeName(node, attr.name), evaluateExpression(attr.value, scope, locals))
+          });
+        }
       }
     }
 
@@ -1762,7 +2590,16 @@ function collectPatches(
 }
 
 function nativeElementTag(node: ElementTemplateNode): string {
-  return node.tag === "ResuxLink" ? "a" : node.tag;
+  if (node.tag === "ResuxLink") {
+    return "a";
+  }
+  if (node.tag === "ResuxImg") {
+    return "img";
+  }
+  if (node.tag === "ResuxPicture") {
+    return "picture";
+  }
+  return node.tag;
 }
 
 function nativeAttributeName(node: ElementTemplateNode, name: string): string {
@@ -1799,6 +2636,11 @@ const pendingAsyncDataControllers = globalThis.__RESUX_PENDING_ASYNC_DATA_CONTRO
 let devImportRevision = 0;
 let routeTransitionToken = 0;
 let routeTransitionHideTimer = 0;
+let routeTransitionShowTimer = 0;
+let routeTransitionProgressTimer = 0;
+let routeTransitionStartedAt = 0;
+let routeTransitionVisible = false;
+let routeTransitionIndicator = null;
 const clientPluginIds = new Set();
 const clientMiddlewareById = new Map();
 const clientProvides = globalThis.__RESUX_PROVIDES__ ||= {};
@@ -2277,6 +3119,11 @@ export function useResuxApp() {
   return getClientResuxApp();
 }
 
+export function useResuxImage() {
+  const app = getClientResuxApp();
+  return createClientImageBuilder(app.route, app.$config);
+}
+
 function getClientResuxApp(routeOverride) {
   const payload = globalThis.__RESUX__ ?? {
     route: routeOverride ?? { path: "/", params: {}, query: {} },
@@ -2311,6 +3158,103 @@ function getClientResuxApp(routeOverride) {
   }
 
   return app;
+}
+
+function createClientImageBuilder(route, runtimeConfig) {
+  return (src, options = {}) => {
+    const normalizedSrc = normalizeClientImageSource(src, route);
+    const imageConfig = readClientImageConfig(runtimeConfig);
+    const providerName = String(options.provider || imageConfig.provider || "resux").trim().toLowerCase();
+    const providerConfig = imageConfig.providers[providerName] || {};
+    const baseURL = providerConfig.baseURL || (providerName === "vercel" ? "/_vercel/image" : "/__resux/image");
+    const query = new URLSearchParams();
+
+    if (baseURL.includes("{src}")) {
+      let resolved = baseURL.replaceAll("{src}", encodeURIComponent(normalizedSrc));
+      const templateModifiers = {
+        ...(providerConfig.modifiers || {}),
+        ...(Number.isFinite(imageConfig.quality) ? { quality: Math.round(imageConfig.quality) } : {}),
+        ...(typeof imageConfig.format === "string" ? { format: imageConfig.format } : {}),
+        ...(options.modifiers || {}),
+        ...(Number.isFinite(options.width) ? { width: Math.round(options.width) } : {}),
+        ...(Number.isFinite(options.height) ? { height: Math.round(options.height) } : {}),
+        ...(Number.isFinite(options.quality) ? { quality: Math.round(options.quality) } : {}),
+        ...(typeof options.fit === "string" ? { fit: options.fit } : {}),
+        ...(typeof options.format === "string" ? { format: options.format } : {})
+      };
+      for (const [key, value] of Object.entries(templateModifiers)) {
+        resolved = resolved.replaceAll("{" + key + "}", encodeURIComponent(String(value)));
+      }
+      return resolved;
+    }
+
+    if (providerName === "vercel") {
+      query.set("url", normalizedSrc);
+    } else {
+      query.set("src", normalizedSrc);
+    }
+
+    const modifiers = {
+      ...(providerConfig.modifiers || {}),
+      ...(Number.isFinite(imageConfig.quality) ? { quality: Math.round(imageConfig.quality) } : {}),
+      ...(typeof imageConfig.format === "string" ? { format: imageConfig.format } : {}),
+      ...(options.modifiers || {}),
+      ...(Number.isFinite(options.width) ? { width: Math.round(options.width) } : {}),
+      ...(Number.isFinite(options.height) ? { height: Math.round(options.height) } : {}),
+      ...(Number.isFinite(options.quality) ? { quality: Math.round(options.quality) } : {}),
+      ...(typeof options.fit === "string" ? { fit: options.fit } : {}),
+      ...(typeof options.format === "string" ? { format: options.format } : {})
+    };
+
+    if (Number.isFinite(modifiers.width) && modifiers.width > 0) query.set("w", String(modifiers.width));
+    if (Number.isFinite(modifiers.height) && modifiers.height > 0) query.set("h", String(modifiers.height));
+    if (Number.isFinite(modifiers.quality) && modifiers.quality > 0) query.set("q", String(modifiers.quality));
+    if (typeof modifiers.fit === "string" && modifiers.fit) query.set("fit", modifiers.fit);
+    if (typeof modifiers.format === "string" && modifiers.format) query.set("f", modifiers.format);
+
+    for (const [key, value] of Object.entries(modifiers)) {
+      if (["width", "height", "quality", "fit", "format"].includes(key)) continue;
+      if (value === undefined || value === null || value === false) continue;
+      query.set(key, String(value));
+    }
+
+    const separator = baseURL.includes("?") ? "&" : "?";
+    return query.toString() ? baseURL + separator + query.toString() : baseURL;
+  };
+}
+
+function normalizeClientImageSource(src, route) {
+  const value = String(src || "").trim();
+  if (!value) return "";
+  if (value.startsWith("http://") || value.startsWith("https://") || value.startsWith("data:") || value.startsWith("blob:") || value.startsWith("file:")) {
+    return value;
+  }
+  if (value.startsWith("/")) return value;
+  const basePath = route && typeof route.path === "string" && route.path.startsWith("/") ? route.path : "/";
+  const directory = basePath.endsWith("/") ? basePath : basePath.slice(0, Math.max(basePath.lastIndexOf("/") + 1, 1));
+  const resolved = new URL(value, "https://resux.local" + directory);
+  return resolved.pathname + resolved.search + resolved.hash;
+}
+
+function readClientImageConfig(runtimeConfig) {
+  const config = runtimeConfig && runtimeConfig.public ? runtimeConfig.public : {};
+  const image = config.image || config.resuxImage || {};
+  if (!image || typeof image !== "object" || Array.isArray(image)) {
+    return { providers: {} };
+  }
+  const providers = image.providers && typeof image.providers === "object" && !Array.isArray(image.providers)
+    ? image.providers
+    : {};
+  const densities = Array.isArray(image.densities)
+    ? image.densities.map((entry) => Number(entry)).filter((entry) => Number.isFinite(entry) && entry > 0).map((entry) => Math.round(entry))
+    : undefined;
+  return {
+    provider: typeof image.provider === "string" ? image.provider : undefined,
+    quality: Number.isFinite(image.quality) ? Math.round(image.quality) : undefined,
+    format: typeof image.format === "string" ? image.format : undefined,
+    densities: densities && densities.length ? densities : undefined,
+    providers
+  };
 }
 
 async function ensureClientPlugins(payload) {
@@ -2508,6 +3452,9 @@ export function createClientComponent(definition) {
         useResuxApp() {
           return getClientResuxApp(route);
         },
+        useResuxImage() {
+          return createClientImageBuilder(route, getClientResuxApp(route).$config);
+        },
         apiURL(url) {
           return url;
         },
@@ -2667,33 +3614,32 @@ function setRouteLoading(active) {
 }
 
 function setRouteTransition(state, options = {}) {
-  const loader = document.getElementById("__resux-loading");
+  const loader = getRouteTransitionIndicator();
   const root = document.getElementById("__resux");
   if (!loader) {
     return;
   }
 
+  if (state === "start") {
+    routeTransitionStartedAt = Date.now();
+  }
+
+  const config = readRouteTransitionConfig(loader);
   if (routeTransitionHideTimer) {
     clearTimeout(routeTransitionHideTimer);
     routeTransitionHideTimer = 0;
   }
 
-  const progress = transitionProgress(state, options.progress);
+  const progress = transitionProgress(state, options.progress, config.duration);
   const message = options.message ?? transitionMessage(state);
-  loader.hidden = false;
-  loader.dataset.state = state;
-  loader.style.setProperty("--resux-progress", progress + "%");
-  loader.setAttribute("aria-busy", state === "idle" || state === "complete" ? "false" : "true");
+  updateRouteTransitionUi(loader, state, progress, message);
 
-  const progressbar = loader.querySelector("[role='progressbar']");
-  if (progressbar) {
-    progressbar.setAttribute("aria-valuenow", String(progress));
-    progressbar.setAttribute("aria-valuetext", message);
-  }
-
-  const label = loader.querySelector("[data-rx-transition-message]");
-  if (label) {
-    label.textContent = message;
+  const activeState = state === "start" || state === "fetching" || state === "swapping";
+  if (activeState) {
+    showRouteTransition(loader, config.throttle, false);
+    startRouteTransitionProgressTimer(loader, config.duration);
+  } else {
+    stopRouteTransitionProgressTimer();
   }
 
   if (root) {
@@ -2708,35 +3654,186 @@ function setRouteTransition(state, options = {}) {
 
   dispatchRouteTransition(state, options);
 
-  if (state === "idle" || state === "complete") {
+  if (state === "idle" || state === "complete" || state === "error") {
+    const hideDelay = state === "complete" ? 160 : state === "error" ? 640 : 0;
     routeTransitionHideTimer = setTimeout(() => {
-      loader.hidden = true;
-      loader.dataset.state = "idle";
-      loader.style.setProperty("--resux-progress", "0%");
-      progressbar?.setAttribute("aria-valuenow", "0");
-      progressbar?.setAttribute("aria-valuetext", "Idle");
-    }, state === "complete" ? 160 : 0);
+      hideRouteTransition(loader);
+    }, hideDelay);
   }
 }
 
-function transitionProgress(state, explicitProgress) {
-  if (typeof explicitProgress === "number") {
-    return Math.max(0, Math.min(100, Math.round(explicitProgress)));
+function getRouteTransitionIndicator() {
+  if (routeTransitionIndicator && routeTransitionIndicator.isConnected) {
+    return routeTransitionIndicator;
   }
-  if (state === "start") return 8;
-  if (state === "fetching") return 38;
-  if (state === "swapping") return 76;
-  if (state === "complete") return 100;
-  if (state === "error") return 100;
-  return 0;
+
+  routeTransitionIndicator = document.querySelector("[data-rx-loading-indicator]");
+  if (routeTransitionIndicator) {
+    return routeTransitionIndicator;
+  }
+
+  const fallback = createFallbackRouteTransitionIndicator();
+  routeTransitionIndicator = fallback;
+  return fallback;
+}
+
+function createFallbackRouteTransitionIndicator() {
+  if (!document.body) {
+    return null;
+  }
+
+  const fallback = document.createElement("div");
+  fallback.setAttribute("data-rx-loading-indicator", "true");
+  fallback.setAttribute("hidden", "");
+  fallback.setAttribute("data-state", "idle");
+  fallback.setAttribute("aria-live", "polite");
+  fallback.setAttribute("aria-busy", "false");
+  fallback.setAttribute("data-duration", "2000");
+  fallback.setAttribute("data-throttle", "200");
+  fallback.setAttribute("style", "--resux-loader-height: 3px; --resux-loader-color: #2563eb; --resux-loader-error-color: #dc2626;");
+  fallback.innerHTML = '<div class="rx-loading-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Idle"><span class="rx-loading-progress"></span></div>';
+  document.body.appendChild(fallback);
+  return fallback;
+}
+
+function readRouteTransitionConfig(loader) {
+  return {
+    duration: readPositiveInt(loader?.dataset?.duration, 2000, 1),
+    throttle: readPositiveInt(loader?.dataset?.throttle, 200, 0)
+  };
+}
+
+function readPositiveInt(value, fallback, min) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(min, parsed);
+}
+
+function showRouteTransition(loader, throttle, force) {
+  if (!loader) {
+    return;
+  }
+  if (routeTransitionShowTimer && !force) {
+    return;
+  }
+  if (routeTransitionShowTimer) {
+    clearTimeout(routeTransitionShowTimer);
+    routeTransitionShowTimer = 0;
+  }
+
+  if (force || throttle <= 0 || routeTransitionVisible) {
+    loader.hidden = false;
+    routeTransitionVisible = true;
+    return;
+  }
+
+  routeTransitionShowTimer = setTimeout(() => {
+    loader.hidden = false;
+    routeTransitionVisible = true;
+    routeTransitionShowTimer = 0;
+  }, throttle);
+}
+
+function hideRouteTransition(loader) {
+  if (!loader) {
+    return;
+  }
+  stopRouteTransitionProgressTimer();
+  if (routeTransitionShowTimer) {
+    clearTimeout(routeTransitionShowTimer);
+    routeTransitionShowTimer = 0;
+  }
+  loader.hidden = true;
+  routeTransitionVisible = false;
+  updateRouteTransitionUi(loader, "idle", 0, "Idle");
+}
+
+function startRouteTransitionProgressTimer(loader, duration) {
+  if (routeTransitionProgressTimer) {
+    clearInterval(routeTransitionProgressTimer);
+  }
+
+  routeTransitionProgressTimer = setInterval(() => {
+    if (!loader || loader.hidden) {
+      return;
+    }
+    const state = loader.dataset?.state ?? "idle";
+    if (state === "idle" || state === "complete" || state === "error") {
+      return;
+    }
+    updateRouteTransitionUi(
+      loader,
+      state,
+      transitionProgress(state, undefined, duration),
+      transitionMessage(state),
+    );
+  }, 120);
+}
+
+function stopRouteTransitionProgressTimer() {
+  if (!routeTransitionProgressTimer) {
+    return;
+  }
+  clearInterval(routeTransitionProgressTimer);
+  routeTransitionProgressTimer = 0;
+}
+
+function updateRouteTransitionUi(loader, state, progress, message) {
+  if (!loader) {
+    return;
+  }
+
+  loader.dataset.state = state;
+  loader.style.setProperty("--resux-progress", progress + "%");
+  loader.setAttribute("aria-busy", state === "idle" || state === "complete" || state === "error" ? "false" : "true");
+
+  const progressbar = loader.querySelector("[role='progressbar']");
+  if (progressbar) {
+    progressbar.setAttribute("aria-valuenow", String(progress));
+    progressbar.setAttribute("aria-valuetext", message);
+  }
+}
+
+function transitionProgress(state, explicitProgress, duration = 2000) {
+  if (typeof explicitProgress === "number") {
+    return clampProgress(explicitProgress);
+  }
+
+  if (state === "idle") {
+    return 0;
+  }
+  if (state === "complete" || state === "error") {
+    return 100;
+  }
+
+  const elapsed = Math.max(0, Date.now() - routeTransitionStartedAt);
+  const estimated = defaultEstimatedProgress(duration, elapsed);
+  if (state === "start") {
+    return Math.max(8, Math.min(32, estimated));
+  }
+  if (state === "fetching") {
+    return Math.max(18, Math.min(88, estimated));
+  }
+  return Math.max(72, Math.min(97, estimated));
+}
+
+function defaultEstimatedProgress(duration, elapsed) {
+  const safeDuration = Math.max(1, duration);
+  const scaled = (elapsed / safeDuration) * 2;
+  const estimated = (2 / Math.PI * 100) * Math.atan(scaled);
+  return clampProgress(estimated);
+}
+
+function clampProgress(value) {
+  return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 function transitionMessage(state) {
-  if (state === "start") return "Starting navigation";
-  if (state === "fetching") return "Loading route";
-  if (state === "swapping") return "Updating page";
-  if (state === "complete") return "Route loaded";
-  if (state === "error") return "Route failed";
+  if (state === "start" || state === "fetching" || state === "swapping") return "Loading";
+  if (state === "complete") return "Done";
+  if (state === "error") return "Failed";
   return "Ready";
 }
 
@@ -2787,7 +3884,11 @@ function handleNavigationClick(event) {
 
   const nextPath = target.pathname + target.search;
   const currentPath = location.pathname + location.search;
-  if (nextPath === currentPath && target.hash) {
+  if (nextPath === currentPath) {
+    if (!target.hash || target.hash === location.hash) {
+      event.preventDefault();
+      return true;
+    }
     return false;
   }
 
@@ -2799,6 +3900,11 @@ function handleNavigationClick(event) {
 async function navigateTo(target, options = {}) {
   const nextUrl = new URL(target, location.href);
   const routePath = nextUrl.pathname + nextUrl.search;
+  const currentUrl = new URL(location.href);
+  const currentRoutePath = currentUrl.pathname + currentUrl.search;
+  if (routePath === currentRoutePath && nextUrl.hash === currentUrl.hash) {
+    return;
+  }
   const transitionToken = ++routeTransitionToken;
   let completed = false;
   abortPendingAsyncData();
@@ -2807,6 +3913,9 @@ async function navigateTo(target, options = {}) {
   try {
     setRouteTransition("fetching", { path: routePath });
     const result = await fetchRoutePayload(routePath);
+    if (transitionToken !== routeTransitionToken) {
+      return;
+    }
     if (result.redirect) {
       await navigateTo(result.redirect, { replace: true });
       return;
@@ -2816,11 +3925,17 @@ async function navigateTo(target, options = {}) {
       throw new Error("Route payload response is missing payload data.");
     }
     await ensureClientPlugins(nextPayload);
+    if (transitionToken !== routeTransitionToken) {
+      return;
+    }
     const previousPayload = globalThis.__RESUX__;
     const middlewareResult = await runClientRouteMiddleware(
       nextPayload,
       previousPayload?.route ?? { path: "", params: {}, query: {} }
     );
+    if (transitionToken !== routeTransitionToken) {
+      return;
+    }
     if (middlewareResult?.type === "redirect") {
       await navigateTo(middlewareResult.to, { replace: true });
       return;
@@ -2832,6 +3947,10 @@ async function navigateTo(target, options = {}) {
     const root = document.getElementById("__resux");
     if (!root) {
       location.href = nextUrl.href;
+      return;
+    }
+
+    if (transitionToken !== routeTransitionToken) {
       return;
     }
 
@@ -3364,10 +4483,12 @@ function collectPatches(nodes, scope, locals, patches, styleScopeId) {
     if (node.html) {
       patches.push({ type: "html", id: node.html.bindingId, value: sanitizeHtml(evaluateExpression(node.html.expression, scope, locals)) });
     }
-    for (const attr of node.attrs) {
-      if (attr.kind === "dynamic" && attr.bindingId) {
-        const attrName = nativeAttributeName(node, attr.name);
-        patches.push({ type: "attr", id: attr.bindingId, attr: attrName, value: stringifyAttributeValue(attrName, evaluateExpression(attr.value, scope, locals)) });
+    if (node.tag !== "ResuxImg" && node.tag !== "ResuxPicture") {
+      for (const attr of node.attrs) {
+        if (attr.kind === "dynamic" && attr.bindingId) {
+          const attrName = nativeAttributeName(node, attr.name);
+          patches.push({ type: "attr", id: attr.bindingId, attr: attrName, value: stringifyAttributeValue(attrName, evaluateExpression(attr.value, scope, locals)) });
+        }
       }
     }
     collectPatches(node.children, scope, locals, patches, styleScopeId);
@@ -3402,6 +4523,12 @@ function renderNode(node, scope, locals, styleScopeId) {
 }
 
 function renderElement(node, scope, locals, styleScopeId) {
+  if (node.tag === "ResuxImg") {
+    return renderClientResuxImg(node, scope, locals, styleScopeId);
+  }
+  if (node.tag === "ResuxPicture") {
+    return renderClientResuxPicture(node, scope, locals, styleScopeId);
+  }
   const tag = nativeElementTag(node);
   const attrs = [];
   for (const attr of node.attrs) {
@@ -3435,8 +4562,345 @@ function renderElement(node, scope, locals, styleScopeId) {
   return "<" + tag + attrText + ">" + children + "</" + tag + ">";
 }
 
+const clientImageReservedProps = new Set([
+  "src",
+  "alt",
+  "provider",
+  "modifiers",
+  "quality",
+  "fit",
+  "format",
+  "formats",
+  "width",
+  "height",
+  "widths",
+  "sizes",
+  "densities",
+  "priority",
+  "preload",
+  "lazy",
+  "loading",
+  "decoding",
+  "fetchpriority",
+  "fetchPriority"
+]);
+
+function renderClientResuxImg(node, scope, locals, styleScopeId) {
+  const input = resolveClientImageRenderInput(node, scope, locals);
+  if (!input.src) {
+    return "";
+  }
+
+  const app = getClientResuxApp();
+  const builder = createClientImageBuilder(app.route, app.$config);
+  const src = builder(input.src, {
+    provider: input.provider,
+    width: input.width,
+    height: input.height,
+    quality: input.quality,
+    fit: input.fit,
+    format: input.format,
+    modifiers: input.modifiers
+  });
+  const srcset = buildClientImageSrcset(builder, input);
+  return renderClientResuxImgTag(input, src, srcset, styleScopeId);
+}
+
+function renderClientResuxPicture(node, scope, locals, styleScopeId) {
+  const input = resolveClientImageRenderInput(node, scope, locals);
+  if (!input.src) {
+    return "";
+  }
+
+  const app = getClientResuxApp();
+  const builder = createClientImageBuilder(app.route, app.$config);
+  const fallbackSrc = builder(input.src, {
+    provider: input.provider,
+    width: input.width,
+    height: input.height,
+    quality: input.quality,
+    fit: input.fit,
+    modifiers: input.modifiers
+  });
+  const fallbackSrcset = buildClientImageSrcset(builder, {
+    ...input,
+    format: undefined
+  });
+  const manualChildren = node.children.map((child) => renderNode(child, scope, locals, styleScopeId)).join("");
+  const generatedSources = input.formats
+    .map((format) => {
+      const sourceSrcset = buildClientImageSrcset(builder, {
+        ...input,
+        format
+      });
+      const resolvedSrcset = sourceSrcset || builder(input.src, {
+        provider: input.provider,
+        width: input.width,
+        height: input.height,
+        quality: input.quality,
+        fit: input.fit,
+        format,
+        modifiers: input.modifiers
+      });
+      if (!resolvedSrcset) {
+        return "";
+      }
+      const sourceAttrs = [
+        'type="' + escapeAttribute(clientImageMimeType(format)) + '"',
+        'srcset="' + escapeAttribute(resolvedSrcset) + '"'
+      ];
+      if (input.sizes) {
+        sourceAttrs.push('sizes="' + escapeAttribute(input.sizes) + '"');
+      }
+      return "<source " + sourceAttrs.join(" ") + ">";
+    })
+    .filter(Boolean)
+    .join("");
+  const img = renderClientResuxImgTag(input, fallbackSrc, fallbackSrcset, undefined);
+  const attrs = [];
+  if (styleScopeId) {
+    attrs.push(styleScopeId + '=""');
+  }
+  const attrText = attrs.length ? " " + attrs.join(" ") : "";
+  return "<picture" + attrText + ">" + manualChildren + generatedSources + img + "</picture>";
+}
+
+function resolveClientImageRenderInput(node, scope, locals) {
+  const props = {};
+  for (const attr of node.attrs) {
+    const normalizedName = attr.name.replace(/-([a-zA-Z0-9])/g, (_, char) => char.toUpperCase());
+    props[normalizedName] = attr.kind === "static"
+      ? attr.value
+      : evaluateExpression(attr.value, scope, locals);
+  }
+  const imageConfig = readClientImageConfig(getClientResuxApp().$config);
+  const explicitFormat = readClientStringProp(props.format);
+  const explicitFormats = parseClientImageFormats(
+    props.formats || (explicitFormat && explicitFormat.includes(",") ? explicitFormat : undefined)
+  );
+  const priority = readClientBooleanProp(props.priority, false);
+  const preload = readClientBooleanProp(props.preload, priority);
+  const lazy = readClientBooleanProp(props.lazy, !priority);
+  const quality = readClientNumberProp(props.quality) || imageConfig.quality;
+  const densities = parseClientImageNumberList(props.densities)
+    || imageConfig.densities
+    || [1, 2];
+  return {
+    src: readClientStringProp(props.src) || "",
+    alt: readClientStringProp(props.alt) || "",
+    width: readClientNumberProp(props.width),
+    height: readClientNumberProp(props.height),
+    sizes: readClientStringProp(props.sizes),
+    widths: parseClientImageNumberList(props.widths) || [],
+    densities,
+    loading: readClientStringProp(props.loading) || (lazy ? "lazy" : "eager"),
+    decoding: readClientStringProp(props.decoding) || "async",
+    fetchPriority: readClientStringProp(props.fetchpriority || props.fetchPriority) || (priority ? "high" : undefined),
+    provider: readClientStringProp(props.provider),
+    quality,
+    fit: readClientStringProp(props.fit),
+    format: explicitFormats.length ? undefined : explicitFormat || imageConfig.format,
+    formats: explicitFormats,
+    modifiers: normalizeClientImageModifiers(props.modifiers),
+    attrs: collectClientImageAttrs(props),
+    preload
+  };
+}
+
+function collectClientImageAttrs(props) {
+  const attrs = {};
+  for (const [name, rawValue] of Object.entries(props)) {
+    if (clientImageReservedProps.has(name)) {
+      continue;
+    }
+    if (rawValue === undefined || rawValue === null || rawValue === false) {
+      continue;
+    }
+    const attrName = name === "className"
+      ? "class"
+      : name === "referrerPolicy"
+        ? "referrerpolicy"
+        : name === "crossOrigin"
+          ? "crossorigin"
+          : name;
+    attrs[attrName] = stringifyAttributeValue(attrName, rawValue);
+  }
+  return attrs;
+}
+
+function normalizeClientImageModifiers(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const modifiers = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry === undefined || entry === null || entry === false) {
+      continue;
+    }
+    if (key === "width" || key === "height" || key === "quality") {
+      const numeric = Number(entry);
+      if (Number.isFinite(numeric) && numeric > 0) {
+        modifiers[key] = Math.round(numeric);
+      }
+      continue;
+    }
+    modifiers[key] = entry;
+  }
+  return modifiers;
+}
+
+function buildClientImageSrcset(builder, input) {
+  const widthCandidates = input.widths.length
+    ? [...new Set(input.widths)].sort((left, right) => left - right)
+    : [];
+  if (widthCandidates.length) {
+    return widthCandidates
+      .map((width) => builder(input.src, {
+        provider: input.provider,
+        width,
+        height: input.height,
+        quality: input.quality,
+        fit: input.fit,
+        format: input.format,
+        modifiers: input.modifiers
+      }) + " " + width + "w")
+      .join(", ");
+  }
+  if (!input.width || !input.densities.length) {
+    return undefined;
+  }
+  return [...new Set(input.densities)]
+    .sort((left, right) => left - right)
+    .map((density) => {
+      const width = Math.max(1, Math.round(input.width * density));
+      const height = input.height ? Math.max(1, Math.round(input.height * density)) : undefined;
+      return builder(input.src, {
+        provider: input.provider,
+        width,
+        height,
+        quality: input.quality,
+        fit: input.fit,
+        format: input.format,
+        modifiers: input.modifiers
+      }) + " " + density + "x";
+    })
+    .join(", ");
+}
+
+function renderClientResuxImgTag(input, src, srcset, styleScopeId) {
+  const attrs = [];
+  const mergedAttrs = {
+    ...input.attrs,
+    src,
+    alt: input.alt,
+    loading: input.loading,
+    decoding: input.decoding,
+    ...(input.fetchPriority ? { fetchpriority: input.fetchPriority } : {}),
+    ...(input.width ? { width: String(input.width) } : {}),
+    ...(input.height ? { height: String(input.height) } : {}),
+    ...(srcset ? { srcset } : {}),
+    ...(input.sizes ? { sizes: input.sizes } : {})
+  };
+  for (const [name, value] of Object.entries(mergedAttrs)) {
+    if (value === undefined || value === null) {
+      continue;
+    }
+    attrs.push(name + '="' + escapeAttribute(String(value)) + '"');
+  }
+  if (styleScopeId) {
+    attrs.push(styleScopeId + '=""');
+  }
+  const attrText = attrs.length ? " " + attrs.join(" ") : "";
+  return "<img" + attrText + ">";
+}
+
+function parseClientImageFormats(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => String(entry).trim().toLowerCase()).filter(Boolean);
+  }
+  if (typeof value !== "string") {
+    return [];
+  }
+  return value.split(",").map((entry) => entry.trim().toLowerCase()).filter(Boolean);
+}
+
+function parseClientImageNumberList(value) {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : null;
+  if (!values) {
+    return undefined;
+  }
+  const numbers = values
+    .map((entry) => Number(entry))
+    .filter((entry) => Number.isFinite(entry) && entry > 0)
+    .map((entry) => Math.round(entry));
+  return numbers.length ? numbers : undefined;
+}
+
+function readClientStringProp(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : undefined;
+}
+
+function readClientNumberProp(value) {
+  const parsed = typeof value === "number"
+    ? value
+    : typeof value === "string"
+      ? Number(value)
+      : Number.NaN;
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+  return Math.round(parsed);
+}
+
+function readClientBooleanProp(value, fallback) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1" || normalized === "yes") {
+      return true;
+    }
+    if (normalized === "false" || normalized === "0" || normalized === "no") {
+      return false;
+    }
+  }
+  return fallback;
+}
+
+function clientImageMimeType(format) {
+  const normalized = String(format || "").trim().toLowerCase();
+  if (!normalized) {
+    return "image/*";
+  }
+  if (normalized === "jpg") {
+    return "image/jpeg";
+  }
+  return normalized.startsWith("image/") ? normalized : "image/" + normalized;
+}
+
 function nativeElementTag(node) {
-  return node.tag === "ResuxLink" ? "a" : node.tag;
+  if (node.tag === "ResuxLink") {
+    return "a";
+  }
+  if (node.tag === "ResuxImg") {
+    return "img";
+  }
+  if (node.tag === "ResuxPicture") {
+    return "picture";
+  }
+  return node.tag;
 }
 
 function nativeAttributeName(node, name) {

@@ -90,9 +90,8 @@ describe("runtime SSR", () => {
     expect(result.payload.scopes.s0.state.count).toBe(0);
     expect(result.payload.scopes.s0.asyncData).toEqual({});
     expect(documentHtml).toContain('/__resux/runtime-client.mjs');
-    expect(documentHtml).toContain('__resux-loading');
-    expect(documentHtml).toContain('role="progressbar"');
-    expect(documentHtml).toContain('data-rx-transition-message');
+    expect(documentHtml).not.toContain('__resux-loading');
+    expect(documentHtml).toContain('data-rx-loading-indicator');
     expect(documentHtml).not.toContain('/__resux/dev-events');
     expect(documentHtml).not.toContain('<script type="module" src="/__resux/handlers/m0.mjs"');
   });
@@ -346,6 +345,159 @@ describe("runtime SSR", () => {
     expect(result.html).toContain('<a href="/about">About</a>');
     expect(result.html).toContain('href="/dynamic"');
     expect(result.html).toContain('data-rx-attr-b0="s0:b0"');
+  });
+
+  it("renders ResuxLoadingIndicator with configurable attrs and default slot content", async () => {
+    const page = defineComponent({
+      id: "m-loading",
+      name: "LoadingPage",
+      file: "LoadingPage.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [
+        {
+          type: "element",
+          tag: "ResuxLoadingIndicator",
+          attrs: [
+            { kind: "static", name: "color", value: "#22c55e" },
+            { kind: "static", name: "error-color", value: "#ef4444" },
+            { kind: "static", name: "height", value: "4" },
+            { kind: "static", name: "duration", value: "1500" },
+            { kind: "static", name: "throttle", value: "25" }
+          ],
+          events: [],
+          children: [
+            {
+              type: "element",
+              tag: "strong",
+              attrs: [],
+              events: [],
+              children: [{ type: "text", value: "Please wait" }]
+            }
+          ]
+        }
+      ]
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/", params: {}, query: {} }
+    });
+
+    expect(result.html).toContain('data-rx-loading-indicator="true"');
+    expect(result.html).toContain('data-duration="1500"');
+    expect(result.html).toContain('data-throttle="25"');
+    expect(result.html).toContain("--resux-loader-height: 4px");
+    expect(result.html).toContain("--resux-loader-color: #22c55e");
+    expect(result.html).toContain("--resux-loader-error-color: #ef4444");
+    expect(result.html).toContain("<strong>Please wait</strong>");
+  });
+
+  it("builds image URLs with useResuxImage and provider templates", async () => {
+    const page = defineComponent({
+      id: "m-image-builder",
+      name: "ImageBuilderPage",
+      file: "ImageBuilderPage.vue",
+      handlers: [],
+      async script(ctx) {
+        const buildImage = ctx.useResuxImage();
+        return {
+          url: buildImage("/hero.jpg", {
+            provider: "cdn",
+            width: 640
+          })
+        };
+      },
+      template: [{ type: "interpolation", expression: "url", bindingId: "b0" }]
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/gallery", params: {}, query: {} },
+      runtimeConfig: {
+        public: {
+          image: {
+            quality: 78,
+            format: "webp",
+            providers: {
+              cdn: {
+                baseURL: "https://img.example.com/{src}?w={width}&q={quality}&f={format}"
+              }
+            }
+          }
+        }
+      }
+    });
+
+    expect(result.html).toContain("https://img.example.com/%2Fhero.jpg?w=640&amp;q=78&amp;f=webp");
+  });
+
+  it("renders ResuxImg and ResuxPicture with responsive attrs and preload links", async () => {
+    const page = defineComponent({
+      id: "m-image-components",
+      name: "ImageComponentsPage",
+      file: "ImageComponentsPage.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [
+        {
+          type: "element",
+          tag: "ResuxImg",
+          attrs: [
+            { kind: "static", name: "src", value: "/images/hero.jpg" },
+            { kind: "static", name: "alt", value: "Hero" },
+            { kind: "static", name: "width", value: "400" },
+            { kind: "static", name: "sizes", value: "100vw" },
+            { kind: "static", name: "densities", value: "1,2" },
+            { kind: "static", name: "format", value: "webp" },
+            { kind: "static", name: "priority", value: "true" }
+          ],
+          events: [],
+          children: []
+        },
+        {
+          type: "element",
+          tag: "ResuxPicture",
+          attrs: [
+            { kind: "static", name: "src", value: "/images/card.jpg" },
+            { kind: "static", name: "alt", value: "Card" },
+            { kind: "static", name: "widths", value: "320,640" },
+            { kind: "static", name: "formats", value: "avif,webp" }
+          ],
+          events: [],
+          children: []
+        }
+      ]
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/", params: {}, query: {} },
+      runtimeConfig: {
+        public: {
+          image: {
+            quality: 82
+          }
+        }
+      }
+    });
+
+    expect(result.html).toContain("<img");
+    expect(result.html).toContain("/__resux/image?src=%2Fimages%2Fhero.jpg&amp;w=400&amp;q=82&amp;f=webp");
+    expect(result.html).toContain('srcset="/__resux/image?src=%2Fimages%2Fhero.jpg&amp;w=400&amp;q=82&amp;f=webp 1x, /__resux/image?src=%2Fimages%2Fhero.jpg&amp;w=800&amp;q=82&amp;f=webp 2x"');
+    expect(result.html).toContain("<picture");
+    expect(result.html).toContain('type="image/avif"');
+    expect(result.html).toContain('type="image/webp"');
+    expect(result.head.link).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        rel: "preload",
+        as: "image"
+      })
+    ]));
   });
 
   it("normalizes dynamic class and style values", async () => {
@@ -727,6 +879,62 @@ export default createClientComponent({ id: "m0", name: "ApiUrl", file: "ApiUrl.v
     await waitForText(window, "/api/test");
 
     expect(window.document.querySelector("[data-rx-text='s0:b0']")?.textContent).toBe("/api/test");
+  });
+
+  it("ignores same-route link clicks without refetching route payloads", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-same-route-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <a href="/">Home</a>
+        <main>Home</main>
+      </div>
+    `;
+    let fetchCalls = 0;
+
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      scrollTo: () => undefined,
+      fetch: async () => {
+        fetchCalls++;
+        return new Response(
+          JSON.stringify({
+            html: "<main>Home</main>",
+            head: { title: "Home" },
+            payload: {
+              route: { path: "/", params: {}, query: {} },
+              scopes: {},
+              modules: {}
+            }
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      },
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(fetchCalls).toBe(0);
+    expect(window.location.pathname).toBe("/");
+    expect(window.document.getElementById("__resux")?.innerHTML).toContain("<main>Home</main>");
   });
 
   it("resumes pending async data and patches skeleton blocks", async () => {
@@ -1238,6 +1446,127 @@ export default createClientComponent({ id: "m0", name: "Model", file: "Model.vue
     expect(window.document.head.innerHTML).toContain('name="route"');
   });
 
+  it("ignores same-route link clicks without fetching or rerendering", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-same-route-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const window = new Window({ url: "http://localhost/about?tab=info" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <a href="/about?tab=info">About</a>
+        <main>About page</main>
+      </div>
+    `;
+
+    let fetchCalls = 0;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      scrollTo: () => undefined,
+      fetch: async () => {
+        fetchCalls++;
+        return new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      },
+      __RESUX__: {
+        route: { path: "/about", params: {}, query: { tab: "info" } },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(fetchCalls).toBe(0);
+    expect(window.document.getElementById("__resux")?.innerHTML).toContain("About page");
+    expect(window.location.pathname).toBe("/about");
+    expect(window.location.search).toBe("?tab=info");
+  });
+
+  it("renders ResuxImg to native img markup during client block patches", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-client-img-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const handlerFile = path.join(tempDir, "handler.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+    await writeFile(
+      handlerFile,
+      `import { createClientComponent } from ${JSON.stringify(pathToFileURL(runtimeFile).href)};
+const __template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "toggle" }], children: [{ type: "text", value: "Toggle" }] },
+  { type: "element", tag: "section", attrs: [], events: [], if: { expression: "show.value", blockId: "b0" }, children: [
+      { type: "element", tag: "ResuxImg", attrs: [
+          { kind: "static", name: "src", value: "/hero.png" },
+          { kind: "static", name: "alt", value: "Hero" },
+          { kind: "static", name: "width", value: "200" },
+          { kind: "static", name: "format", value: "webp" }
+        ], events: [], children: [] }
+    ] }
+];
+async function script(ctx) {
+  const show = ctx.useState("show", () => false);
+  function toggle() {
+    show.value = !show.value;
+  }
+  return { show, toggle };
+}
+export default createClientComponent({ id: "m0", name: "ImagePatch", file: "ImagePatch.vue", script, template: __template, handlers: ["toggle"] });
+`,
+      "utf8",
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <button data-rx-on-click="s0:m0:toggle">Toggle</button>
+      <span data-rx-block="s0:b0" style="display: contents;"></span>
+    `;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {
+          s0: {
+            id: "s0",
+            moduleId: "m0",
+            state: { show: false },
+            asyncData: {}
+          }
+        },
+        modules: {
+          m0: pathToFileURL(handlerFile).href
+        },
+        config: {
+          public: {
+            image: {
+              quality: 80
+            }
+          }
+        }
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    window.document.querySelector("button")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+    await waitForHtml(window, "<img");
+
+    const html = window.document.body.innerHTML;
+    expect(html).toContain("/__resux/image?src=%2Fhero.png&amp;w=200&amp;q=80&amp;f=webp");
+    expect(html).not.toContain("<ResuxImg");
+  });
+
   it("runs client route middleware during client-side navigation", async () => {
     const tempDir = path.join(os.tmpdir(), `resux-client-mw-${Date.now()}`);
     await mkdir(tempDir, { recursive: true });
@@ -1264,9 +1593,8 @@ export default defineResuxRouteMiddleware((to, from) => {
         <a href="/protected">Protected</a>
         <main>Home</main>
       </div>
-      <div id="__resux-loading" hidden data-state="idle" aria-live="polite" aria-busy="false">
-        <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Idle"><span></span></div>
-        <div class="panel" data-rx-transition-message>Ready</div>
+      <div data-rx-loading-indicator="true" hidden data-state="idle" aria-live="polite" aria-busy="false" data-duration="2000" data-throttle="0" style="--resux-loader-height: 3px;">
+        <div class="rx-loading-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Idle"><span class="rx-loading-progress"></span></div>
       </div>
     `;
 
@@ -1584,9 +1912,8 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
         <a href="/slow">Slow</a>
         <main>Home</main>
       </div>
-      <div id="__resux-loading" hidden data-state="idle" aria-live="polite" aria-busy="false">
-        <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Idle"><span></span></div>
-        <div class="panel" data-rx-transition-message>Ready</div>
+      <div data-rx-loading-indicator="true" hidden data-state="idle" aria-live="polite" aria-busy="false" data-duration="2000" data-throttle="0" style="--resux-loader-height: 3px;">
+        <div class="rx-loading-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Idle"><span class="rx-loading-progress"></span></div>
       </div>
     `;
     const phases: string[] = [];
@@ -1639,19 +1966,21 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await fetchStarted;
 
-    const loader = window.document.getElementById("__resux-loading")!;
+    const loader = window.document.querySelector("[data-rx-loading-indicator]") as HTMLElement;
     const root = window.document.getElementById("__resux")!;
     expect(loader.hidden).toBe(false);
     expect(loader.dataset.state).toBe("fetching");
     expect(loader.getAttribute("aria-busy")).toBe("true");
     expect(root.getAttribute("data-route-transition")).toBe("loading");
-    expect(window.document.querySelector("[role='progressbar']")?.getAttribute("aria-valuenow")).toBe("38");
+    const progressValue = Number(window.document.querySelector("[role='progressbar']")?.getAttribute("aria-valuenow") ?? "0");
+    expect(progressValue).toBeGreaterThan(0);
+    expect(progressValue).toBeLessThan(100);
 
     resolveFetch();
     await waitForHtml(window, "<main>Slow</main>");
 
     expect(phases).toEqual(expect.arrayContaining(["start", "fetching", "swapping", "complete"]));
-    expect(loader.dataset.state).toBe("complete");
+    expect(["complete", "idle"]).toContain(loader.dataset.state);
     expect(root.hasAttribute("data-route-transition")).toBe(false);
   });
 

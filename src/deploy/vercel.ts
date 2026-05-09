@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { cp, lstat, mkdir, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  assertRuntimeClientAsset,
   ensureResuxClientAssets,
   ensureResuxServerPayload,
   pathExists,
@@ -77,6 +78,30 @@ function normalizeBuildOutputConfig(value: unknown): BuildOutputConfig {
     return {};
   }
   return value;
+}
+
+function isHeaderOnlyRoute(route: BuildOutputRoute): boolean {
+  if (!isRecord(route)) {
+    return false;
+  }
+
+  return (
+    typeof route.src === "string"
+    && isRecord(route.headers)
+    && route.continue !== true
+    && route.dest === undefined
+    && route.handle === undefined
+    && route.status === undefined
+    && route.check === undefined
+    && route.middlewarePath === undefined
+  );
+}
+
+function normalizeRoute(route: BuildOutputRoute): BuildOutputRoute {
+  if (isHeaderOnlyRoute(route)) {
+    return { ...route, continue: true };
+  }
+  return route;
 }
 
 function isRunningInsideVercelContainer(appRoot: string): boolean {
@@ -178,6 +203,7 @@ async function postBuild(context: DeployBuildContext): Promise<void> {
       target: path.join(context.appRoot, ".vercel", "output", "static", "__resux"),
     },
   ]);
+  await assertRuntimeClientAsset(path.join(context.appRoot, ".vercel", "output", "static"));
 
   const outputDir = path.join(context.appRoot, ".vercel", "output");
   const functionsDir = path.join(outputDir, "functions");
@@ -185,7 +211,9 @@ async function postBuild(context: DeployBuildContext): Promise<void> {
 
   const functionNames = await listFunctionDirectories(functionsDir);
   if (!functionNames.length) {
-    return;
+    throw new Error(
+      "Resux vercel deployment output is missing function directories under .vercel/output/functions.",
+    );
   }
 
   const functionRoots = functionNames.map((functionName) =>
@@ -202,6 +230,14 @@ async function postBuild(context: DeployBuildContext): Promise<void> {
       target: path.join(root, ".resux", "client"),
     })),
   );
+  for (const functionRoot of functionRoots) {
+    const manifestPath = path.join(functionRoot, ".resux", "server", "manifest.mjs");
+    if (!(await pathExists(manifestPath))) {
+      throw new Error(
+        `Resux vercel deployment output is missing ${manifestPath}.`,
+      );
+    }
+  }
 
   const defaultFunctionConfig = {
     runtime: resolveVercelNodeRuntime(),
@@ -226,7 +262,7 @@ async function postBuild(context: DeployBuildContext): Promise<void> {
   const parsedOutputConfig = await readJsonRecord(outputConfigPath);
   const safeOutputConfig = normalizeBuildOutputConfig(parsedOutputConfig ?? {});
   const routes = Array.isArray(safeOutputConfig.routes)
-    ? [...safeOutputConfig.routes as BuildOutputRoute[]]
+    ? (safeOutputConfig.routes as BuildOutputRoute[]).map(normalizeRoute)
     : [];
   const hasFilesystemRoute = routes.some((route) => route?.handle === "filesystem");
   if (!hasFilesystemRoute) {
@@ -261,4 +297,3 @@ export const vercelDeployModule: DeployTargetModule = {
   inferPreset: () => "vercel",
   postBuild,
 };
-

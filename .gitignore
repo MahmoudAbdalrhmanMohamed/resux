@@ -6,3 +6,4 @@ coverage/
 # Resux generated output.
 .resux/
 **/.resux/
+docs

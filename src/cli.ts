@@ -10,9 +10,8 @@ import { cp, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import vuePlugin from "@vitejs/plugin-vue";
-import { createServer as createViteServer, type ViteDevServer } from "vite";
-import { buildProject, type BuildOptions } from "./compiler/index.js";
+import type { ViteDevServer } from "vite";
+import type { BuildOptions } from "./compiler/index.js";
 import { runCreateResux } from "./create.js";
 import {
   type ClientPluginManifestRecord,
@@ -42,6 +41,15 @@ let devBuildRevision = 0;
 let devReloadRevision = 0;
 let devLastBuildSourceMtime = 0;
 const devReloadClients = new Set<ServerResponse>();
+
+async function runCompilerBuild(
+  appRoot: string,
+  outDir: string,
+  options: BuildOptions,
+) {
+  const { buildProject } = await import("./compiler/index.js");
+  return buildProject(appRoot, outDir, options);
+}
 
 interface RenderRedirect {
   type: "redirect";
@@ -202,7 +210,7 @@ async function runCli(args: string[]): Promise<void> {
   try {
     if (command === "build") {
       await runTailwindBuild(appRoot, tailwind, true);
-      const result = await buildProject(appRoot, outDir, {
+      const result = await runCompilerBuild(appRoot, outDir, {
         ...buildOptions,
         vite: "build",
       });
@@ -213,7 +221,7 @@ async function runCli(args: string[]): Promise<void> {
       await runNitroBuild(appRoot);
     } else if (command === "compile") {
       await runTailwindBuild(appRoot, tailwind, true);
-      const result = await buildProject(appRoot, outDir, {
+      const result = await runCompilerBuild(appRoot, outDir, {
         ...buildOptions,
         vite: "build",
       });
@@ -231,7 +239,7 @@ async function runCli(args: string[]): Promise<void> {
     } else if (command === "dev") {
       await runTailwindBuild(appRoot, tailwind, false);
       startTailwindWatch(appRoot, tailwind);
-      await buildProject(appRoot, outDir, { ...buildOptions, vite: "dev" });
+      await runCompilerBuild(appRoot, outDir, { ...buildOptions, vite: "dev" });
       const vite = await startViteDevServer(outDir);
       startDevWatcher(vite, appRoot, outDir, buildOptions);
       await startServer({
@@ -247,7 +255,7 @@ async function runCli(args: string[]): Promise<void> {
     } else if (command === "preview" || command === "start") {
       if (await previewNeedsBuild(outDir, buildOptions)) {
         await runTailwindBuild(appRoot, tailwind, true);
-        await buildProject(appRoot, outDir, { ...buildOptions, vite: "build" });
+        await runCompilerBuild(appRoot, outDir, { ...buildOptions, vite: "build" });
       }
       await startServer({
         appRoot,
@@ -561,7 +569,7 @@ async function inspectProject(
   json = false,
 ): Promise<void> {
   if (await previewNeedsBuild(outDir, buildOptions)) {
-    await buildProject(appRoot, outDir, { ...buildOptions, vite: "build" });
+    await runCompilerBuild(appRoot, outDir, { ...buildOptions, vite: "build" });
   }
 
   const manifest = JSON.parse(
@@ -857,23 +865,71 @@ function resolveFallbackFunctionName(functionNames: string[]): string | null {
   return fallback ? fallback.slice(0, -5) : null;
 }
 
+function isCatchAllRouteSrc(src: unknown): boolean {
+  if (typeof src !== "string") {
+    return false;
+  }
+
+  return src === "/(.*)" || src === "/(?:.*)" || /^\/\((?:\?:)?\.\*\)$/.test(src);
+}
+
+function routeDestIncludesFunctionName(route: Record<string, unknown>, functionName: string): boolean {
+  if (typeof route.dest !== "string" || !functionName) {
+    return false;
+  }
+
+  const normalizedDest = route.dest.startsWith("/") ? route.dest.slice(1) : route.dest;
+  return normalizedDest === functionName;
+}
+
+async function patchNitroPublicClientAssets(appRoot: string): Promise<void> {
+  const resuxClientDir = path.join(appRoot, ".resux", "client");
+  if (!(await exists(resuxClientDir))) {
+    return;
+  }
+
+  const publicTargets = [
+    {
+      root: path.join(appRoot, ".output"),
+      target: path.join(appRoot, ".output", "public", "__resux")
+    },
+    {
+      root: path.join(appRoot, ".vercel", "output"),
+      target: path.join(appRoot, ".vercel", "output", "static", "__resux")
+    }
+  ];
+
+  for (const { root, target } of publicTargets) {
+    if (!(await exists(root))) {
+      continue;
+    }
+    await mkdir(path.dirname(target), { recursive: true });
+    await cp(resuxClientDir, target, {
+      recursive: true,
+      force: true
+    });
+  }
+}
+
 async function patchVercelBuildOutput(appRoot: string): Promise<void> {
   const outputDir = path.join(appRoot, ".vercel", "output");
   const functionsDir = path.join(outputDir, "functions");
-  const functionNames = await readdir(functionsDir, { withFileTypes: true })
+  const functionNames: string[] = await readdir(functionsDir, { withFileTypes: true })
     .then((entries) =>
       entries
         .filter((entry) => entry.isDirectory() && entry.name.endsWith(".func"))
         .map((entry) => entry.name),
     )
-    .catch(() => []);
+    .catch((): string[] => []);
 
   if (!functionNames.length) {
     return;
   }
 
   const resuxServerDir = path.join(appRoot, ".resux", "server");
+  const resuxClientDir = path.join(appRoot, ".resux", "client");
   const hasResuxServer = await exists(resuxServerDir);
+  const hasResuxClient = await exists(resuxClientDir);
   const defaultFunctionConfig = {
     runtime: resolveVercelNodeRuntime(),
     handler: "index.mjs",
@@ -887,6 +943,12 @@ async function patchVercelBuildOutput(appRoot: string): Promise<void> {
 
     if (hasResuxServer) {
       await cp(resuxServerDir, path.join(functionDir, ".resux", "server"), {
+        recursive: true,
+        force: true
+      });
+    }
+    if (hasResuxClient) {
+      await cp(resuxClientDir, path.join(functionDir, ".resux", "client"), {
         recursive: true,
         force: true
       });
@@ -921,8 +983,13 @@ async function patchVercelBuildOutput(appRoot: string): Promise<void> {
   }
 
   const fallbackFunctionName = resolveFallbackFunctionName(functionNames);
-  const hasCatchAllRoute = routes.some((route) => route?.src === "/(.*)");
-  if (fallbackFunctionName && !hasCatchAllRoute) {
+  const hasNativeCatchAllFunction = functionNames.includes("[...].func");
+  const hasCatchAllRoute =
+    hasNativeCatchAllFunction || routes.some((route) => isCatchAllRouteSrc(route?.src));
+  const hasFallbackDest = fallbackFunctionName
+    ? routes.some((route) => routeDestIncludesFunctionName(route ?? {}, fallbackFunctionName))
+    : false;
+  if (fallbackFunctionName && !hasCatchAllRoute && !hasFallbackDest) {
     routes.push({ src: "/(.*)", dest: `/${fallbackFunctionName}` });
   }
 
@@ -967,6 +1034,8 @@ async function runNitroBuild(appRoot: string): Promise<void> {
       }
     });
   });
+
+  await patchNitroPublicClientAssets(appRoot);
 
   if (resolvedPreset?.startsWith("vercel")) {
     await patchVercelBuildOutput(appRoot);
@@ -1091,6 +1160,10 @@ export default defineNitroConfig({
     {
       dir: "public",
       baseURL: "/"
+    },
+    {
+      dir: ".resux/client",
+      baseURL: "/__resux"
     }
   ],
   serverAssets: [
@@ -1216,6 +1289,8 @@ dist
 }
 
 async function startViteDevServer(outDir: string): Promise<ViteDevServer> {
+  const [{ createServer: createViteServer }, { default: vuePlugin }] =
+    await Promise.all([import("vite"), import("@vitejs/plugin-vue")]);
   const hmrPort = 30000 + Math.floor(Math.random() * 20000);
   const vite = await createViteServer({
     root: path.join(outDir, "vite-client"),
@@ -2487,7 +2562,7 @@ async function ensureDevBuild(
   while (devBuildDirty || activeDevBuild) {
     if (!activeDevBuild) {
       devBuildDirty = false;
-      activeDevBuild = buildProject(appRoot, outDir, {
+      activeDevBuild = runCompilerBuild(appRoot, outDir, {
         ...buildOptions,
         vite: "dev",
       })

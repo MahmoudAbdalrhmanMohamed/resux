@@ -11,6 +11,10 @@ export default defineNitroConfig({
     {
       dir: "public",
       baseURL: "/"
+    },
+    {
+      dir: ".resux/client",
+      baseURL: "/__resux"
     }
   ],
   serverAssets: [

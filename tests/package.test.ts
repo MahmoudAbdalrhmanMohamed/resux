@@ -88,6 +88,7 @@ describe("create app", () => {
       const frameworkPackage = await readPackageJson();
       const appPackage = JSON.parse(await readFile(path.join(tempRoot, "demo-app", "package.json"), "utf8"));
       const envTypes = await readFile(path.join(tempRoot, "demo-app", "env.d.ts"), "utf8");
+      const nitroConfig = await readFile(path.join(tempRoot, "demo-app", "nitro.config.ts"), "utf8");
 
       expect(appPackage.dependencies).toEqual({
         resuxjs: `^${frameworkPackage.version}`
@@ -100,6 +101,8 @@ describe("create app", () => {
         inspect: "resux inspect ."
       });
       expect(envTypes).toContain("resuxjs/globals");
+      expect(nitroConfig).toContain('dir: ".resux/client"');
+      expect(nitroConfig).toContain('baseURL: "/__resux"');
     } finally {
       process.chdir(cwd);
     }

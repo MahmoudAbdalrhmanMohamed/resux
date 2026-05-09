@@ -1,18 +1,23 @@
 #!/usr/bin/env node
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readdirSync, statSync, watch } from "node:fs";
+import { readdirSync, statSync, watch } from "node:fs";
 import {
   createServer as createHttpServer,
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { cp, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { ViteDevServer } from "vite";
 import type { BuildOptions } from "./compiler/index.js";
 import { runCreateResux } from "./create.js";
+import {
+  patchNitroPublicClientAssets,
+  patchVercelBuildOutput,
+  shouldPreferVercelPreset,
+} from "./deploy/vercel.js";
 import {
   type ClientPluginManifestRecord,
   type ClientRouteMiddlewareManifestRecord,
@@ -822,10 +827,10 @@ function detectDeployProviderFromEnv(env: NodeJS.ProcessEnv): string | null {
   return null;
 }
 
-function resolveNitroPreset(
+async function resolveNitroPreset(
   appRoot: string,
   env: NodeJS.ProcessEnv,
-): string | null {
+): Promise<string | null> {
   const explicitPreset = (env.NITRO_PRESET ?? env.RESUX_NITRO_PRESET)?.trim();
   if (explicitPreset) {
     return explicitPreset;
@@ -836,169 +841,11 @@ function resolveNitroPreset(
     return normalizeProviderPreset(provider);
   }
 
-  // Vercel build containers expose /vercel paths even when system env vars are hidden.
-  const normalizedRoot = appRoot.replace(/\\/g, "/");
-  if (normalizedRoot.startsWith("/vercel/path") || existsSync("/vercel/output")) {
+  if (await shouldPreferVercelPreset(appRoot, env)) {
     return "vercel";
   }
 
   return null;
-}
-
-function resolveVercelNodeRuntime(): string {
-  const supportedNodeVersions = [18, 20, 22];
-  const systemNodeVersion = Number.parseInt(process.versions.node.split(".")[0] ?? "22");
-  const runtimeVersion =
-    supportedNodeVersions.find((version) => version >= systemNodeVersion)
-    ?? supportedNodeVersions[supportedNodeVersions.length - 1];
-  return `nodejs${runtimeVersion}.x`;
-}
-
-function resolveFallbackFunctionName(functionNames: string[]): string | null {
-  if (functionNames.includes("__fallback.func")) {
-    return "__fallback";
-  }
-  if (functionNames.includes("[...].func")) {
-    return "[...]";
-  }
-  const fallback = functionNames.find((name) => name.endsWith(".func"));
-  return fallback ? fallback.slice(0, -5) : null;
-}
-
-function isCatchAllRouteSrc(src: unknown): boolean {
-  if (typeof src !== "string") {
-    return false;
-  }
-
-  return src === "/(.*)" || src === "/(?:.*)" || /^\/\((?:\?:)?\.\*\)$/.test(src);
-}
-
-function routeDestIncludesFunctionName(route: Record<string, unknown>, functionName: string): boolean {
-  if (typeof route.dest !== "string" || !functionName) {
-    return false;
-  }
-
-  const normalizedDest = route.dest.startsWith("/") ? route.dest.slice(1) : route.dest;
-  return normalizedDest === functionName;
-}
-
-async function patchNitroPublicClientAssets(appRoot: string): Promise<void> {
-  const resuxClientDir = path.join(appRoot, ".resux", "client");
-  if (!(await exists(resuxClientDir))) {
-    return;
-  }
-
-  const publicTargets = [
-    {
-      root: path.join(appRoot, ".output"),
-      target: path.join(appRoot, ".output", "public", "__resux")
-    },
-    {
-      root: path.join(appRoot, ".vercel", "output"),
-      target: path.join(appRoot, ".vercel", "output", "static", "__resux")
-    }
-  ];
-
-  for (const { root, target } of publicTargets) {
-    if (!(await exists(root))) {
-      continue;
-    }
-    await mkdir(path.dirname(target), { recursive: true });
-    await cp(resuxClientDir, target, {
-      recursive: true,
-      force: true
-    });
-  }
-}
-
-async function patchVercelBuildOutput(appRoot: string): Promise<void> {
-  const outputDir = path.join(appRoot, ".vercel", "output");
-  const functionsDir = path.join(outputDir, "functions");
-  const functionNames: string[] = await readdir(functionsDir, { withFileTypes: true })
-    .then((entries) =>
-      entries
-        .filter((entry) => entry.isDirectory() && entry.name.endsWith(".func"))
-        .map((entry) => entry.name),
-    )
-    .catch((): string[] => []);
-
-  if (!functionNames.length) {
-    return;
-  }
-
-  const resuxServerDir = path.join(appRoot, ".resux", "server");
-  const resuxClientDir = path.join(appRoot, ".resux", "client");
-  const hasResuxServer = await exists(resuxServerDir);
-  const hasResuxClient = await exists(resuxClientDir);
-  const defaultFunctionConfig = {
-    runtime: resolveVercelNodeRuntime(),
-    handler: "index.mjs",
-    launcherType: "Nodejs",
-    shouldAddHelpers: false,
-    supportsResponseStreaming: true
-  };
-
-  for (const functionName of functionNames) {
-    const functionDir = path.join(functionsDir, functionName);
-
-    if (hasResuxServer) {
-      await cp(resuxServerDir, path.join(functionDir, ".resux", "server"), {
-        recursive: true,
-        force: true
-      });
-    }
-    if (hasResuxClient) {
-      await cp(resuxClientDir, path.join(functionDir, ".resux", "client"), {
-        recursive: true,
-        force: true
-      });
-    }
-
-    const functionConfigPath = path.join(functionDir, ".vc-config.json");
-    if (!(await exists(functionConfigPath))) {
-      await writeFile(
-        functionConfigPath,
-        JSON.stringify(defaultFunctionConfig, null, 2),
-        "utf8",
-      );
-    }
-  }
-
-  const outputConfigPath = path.join(outputDir, "config.json");
-  const parsedOutputConfig = await readFile(outputConfigPath, "utf8")
-    .then((contents) => JSON.parse(contents))
-    .catch(() => ({}));
-  const safeOutputConfig =
-    typeof parsedOutputConfig === "object"
-    && parsedOutputConfig !== null
-    && !Array.isArray(parsedOutputConfig)
-      ? parsedOutputConfig as { routes?: Array<Record<string, unknown>>; [key: string]: unknown }
-      : {};
-  const routes = Array.isArray(safeOutputConfig.routes)
-    ? [...safeOutputConfig.routes]
-    : [];
-  const hasFilesystemRoute = routes.some((route) => route?.handle === "filesystem");
-  if (!hasFilesystemRoute) {
-    routes.push({ handle: "filesystem" });
-  }
-
-  const fallbackFunctionName = resolveFallbackFunctionName(functionNames);
-  const hasNativeCatchAllFunction = functionNames.includes("[...].func");
-  const hasCatchAllRoute =
-    hasNativeCatchAllFunction || routes.some((route) => isCatchAllRouteSrc(route?.src));
-  const hasFallbackDest = fallbackFunctionName
-    ? routes.some((route) => routeDestIncludesFunctionName(route ?? {}, fallbackFunctionName))
-    : false;
-  if (fallbackFunctionName && !hasCatchAllRoute && !hasFallbackDest) {
-    routes.push({ src: "/(.*)", dest: `/${fallbackFunctionName}` });
-  }
-
-  const outputConfig = {
-    ...safeOutputConfig,
-    version: 3,
-    routes
-  };
-  await writeFile(outputConfigPath, JSON.stringify(outputConfig, null, 2), "utf8");
 }
 
 async function runNitroBuild(appRoot: string): Promise<void> {
@@ -1010,13 +857,16 @@ async function runNitroBuild(appRoot: string): Promise<void> {
     "index.mjs",
   );
   const nitroEnv = { ...process.env };
-  const resolvedPreset = resolveNitroPreset(appRoot, nitroEnv);
+  const resolvedPreset = await resolveNitroPreset(appRoot, nitroEnv);
   if (resolvedPreset && !nitroEnv.NITRO_PRESET) {
     nitroEnv.NITRO_PRESET = resolvedPreset;
     console.log(`Detected Nitro preset: ${resolvedPreset}`);
   }
 
-  console.log("Building Nitro output into .output");
+  const outputLabel = resolvedPreset?.startsWith("vercel")
+    ? ".vercel/output"
+    : ".output";
+  console.log(`Building Nitro output into ${outputLabel}`);
 
   await new Promise<void>((resolve, reject) => {
     const child = spawn(process.execPath, [nitroCli, "build"], {

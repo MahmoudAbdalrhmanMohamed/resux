@@ -487,17 +487,81 @@ describe("runtime SSR", () => {
     });
 
     expect(result.html).toContain("<img");
-    expect(result.html).toContain("/__resux/image?src=%2Fimages%2Fhero.jpg&amp;w=400&amp;q=82&amp;f=webp");
-    expect(result.html).toContain('srcset="/__resux/image?src=%2Fimages%2Fhero.jpg&amp;w=400&amp;q=82&amp;f=webp 1x, /__resux/image?src=%2Fimages%2Fhero.jpg&amp;w=800&amp;q=82&amp;f=webp 2x"');
+    expect(result.html).toContain("/__resux/image?src=%2Fimages%2Fhero.webp&amp;original=%2Fimages%2Fhero.jpg&amp;w=400&amp;q=82&amp;f=webp");
+    expect(result.html).toContain('srcset="/__resux/image?src=%2Fimages%2Fhero.webp&amp;original=%2Fimages%2Fhero.jpg&amp;w=400&amp;q=82&amp;f=webp 1x, /__resux/image?src=%2Fimages%2Fhero.webp&amp;original=%2Fimages%2Fhero.jpg&amp;w=800&amp;q=82&amp;f=webp 2x"');
     expect(result.html).toContain("<picture");
     expect(result.html).toContain('type="image/avif"');
     expect(result.html).toContain('type="image/webp"');
     expect(result.head.link).toEqual(expect.arrayContaining([
       expect.objectContaining({
         rel: "preload",
-        as: "image"
+        as: "image",
+        href: "/__resux/image?src=%2Fimages%2Fhero.webp&original=%2Fimages%2Fhero.jpg&w=400&q=82&f=webp",
+        imagesrcset: "/__resux/image?src=%2Fimages%2Fhero.webp&original=%2Fimages%2Fhero.jpg&w=400&q=82&f=webp 1x, /__resux/image?src=%2Fimages%2Fhero.webp&original=%2Fimages%2Fhero.jpg&w=800&q=82&f=webp 2x",
+        imagesizes: "100vw",
+        fetchpriority: "high",
+        type: "image/webp",
       })
     ]));
+  });
+
+  it("defers explicit lazy image loading until client runtime reveals sources", async () => {
+    const page = defineComponent({
+      id: "m-image-lazy",
+      name: "ImageLazyPage",
+      file: "ImageLazyPage.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [
+        {
+          type: "element",
+          tag: "ResuxImg",
+          attrs: [
+            { kind: "static", name: "src", value: "/images/lazy.jpg" },
+            { kind: "static", name: "alt", value: "Lazy" },
+            { kind: "static", name: "width", value: "320" },
+            { kind: "static", name: "loading", value: "lazy" },
+          ],
+          events: [],
+          children: [],
+        },
+        {
+          type: "element",
+          tag: "ResuxPicture",
+          attrs: [
+            { kind: "static", name: "src", value: "/images/lazy-picture.jpg" },
+            { kind: "static", name: "alt", value: "Lazy picture" },
+            { kind: "static", name: "formats", value: "avif,webp" },
+            { kind: "static", name: "loading", value: "lazy" },
+            { kind: "static", name: "widths", value: "320,640" },
+          ],
+          events: [],
+          children: [],
+        },
+      ],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/", params: {}, query: {} },
+      runtimeConfig: {
+        public: {
+          image: {
+            quality: 75,
+          },
+        },
+      },
+    });
+
+    expect(result.html).toContain('data-rx-lazy-image="true"');
+    expect(result.html).toContain('data-rx-lazy-src="/__resux/image?src=%2Fimages%2Flazy.jpg&amp;w=320&amp;q=75"');
+    expect(result.html).toContain('src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="');
+    expect(result.html).toContain('data-rx-lazy-srcset="/__resux/image?src=%2Fimages%2Flazy-picture.avif&amp;original=%2Fimages%2Flazy-picture.jpg&amp;w=320&amp;q=75&amp;f=avif 320w, /__resux/image?src=%2Fimages%2Flazy-picture.avif&amp;original=%2Fimages%2Flazy-picture.jpg&amp;w=640&amp;q=75&amp;f=avif 640w"');
+    expect(result.html).toContain('data-rx-lazy-srcset="/__resux/image?src=%2Fimages%2Flazy-picture.webp&amp;original=%2Fimages%2Flazy-picture.jpg&amp;w=320&amp;q=75&amp;f=webp 320w, /__resux/image?src=%2Fimages%2Flazy-picture.webp&amp;original=%2Fimages%2Flazy-picture.jpg&amp;w=640&amp;q=75&amp;f=webp 640w"');
+    expect(result.html).not.toContain('<source type="image/avif" srcset=');
+    expect(result.html).not.toContain('<source type="image/webp" srcset=');
   });
 
   it("normalizes dynamic class and style values", async () => {
@@ -1563,7 +1627,7 @@ export default createClientComponent({ id: "m0", name: "ImagePatch", file: "Imag
     await waitForHtml(window, "<img");
 
     const html = window.document.body.innerHTML;
-    expect(html).toContain("/__resux/image?src=%2Fhero.png&amp;w=200&amp;q=80&amp;f=webp");
+    expect(html).toContain("/__resux/image?src=%2Fhero.webp&amp;original=%2Fhero.png&amp;w=200&amp;q=80&amp;f=webp");
     expect(html).not.toContain("<ResuxImg");
   });
 
@@ -1982,6 +2046,79 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     expect(phases).toEqual(expect.arrayContaining(["start", "fetching", "swapping", "complete"]));
     expect(["complete", "idle"]).toContain(loader.dataset.state);
     expect(root.hasAttribute("data-route-transition")).toBe(false);
+  });
+
+  it("reveals deferred lazy images only after intersection events", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-lazy-reveal-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux"><main>Home</main></div>
+      <picture>
+        <source data-rx-lazy-srcset="/img/sample.avif 1x" type="image/avif">
+        <img
+          data-rx-lazy-image="true"
+          src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
+          data-rx-lazy-src="/img/sample.webp"
+          data-rx-lazy-srcset="/img/sample.webp 1x, /img/sample@2x.webp 2x"
+          alt="Sample"
+          loading="lazy"
+        >
+      </picture>
+    `;
+
+    let observerCallback: ((entries: Array<{ target: Element; isIntersecting: boolean; intersectionRatio: number }>) => void) | null = null;
+    const observedTargets = new Set<Element>();
+    class MockIntersectionObserver {
+      constructor(
+        callback: (entries: Array<{ target: Element; isIntersecting: boolean; intersectionRatio: number }>) => void
+      ) {
+        observerCallback = callback;
+      }
+      observe(target: Element) {
+        observedTargets.add(target);
+      }
+      unobserve(target: Element) {
+        observedTargets.delete(target);
+      }
+      disconnect() {
+        observedTargets.clear();
+      }
+    }
+
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      IntersectionObserver: MockIntersectionObserver,
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    const image = window.document.querySelector("img[data-rx-lazy-image]") as HTMLImageElement;
+    const source = window.document.querySelector("source[type='image/avif']") as HTMLSourceElement;
+
+    expect(observedTargets.has(image)).toBe(true);
+    expect(image.getAttribute("src")).toContain("data:image/gif;base64");
+    expect(image.getAttribute("srcset")).toBeNull();
+    expect(source.getAttribute("srcset")).toBeNull();
+    expect(observerCallback).toBeTypeOf("function");
+
+    observerCallback!([{ target: image, isIntersecting: true, intersectionRatio: 1 }]);
+
+    expect(image.getAttribute("src")).toBe("/img/sample.webp");
+    expect(image.getAttribute("srcset")).toBe("/img/sample.webp 1x, /img/sample@2x.webp 2x");
+    expect(source.getAttribute("srcset")).toBe("/img/sample.avif 1x");
+    expect(image.getAttribute("data-rx-lazy-ready")).toBe("true");
   });
 
   it("preserves the active layout across client-side navigation", async () => {

@@ -1831,6 +1831,7 @@ const RESUX_IMAGE_SUPPORTED_FORMATS = new Set([
   "webp",
 ]);
 let sharpFactoryPromise: Promise<SharpFactory | null> | null = null;
+let sharpFactoryLoadError: string | null = null;
 
 function parseImageInteger(
   value: string | null,
@@ -1952,10 +1953,14 @@ async function loadSharpFactory(): Promise<SharpFactory | null> {
       const sharpModule = await import(pathToFileURL(sharpPath).href);
       const factory = (sharpModule as { default?: unknown }).default
         ?? (sharpModule as unknown);
+      sharpFactoryLoadError = null;
       return typeof factory === "function"
         ? (factory as SharpFactory)
         : null;
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      sharpFactoryLoadError =
+        `Image transforms require "sharp". Install it in your app dependency tree. (${message})`;
       return null;
     }
   })();
@@ -1988,7 +1993,7 @@ async function transformResuxImage(
       pipeline = pipeline.resize({
         ...(options.width ? { width: options.width } : {}),
         ...(options.height ? { height: options.height } : {}),
-        fit: options.fit ?? "cover",
+        fit: options.fit ?? "inside",
         withoutEnlargement: true,
       });
     }
@@ -2033,7 +2038,9 @@ async function serveResuxImage(
     requestUrl.searchParams.get("src")
     ?? requestUrl.searchParams.get("url")
     ?? "";
-  const sourceUrl = resolveResuxImageSource(sourceParam, requestOrigin);
+  const originalSourceParam = requestUrl.searchParams.get("original") ?? "";
+  const sourceCandidate = originalSourceParam.trim() || sourceParam;
+  const sourceUrl = resolveResuxImageSource(sourceCandidate, requestOrigin);
   if (!sourceUrl) {
     response.writeHead(400, {
       "content-type": "application/json; charset=utf-8",
@@ -2095,11 +2102,26 @@ async function serveResuxImage(
 
   const sourceBuffer = Buffer.from(await upstream.arrayBuffer());
   const sourceContentType = upstream.headers.get("content-type");
+  const needsTransform = shouldTransformImage(options);
   const transformed = await transformResuxImage(
     sourceBuffer,
     sourceContentType,
     options,
   );
+  if (needsTransform && !transformed) {
+    response.writeHead(501, {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    response.end(
+      JSON.stringify({
+        error:
+          sharpFactoryLoadError
+          ?? "Image transform failed. Verify source format and requested modifiers.",
+      }),
+    );
+    return;
+  }
 
   const body = transformed?.buffer ?? sourceBuffer;
   const contentType =

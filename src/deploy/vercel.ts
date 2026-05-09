@@ -24,10 +24,6 @@ interface BuildOutputConfig extends Record<string, unknown> {
   routes?: unknown;
 }
 
-interface VercelProjectConfig extends Record<string, unknown> {
-  framework?: unknown;
-}
-
 function parseMajorNodeVersion(version: string): number {
   const major = Number.parseInt(version.split(".")[0] ?? "", 10);
   return Number.isNaN(major) ? 22 : major;
@@ -126,15 +122,7 @@ async function detect(context: DeployDetectionContext): Promise<boolean> {
   if (context.env.NOW_BUILDER || context.env.VERCEL || context.env.VERCEL_ENV) {
     return true;
   }
-
-  const vercelConfigPath = path.join(context.appRoot, "vercel.json");
-  const config = (await readJsonRecord(vercelConfigPath)) as VercelProjectConfig | null;
-  if (!config) {
-    return false;
-  }
-
-  const framework = typeof config.framework === "string" ? config.framework.trim().toLowerCase() : "";
-  return framework === "nitro";
+  return false;
 }
 
 async function materializeLinkedFunctions(functionsDir: string): Promise<void> {
@@ -233,8 +221,12 @@ async function postBuild(context: DeployBuildContext): Promise<void> {
   for (const functionRoot of functionRoots) {
     const manifestPath = path.join(functionRoot, ".resux", "server", "manifest.mjs");
     if (!(await pathExists(manifestPath))) {
+      const chunkManifestPath = path.join(functionRoot, "chunks", "raw", "manifest.mjs");
+      const hasChunkManifest = await pathExists(chunkManifestPath);
       throw new Error(
-        `Resux vercel deployment output is missing ${manifestPath}.`,
+        hasChunkManifest
+          ? `Resux vercel deployment output is missing ${manifestPath}. Found ${chunkManifestPath} but not the copied Resux server payload. Stop concurrent dev/watch processes, clean .vercel/output, and rerun build.`
+          : `Resux vercel deployment output is missing ${manifestPath}.`,
       );
     }
   }

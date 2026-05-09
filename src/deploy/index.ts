@@ -1,9 +1,7 @@
-import path from "node:path";
 import {
   detectDeployProviderFromEnv,
   loadResuxDeployConfig,
   normalizeProviderPreset,
-  readJsonRecord,
 } from "./common.js";
 import { cloudflareDeployModule } from "./cloudflare.js";
 import { netlifyDeployModule } from "./netlify.js";
@@ -39,37 +37,6 @@ function moduleFromPreset(preset: string): DeployTargetModule | null {
   return deployModules.find((module) =>
     module.presetAliases.some((alias) => alias === normalized)
   ) ?? null;
-}
-
-function moduleFromPackageScripts(scripts: Record<string, unknown>): DeployTargetModule | null {
-  const joined = Object.values(scripts).map((value) => String(value).toLowerCase()).join("\n");
-  if (joined.includes("vercel")) {
-    return vercelDeployModule;
-  }
-  if (joined.includes("netlify")) {
-    return netlifyDeployModule;
-  }
-  if (joined.includes("cloudflare") || joined.includes("wrangler")) {
-    return cloudflareDeployModule;
-  }
-  if (joined.includes("nitro") && joined.includes("static")) {
-    return staticDeployModule;
-  }
-  return null;
-}
-
-async function detectTargetFromPackageConfig(appRoot: string): Promise<DeployTargetModule | null> {
-  const packageJson = await readJsonRecord(path.join(appRoot, "package.json"));
-  if (!packageJson) {
-    return null;
-  }
-
-  const scripts = packageJson.scripts;
-  if (!scripts || typeof scripts !== "object" || Array.isArray(scripts)) {
-    return null;
-  }
-
-  return moduleFromPackageScripts(scripts as Record<string, unknown>);
 }
 
 function buildDetectionContext(
@@ -186,16 +153,6 @@ export async function resolveDeployment(
     }
     const inferredPreset = module.inferPreset?.(detectionContext) ?? null;
     return createResolution(module, inferredPreset, `${module.target} project detection`);
-  }
-
-  const packageDetectedModule = await detectTargetFromPackageConfig(appRoot);
-  if (packageDetectedModule) {
-    const inferredPreset = packageDetectedModule.inferPreset?.(detectionContext) ?? null;
-    return createResolution(
-      packageDetectedModule,
-      inferredPreset,
-      "package.json scripts",
-    );
   }
 
   const fallbackPreset = nodeDeployModule.inferPreset?.(detectionContext) ?? null;

@@ -1,6 +1,6 @@
 {
   "name": "resuxjs",
-  "version": "0.2.34",
+  "version": "0.2.35",
   "private": false,
   "description": "Experimental resumable web framework with Vue-like SFC routing and a custom SSR/runtime pipeline.",
   "type": "module",
@@ -92,6 +92,7 @@
     "@vue/compiler-sfc": "^3.5.22",
     "h3": "^1.15.4",
     "nitropack": "^2.12.6",
+    "sharp": "^0.34.4",
     "typescript": "^5.9.3",
     "vite": "^8.0.10",
     "vue": "^3.5.33"

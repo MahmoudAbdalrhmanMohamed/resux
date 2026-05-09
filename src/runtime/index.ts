@@ -1124,16 +1124,26 @@ function buildResuxImageURL(
   const trimmedProvider = providerName.trim().toLowerCase();
   const baseURL = providerBaseURL?.trim()
     || (trimmedProvider === "vercel" ? "/_vercel/image" : "/__resux/image");
+  const normalizedFormat = normalizeImageOutputFormat(
+    typeof modifiers.format === "string" ? modifiers.format : undefined,
+  );
 
   if (baseURL.includes("{src}")) {
     return injectImageTemplateSource(baseURL, src, modifiers);
   }
 
+  const sourceDescriptor =
+    trimmedProvider === "vercel"
+      ? { publicSource: src }
+      : rewriteImageSourceForDisplayFormat(src, normalizedFormat);
   const query = new URLSearchParams();
   if (trimmedProvider === "vercel") {
     query.set("url", src);
   } else {
-    query.set("src", src);
+    query.set("src", sourceDescriptor.publicSource);
+    if (sourceDescriptor.originalSource) {
+      query.set("original", sourceDescriptor.originalSource);
+    }
   }
 
   const width = Number(modifiers.width);
@@ -1151,7 +1161,9 @@ function buildResuxImageURL(
   if (typeof modifiers.fit === "string" && modifiers.fit.length > 0) {
     query.set("fit", modifiers.fit);
   }
-  if (typeof modifiers.format === "string" && modifiers.format.length > 0) {
+  if (normalizedFormat) {
+    query.set("f", normalizedFormat);
+  } else if (typeof modifiers.format === "string" && modifiers.format.length > 0) {
     query.set("f", modifiers.format);
   }
 
@@ -1184,6 +1196,69 @@ function injectImageTemplateSource(
     resolved = resolved.replaceAll(`{${key}}`, encodeURIComponent(String(value)));
   }
   return resolved;
+}
+
+function normalizeImageOutputFormat(value: string | undefined): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  return normalized === "jpg" ? "jpeg" : normalized;
+}
+
+function rewriteImageSourceForDisplayFormat(
+  src: string,
+  normalizedFormat: string | undefined,
+): { publicSource: string; originalSource?: string } {
+  if (!normalizedFormat) {
+    return { publicSource: src };
+  }
+
+  if (src.startsWith("data:") || src.startsWith("blob:")) {
+    return { publicSource: src };
+  }
+
+  if (src.startsWith("http://") || src.startsWith("https://")) {
+    try {
+      const sourceUrl = new URL(src);
+      const rewrittenPathname = rewriteImagePathExtension(
+        sourceUrl.pathname,
+        normalizedFormat,
+      );
+      if (rewrittenPathname === sourceUrl.pathname) {
+        return { publicSource: src };
+      }
+      sourceUrl.pathname = rewrittenPathname;
+      return { publicSource: sourceUrl.toString(), originalSource: src };
+    } catch {
+      return { publicSource: src };
+    }
+  }
+
+  const [pathPart, suffix = ""] = src.split(/(?=[?#])/);
+  const rewrittenPath = rewriteImagePathExtension(pathPart, normalizedFormat);
+  if (rewrittenPath === pathPart) {
+    return { publicSource: src };
+  }
+  return { publicSource: `${rewrittenPath}${suffix}`, originalSource: src };
+}
+
+function rewriteImagePathExtension(pathname: string, extension: string): string {
+  if (!pathname) {
+    return pathname;
+  }
+  const normalizedExtension = extension.startsWith(".")
+    ? extension.slice(1)
+    : extension;
+  const lastSlash = pathname.lastIndexOf("/");
+  const lastDot = pathname.lastIndexOf(".");
+  if (lastDot > lastSlash) {
+    return `${pathname.slice(0, lastDot + 1)}${normalizedExtension}`;
+  }
+  return `${pathname}.${normalizedExtension}`;
 }
 
 function runtimeOrigin(runtimeConfig: RuntimeConfig): string | undefined {
@@ -1517,6 +1592,7 @@ interface ResuxImageRenderInput {
   format?: string;
   formats: string[];
   preload: boolean;
+  deferLazy: boolean;
   modifiers: ResuxImageModifiers;
   attrs: Record<string, string>;
 }
@@ -1543,6 +1619,8 @@ const resuxImageReservedProps = new Set([
   "fetchpriority",
   "fetchPriority",
 ]);
+const resuxLazyPlaceholderSrc =
+  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 
 function renderResuxImg(
   node: ElementTemplateNode,
@@ -1566,7 +1644,7 @@ function renderResuxImg(
   });
   const srcset = buildResuxImageSrcset(builder, input);
 
-  registerResuxImagePreload(context, src, srcset, input.sizes, input.preload);
+  registerResuxImagePreload(context, src, srcset, input, input.preload);
   return renderResuxImgTag(input, src, srcset, context.styleScopeId);
 }
 
@@ -1593,7 +1671,7 @@ function renderResuxPicture(
     ...input,
     format: undefined,
   });
-  registerResuxImagePreload(context, fallbackSrc, fallbackSrcset, input.sizes, input.preload);
+  registerResuxImagePreload(context, fallbackSrc, fallbackSrcset, input, input.preload);
 
   const manualChildren = renderTemplateNodes(node.children, context, locals);
   const generatedSources = input.formats
@@ -1615,12 +1693,17 @@ function renderResuxPicture(
       if (!resolvedSrcset) {
         return "";
       }
-      const sourceAttrs: string[] = [
-        `type="${escapeAttribute(resuxImageMimeType(format))}"`,
-        `srcset="${escapeAttribute(resolvedSrcset)}"`,
-      ];
-      if (input.sizes) {
-        sourceAttrs.push(`sizes="${escapeAttribute(input.sizes)}"`);
+      const sourceAttrs: string[] = [`type="${escapeAttribute(resuxImageMimeType(format))}"`];
+      if (input.deferLazy) {
+        sourceAttrs.push(`data-rx-lazy-srcset="${escapeAttribute(resolvedSrcset)}"`);
+        if (input.sizes) {
+          sourceAttrs.push(`data-rx-lazy-sizes="${escapeAttribute(input.sizes)}"`);
+        }
+      } else {
+        sourceAttrs.push(`srcset="${escapeAttribute(resolvedSrcset)}"`);
+        if (input.sizes) {
+          sourceAttrs.push(`sizes="${escapeAttribute(input.sizes)}"`);
+        }
       }
       return `<source ${sourceAttrs.join(" ")}>`;
     })
@@ -1654,8 +1737,13 @@ function resolveResuxImageRenderInput(
   const height = readNumberProp(props.height);
   const priority = readBooleanProp(props.priority, false);
   const preload = readBooleanProp(props.preload, priority);
-  const lazy = readBooleanProp(props.lazy, !priority);
-  const loading = readStringProp(props.loading) ?? (lazy ? "lazy" : "eager");
+  const explicitLoading = readStringProp(props.loading);
+  const explicitLazy = props.lazy === undefined
+    ? undefined
+    : readBooleanProp(props.lazy, true);
+  const lazy = explicitLazy ?? (explicitLoading ? explicitLoading === "lazy" : !priority);
+  const loading = explicitLoading ?? (lazy ? "lazy" : "eager");
+  const deferLazy = explicitLoading === "lazy" || explicitLazy === true;
   const decoding = readStringProp(props.decoding) ?? "async";
   const fetchPriority = readStringProp(props.fetchpriority ?? props.fetchPriority)
     ?? (priority ? "high" : undefined);
@@ -1684,6 +1772,7 @@ function resolveResuxImageRenderInput(
     format: explicitFormats.length ? undefined : explicitFormat ?? runtimeImageConfig.format,
     formats: explicitFormats,
     preload,
+    deferLazy,
     modifiers,
     attrs: passthrough,
   };
@@ -1765,7 +1854,7 @@ function registerResuxImagePreload(
   context: RenderTemplateContext,
   href: string,
   srcset: string | undefined,
-  sizes: string | undefined,
+  input: ResuxImageRenderInput,
   enabled: boolean,
 ): void {
   if (!enabled || !href || !context.addHeadEntry) {
@@ -1776,12 +1865,16 @@ function registerResuxImagePreload(
     rel: "preload",
     as: "image",
     href,
+    ...(input.fetchPriority ? { fetchpriority: input.fetchPriority } : {}),
   };
   if (srcset) {
     link.imagesrcset = srcset;
   }
-  if (sizes) {
-    link.imagesizes = sizes;
+  if (input.sizes) {
+    link.imagesizes = input.sizes;
+  }
+  if (input.format && input.formats.length === 0) {
+    link.type = resuxImageMimeType(input.format);
   }
   context.addHeadEntry({ link: [link] });
 }
@@ -1793,17 +1886,22 @@ function renderResuxImgTag(
   styleScopeId?: string,
 ): string {
   const attrs: string[] = [];
+  const isDeferredLazy = input.deferLazy && input.loading.toLowerCase() === "lazy";
   const mergedAttrs = {
     ...input.attrs,
-    src,
+    src: isDeferredLazy ? resuxLazyPlaceholderSrc : src,
     alt: input.alt,
     loading: input.loading,
     decoding: input.decoding,
+    ...(isDeferredLazy ? { "data-rx-lazy-image": "true" } : {}),
+    ...(isDeferredLazy ? { "data-rx-lazy-src": src } : {}),
+    ...(isDeferredLazy && srcset ? { "data-rx-lazy-srcset": srcset } : {}),
+    ...(isDeferredLazy && input.sizes ? { "data-rx-lazy-sizes": input.sizes } : {}),
     ...(input.fetchPriority ? { fetchpriority: input.fetchPriority } : {}),
     ...(input.width ? { width: String(input.width) } : {}),
     ...(input.height ? { height: String(input.height) } : {}),
-    ...(srcset ? { srcset } : {}),
-    ...(input.sizes ? { sizes: input.sizes } : {}),
+    ...(!isDeferredLazy && srcset ? { srcset } : {}),
+    ...(!isDeferredLazy && input.sizes ? { sizes: input.sizes } : {}),
   };
 
   for (const [name, value] of Object.entries(mergedAttrs)) {
@@ -2641,9 +2739,11 @@ let routeTransitionProgressTimer = 0;
 let routeTransitionStartedAt = 0;
 let routeTransitionVisible = false;
 let routeTransitionIndicator = null;
+let lazyImageObserver = null;
 const clientPluginIds = new Set();
 const clientMiddlewareById = new Map();
 const clientProvides = globalThis.__RESUX_PROVIDES__ ||= {};
+const RESUX_LAZY_PLACEHOLDER_SRC = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 
 const __rxFlags = {
   isReactive: "__v_isReactive",
@@ -3167,33 +3267,6 @@ function createClientImageBuilder(route, runtimeConfig) {
     const providerName = String(options.provider || imageConfig.provider || "resux").trim().toLowerCase();
     const providerConfig = imageConfig.providers[providerName] || {};
     const baseURL = providerConfig.baseURL || (providerName === "vercel" ? "/_vercel/image" : "/__resux/image");
-    const query = new URLSearchParams();
-
-    if (baseURL.includes("{src}")) {
-      let resolved = baseURL.replaceAll("{src}", encodeURIComponent(normalizedSrc));
-      const templateModifiers = {
-        ...(providerConfig.modifiers || {}),
-        ...(Number.isFinite(imageConfig.quality) ? { quality: Math.round(imageConfig.quality) } : {}),
-        ...(typeof imageConfig.format === "string" ? { format: imageConfig.format } : {}),
-        ...(options.modifiers || {}),
-        ...(Number.isFinite(options.width) ? { width: Math.round(options.width) } : {}),
-        ...(Number.isFinite(options.height) ? { height: Math.round(options.height) } : {}),
-        ...(Number.isFinite(options.quality) ? { quality: Math.round(options.quality) } : {}),
-        ...(typeof options.fit === "string" ? { fit: options.fit } : {}),
-        ...(typeof options.format === "string" ? { format: options.format } : {})
-      };
-      for (const [key, value] of Object.entries(templateModifiers)) {
-        resolved = resolved.replaceAll("{" + key + "}", encodeURIComponent(String(value)));
-      }
-      return resolved;
-    }
-
-    if (providerName === "vercel") {
-      query.set("url", normalizedSrc);
-    } else {
-      query.set("src", normalizedSrc);
-    }
-
     const modifiers = {
       ...(providerConfig.modifiers || {}),
       ...(Number.isFinite(imageConfig.quality) ? { quality: Math.round(imageConfig.quality) } : {}),
@@ -3205,12 +3278,44 @@ function createClientImageBuilder(route, runtimeConfig) {
       ...(typeof options.fit === "string" ? { fit: options.fit } : {}),
       ...(typeof options.format === "string" ? { format: options.format } : {})
     };
+    const normalizedFormat = normalizeClientImageOutputFormat(
+      typeof modifiers.format === "string" ? modifiers.format : undefined
+    );
 
-    if (Number.isFinite(modifiers.width) && modifiers.width > 0) query.set("w", String(modifiers.width));
-    if (Number.isFinite(modifiers.height) && modifiers.height > 0) query.set("h", String(modifiers.height));
-    if (Number.isFinite(modifiers.quality) && modifiers.quality > 0) query.set("q", String(modifiers.quality));
+    if (baseURL.includes("{src}")) {
+      let resolved = baseURL.replaceAll("{src}", encodeURIComponent(normalizedSrc));
+      for (const [key, value] of Object.entries(modifiers)) {
+        resolved = resolved.replaceAll("{" + key + "}", encodeURIComponent(String(value)));
+      }
+      return resolved;
+    }
+
+    const query = new URLSearchParams();
+    const sourceDescriptor = providerName === "vercel"
+      ? { publicSource: normalizedSrc }
+      : rewriteClientImageSourceForDisplayFormat(normalizedSrc, normalizedFormat);
+
+    if (providerName === "vercel") {
+      query.set("url", normalizedSrc);
+    } else {
+      query.set("src", sourceDescriptor.publicSource);
+      if (sourceDescriptor.originalSource) {
+        query.set("original", sourceDescriptor.originalSource);
+      }
+    }
+
+    const width = Number(modifiers.width);
+    const height = Number(modifiers.height);
+    const quality = Number(modifiers.quality);
+    if (Number.isFinite(width) && width > 0) query.set("w", String(Math.round(width)));
+    if (Number.isFinite(height) && height > 0) query.set("h", String(Math.round(height)));
+    if (Number.isFinite(quality) && quality > 0) query.set("q", String(Math.round(quality)));
     if (typeof modifiers.fit === "string" && modifiers.fit) query.set("fit", modifiers.fit);
-    if (typeof modifiers.format === "string" && modifiers.format) query.set("f", modifiers.format);
+    if (normalizedFormat) {
+      query.set("f", normalizedFormat);
+    } else if (typeof modifiers.format === "string" && modifiers.format) {
+      query.set("f", modifiers.format);
+    }
 
     for (const [key, value] of Object.entries(modifiers)) {
       if (["width", "height", "quality", "fit", "format"].includes(key)) continue;
@@ -3221,6 +3326,64 @@ function createClientImageBuilder(route, runtimeConfig) {
     const separator = baseURL.includes("?") ? "&" : "?";
     return query.toString() ? baseURL + separator + query.toString() : baseURL;
   };
+}
+
+function normalizeClientImageOutputFormat(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  return normalized === "jpg" ? "jpeg" : normalized;
+}
+
+function rewriteClientImageSourceForDisplayFormat(src, normalizedFormat) {
+  if (!normalizedFormat) {
+    return { publicSource: src };
+  }
+
+  if (src.startsWith("data:") || src.startsWith("blob:")) {
+    return { publicSource: src };
+  }
+
+  if (src.startsWith("http://") || src.startsWith("https://")) {
+    try {
+      const sourceUrl = new URL(src);
+      const rewrittenPathname = rewriteClientImagePathExtension(sourceUrl.pathname, normalizedFormat);
+      if (rewrittenPathname === sourceUrl.pathname) {
+        return { publicSource: src };
+      }
+      sourceUrl.pathname = rewrittenPathname;
+      return { publicSource: sourceUrl.toString(), originalSource: src };
+    } catch {
+      return { publicSource: src };
+    }
+  }
+
+  const [pathPart, suffix = ""] = src.split(/(?=[?#])/);
+  const rewrittenPath = rewriteClientImagePathExtension(pathPart, normalizedFormat);
+  if (rewrittenPath === pathPart) {
+    return { publicSource: src };
+  }
+
+  return { publicSource: rewrittenPath + suffix, originalSource: src };
+}
+
+function rewriteClientImagePathExtension(pathname, extension) {
+  if (!pathname) {
+    return pathname;
+  }
+  const normalizedExtension = extension.startsWith(".")
+    ? extension.slice(1)
+    : extension;
+  const lastSlash = pathname.lastIndexOf("/");
+  const lastDot = pathname.lastIndexOf(".");
+  if (lastDot > lastSlash) {
+    return pathname.slice(0, lastDot + 1) + normalizedExtension;
+  }
+  return pathname + "." + normalizedExtension;
 }
 
 function normalizeClientImageSource(src, route) {
@@ -3554,6 +3717,88 @@ async function initializeClientRuntime() {
   }
   void resumePendingAsyncData();
   void mountVueIslands();
+  activateDeferredLazyImages();
+}
+
+function activateDeferredLazyImages(root = document) {
+  const images = root.querySelectorAll ? root.querySelectorAll("img[data-rx-lazy-image='true']") : [];
+  if (!images.length) {
+    return;
+  }
+
+  const observer = getLazyImageObserver();
+  for (const image of images) {
+    if (image.getAttribute("data-rx-lazy-ready") === "true") {
+      continue;
+    }
+    if (!observer) {
+      revealDeferredLazyImage(image);
+      continue;
+    }
+    observer.observe(image);
+  }
+}
+
+function getLazyImageObserver() {
+  if (lazyImageObserver) {
+    return lazyImageObserver;
+  }
+  if (typeof IntersectionObserver !== "function") {
+    return null;
+  }
+  lazyImageObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting && entry.intersectionRatio <= 0) {
+        continue;
+      }
+      const target = entry.target;
+      lazyImageObserver?.unobserve(target);
+      revealDeferredLazyImage(target);
+    }
+  }, { rootMargin: "320px 0px" });
+  return lazyImageObserver;
+}
+
+function revealDeferredLazyImage(image) {
+  if (!image || image.getAttribute("data-rx-lazy-ready") === "true") {
+    return;
+  }
+
+  const picture = image.closest ? image.closest("picture") : null;
+  if (picture && picture.querySelectorAll) {
+    picture.querySelectorAll("source[data-rx-lazy-srcset]").forEach((source) => {
+      const nextSrcset = source.getAttribute("data-rx-lazy-srcset");
+      if (nextSrcset) {
+        source.setAttribute("srcset", nextSrcset);
+      }
+      source.removeAttribute("data-rx-lazy-srcset");
+      const nextSizes = source.getAttribute("data-rx-lazy-sizes");
+      if (nextSizes) {
+        source.setAttribute("sizes", nextSizes);
+      }
+      source.removeAttribute("data-rx-lazy-sizes");
+    });
+  }
+
+  const srcset = image.getAttribute("data-rx-lazy-srcset");
+  if (srcset) {
+    image.setAttribute("srcset", srcset);
+  }
+  image.removeAttribute("data-rx-lazy-srcset");
+  const sizes = image.getAttribute("data-rx-lazy-sizes");
+  if (sizes) {
+    image.setAttribute("sizes", sizes);
+  }
+  image.removeAttribute("data-rx-lazy-sizes");
+
+  const src = image.getAttribute("data-rx-lazy-src");
+  if (src) {
+    image.setAttribute("src", src);
+  } else if (image.getAttribute("src") === RESUX_LAZY_PLACEHOLDER_SRC) {
+    image.removeAttribute("src");
+  }
+  image.removeAttribute("data-rx-lazy-src");
+  image.setAttribute("data-rx-lazy-ready", "true");
 }
 
 function createAsyncDataResource(value, pending = false, error = null) {
@@ -3968,6 +4213,7 @@ async function navigateTo(target, options = {}) {
     clearScopeCacheExcept(preserved.scopeIds);
     void resumePendingAsyncData();
     void mountVueIslands(preserved.root);
+    activateDeferredLazyImages(preserved.root);
 
     if (nextUrl.hash) {
       document.getElementById(nextUrl.hash.slice(1))?.scrollIntoView();
@@ -4645,12 +4891,17 @@ function renderClientResuxPicture(node, scope, locals, styleScopeId) {
       if (!resolvedSrcset) {
         return "";
       }
-      const sourceAttrs = [
-        'type="' + escapeAttribute(clientImageMimeType(format)) + '"',
-        'srcset="' + escapeAttribute(resolvedSrcset) + '"'
-      ];
-      if (input.sizes) {
-        sourceAttrs.push('sizes="' + escapeAttribute(input.sizes) + '"');
+      const sourceAttrs = ['type="' + escapeAttribute(clientImageMimeType(format)) + '"'];
+      if (input.deferLazy) {
+        sourceAttrs.push('data-rx-lazy-srcset="' + escapeAttribute(resolvedSrcset) + '"');
+        if (input.sizes) {
+          sourceAttrs.push('data-rx-lazy-sizes="' + escapeAttribute(input.sizes) + '"');
+        }
+      } else {
+        sourceAttrs.push('srcset="' + escapeAttribute(resolvedSrcset) + '"');
+        if (input.sizes) {
+          sourceAttrs.push('sizes="' + escapeAttribute(input.sizes) + '"');
+        }
       }
       return "<source " + sourceAttrs.join(" ") + ">";
     })
@@ -4680,7 +4931,13 @@ function resolveClientImageRenderInput(node, scope, locals) {
   );
   const priority = readClientBooleanProp(props.priority, false);
   const preload = readClientBooleanProp(props.preload, priority);
-  const lazy = readClientBooleanProp(props.lazy, !priority);
+  const explicitLoading = readClientStringProp(props.loading);
+  const explicitLazy = props.lazy === undefined
+    ? undefined
+    : readClientBooleanProp(props.lazy, true);
+  const lazy = explicitLazy ?? (explicitLoading ? explicitLoading === "lazy" : !priority);
+  const loading = explicitLoading || (lazy ? "lazy" : "eager");
+  const deferLazy = explicitLoading === "lazy" || explicitLazy === true;
   const quality = readClientNumberProp(props.quality) || imageConfig.quality;
   const densities = parseClientImageNumberList(props.densities)
     || imageConfig.densities
@@ -4693,7 +4950,7 @@ function resolveClientImageRenderInput(node, scope, locals) {
     sizes: readClientStringProp(props.sizes),
     widths: parseClientImageNumberList(props.widths) || [],
     densities,
-    loading: readClientStringProp(props.loading) || (lazy ? "lazy" : "eager"),
+    loading,
     decoding: readClientStringProp(props.decoding) || "async",
     fetchPriority: readClientStringProp(props.fetchpriority || props.fetchPriority) || (priority ? "high" : undefined),
     provider: readClientStringProp(props.provider),
@@ -4703,7 +4960,8 @@ function resolveClientImageRenderInput(node, scope, locals) {
     formats: explicitFormats,
     modifiers: normalizeClientImageModifiers(props.modifiers),
     attrs: collectClientImageAttrs(props),
-    preload
+    preload,
+    deferLazy
   };
 }
 
@@ -4789,17 +5047,22 @@ function buildClientImageSrcset(builder, input) {
 
 function renderClientResuxImgTag(input, src, srcset, styleScopeId) {
   const attrs = [];
+  const isDeferredLazy = input.deferLazy && String(input.loading || "").toLowerCase() === "lazy";
   const mergedAttrs = {
     ...input.attrs,
-    src,
+    src: isDeferredLazy ? RESUX_LAZY_PLACEHOLDER_SRC : src,
     alt: input.alt,
     loading: input.loading,
     decoding: input.decoding,
+    ...(isDeferredLazy ? { "data-rx-lazy-image": "true" } : {}),
+    ...(isDeferredLazy ? { "data-rx-lazy-src": src } : {}),
+    ...(isDeferredLazy && srcset ? { "data-rx-lazy-srcset": srcset } : {}),
+    ...(isDeferredLazy && input.sizes ? { "data-rx-lazy-sizes": input.sizes } : {}),
     ...(input.fetchPriority ? { fetchpriority: input.fetchPriority } : {}),
     ...(input.width ? { width: String(input.width) } : {}),
     ...(input.height ? { height: String(input.height) } : {}),
-    ...(srcset ? { srcset } : {}),
-    ...(input.sizes ? { sizes: input.sizes } : {})
+    ...(!isDeferredLazy && srcset ? { srcset } : {}),
+    ...(!isDeferredLazy && input.sizes ? { sizes: input.sizes } : {})
   };
   for (const [name, value] of Object.entries(mergedAttrs)) {
     if (value === undefined || value === null) {
@@ -4908,6 +5171,7 @@ function nativeAttributeName(node, name) {
 }
 
 function applyPatches(scopeId, patches) {
+  let needsLazyImageActivation = false;
   for (const patch of patches) {
     if (patch.type === "text") {
       document.querySelectorAll('[data-rx-text="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
@@ -4939,6 +5203,7 @@ function applyPatches(scopeId, patches) {
         unmountVueIslands(element);
         element.innerHTML = patch.value;
         void mountVueIslands(element);
+        needsLazyImageActivation = true;
       });
       continue;
     }
@@ -4946,7 +5211,11 @@ function applyPatches(scopeId, patches) {
       unmountVueIslands(element);
       element.innerHTML = patch.value;
       void mountVueIslands(element);
+      needsLazyImageActivation = true;
     });
+  }
+  if (needsLazyImageActivation) {
+    activateDeferredLazyImages();
   }
 }
 

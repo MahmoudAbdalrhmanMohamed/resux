@@ -1987,12 +1987,12 @@ function renderResuxVideo(
   const controlsAccent = readStringProp(props.controlsAccent) ?? "#38bdf8";
   const controlsClass = readStringProp(props.controlsClass);
   const controlsStyle = readStringProp(props.controlsStyle);
-  const iconPlay = readStringProp(props.controlsIconPlay ?? props.iconPlay) ?? "Play";
-  const iconPause = readStringProp(props.controlsIconPause ?? props.iconPause) ?? "Pause";
-  const iconMute = readStringProp(props.controlsIconMute ?? props.iconMute) ?? "Mute";
-  const iconUnmute = readStringProp(props.controlsIconUnmute ?? props.iconUnmute) ?? "Sound";
-  const iconFullscreen = readStringProp(props.controlsIconFullscreen ?? props.iconFullscreen) ?? "Full";
-  const iconExitFullscreen = readStringProp(props.controlsIconExitFullscreen ?? props.iconExitFullscreen) ?? "Exit";
+  const iconPlay = readStringProp(props.controlsIconPlay ?? props.iconPlay) ?? "▶";
+  const iconPause = readStringProp(props.controlsIconPause ?? props.iconPause) ?? "❚❚";
+  const iconMute = readStringProp(props.controlsIconMute ?? props.iconMute) ?? "🔇";
+  const iconUnmute = readStringProp(props.controlsIconUnmute ?? props.iconUnmute) ?? "🔊";
+  const iconFullscreen = readStringProp(props.controlsIconFullscreen ?? props.iconFullscreen) ?? "⛶";
+  const iconExitFullscreen = readStringProp(props.controlsIconExitFullscreen ?? props.iconExitFullscreen) ?? "🗗";
   const resolvedSources = resolveVideoSources(props.sources);
   const hasSourceChildren = resolvedSources.length > 0;
 
@@ -5331,12 +5331,12 @@ function updateManagedVideoControlShell(shell, video) {
   shell.setAttribute("data-rx-video-controls-ready", lazyPending ? "false" : "true");
   shell.setAttribute("data-rx-video-state", video.paused ? "paused" : "playing");
 
-  const iconPlay = shell.getAttribute("data-rx-video-icon-play") || "Play";
-  const iconPause = shell.getAttribute("data-rx-video-icon-pause") || "Pause";
-  const iconMute = shell.getAttribute("data-rx-video-icon-mute") || "Mute";
-  const iconUnmute = shell.getAttribute("data-rx-video-icon-unmute") || "Sound";
-  const iconFullscreen = shell.getAttribute("data-rx-video-icon-fullscreen") || "Full";
-  const iconExitFullscreen = shell.getAttribute("data-rx-video-icon-exit-fullscreen") || "Exit";
+  const iconPlay = shell.getAttribute("data-rx-video-icon-play") || "▶";
+  const iconPause = shell.getAttribute("data-rx-video-icon-pause") || "❚❚";
+  const iconMute = shell.getAttribute("data-rx-video-icon-mute") || "🔇";
+  const iconUnmute = shell.getAttribute("data-rx-video-icon-unmute") || "🔊";
+  const iconFullscreen = shell.getAttribute("data-rx-video-icon-fullscreen") || "⛶";
+  const iconExitFullscreen = shell.getAttribute("data-rx-video-icon-exit-fullscreen") || "🗗";
 
   toggleButton.textContent = video.paused ? iconPlay : iconPause;
   toggleButton.setAttribute("aria-label", video.paused ? "Play video" : "Pause video");
@@ -6942,12 +6942,12 @@ function renderClientResuxVideo(node, scope, locals, styleScopeId) {
   const controlsAccent = readClientStringProp(props.controlsAccent) || "#38bdf8";
   const controlsClass = readClientStringProp(props.controlsClass);
   const controlsStyle = readClientStringProp(props.controlsStyle);
-  const iconPlay = readClientStringProp(props.controlsIconPlay || props.iconPlay) || "Play";
-  const iconPause = readClientStringProp(props.controlsIconPause || props.iconPause) || "Pause";
-  const iconMute = readClientStringProp(props.controlsIconMute || props.iconMute) || "Mute";
-  const iconUnmute = readClientStringProp(props.controlsIconUnmute || props.iconUnmute) || "Sound";
-  const iconFullscreen = readClientStringProp(props.controlsIconFullscreen || props.iconFullscreen) || "Full";
-  const iconExitFullscreen = readClientStringProp(props.controlsIconExitFullscreen || props.iconExitFullscreen) || "Exit";
+  const iconPlay = readClientStringProp(props.controlsIconPlay || props.iconPlay) || "▶";
+  const iconPause = readClientStringProp(props.controlsIconPause || props.iconPause) || "❚❚";
+  const iconMute = readClientStringProp(props.controlsIconMute || props.iconMute) || "🔇";
+  const iconUnmute = readClientStringProp(props.controlsIconUnmute || props.iconUnmute) || "🔊";
+  const iconFullscreen = readClientStringProp(props.controlsIconFullscreen || props.iconFullscreen) || "⛶";
+  const iconExitFullscreen = readClientStringProp(props.controlsIconExitFullscreen || props.iconExitFullscreen) || "🗗";
   const resolvedSources = resolveClientVideoSources(props.sources);
   const hasSourceChildren = resolvedSources.length > 0;
   const styleParts = [];

@@ -1,0 +1,27 @@
+<svg width="96" height="96" viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Resux mark</title>
+  <desc id="desc">A compact Resux monogram shaped like a resumable route.</desc>
+  <defs>
+    <linearGradient id="panel" x1="12" y1="8" x2="88" y2="92" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111827"/>
+      <stop offset="1" stop-color="#020617"/>
+    </linearGradient>
+    <linearGradient id="route" x1="25" y1="22" x2="73" y2="75" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22D3EE"/>
+      <stop offset="0.58" stop-color="#7C3AED"/>
+      <stop offset="1" stop-color="#10B981"/>
+    </linearGradient>
+    <filter id="soft" x="8" y="8" width="80" height="80" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+  </defs>
+  <rect x="4" y="4" width="88" height="88" rx="22" fill="url(#panel)"/>
+  <path d="M24 29C31 20 43 16 55 18C68 20 77 29 77 41C77 54 67 62 53 62H36V77" stroke="#38BDF8" stroke-opacity="0.18" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" filter="url(#soft)"/>
+  <path d="M27 76V25H54C67 25 75 32 75 42C75 52 67 59 54 59H37" stroke="url(#route)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M50 59L72 76" stroke="url(#route)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M31 35H54C60 35 64 38 64 42C64 47 60 50 54 50H31" stroke="#F8FAFC" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="27" cy="25" r="4" fill="#22D3EE"/>
+  <circle cx="72" cy="76" r="4" fill="#10B981"/>
+  <path d="M22 14H34" stroke="#F8FAFC" stroke-opacity="0.22" stroke-width="3" stroke-linecap="round"/>
+  <path d="M62 82H74" stroke="#F8FAFC" stroke-opacity="0.22" stroke-width="3" stroke-linecap="round"/>
+</svg>

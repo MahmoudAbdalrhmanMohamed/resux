@@ -44,6 +44,34 @@ let devBuildRevision = 0;
 let devReloadRevision = 0;
 let devLastBuildSourceMtime = 0;
 const devReloadClients = new Set<ServerResponse>();
+const RESUX_PLACEHOLDER_SVG = `<svg width="96" height="96" viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Resux mark</title>
+  <desc id="desc">A compact Resux monogram shaped like a resumable route.</desc>
+  <defs>
+    <linearGradient id="panel" x1="12" y1="8" x2="88" y2="92" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111827"/>
+      <stop offset="1" stop-color="#020617"/>
+    </linearGradient>
+    <linearGradient id="route" x1="25" y1="22" x2="73" y2="75" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22D3EE"/>
+      <stop offset="0.58" stop-color="#7C3AED"/>
+      <stop offset="1" stop-color="#10B981"/>
+    </linearGradient>
+    <filter id="soft" x="8" y="8" width="80" height="80" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+  </defs>
+  <rect x="4" y="4" width="88" height="88" rx="22" fill="url(#panel)"/>
+  <path d="M24 29C31 20 43 16 55 18C68 20 77 29 77 41C77 54 67 62 53 62H36V77" stroke="#38BDF8" stroke-opacity="0.18" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" filter="url(#soft)"/>
+  <path d="M27 76V25H54C67 25 75 32 75 42C75 52 67 59 54 59H37" stroke="url(#route)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M50 59L72 76" stroke="url(#route)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M31 35H54C60 35 64 38 64 42C64 47 60 50 54 50H31" stroke="#F8FAFC" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="27" cy="25" r="4" fill="#22D3EE"/>
+  <circle cx="72" cy="76" r="4" fill="#10B981"/>
+  <path d="M22 14H34" stroke="#F8FAFC" stroke-opacity="0.22" stroke-width="3" stroke-linecap="round"/>
+  <path d="M62 82H74" stroke="#F8FAFC" stroke-opacity="0.22" stroke-width="3" stroke-linecap="round"/>
+</svg>
+`;
 
 async function runCompilerBuild(
   appRoot: string,
@@ -1377,10 +1405,18 @@ async function handleRequest(
   },
 ): Promise<void> {
   const requestOrigin = requestOriginFromHeaders(request);
-  const requestUrl = new URL(request.url ?? "/", requestOrigin);
+  const requestUrl = safeParseRequestUrl(request.url, requestOrigin);
 
   try {
     applyDefaultSecurityHeaders(response, options.securityHeaders);
+    if (!requestUrl) {
+      response.writeHead(404, {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      response.end("Not found");
+      return;
+    }
 
     if (
       options.dev &&
@@ -1396,6 +1432,11 @@ async function handleRequest(
       return;
     }
 
+    if (requestUrl.pathname === "/__resux/resux-placeholder.svg") {
+      serveResuxPlaceholderAsset(response);
+      return;
+    }
+
     if (requestUrl.pathname === "/__resux/health") {
       await serveHealthCheck(response, options);
       return;
@@ -1408,6 +1449,17 @@ async function handleRequest(
 
     if (requestUrl.pathname === "/__resux/image") {
       await serveResuxImage(request, response, requestUrl, requestOrigin);
+      return;
+    }
+
+    if (requestUrl.pathname.startsWith("/_resux/generated/images/")) {
+      await serveGeneratedResuxImage(
+        request,
+        response,
+        requestUrl,
+        requestOrigin,
+        options.appRoot,
+      );
       return;
     }
 
@@ -1513,9 +1565,12 @@ async function handleRequest(
       return;
     }
 
-    const html = renderDocument(rendered, "Resux App", {
-      devReload: options.dev,
-    });
+    const normalizedRendered = withPrioritizedHeadImagePreloads(rendered);
+    const html = promoteDocumentImagePreloads(
+      renderDocument(normalizedRendered, "Resux App", {
+        devReload: options.dev,
+      }),
+    );
 
     response.writeHead(routeRule?.statusCode ?? 200, {
       "content-type": "text/html; charset=utf-8",
@@ -1527,6 +1582,29 @@ async function handleRequest(
     }
     await serveErrorDocument(response, options, undefined, 500, error);
   }
+}
+
+function safeParseRequestUrl(rawUrl: string | undefined, requestOrigin: string): URL | null {
+  const candidate = typeof rawUrl === "string" ? rawUrl.trim() : "/";
+  if (!candidate) {
+    return null;
+  }
+  if (candidate.startsWith("//")) {
+    return null;
+  }
+  try {
+    return new URL(candidate, requestOrigin);
+  } catch {
+    return null;
+  }
+}
+
+function serveResuxPlaceholderAsset(response: ServerResponse): void {
+  response.writeHead(200, {
+    "content-type": "image/svg+xml; charset=utf-8",
+    "cache-control": "public, max-age=31536000, immutable",
+  });
+  response.end(RESUX_PLACEHOLDER_SVG);
 }
 
 async function serveErrorDocument(
@@ -1578,8 +1656,11 @@ async function serveErrorDocument(
       response.writeHead(statusCode, {
         "content-type": "text/html; charset=utf-8",
       });
+      const normalizedRendered = withPrioritizedHeadImagePreloads(rendered);
       response.end(
-        renderDocument(rendered, statusMessage, { devReload: options.dev }),
+        promoteDocumentImagePreloads(
+          renderDocument(normalizedRendered, statusMessage, { devReload: options.dev }),
+        ),
       );
       return;
     }
@@ -1716,7 +1797,7 @@ async function serveRoutePayload(
 ): Promise<void> {
   const targetPath = requestUrl.searchParams.get("path");
 
-  if (!targetPath || !targetPath.startsWith("/")) {
+  if (!targetPath || !targetPath.startsWith("/") || targetPath.startsWith("//")) {
     response.writeHead(400, {
       "content-type": "application/json; charset=utf-8",
     });
@@ -1791,11 +1872,12 @@ async function serveRoutePayload(
     return;
   }
 
+  const normalizedRendered = withPrioritizedHeadImagePreloads(rendered);
   response.writeHead(200, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
   });
-  response.end(JSON.stringify(rendered));
+  response.end(JSON.stringify(normalizedRendered));
 }
 
 type ResuxImageFit = "cover" | "contain" | "fill" | "inside" | "outside";
@@ -1806,6 +1888,26 @@ interface ResuxImageRequestOptions {
   quality?: number;
   format?: string;
   fit?: ResuxImageFit;
+  extraModifiers?: Record<string, string>;
+}
+
+interface ResuxGeneratedImageCacheMetadata {
+  version: 1;
+  key: string;
+  createdAt: number;
+  expiresAt: number;
+  originalSource: string;
+  generatedPath: string;
+  transform: {
+    width?: number;
+    height?: number;
+    quality?: number;
+    format?: string;
+    fit?: ResuxImageFit;
+    modifiers?: Record<string, string>;
+  };
+  sourceMtimeMs?: number;
+  sourceSize?: number;
 }
 
 type SharpFactory = (
@@ -1920,12 +2022,28 @@ function shouldTransformImage(options: ResuxImageRequestOptions): boolean {
   );
 }
 
+function shouldConvertImageFormat(
+  inputFormat: string | undefined,
+  outputFormat: string | undefined,
+): boolean {
+  if (!outputFormat) {
+    return false;
+  }
+  if (!inputFormat) {
+    return true;
+  }
+  return inputFormat !== outputFormat;
+}
+
 function resolveResuxImageSource(
   rawSource: string,
   requestOrigin: string,
 ): URL | null {
   const source = rawSource.trim();
   if (!source) {
+    return null;
+  }
+  if (source.startsWith("//")) {
     return null;
   }
   if (source.startsWith("/")) {
@@ -1949,8 +2067,7 @@ async function loadSharpFactory(): Promise<SharpFactory | null> {
 
   sharpFactoryPromise = (async () => {
     try {
-      const sharpPath = require.resolve("sharp");
-      const sharpModule = await import(pathToFileURL(sharpPath).href);
+      const sharpModule = await import("sharp");
       const factory = (sharpModule as { default?: unknown }).default
         ?? (sharpModule as unknown);
       sharpFactoryLoadError = null;
@@ -1960,7 +2077,7 @@ async function loadSharpFactory(): Promise<SharpFactory | null> {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       sharpFactoryLoadError =
-        `Image transforms require "sharp". Install it in your app dependency tree. (${message})`;
+        `Resux image transforms require "sharp" in the server runtime. (${message})`;
       return null;
     }
   })();
@@ -1983,8 +2100,9 @@ async function transformResuxImage(
   }
 
   const inputFormat = parseFormatFromContentType(contentType);
-  const outputFormat = options.format
-    ?? (options.quality && inputFormat ? inputFormat : undefined);
+  const outputFormat = options.format;
+  const shouldConvertFormat = shouldConvertImageFormat(inputFormat, outputFormat);
+  const shouldResize = Boolean(options.width || options.height);
 
   try {
     let pipeline: any = sharp(source, { failOn: "none" });
@@ -1998,24 +2116,294 @@ async function transformResuxImage(
       });
     }
 
-    if (outputFormat) {
-      const quality = options.quality;
-      const formatOptions = Number.isFinite(quality)
-        ? { quality: Math.min(100, Math.max(1, quality as number)) }
-        : undefined;
+    if (shouldConvertFormat) {
+      const quality = normalizeImageQuality(options.quality);
+      const formatOptions = quality ? { quality } : undefined;
       pipeline = pipeline.toFormat(outputFormat, formatOptions);
+    } else if (Number.isFinite(options.quality)) {
+      const quality = normalizeImageQuality(options.quality);
+      if (quality && inputFormat && inputFormat !== "gif") {
+        pipeline = pipeline.toFormat(inputFormat, { quality });
+      }
     }
 
     const transformed = await pipeline.toBuffer();
     return {
       buffer: transformed,
-      contentType: outputFormat
+      contentType: shouldConvertFormat && outputFormat
         ? mimeTypeFromImageFormat(outputFormat)
         : contentType ?? "application/octet-stream",
     };
   } catch {
     return null;
   }
+}
+
+function normalizeImageQuality(quality: number | undefined): number | undefined {
+  if (!Number.isFinite(quality)) {
+    return undefined;
+  }
+  return Math.min(100, Math.max(1, Math.round(quality as number)));
+}
+
+const RESUX_IMAGE_RESERVED_QUERY_KEYS = new Set([
+  "src",
+  "url",
+  "original",
+  "w",
+  "width",
+  "h",
+  "height",
+  "q",
+  "quality",
+  "f",
+  "format",
+  "fit",
+  "mode",
+  "cache",
+  "c",
+]);
+
+function parseImageExtraModifiers(
+  searchParams: URLSearchParams,
+): Record<string, string> {
+  const modifiers: Record<string, string> = {};
+  for (const [key, value] of searchParams.entries()) {
+    if (RESUX_IMAGE_RESERVED_QUERY_KEYS.has(key)) {
+      continue;
+    }
+    if (!value) {
+      continue;
+    }
+    modifiers[key] = value;
+  }
+  return modifiers;
+}
+
+function parseImageCacheMaxAgeSeconds(value: string | null): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || normalized === "false" || normalized === "0" || normalized === "off" || normalized === "no") {
+    return undefined;
+  }
+  if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") {
+    return 86400;
+  }
+
+  const directNumber = Number(normalized);
+  if (Number.isFinite(directNumber) && directNumber > 0) {
+    return Math.max(1, Math.round(directNumber));
+  }
+
+  const durationMatch = /^(\d+)\s*(s|m|h|d|w)$/.exec(normalized);
+  if (!durationMatch) {
+    return undefined;
+  }
+  const amount = Number(durationMatch[1]);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return undefined;
+  }
+  const unit = durationMatch[2];
+  const multiplier =
+    unit === "s" ? 1
+      : unit === "m" ? 60
+        : unit === "h" ? 3600
+          : unit === "d" ? 86400
+            : 604800;
+  return Math.max(1, Math.round(amount * multiplier));
+}
+
+function inferImageExtensionFromSource(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (trimmed.startsWith("data:")) {
+    const mimeMatch = /^data:image\/([a-zA-Z0-9.+-]+);/i.exec(trimmed);
+    if (!mimeMatch) {
+      return undefined;
+    }
+    const normalized = mimeMatch[1].toLowerCase();
+    return normalized === "jpg" ? "jpeg" : normalized;
+  }
+  const withoutQuery = trimmed.split(/[?#]/)[0];
+  const dotIndex = withoutQuery.lastIndexOf(".");
+  if (dotIndex < 0) {
+    return undefined;
+  }
+  const extension = withoutQuery.slice(dotIndex + 1).toLowerCase();
+  if (!extension) {
+    return undefined;
+  }
+  return extension === "jpg" ? "jpeg" : extension;
+}
+
+function createImageTransformSignature(
+  source: string,
+  originalSource: string | undefined,
+  format: string | undefined,
+  options: ResuxImageRequestOptions,
+): string {
+  const entries: string[] = [`src=${source}`];
+  if (originalSource) {
+    entries.push(`original=${originalSource}`);
+  }
+  if (Number.isFinite(options.width) && options.width! > 0) {
+    entries.push(`w=${Math.round(options.width!)}`);
+  }
+  if (Number.isFinite(options.height) && options.height! > 0) {
+    entries.push(`h=${Math.round(options.height!)}`);
+  }
+  if (typeof options.fit === "string" && options.fit.length > 0) {
+    entries.push(`fit=${options.fit}`);
+  }
+  if (format) {
+    entries.push(`f=${format}`);
+  }
+  if (Number.isFinite(options.quality) && options.quality! > 0) {
+    entries.push(`q=${Math.round(options.quality!)}`);
+  }
+
+  const extras = options.extraModifiers ?? {};
+  for (const key of Object.keys(extras).sort()) {
+    const value = extras[key];
+    if (!value) {
+      continue;
+    }
+    entries.push(`${key}=${value}`);
+  }
+
+  return entries.join("&");
+}
+
+function hashImageSignature(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function createGeneratedImageRoutePath(
+  source: string,
+  originalSource: string | undefined,
+  format: string | undefined,
+  options: ResuxImageRequestOptions,
+): string {
+  const extension =
+    format
+    ?? inferImageExtensionFromSource(source)
+    ?? inferImageExtensionFromSource(originalSource)
+    ?? "bin";
+  const signature = createImageTransformSignature(source, originalSource, format, options);
+  const digest = hashImageSignature(signature);
+  return `/_resux/generated/images/${digest}.${extension}`;
+}
+
+function resolveGeneratedImageDiskPath(
+  appRoot: string,
+  pathname: string,
+): { filePath: string; relativePath: string } | null {
+  const publicRoot = path.resolve(appRoot, "public");
+  const generatedRoot = path.resolve(publicRoot, "_resux", "generated", "images");
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(pathname);
+  } catch {
+    return null;
+  }
+  const resolved = path.resolve(publicRoot, `.${decodedPath}`);
+  if (!resolved.startsWith(generatedRoot)) {
+    return null;
+  }
+  return {
+    filePath: resolved,
+    relativePath: decodedPath,
+  };
+}
+
+async function readGeneratedImageMetadata(
+  metadataPath: string,
+): Promise<ResuxGeneratedImageCacheMetadata | null> {
+  if (!(await exists(metadataPath))) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(await readFile(metadataPath, "utf8")) as ResuxGeneratedImageCacheMetadata;
+    if (!payload || payload.version !== 1) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function generatedImageMetadataValid(
+  metadata: ResuxGeneratedImageCacheMetadata,
+  key: string,
+  now: number,
+  sourceInfo: { mtimeMs: number; size: number } | null,
+): boolean {
+  if (!metadata || metadata.version !== 1) {
+    return false;
+  }
+  if (metadata.key !== key) {
+    return false;
+  }
+  if (!Number.isFinite(metadata.expiresAt) || metadata.expiresAt <= now) {
+    return false;
+  }
+  if (sourceInfo) {
+    if (metadata.sourceMtimeMs !== sourceInfo.mtimeMs) {
+      return false;
+    }
+    if (metadata.sourceSize !== sourceInfo.size) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function resolveLocalSourceFileInfo(
+  sourceUrl: URL,
+  requestOrigin: string,
+  appRoot: string,
+): Promise<{ mtimeMs: number; size: number } | null> {
+  const sameOrigin = sourceUrl.origin === requestOrigin;
+  if (!sameOrigin || !sourceUrl.pathname.startsWith("/")) {
+    return null;
+  }
+
+  const publicRoot = path.resolve(appRoot, "public");
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(sourceUrl.pathname);
+  } catch {
+    return null;
+  }
+  const resolved = path.resolve(publicRoot, `.${decodedPath}`);
+  if (!resolved.startsWith(publicRoot)) {
+    return null;
+  }
+  if (!(await exists(resolved))) {
+    return null;
+  }
+  const sourceStats = await stat(resolved);
+  if (!sourceStats.isFile()) {
+    return null;
+  }
+  return {
+    mtimeMs: sourceStats.mtimeMs,
+    size: sourceStats.size,
+  };
 }
 
 async function serveResuxImage(
@@ -2070,6 +2458,7 @@ async function serveResuxImage(
     fit:
       normalizeImageFit(requestUrl.searchParams.get("fit"))
       ?? normalizeImageFit(requestUrl.searchParams.get("mode")),
+    extraModifiers: parseImageExtraModifiers(requestUrl.searchParams),
   };
 
   const forwardedAccept = firstHeaderValue(request.headers.accept);
@@ -2133,6 +2522,249 @@ async function serveResuxImage(
   response.writeHead(200, {
     "content-type": contentType,
     "cache-control": cacheControl,
+    vary: "Accept",
+  });
+
+  if (method === "HEAD") {
+    response.end();
+    return;
+  }
+
+  response.end(body);
+}
+
+async function serveGeneratedResuxImage(
+  request: IncomingMessage,
+  response: ServerResponse,
+  requestUrl: URL,
+  requestOrigin: string,
+  appRoot: string,
+): Promise<void> {
+  const method = request.method ?? "GET";
+  if (method !== "GET" && method !== "HEAD") {
+    response.writeHead(405, {
+      "content-type": "text/plain; charset=utf-8",
+      allow: "GET, HEAD",
+    });
+    response.end("Method Not Allowed");
+    return;
+  }
+
+  const resolvedDiskPath = resolveGeneratedImageDiskPath(appRoot, requestUrl.pathname);
+  if (!resolvedDiskPath) {
+    response.writeHead(404, {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    response.end("Not found");
+    return;
+  }
+  const { filePath, relativePath } = resolvedDiskPath;
+  const metadataPath = `${filePath}.meta.json`;
+
+  const sourceParam =
+    requestUrl.searchParams.get("src")
+    ?? requestUrl.searchParams.get("url")
+    ?? "";
+  const originalSourceParam = requestUrl.searchParams.get("original") ?? "";
+  const sourceCandidate = originalSourceParam.trim() || sourceParam;
+  const cacheRaw = requestUrl.searchParams.get("cache") ?? requestUrl.searchParams.get("c");
+  const cacheMaxAgeSeconds = parseImageCacheMaxAgeSeconds(cacheRaw);
+
+  if (!sourceCandidate) {
+    if (!(await exists(filePath))) {
+      response.writeHead(404, {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      response.end("Not found");
+      return;
+    }
+
+    response.writeHead(200, {
+      "content-type": mimeType(filePath),
+      "cache-control": "public, max-age=86400",
+    });
+    if (method === "HEAD") {
+      response.end();
+      return;
+    }
+    response.end(await readFile(filePath));
+    return;
+  }
+
+  const sourceUrl = resolveResuxImageSource(sourceCandidate, requestOrigin);
+  if (!sourceUrl) {
+    response.writeHead(400, {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    response.end(
+      JSON.stringify({
+        error:
+          'Generated image requests require "src" (or "url") with an absolute path or http(s) URL.',
+      }),
+    );
+    return;
+  }
+
+  const options: ResuxImageRequestOptions = {
+    width:
+      parseImageInteger(requestUrl.searchParams.get("w"), 1, 8192)
+      ?? parseImageInteger(requestUrl.searchParams.get("width"), 1, 8192),
+    height:
+      parseImageInteger(requestUrl.searchParams.get("h"), 1, 8192)
+      ?? parseImageInteger(requestUrl.searchParams.get("height"), 1, 8192),
+    quality:
+      parseImageInteger(requestUrl.searchParams.get("q"), 1, 100)
+      ?? parseImageInteger(requestUrl.searchParams.get("quality"), 1, 100),
+    format:
+      normalizeImageFormat(requestUrl.searchParams.get("f"))
+      ?? normalizeImageFormat(requestUrl.searchParams.get("format")),
+    fit:
+      normalizeImageFit(requestUrl.searchParams.get("fit"))
+      ?? normalizeImageFit(requestUrl.searchParams.get("mode")),
+    extraModifiers: parseImageExtraModifiers(requestUrl.searchParams),
+  };
+
+  const generatedRoutePath = createGeneratedImageRoutePath(
+    sourceParam,
+    originalSourceParam || undefined,
+    options.format,
+    options,
+  );
+  if (generatedRoutePath !== relativePath) {
+    response.writeHead(404, {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    response.end(JSON.stringify({ error: "Generated image URL is not valid for the provided transform." }));
+    return;
+  }
+
+  const sourceInfo = await resolveLocalSourceFileInfo(sourceUrl, requestOrigin, appRoot);
+  const cacheKey = hashImageSignature(
+    createImageTransformSignature(
+      sourceParam,
+      originalSourceParam || undefined,
+      options.format,
+      options,
+    ),
+  );
+  const now = Date.now();
+  const metadata = await readGeneratedImageMetadata(metadataPath);
+  if (
+    cacheMaxAgeSeconds
+    && (await exists(filePath))
+    && metadata
+    && generatedImageMetadataValid(metadata, cacheKey, now, sourceInfo)
+  ) {
+    const remaining = Math.max(1, Math.floor((metadata.expiresAt - now) / 1000));
+    response.writeHead(200, {
+      "content-type": mimeType(filePath),
+      "cache-control": `public, max-age=${remaining}`,
+      "x-resux-cache": "hit",
+    });
+    if (method === "HEAD") {
+      response.end();
+      return;
+    }
+    response.end(await readFile(filePath));
+    return;
+  }
+
+  const forwardedAccept = firstHeaderValue(request.headers.accept);
+  const upstream = await fetch(sourceUrl, {
+    headers: forwardedAccept ? { accept: forwardedAccept } : undefined,
+    redirect: "follow",
+  }).catch(() => null);
+
+  if (!upstream) {
+    response.writeHead(502, {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    response.end(JSON.stringify({ error: "Failed to fetch image source." }));
+    return;
+  }
+
+  if (!upstream.ok) {
+    response.writeHead(upstream.status, {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    response.end(
+      JSON.stringify({
+        error: `Image source request failed with status ${upstream.status}.`,
+      }),
+    );
+    return;
+  }
+
+  const sourceBuffer = Buffer.from(await upstream.arrayBuffer());
+  const sourceContentType = upstream.headers.get("content-type");
+  const needsTransform = shouldTransformImage(options);
+  const transformed = await transformResuxImage(
+    sourceBuffer,
+    sourceContentType,
+    options,
+  );
+  if (needsTransform && !transformed) {
+    response.writeHead(501, {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    response.end(
+      JSON.stringify({
+        error:
+          sharpFactoryLoadError
+          ?? "Image transform failed. Verify source format and requested modifiers.",
+      }),
+    );
+    return;
+  }
+
+  const body = transformed?.buffer ?? sourceBuffer;
+  const contentType =
+    transformed?.contentType ?? sourceContentType ?? "application/octet-stream";
+  const expiresAt = cacheMaxAgeSeconds
+    ? now + (cacheMaxAgeSeconds * 1000)
+    : now;
+  const responseMaxAge = cacheMaxAgeSeconds
+    ? Math.max(1, Math.floor((expiresAt - now) / 1000))
+    : 0;
+
+  if (cacheMaxAgeSeconds) {
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, body);
+    const metadataPayload: ResuxGeneratedImageCacheMetadata = {
+      version: 1,
+      key: cacheKey,
+      createdAt: now,
+      expiresAt,
+      originalSource: sourceCandidate,
+      generatedPath: relativePath,
+      transform: {
+        ...(options.width ? { width: options.width } : {}),
+        ...(options.height ? { height: options.height } : {}),
+        ...(options.quality ? { quality: options.quality } : {}),
+        ...(options.format ? { format: options.format } : {}),
+        ...(options.fit ? { fit: options.fit } : {}),
+        ...(options.extraModifiers && Object.keys(options.extraModifiers).length > 0
+          ? { modifiers: options.extraModifiers }
+          : {}),
+      },
+      ...(sourceInfo ? { sourceMtimeMs: sourceInfo.mtimeMs, sourceSize: sourceInfo.size } : {}),
+    };
+    await writeFile(metadataPath, `${JSON.stringify(metadataPayload, null, 2)}\n`, "utf8");
+  }
+
+  response.writeHead(200, {
+    "content-type": contentType,
+    "cache-control": cacheMaxAgeSeconds
+      ? `public, max-age=${responseMaxAge}`
+      : "no-store",
+    "x-resux-cache": cacheMaxAgeSeconds ? "miss" : "bypass",
     vary: "Accept",
   });
 
@@ -2369,6 +3001,80 @@ function normalizeMiddlewareResult(
   }
 
   return null;
+}
+
+function isPriorityImagePreloadLinkRecord(link: Record<string, string>): boolean {
+  return (
+    String(link.rel ?? "").trim().toLowerCase() === "preload"
+    && String(link.as ?? "").trim().toLowerCase() === "image"
+  );
+}
+
+function prioritizeHeadImagePreloads(head: HeadEntry | undefined): void {
+  if (!head?.link || !head.link.length) {
+    return;
+  }
+
+  const priorityLinks = head.link.filter((link) =>
+    isPriorityImagePreloadLinkRecord(link)
+  );
+  if (!priorityLinks.length) {
+    return;
+  }
+
+  const remainingLinks = head.link.filter((link) =>
+    !isPriorityImagePreloadLinkRecord(link)
+  );
+  head.link = [...priorityLinks, ...remainingLinks];
+}
+
+function withPrioritizedHeadImagePreloads(result: RenderResult): RenderResult {
+  const clonedHead = result.head
+    ? {
+      ...result.head,
+      link: result.head.link ? [...result.head.link] : result.head.link,
+    }
+    : result.head;
+  prioritizeHeadImagePreloads(clonedHead);
+  if (clonedHead === result.head) {
+    return result;
+  }
+  return {
+    ...result,
+    head: clonedHead,
+  };
+}
+
+function promoteDocumentImagePreloads(html: string): string {
+  const headStart = html.indexOf("<head>");
+  const headEnd = html.indexOf("</head>");
+  if (headStart === -1 || headEnd === -1 || headEnd <= headStart) {
+    return html;
+  }
+
+  const headOpenEnd = headStart + "<head>".length;
+  const headContent = html.slice(headOpenEnd, headEnd);
+  const preloadPattern = /<link\b[^>]*\brel="preload"[^>]*\bas="image"[^>]*>/gi;
+  const preloadTags = headContent.match(preloadPattern) ?? [];
+  if (!preloadTags.length) {
+    return html;
+  }
+
+  const headWithoutPreloads = headContent.replace(preloadPattern, "");
+  const titleMatch = headWithoutPreloads.match(/<title\b[^>]*>[\s\S]*?<\/title>/i);
+  const insertionPoint = titleMatch
+    ? headWithoutPreloads.indexOf(titleMatch[0]) + titleMatch[0].length
+    : 0;
+  const reorderedHeadContent =
+    headWithoutPreloads.slice(0, insertionPoint)
+    + preloadTags.join("")
+    + headWithoutPreloads.slice(insertionPoint);
+
+  return (
+    html.slice(0, headOpenEnd)
+    + reorderedHeadContent
+    + html.slice(headEnd)
+  );
 }
 
 function matchRouteRule(
@@ -2669,6 +3375,11 @@ function mimeType(file: string): string {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".webp": "image/webp",
+    ".avif": "image/avif",
+    ".gif": "image/gif",
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
     ".ico": "image/x-icon",
   };
   return types[ext] ?? "application/octet-stream";

@@ -82,6 +82,40 @@ describe("route middleware and server middleware integration", () => {
 
     expect((globalThis as { __RESUX_GLOBAL_MW_RUNS__?: number }).__RESUX_GLOBAL_MW_RUNS__).toBeGreaterThanOrEqual(4);
   }, 30000);
+
+  it("returns safe responses for malformed paths, unknown routes, and missing image sources", async () => {
+    const root = path.join(os.tmpdir(), `resux-node-safe-routes-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Home</main></template>");
+
+    await buildProject(root);
+    const nodeHandler = createResuxNodeHandler({ appRoot: root });
+    const server = await startServer((request, response) => {
+      nodeHandler(request, response);
+    });
+    activeServers.push(server);
+
+    const malformedResponse = await fetch(`${server.origin}//`, { redirect: "manual" });
+    expect(malformedResponse.status).toBe(404);
+
+    const unknownResponse = await fetch(`${server.origin}/unknown-route`, { redirect: "manual" });
+    expect(unknownResponse.status).toBe(404);
+    expect(await unknownResponse.text()).toContain("Not found");
+
+    const badRoutePayload = await fetch(`${server.origin}/__resux/route?path=%2F%2F`, { redirect: "manual" });
+    expect(badRoutePayload.status).toBe(400);
+
+    const missingImageResponse = await fetch(
+      `${server.origin}/__resux/image?src=%2Fmedia-test%2Fimages%2Fmissing.jpg&w=860&fit=cover`,
+      { redirect: "manual" }
+    );
+    expect(missingImageResponse.status).toBe(404);
+    expect(missingImageResponse.headers.get("cache-control")).toBe("no-store");
+
+    const placeholderResponse = await fetch(`${server.origin}/__resux/resux-placeholder.svg`);
+    expect(placeholderResponse.status).toBe(200);
+    expect(placeholderResponse.headers.get("content-type")).toContain("image/svg+xml");
+  }, 30000);
 });
 
 async function startServer(

@@ -1997,7 +1997,9 @@ function renderResuxVideo(
     attrs.push('data-resux-placeholder-active="true"');
   }
 
-  const initialPoster = placeholderSrc ?? poster;
+  const initialPoster = deferLazy
+    ? undefined
+    : (placeholderSrc ?? poster);
   if (initialPoster) {
     attrs.push(`poster="${escapeAttribute(initialPoster)}"`);
   }
@@ -2464,7 +2466,7 @@ function renderResuxImgTag(
     placeholderStyle,
   );
   const initialSrc = isDeferredLazy
-    ? (placeholderSrc ?? resuxLazyPlaceholderSrc)
+    ? resuxLazyPlaceholderSrc
     : src;
   const mergedAttrs = {
     ...input.attrs,
@@ -4953,6 +4955,10 @@ function revealDeferredLazyVideo(video) {
 
   const preload = video.getAttribute("data-rx-lazy-preload") || "metadata";
   video.setAttribute("preload", preload);
+  const revealPoster = video.getAttribute("data-rx-poster") || video.getAttribute("data-rx-placeholder-src");
+  if (revealPoster) {
+    video.setAttribute("poster", revealPoster);
+  }
   const sourceNodes = video.querySelectorAll
     ? video.querySelectorAll("source[data-rx-lazy-src]")
     : [];
@@ -6647,7 +6653,9 @@ function renderClientResuxVideo(node, scope, locals, styleScopeId) {
     attrs.push('data-rx-placeholder-active="true"');
     attrs.push('data-resux-placeholder-active="true"');
   }
-  const initialPoster = placeholderSrc || poster;
+  const initialPoster = deferLazy
+    ? undefined
+    : (placeholderSrc || poster);
   if (initialPoster) {
     attrs.push('poster="' + escapeAttribute(initialPoster) + '"');
   }
@@ -7097,7 +7105,7 @@ function renderClientResuxImgTag(input, src, srcset, styleScopeId) {
     placeholderStyle
   );
   const initialSrc = isDeferredLazy
-    ? (placeholderSrc || RESUX_LAZY_PLACEHOLDER_SRC)
+    ? RESUX_LAZY_PLACEHOLDER_SRC
     : src;
   const mergedAttrs = {
     ...input.attrs,

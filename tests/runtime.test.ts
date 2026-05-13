@@ -477,6 +477,13 @@ describe("runtime SSR", () => {
     const result = await renderApp({
       page,
       route: { path: "/", params: {}, query: {} },
+      appHead: {
+        meta: [{ name: "description", content: "Media page" }],
+        link: [
+          { rel: "icon", href: "/favicon.svg" },
+          { rel: "stylesheet", href: "/styles.css" },
+        ],
+      },
       runtimeConfig: {
         public: {
           image: {
@@ -488,7 +495,7 @@ describe("runtime SSR", () => {
 
     expect(result.html).toContain("<img");
     expect(result.html).toContain("/__resux/image?src=%2Fimages%2Fhero.webp&amp;original=%2Fimages%2Fhero.jpg&amp;w=400&amp;q=82&amp;f=webp");
-    expect(result.html).toContain('srcset="/__resux/image?src=%2Fimages%2Fhero.webp&amp;original=%2Fimages%2Fhero.jpg&amp;w=400&amp;q=82&amp;f=webp 1x, /__resux/image?src=%2Fimages%2Fhero.webp&amp;original=%2Fimages%2Fhero.jpg&amp;w=800&amp;q=82&amp;f=webp 2x"');
+    expect(result.html).toContain('srcset="/__resux/image?src=%2Fimages%2Fhero.webp&amp;original=%2Fimages%2Fhero.jpg&amp;w=320&amp;q=82&amp;f=webp 320w, /__resux/image?src=%2Fimages%2Fhero.webp&amp;original=%2Fimages%2Fhero.jpg&amp;w=400&amp;q=82&amp;f=webp 400w"');
     expect(result.html).toContain("<picture");
     expect(result.html).toContain('type="image/avif"');
     expect(result.html).toContain('type="image/webp"');
@@ -497,11 +504,72 @@ describe("runtime SSR", () => {
         rel: "preload",
         as: "image",
         href: "/__resux/image?src=%2Fimages%2Fhero.webp&original=%2Fimages%2Fhero.jpg&w=400&q=82&f=webp",
-        imagesrcset: "/__resux/image?src=%2Fimages%2Fhero.webp&original=%2Fimages%2Fhero.jpg&w=400&q=82&f=webp 1x, /__resux/image?src=%2Fimages%2Fhero.webp&original=%2Fimages%2Fhero.jpg&w=800&q=82&f=webp 2x",
+        imagesrcset: "/__resux/image?src=%2Fimages%2Fhero.webp&original=%2Fimages%2Fhero.jpg&w=320&q=82&f=webp 320w, /__resux/image?src=%2Fimages%2Fhero.webp&original=%2Fimages%2Fhero.jpg&w=400&q=82&f=webp 400w",
         imagesizes: "100vw",
         fetchpriority: "high",
         type: "image/webp",
       })
+    ]));
+
+    const documentHtml = renderDocument(result);
+    const preloadIndex = documentHtml.indexOf('rel="preload"');
+    expect(preloadIndex).toBeGreaterThan(-1);
+    expect(preloadIndex).toBeLessThan(documentHtml.indexOf('rel="icon"'));
+    expect(preloadIndex).toBeLessThan(documentHtml.indexOf('name="description"'));
+  });
+
+  it("treats bare priority/preload attrs as true and emits responsive srcset for sizes-driven ResuxImg", async () => {
+    const page = defineComponent({
+      id: "m-image-hero-snippet",
+      name: "ImageHeroSnippetPage",
+      file: "ImageHeroSnippetPage.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [
+        {
+          type: "element",
+          tag: "ResuxImg",
+          attrs: [
+            { kind: "static", name: "src", value: "/images/hero-large.jpg" },
+            { kind: "static", name: "alt", value: "Hero" },
+            { kind: "static", name: "width", value: "1920" },
+            { kind: "static", name: "height", value: "1080" },
+            { kind: "static", name: "sizes", value: "(min-width: 1280px) 960px, 100vw" },
+            { kind: "static", name: "format", value: "webp" },
+            { kind: "static", name: "quality", value: "82" },
+            { kind: "static", name: "priority", value: "" },
+            { kind: "static", name: "preload", value: "" },
+          ],
+          events: [],
+          children: [],
+        },
+      ],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/", params: {}, query: {} },
+    });
+
+    expect(result.html).toContain('loading="eager"');
+    expect(result.html).toContain('fetchpriority="high"');
+    expect(result.html).toContain('width="1920"');
+    expect(result.html).toContain('height="1080"');
+    expect(result.html).toContain('sizes="(min-width: 1280px) 960px, 100vw"');
+    expect(result.html).toContain('src="/__resux/image?src=%2Fimages%2Fhero-large.webp&amp;original=%2Fimages%2Fhero-large.jpg&amp;w=1920&amp;h=1080&amp;q=82&amp;f=webp"');
+    expect(result.html).toContain('/__resux/image?src=%2Fimages%2Fhero-large.webp&amp;original=%2Fimages%2Fhero-large.jpg&amp;w=960&amp;h=540&amp;q=82&amp;f=webp 960w');
+    expect(result.html).toContain('/__resux/image?src=%2Fimages%2Fhero-large.webp&amp;original=%2Fimages%2Fhero-large.jpg&amp;w=1920&amp;h=1080&amp;q=82&amp;f=webp 1920w');
+    expect(result.head.link).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        rel: "preload",
+        as: "image",
+        href: "/__resux/image?src=%2Fimages%2Fhero-large.webp&original=%2Fimages%2Fhero-large.jpg&w=1920&h=1080&q=82&f=webp",
+        fetchpriority: "high",
+        imagesizes: "(min-width: 1280px) 960px, 100vw",
+        type: "image/webp",
+      }),
     ]));
   });
 
@@ -557,11 +625,62 @@ describe("runtime SSR", () => {
 
     expect(result.html).toContain('data-rx-lazy-image="true"');
     expect(result.html).toContain('data-rx-lazy-src="/__resux/image?src=%2Fimages%2Flazy.jpg&amp;w=320&amp;q=75"');
+    expect(result.html).toContain('data-rx-lazy-root-margin="0px 0px"');
+    expect(result.html).toContain('data-rx-lazy-threshold="0"');
     expect(result.html).toContain('src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="');
     expect(result.html).toContain('data-rx-lazy-srcset="/__resux/image?src=%2Fimages%2Flazy-picture.avif&amp;original=%2Fimages%2Flazy-picture.jpg&amp;w=320&amp;q=75&amp;f=avif 320w, /__resux/image?src=%2Fimages%2Flazy-picture.avif&amp;original=%2Fimages%2Flazy-picture.jpg&amp;w=640&amp;q=75&amp;f=avif 640w"');
     expect(result.html).toContain('data-rx-lazy-srcset="/__resux/image?src=%2Fimages%2Flazy-picture.webp&amp;original=%2Fimages%2Flazy-picture.jpg&amp;w=320&amp;q=75&amp;f=webp 320w, /__resux/image?src=%2Fimages%2Flazy-picture.webp&amp;original=%2Fimages%2Flazy-picture.jpg&amp;w=640&amp;q=75&amp;f=webp 640w"');
     expect(result.html).not.toContain('<source type="image/avif" srcset=');
     expect(result.html).not.toContain('<source type="image/webp" srcset=');
+  });
+
+  it("reserves media aspect ratio from explicit width and height to reduce CLS", async () => {
+    const page = defineComponent({
+      id: "m-media-aspect-ratio",
+      name: "MediaAspectRatioPage",
+      file: "MediaAspectRatioPage.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [
+        {
+          type: "element",
+          tag: "ResuxImg",
+          attrs: [
+            { kind: "static", name: "src", value: "/images/hero.jpg" },
+            { kind: "static", name: "alt", value: "Hero" },
+            { kind: "static", name: "width", value: "1280" },
+            { kind: "static", name: "height", value: "720" },
+            { kind: "static", name: "loading", value: "lazy" },
+            { kind: "static", name: "placeholder", value: "true" },
+          ],
+          events: [],
+          children: [],
+        },
+        {
+          type: "element",
+          tag: "ResuxVideo",
+          attrs: [
+            { kind: "static", name: "src", value: "/videos/hero.mp4" },
+            { kind: "static", name: "width", value: "1280" },
+            { kind: "static", name: "height", value: "720" },
+            { kind: "static", name: "lazy", value: "true" },
+            { kind: "static", name: "placeholder", value: "true" },
+          ],
+          events: [],
+          children: [],
+        },
+      ],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/media", params: {}, query: {} },
+    });
+
+    expect(result.html).toContain('style="aspect-ratio: 1280 / 720"');
+    expect(result.html).toContain('style="aspect-ratio: 1280 / 720; display: block; width: 100%; max-width: 100%; height: auto"');
   });
 
   it("normalizes dynamic class and style values", async () => {
@@ -1556,6 +1675,63 @@ export default createClientComponent({ id: "m0", name: "Model", file: "Model.vue
     expect(window.location.search).toBe("?tab=info");
   });
 
+  it("swaps route payloads on browser history navigation after the URL already changed", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-popstate-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const window = new Window({ url: "http://localhost/state" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <main>State</main>
+      </div>
+    `;
+
+    const requestedPaths: string[] = [];
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      scrollTo: () => undefined,
+      fetch: async (url: string) => {
+        const request = new URL(url, "http://localhost");
+        requestedPaths.push(decodeURIComponent(request.searchParams.get("path") ?? ""));
+        return new Response(
+          JSON.stringify({
+            html: "<main>Media</main>",
+            head: { title: "Media" },
+            payload: {
+              route: { path: "/media", params: {}, query: {} },
+              scopes: {},
+              modules: {}
+            }
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          }
+        );
+      },
+      __RESUX__: {
+        route: { path: "/state", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    window.history.replaceState({ __resux: true, path: "/media" }, "", "/media");
+    window.dispatchEvent(new window.Event("popstate"));
+    await waitForHtml(window, "<main>Media</main>");
+
+    expect(requestedPaths).toEqual(["/media"]);
+    expect(window.location.pathname).toBe("/media");
+    expect((globalThis as any).__RESUX__.route.path).toBe("/media");
+  });
+
   it("renders ResuxImg to native img markup during client block patches", async () => {
     const tempDir = path.join(os.tmpdir(), `resux-client-img-${Date.now()}`);
     await mkdir(tempDir, { recursive: true });
@@ -1571,7 +1747,9 @@ const __template = [
       { type: "element", tag: "ResuxImg", attrs: [
           { kind: "static", name: "src", value: "/hero.png" },
           { kind: "static", name: "alt", value: "Hero" },
-          { kind: "static", name: "width", value: "200" },
+          { kind: "static", name: "width", value: "560" },
+          { kind: "static", name: "height", value: "280" },
+          { kind: "static", name: "sizes", value: "100vw" },
           { kind: "static", name: "format", value: "webp" }
         ], events: [], children: [] }
     ] }
@@ -1627,7 +1805,8 @@ export default createClientComponent({ id: "m0", name: "ImagePatch", file: "Imag
     await waitForHtml(window, "<img");
 
     const html = window.document.body.innerHTML;
-    expect(html).toContain("/__resux/image?src=%2Fhero.webp&amp;original=%2Fhero.png&amp;w=200&amp;q=80&amp;f=webp");
+    expect(html).toContain("/__resux/image?src=%2Fhero.webp&amp;original=%2Fhero.png&amp;w=560&amp;h=280&amp;q=80&amp;f=webp");
+    expect(html).toContain('srcset="/__resux/image?src=%2Fhero.webp&amp;original=%2Fhero.png&amp;w=320&amp;h=160&amp;q=80&amp;f=webp 320w, /__resux/image?src=%2Fhero.webp&amp;original=%2Fhero.png&amp;w=560&amp;h=280&amp;q=80&amp;f=webp 560w"');
     expect(html).not.toContain("<ResuxImg");
   });
 
@@ -2119,6 +2298,149 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     expect(image.getAttribute("srcset")).toBe("/img/sample.webp 1x, /img/sample@2x.webp 2x");
     expect(source.getAttribute("srcset")).toBe("/img/sample.avif 1x");
     expect(image.getAttribute("data-rx-lazy-ready")).toBe("true");
+  });
+
+  it("handles lazy picture failures once and switches to fallback without reusing failed sources", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-picture-fallback-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const window = new Window({ url: "http://localhost/media" });
+    window.document.body.innerHTML = `
+      <div id="__resux"><main>Media</main></div>
+      <picture data-resux-media="picture">
+        <source data-rx-lazy-srcset="/__resux/image?src=%2Fmedia-test%2Fimages%2Fmissing-picture.webp&original=%2Fmedia-test%2Fimages%2Fmissing-picture.jpg&w=840&f=webp" type="image/webp">
+        <img
+          data-rx-lazy-image="true"
+          data-rx-fallback-src="/media-test/images/hero-square.jpg"
+          data-rx-placeholder-src="/__resux/resux-placeholder.svg"
+          src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
+          data-rx-lazy-src="/__resux/image?src=%2Fmedia-test%2Fimages%2Fhero-square.jpg&w=840"
+          alt="Broken picture"
+          loading="lazy"
+        >
+      </picture>
+    `;
+
+    let observerCallback: ((entries: Array<{ target: Element; isIntersecting: boolean; intersectionRatio: number }>) => void) | null = null;
+    class MockIntersectionObserver {
+      constructor(callback: (entries: Array<{ target: Element; isIntersecting: boolean; intersectionRatio: number }>) => void) {
+        observerCallback = callback;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      IntersectionObserver: MockIntersectionObserver,
+      __RESUX__: {
+        route: { path: "/media", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    const image = window.document.querySelector("img[data-rx-lazy-image]") as HTMLImageElement;
+    const source = window.document.querySelector("source[type='image/webp']") as HTMLSourceElement;
+
+    observerCallback!([{ target: image, isIntersecting: true, intersectionRatio: 1 }]);
+    expect(source.getAttribute("srcset")).toContain("missing-picture.webp");
+
+    Object.defineProperty(image, "currentSrc", {
+      configurable: true,
+      value: "http://localhost/__resux/image?src=%2Fmedia-test%2Fimages%2Fmissing-picture.webp&original=%2Fmedia-test%2Fimages%2Fmissing-picture.jpg&w=840&f=webp"
+    });
+    image.dispatchEvent(new window.Event("error", { bubbles: true }));
+
+    expect(source.getAttribute("srcset")).toBeNull();
+    expect(image.getAttribute("src")).toBe("/media-test/images/hero-square.jpg");
+    expect(image.getAttribute("data-resux-error-handled")).toBe("true");
+    expect(image.getAttribute("data-resux-fallback-active")).toBe("true");
+
+    image.dispatchEvent(new window.Event("error", { bubbles: true }));
+    expect(image.getAttribute("src")).toBe("/media-test/images/hero-square.jpg");
+  });
+
+  it("reveals lazy videos once and clears failed sources without retrying", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-video-fallback-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const window = new Window({ url: "http://localhost/media" });
+    window.document.body.innerHTML = `
+      <div id="__resux"><main>Media</main></div>
+      <video
+        data-rx-lazy-video="true"
+        data-rx-lazy-src="/media-test/videos/missing.mp4"
+        data-rx-lazy-preload="metadata"
+        data-rx-fallback-poster="/media-test/videos/sample-poster.jpg"
+        data-rx-placeholder-src="/__resux/resux-placeholder.svg"
+        preload="none"
+      >
+        <source data-rx-lazy-src="/media-test/videos/missing.mp4" type="video/mp4">
+      </video>
+    `;
+
+    let observerCallback: ((entries: Array<{ target: Element; isIntersecting: boolean; intersectionRatio: number }>) => void) | null = null;
+    class MockIntersectionObserver {
+      constructor(callback: (entries: Array<{ target: Element; isIntersecting: boolean; intersectionRatio: number }>) => void) {
+        observerCallback = callback;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+
+    let loadCalls = 0;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      IntersectionObserver: MockIntersectionObserver,
+      __RESUX__: {
+        route: { path: "/media", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    const video = window.document.querySelector("video") as HTMLVideoElement;
+    video.load = () => {
+      loadCalls++;
+    };
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    const source = window.document.querySelector("source") as HTMLSourceElement;
+
+    observerCallback!([{ target: video, isIntersecting: true, intersectionRatio: 1 }]);
+    expect(source.getAttribute("src")).toBe("/media-test/videos/missing.mp4");
+    expect(video.getAttribute("preload")).toBe("metadata");
+    expect(loadCalls).toBe(1);
+
+    Object.defineProperty(video, "currentSrc", {
+      configurable: true,
+      value: "http://localhost/media-test/videos/missing.mp4"
+    });
+    video.dispatchEvent(new window.Event("error", { bubbles: true }));
+
+    expect(video.getAttribute("src")).toBeNull();
+    expect(source.getAttribute("src")).toBeNull();
+    expect(video.getAttribute("poster")).toBe("/media-test/videos/sample-poster.jpg");
+    expect(video.getAttribute("data-resux-error-handled")).toBe("true");
+
+    video.dispatchEvent(new window.Event("error", { bubbles: true }));
+    expect(loadCalls).toBe(1);
   });
 
   it("preserves the active layout across client-side navigation", async () => {

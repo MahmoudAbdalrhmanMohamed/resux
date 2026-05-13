@@ -162,11 +162,21 @@ export type ResuxImageFit =
   | "inside"
   | "outside";
 
+export type ResuxImageCacheInput =
+  | boolean
+  | string
+  | number
+  | {
+      maxAge?: number | string;
+      expiresIn?: number | string;
+      ttl?: number | string;
+    };
+
 export interface ResuxImageModifiers {
   width?: number;
   height?: number;
-  quality?: number;
-  format?: string;
+  quality?: number | false;
+  format?: string | false;
   fit?: ResuxImageFit;
   [key: string]: string | number | boolean | undefined;
 }
@@ -180,6 +190,7 @@ export interface ResuxImageConfig {
   provider?: string;
   quality?: number;
   format?: string;
+  cache?: ResuxImageCacheInput;
   densities?: number[];
   providers?: Record<string, ResuxImageProviderConfig>;
 }
@@ -192,6 +203,7 @@ export interface UseResuxImageOptions {
   quality?: number;
   fit?: ResuxImageFit;
   format?: string;
+  cache?: ResuxImageCacheInput;
 }
 
 export type ResuxImageBuilder = (
@@ -746,7 +758,7 @@ class ResuxRenderer {
       components: this.components,
       layouts: {},
       pageMeta: definition.meta ?? {},
-      addHeadEntry: (entry) => this.headEntries.push(entry),
+      addHeadEntry: (entry) => insertHeadEntryWithPriority(this.headEntries, entry),
       renderPage,
       renderSlot
     });
@@ -989,6 +1001,9 @@ function createResuxImageBuilder(
     const imageConfig = resolveRuntimeImageConfig(runtimeConfig);
     const providerName = (options.provider ?? imageConfig.provider ?? "resux").trim();
     const providerConfig = resolveImageProviderConfig(providerName, imageConfig);
+    const cache =
+      normalizeImageCacheValue(options.cache)
+      ?? normalizeImageCacheValue(imageConfig.cache);
     const modifiers = normalizeImageModifiers({
       ...(providerConfig.modifiers ?? {}),
       ...(typeof imageConfig.quality === "number" ? { quality: imageConfig.quality } : {}),
@@ -1007,6 +1022,7 @@ function createResuxImageBuilder(
       normalizedSrc,
       modifiers,
       client,
+      cache,
     );
   };
 }
@@ -1051,11 +1067,60 @@ function resolveRuntimeImageConfig(runtimeConfig: RuntimeConfig): ResuxImageConf
 
   return {
     provider: typeof input.provider === "string" ? input.provider : undefined,
-    quality: typeof input.quality === "number" ? input.quality : undefined,
+    quality: typeof input.quality === "number" ? normalizeImageQualityValue(input.quality) : undefined,
     format: typeof input.format === "string" ? input.format : undefined,
+    cache: normalizeImageCacheValue(input.cache),
     ...(densities.length ? { densities } : {}),
     ...(Object.keys(providers).length ? { providers } : {}),
   };
+}
+
+function normalizeImageQualityValue(value: unknown, fallback = 86): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(100, Math.max(1, Math.round(parsed)));
+}
+
+function normalizeImageCacheValue(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === false) {
+    return undefined;
+  }
+
+  if (value === true) {
+    return "1d";
+  }
+
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value <= 0) {
+      return undefined;
+    }
+    return String(Math.round(value));
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") {
+      return "1d";
+    }
+    if (normalized === "false" || normalized === "0" || normalized === "off" || normalized === "no") {
+      return undefined;
+    }
+    return normalized;
+  }
+
+  if (typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    for (const key of ["maxAge", "expiresIn", "ttl"]) {
+      const normalized = normalizeImageCacheValue(record[key]);
+      if (normalized) {
+        return normalized;
+      }
+    }
+  }
+
+  return undefined;
 }
 
 function resolveImageProviders(value: unknown): Record<string, ResuxImageProviderConfig> {
@@ -1099,7 +1164,16 @@ function resolveImageProviderConfig(
 function normalizeImageModifiers(modifiers: ResuxImageModifiers): ResuxImageModifiers {
   const normalized: ResuxImageModifiers = {};
   for (const [key, value] of Object.entries(modifiers ?? {})) {
-    if (value === undefined || value === null || value === false) {
+    if (value === false) {
+      if (key === "format" || key === "quality") {
+        (normalized as Record<string, string | number | boolean>)[key] = false;
+      }
+      continue;
+    }
+    if (value === undefined || value === null) {
+      continue;
+    }
+    if (key === "cache") {
       continue;
     }
     if (key === "width" || key === "height" || key === "quality") {
@@ -1120,6 +1194,7 @@ function buildResuxImageURL(
   src: string,
   modifiers: ResuxImageModifiers,
   client: boolean,
+  cacheOption?: string,
 ): string {
   const trimmedProvider = providerName.trim().toLowerCase();
   const baseURL = providerBaseURL?.trim()
@@ -1136,6 +1211,7 @@ function buildResuxImageURL(
     trimmedProvider === "vercel"
       ? { publicSource: src }
       : rewriteImageSourceForDisplayFormat(src, normalizedFormat);
+  const useGeneratedCache = trimmedProvider === "resux" && typeof cacheOption === "string" && cacheOption.length > 0;
   const query = new URLSearchParams();
   if (trimmedProvider === "vercel") {
     query.set("url", src);
@@ -1174,6 +1250,18 @@ function buildResuxImageURL(
     query.set(key, String(value));
   }
 
+  if (useGeneratedCache) {
+    query.set("cache", cacheOption!);
+    const generatedPath = createGeneratedImageRoutePath(
+      sourceDescriptor.publicSource,
+      sourceDescriptor.originalSource,
+      normalizedFormat,
+      modifiers,
+    );
+    const queryString = query.toString();
+    return queryString.length > 0 ? `${generatedPath}?${queryString}` : generatedPath;
+  }
+
   const separator = baseURL.includes("?") ? "&" : "?";
   const queryString = query.toString();
   if (!queryString) {
@@ -1184,6 +1272,102 @@ function buildResuxImageURL(
     return resolved;
   }
   return resolved;
+}
+
+function createGeneratedImageRoutePath(
+  source: string,
+  originalSource: string | undefined,
+  normalizedFormat: string | undefined,
+  modifiers: ResuxImageModifiers,
+): string {
+  const extension =
+    normalizedFormat
+    ?? inferImageExtensionFromSource(source)
+    ?? inferImageExtensionFromSource(originalSource)
+    ?? "bin";
+  const signature = createImageTransformSignature(source, originalSource, normalizedFormat, modifiers);
+  const digest = hashImageSignature(signature);
+  return `/_resux/generated/images/${digest}.${extension}`;
+}
+
+function createImageTransformSignature(
+  source: string,
+  originalSource: string | undefined,
+  normalizedFormat: string | undefined,
+  modifiers: ResuxImageModifiers,
+): string {
+  const entries: string[] = [`src=${source}`];
+  if (originalSource) {
+    entries.push(`original=${originalSource}`);
+  }
+  const width = Number(modifiers.width);
+  if (Number.isFinite(width) && width > 0) {
+    entries.push(`w=${Math.round(width)}`);
+  }
+  const height = Number(modifiers.height);
+  if (Number.isFinite(height) && height > 0) {
+    entries.push(`h=${Math.round(height)}`);
+  }
+  if (typeof modifiers.fit === "string" && modifiers.fit.length > 0) {
+    entries.push(`fit=${modifiers.fit}`);
+  }
+  if (normalizedFormat) {
+    entries.push(`f=${normalizedFormat}`);
+  }
+  const quality = Number(modifiers.quality);
+  if (Number.isFinite(quality) && quality > 0) {
+    entries.push(`q=${Math.round(quality)}`);
+  }
+  const extraKeys = Object.keys(modifiers)
+    .filter((key) => !["width", "height", "quality", "fit", "format", "cache"].includes(key))
+    .sort();
+  for (const key of extraKeys) {
+    const value = modifiers[key];
+    if (value === undefined || value === null || value === false) {
+      continue;
+    }
+    entries.push(`${key}=${String(value)}`);
+  }
+  return entries.join("&");
+}
+
+function hashImageSignature(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function inferImageExtensionFromSource(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if (trimmed.startsWith("data:")) {
+    const mimeMatch = /^data:image\/([a-zA-Z0-9.+-]+);/i.exec(trimmed);
+    if (!mimeMatch) {
+      return undefined;
+    }
+    const normalized = mimeMatch[1].toLowerCase();
+    return normalized === "jpg" ? "jpeg" : normalized;
+  }
+
+  const withoutQuery = trimmed.split(/[?#]/)[0];
+  const dotIndex = withoutQuery.lastIndexOf(".");
+  if (dotIndex < 0) {
+    return undefined;
+  }
+  const extension = withoutQuery.slice(dotIndex + 1).toLowerCase();
+  if (!extension) {
+    return undefined;
+  }
+  return extension === "jpg" ? "jpeg" : extension;
 }
 
 function injectImageTemplateSource(
@@ -1346,6 +1530,9 @@ function renderElement(node: ElementTemplateNode, context: RenderTemplateContext
   if (node.tag === "ResuxPicture") {
     return renderResuxPicture(node, context, locals);
   }
+  if (node.tag === "ResuxVideo") {
+    return renderResuxVideo(node, context, locals);
+  }
 
   if (node.tag === "ResuxLoadingIndicator") {
     return renderResuxLoadingIndicatorSync(
@@ -1504,6 +1691,9 @@ async function renderElementAsync(
   if (node.tag === "ResuxPicture") {
     return renderResuxPicture(node, context, locals);
   }
+  if (node.tag === "ResuxVideo") {
+    return renderResuxVideo(node, context, locals);
+  }
 
   if (node.tag === "ResuxLoadingIndicator") {
     return renderResuxLoadingIndicatorAsync(
@@ -1587,20 +1777,48 @@ interface ResuxImageRenderInput {
   decoding: string;
   fetchPriority?: string;
   provider?: string;
+  cache?: string;
   quality?: number;
   fit?: ResuxImageFit;
   format?: string;
   formats: string[];
   preload: boolean;
   deferLazy: boolean;
+  lazyRootMargin: string;
+  lazyThreshold: number;
+  placeholderSrc?: string;
+  placeholderClass?: string;
+  placeholderStyle?: string;
+  fallbackSrc?: string;
   modifiers: ResuxImageModifiers;
   attrs: Record<string, string>;
+}
+
+interface ResuxPictureSourceInput {
+  src: string;
+  srcset?: string;
+  type?: string;
+  media?: string;
+  sizes?: string;
+  width?: number;
+  height?: number;
+  widths: number[];
+  quality?: number;
+  format?: string;
+  fit?: ResuxImageFit;
+  modifiers: ResuxImageModifiers;
+}
+
+interface ResuxVideoSourceInput {
+  src: string;
+  type?: string;
 }
 
 const resuxImageReservedProps = new Set([
   "src",
   "alt",
   "provider",
+  "cache",
   "modifiers",
   "quality",
   "fit",
@@ -1618,9 +1836,19 @@ const resuxImageReservedProps = new Set([
   "decoding",
   "fetchpriority",
   "fetchPriority",
+  "placeholder",
+  "placeholderClass",
+  "placeholderStyle",
+  "fallback",
+  "fallbackSrc",
+  "sources",
+  "rootMargin",
+  "threshold",
 ]);
 const resuxLazyPlaceholderSrc =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+const resuxDefaultPlaceholderSrc = "/__resux/resux-placeholder.svg";
+const resuxResponsiveViewportWidths = [320, 640, 768, 1024, 1280, 1536, 1920, 2560];
 
 function renderResuxImg(
   node: ElementTemplateNode,
@@ -1635,6 +1863,7 @@ function renderResuxImg(
   const builder = createResuxImageBuilder(context.route, context.runtimeConfig, false);
   const src = builder(input.src, {
     provider: input.provider,
+    cache: input.cache,
     width: input.width,
     height: input.height,
     quality: input.quality,
@@ -1648,6 +1877,166 @@ function renderResuxImg(
   return renderResuxImgTag(input, src, srcset, context.styleScopeId);
 }
 
+function renderResuxVideo(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+): string {
+  const props = collectComponentProps(node, context.scope, locals);
+  const explicitLoading = readStringProp(props.loading);
+  const explicitLazy = props.lazy === undefined
+    ? undefined
+    : readBooleanProp(props.lazy, true);
+  const lazy = explicitLazy ?? (explicitLoading ? explicitLoading === "lazy" : false);
+  const deferLazy = explicitLoading === "lazy" || explicitLazy === true || lazy;
+  const src = readStringProp(props.src);
+  const poster = readStringProp(props.poster);
+  const fallbackPoster = readStringProp(props.fallbackPoster);
+  const width = readNumberProp(props.width);
+  const height = readNumberProp(props.height);
+  const placeholderSrc = resolveMediaPlaceholderSource(props.placeholder);
+  const preload = readStringProp(props.preload) ?? "metadata";
+  const ariaLabel = readStringProp(props.ariaLabel ?? props["aria-label"]);
+  const rootMargin = readStringProp(props.rootMargin) ?? "320px 0px";
+  const thresholdRaw = Number(props.threshold);
+  const threshold = Number.isFinite(thresholdRaw)
+    ? Math.min(1, Math.max(0, thresholdRaw))
+    : 0;
+  const forceAutoplay = readBooleanProp(props.forceAutoplay, false);
+  const autoplay = readBooleanProp(props.autoplay, false);
+  const resolvedSources = resolveVideoSources(props.sources);
+  const hasSourceChildren = resolvedSources.length > 0;
+
+  const styleParts: string[] = [];
+  if (typeof props.style === "string" && props.style.trim().length > 0) {
+    styleParts.push(props.style.trim().replace(/;+\s*$/, ""));
+  }
+  const aspectRatio = props.aspectRatio;
+  if (aspectRatio !== undefined && aspectRatio !== null && aspectRatio !== false) {
+    const aspectValue = String(aspectRatio).trim();
+    if (aspectValue.length > 0) {
+      styleParts.push(`aspect-ratio: ${aspectValue}`);
+    }
+  } else {
+    const ratioStyle = resolveAspectRatioStyle(width, height, props.style);
+    if (ratioStyle) {
+      styleParts.push(ratioStyle);
+    }
+  }
+  styleParts.push("display: block");
+  styleParts.push("width: 100%");
+  styleParts.push("max-width: 100%");
+  if (!styleParts.some((entry) => /(^|;)\s*height\s*:/.test(entry))) {
+    styleParts.push("height: auto");
+  }
+  const attrs: string[] = [];
+  for (const [name, rawValue] of Object.entries(props)) {
+    if (rawValue === undefined || rawValue === null || rawValue === false) {
+      continue;
+    }
+    if (
+      name === "aspectRatio"
+      || name === "style"
+      || name === "lazy"
+      || name === "loading"
+      || name === "placeholder"
+      || name === "fallbackPoster"
+      || name === "rootMargin"
+      || name === "threshold"
+      || name === "sources"
+      || name === "forceAutoplay"
+      || name === "ariaLabel"
+      || name === "autoplay"
+      || name === "src"
+      || name === "poster"
+      || name === "preload"
+      || name === "fallbackText"
+    ) {
+      continue;
+    }
+    const attrName = name === "className"
+      ? "class"
+      : name === "playsInline"
+        ? "playsinline"
+        : name === "crossOrigin"
+          ? "crossorigin"
+          : name === "referrerPolicy"
+            ? "referrerpolicy"
+            : name;
+    attrs.push(`${attrName}="${escapeAttribute(stringifyAttributeValue(attrName, rawValue))}"`);
+  }
+  if (!hasSourceChildren && !deferLazy && src) {
+    attrs.push(`src="${escapeAttribute(src)}"`);
+  }
+  attrs.push('data-resux-media="video"');
+  if (deferLazy && src) {
+    attrs.push(`data-rx-lazy-src="${escapeAttribute(src)}"`);
+    attrs.push(`data-src="${escapeAttribute(src)}"`);
+  }
+  if (deferLazy) {
+    attrs.push('data-rx-lazy-video="true"');
+    attrs.push('data-resux-lazy="true"');
+    attrs.push(`data-rx-lazy-root-margin="${escapeAttribute(rootMargin)}"`);
+    attrs.push(`data-rx-lazy-threshold="${escapeAttribute(String(threshold))}"`);
+    attrs.push(`data-rx-lazy-preload="${escapeAttribute(preload)}"`);
+    attrs.push('preload="none"');
+  } else if (preload) {
+    attrs.push(`preload="${escapeAttribute(preload)}"`);
+  }
+
+  if (poster) {
+    attrs.push(`data-rx-poster="${escapeAttribute(poster)}"`);
+  }
+  if (fallbackPoster) {
+    attrs.push(`data-rx-fallback-poster="${escapeAttribute(fallbackPoster)}"`);
+  }
+  if (placeholderSrc) {
+    attrs.push(`data-rx-placeholder-src="${escapeAttribute(placeholderSrc)}"`);
+    attrs.push(`data-placeholder="${escapeAttribute(placeholderSrc)}"`);
+    attrs.push('data-rx-placeholder-active="true"');
+    attrs.push('data-resux-placeholder-active="true"');
+  }
+
+  const initialPoster = placeholderSrc ?? poster;
+  if (initialPoster) {
+    attrs.push(`poster="${escapeAttribute(initialPoster)}"`);
+  }
+
+  if (autoplay) {
+    attrs.push('autoplay="autoplay"');
+    attrs.push('data-rx-autoplay-requested="true"');
+    if (!forceAutoplay) {
+      attrs.push('data-rx-respect-reduced-motion="true"');
+    } else {
+      attrs.push('data-rx-force-autoplay="true"');
+    }
+  }
+  if (ariaLabel) {
+    attrs.push(`aria-label="${escapeAttribute(ariaLabel)}"`);
+  }
+  if (styleParts.length > 0) {
+    attrs.push(`style="${escapeAttribute(styleParts.join("; "))}"`);
+  }
+  appendStyleScopeAttribute(attrs, context.styleScopeId);
+  const attrText = attrs.length ? ` ${attrs.join(" ")}` : "";
+  const sourceTags = hasSourceChildren
+    ? resolvedSources
+      .map((source) => {
+        const sourceAttrs = deferLazy
+          ? [`data-rx-lazy-src="${escapeAttribute(source.src)}"`, `data-src="${escapeAttribute(source.src)}"`]
+          : [`src="${escapeAttribute(source.src)}"`];
+        if (source.type) {
+          sourceAttrs.push(`type="${escapeAttribute(source.type)}"`);
+        }
+        return `<source ${sourceAttrs.join(" ")}>`;
+      })
+      .join("")
+    : "";
+  const children = renderTemplateNodes(node.children, context, locals);
+  const fallbackText = escapeHtml(readStringProp(props.fallbackText) ?? "Your browser does not support the video tag.");
+  return `<video${attrText}>${sourceTags}${children}${fallbackText}</video>`;
+}
+
 function renderResuxPicture(
   node: ElementTemplateNode,
   context: RenderTemplateContext,
@@ -1657,10 +2046,13 @@ function renderResuxPicture(
   if (!input.src) {
     return "";
   }
+  const props = collectComponentProps(node, context.scope, locals);
 
   const builder = createResuxImageBuilder(context.route, context.runtimeConfig, false);
-  const fallbackSrc = builder(input.src, {
+  const fallbackSource = input.fallbackSrc ?? input.src;
+  const fallbackSrc = builder(fallbackSource, {
     provider: input.provider,
+    cache: input.cache,
     width: input.width,
     height: input.height,
     quality: input.quality,
@@ -1669,40 +2061,82 @@ function renderResuxPicture(
   });
   const fallbackSrcset = buildResuxImageSrcset(builder, {
     ...input,
+    src: fallbackSource,
     format: undefined,
   });
   registerResuxImagePreload(context, fallbackSrc, fallbackSrcset, input, input.preload);
 
   const manualChildren = renderTemplateNodes(node.children, context, locals);
-  const generatedSources = input.formats
-    .map((format) => {
-      const sourceSrcset = buildResuxImageSrcset(builder, {
+  const explicitSources = resolvePictureSourceInputs(props.sources, input);
+  const sourceInputs = explicitSources.length
+    ? explicitSources
+    : input.formats.map((format) => ({
+      src: input.src,
+      widths: input.widths,
+      width: input.width,
+      height: input.height,
+      quality: input.quality,
+      format,
+      fit: input.fit,
+      sizes: input.sizes,
+      modifiers: input.modifiers,
+      type: resuxImageMimeType(format),
+    } as ResuxPictureSourceInput));
+  const generatedSources = sourceInputs
+    .map((sourceInput) => {
+      const sourceRenderInput: ResuxImageRenderInput = {
         ...input,
-        format,
+        src: sourceInput.src,
+        width: sourceInput.width,
+        height: sourceInput.height,
+        widths: sourceInput.widths,
+        sizes: sourceInput.sizes,
+        quality: sourceInput.quality,
+        format: sourceInput.format,
+        fit: sourceInput.fit,
+        modifiers: sourceInput.modifiers,
+        placeholderSrc: undefined,
+        placeholderClass: undefined,
+        placeholderStyle: undefined,
+        fallbackSrc: undefined,
+        attrs: {},
+        preload: false,
+        deferLazy: input.deferLazy,
+      };
+      const sourceSrcset = sourceInput.srcset || buildResuxImageSrcset(builder, sourceRenderInput);
+      const sourceUrl = builder(sourceInput.src, {
+        provider: input.provider,
+        cache: input.cache,
+        width: sourceInput.width,
+        height: sourceInput.height,
+        quality: sourceInput.quality,
+        fit: sourceInput.fit,
+        format: sourceInput.format,
+        modifiers: sourceInput.modifiers,
       });
-      const resolvedSrcset = sourceSrcset
-        || builder(input.src, {
-          provider: input.provider,
-          width: input.width,
-          height: input.height,
-          quality: input.quality,
-          fit: input.fit,
-          format,
-          modifiers: input.modifiers,
-        });
+      const resolvedSrcset = sourceSrcset || sourceUrl;
       if (!resolvedSrcset) {
         return "";
       }
-      const sourceAttrs: string[] = [`type="${escapeAttribute(resuxImageMimeType(format))}"`];
+      const sourceAttrs: string[] = [];
+      const sourceType = sourceInput.type
+        || (sourceInput.format ? resuxImageMimeType(sourceInput.format) : inferImageMimeTypeFromSource(sourceInput.src));
+      if (sourceType) {
+        sourceAttrs.push(`type="${escapeAttribute(sourceType)}"`);
+      }
+      if (sourceInput.media) {
+        sourceAttrs.push(`media="${escapeAttribute(sourceInput.media)}"`);
+      }
       if (input.deferLazy) {
         sourceAttrs.push(`data-rx-lazy-srcset="${escapeAttribute(resolvedSrcset)}"`);
-        if (input.sizes) {
-          sourceAttrs.push(`data-rx-lazy-sizes="${escapeAttribute(input.sizes)}"`);
+        sourceAttrs.push(`data-srcset="${escapeAttribute(resolvedSrcset)}"`);
+        if (sourceInput.sizes) {
+          sourceAttrs.push(`data-rx-lazy-sizes="${escapeAttribute(sourceInput.sizes)}"`);
         }
       } else {
         sourceAttrs.push(`srcset="${escapeAttribute(resolvedSrcset)}"`);
-        if (input.sizes) {
-          sourceAttrs.push(`sizes="${escapeAttribute(input.sizes)}"`);
+        if (sourceInput.sizes) {
+          sourceAttrs.push(`sizes="${escapeAttribute(sourceInput.sizes)}"`);
         }
       }
       return `<source ${sourceAttrs.join(" ")}>`;
@@ -1711,7 +2145,7 @@ function renderResuxPicture(
     .join("");
 
   const img = renderResuxImgTag(input, fallbackSrc, fallbackSrcset, undefined);
-  const attrs: string[] = [];
+  const attrs: string[] = ['data-resux-media="picture"'];
   appendStyleScopeAttribute(attrs, context.styleScopeId);
   const attrText = attrs.length ? ` ${attrs.join(" ")}` : "";
   return `<picture${attrText}>${manualChildren}${generatedSources}${img}</picture>`;
@@ -1724,14 +2158,25 @@ function resolveResuxImageRenderInput(
 ): ResuxImageRenderInput {
   const props = collectComponentProps(node, context.scope, locals);
   const runtimeImageConfig = resolveRuntimeImageConfig(context.runtimeConfig);
-  const modifiers = resolveResuxImageModifierProps(props.modifiers);
+  const baseModifiers = resolveResuxImageModifierProps(props.modifiers);
   const explicitFormat = readStringProp(props.format);
   const explicitFormats = parseImageFormats(
     props.formats
     ?? (explicitFormat?.includes(",") ? explicitFormat : undefined),
   );
+  const hasExplicitQuality = Object.prototype.hasOwnProperty.call(props, "quality");
+  const hasExplicitFormat = Object.prototype.hasOwnProperty.call(props, "format");
+  const explicitQuality = readNumberProp(props.quality);
+  const modifiers = normalizeImageModifiers({
+    ...baseModifiers,
+    ...(hasExplicitFormat && !explicitFormat ? { format: false } : {}),
+    ...(hasExplicitQuality && !explicitQuality ? { quality: false } : {}),
+  });
   const provider = readStringProp(props.provider);
-  const quality = readNumberProp(props.quality) ?? runtimeImageConfig.quality;
+  const quality = hasExplicitQuality
+    ? explicitQuality
+    : (explicitQuality ?? runtimeImageConfig.quality);
+  const cache = normalizeImageCacheValue(props.cache ?? runtimeImageConfig.cache);
   const fit = readStringProp(props.fit) as ResuxImageFit | undefined;
   const width = readNumberProp(props.width);
   const height = readNumberProp(props.height);
@@ -1744,6 +2189,11 @@ function resolveResuxImageRenderInput(
   const lazy = explicitLazy ?? (explicitLoading ? explicitLoading === "lazy" : !priority);
   const loading = explicitLoading ?? (lazy ? "lazy" : "eager");
   const deferLazy = explicitLoading === "lazy" || explicitLazy === true;
+  const lazyRootMargin = readStringProp(props.rootMargin) ?? "0px 0px";
+  const lazyThresholdRaw = Number(props.threshold);
+  const lazyThreshold = Number.isFinite(lazyThresholdRaw)
+    ? Math.min(1, Math.max(0, lazyThresholdRaw))
+    : 0;
   const decoding = readStringProp(props.decoding) ?? "async";
   const fetchPriority = readStringProp(props.fetchpriority ?? props.fetchPriority)
     ?? (priority ? "high" : undefined);
@@ -1752,8 +2202,12 @@ function resolveResuxImageRenderInput(
     || [1, 2];
   const widths = parseImageNumberList(props.widths) ?? [];
   const passthrough = collectResuxImagePassthroughAttributes(props);
-  const src = readStringProp(props.src) ?? "";
+  const src = readStringProp(props.src)
+    ?? readStringProp(props.fallbackSrc ?? props.fallback)
+    ?? "";
   const alt = readStringProp(props.alt) ?? "";
+  const placeholderSrc = resolveMediaPlaceholderSource(props.placeholder);
+  const fallbackSrc = readStringProp(props.fallbackSrc ?? props.fallback);
 
   return {
     src,
@@ -1767,12 +2221,21 @@ function resolveResuxImageRenderInput(
     decoding,
     fetchPriority,
     provider,
+    cache,
     quality,
     fit,
-    format: explicitFormats.length ? undefined : explicitFormat ?? runtimeImageConfig.format,
+    format: explicitFormats.length
+      ? undefined
+      : (hasExplicitFormat ? explicitFormat : (explicitFormat ?? runtimeImageConfig.format)),
     formats: explicitFormats,
     preload,
     deferLazy,
+    lazyRootMargin,
+    lazyThreshold,
+    placeholderSrc,
+    placeholderClass: readStringProp(props.placeholderClass),
+    placeholderStyle: readStringProp(props.placeholderStyle),
+    fallbackSrc,
     modifiers,
     attrs: passthrough,
   };
@@ -1812,15 +2275,14 @@ function buildResuxImageSrcset(
   builder: ResuxImageBuilder,
   input: ResuxImageRenderInput,
 ): string | undefined {
-  const widthCandidates = input.widths.length
-    ? [...new Set(input.widths)].sort((left, right) => left - right)
-    : [];
+  const widthCandidates = resolveResuxImageWidthCandidates(input);
   if (widthCandidates.length) {
     return widthCandidates
       .map((width) => `${builder(input.src, {
         provider: input.provider,
+        cache: input.cache,
         width,
-        height: input.height,
+        height: resolveResuxImageCandidateHeight(input, width),
         quality: input.quality,
         fit: input.fit,
         format: input.format,
@@ -1839,6 +2301,7 @@ function buildResuxImageSrcset(
       const width = Math.max(1, Math.round(input.width! * density));
       return `${builder(input.src, {
         provider: input.provider,
+        cache: input.cache,
         width,
         height: input.height ? Math.max(1, Math.round(input.height * density)) : undefined,
         quality: input.quality,
@@ -1848,6 +2311,105 @@ function buildResuxImageSrcset(
       })} ${density}x`;
     })
     .join(", ");
+}
+
+function resolveResuxImageWidthCandidates(input: ResuxImageRenderInput): number[] {
+  const explicitWidths = input.widths.length
+    ? normalizeResuxImageWidthCandidates(input.widths, input.width)
+    : [];
+  if (explicitWidths.length) {
+    return explicitWidths;
+  }
+  if (!input.sizes) {
+    return [];
+  }
+  return resolveResuxImageWidthsFromSizes(
+    input.sizes,
+    input.densities,
+    input.width,
+  );
+}
+
+function resolveResuxImageWidthsFromSizes(
+  sizes: string,
+  densities: number[],
+  maxWidth?: number,
+): number[] {
+  const descriptors = sizes
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+  const baseWidths: number[] = [];
+  for (const descriptor of descriptors) {
+    const match = [...descriptor.matchAll(/([0-9]*\.?[0-9]+)\s*(px|vw)\b/g)].pop();
+    if (!match) {
+      continue;
+    }
+    const value = Number(match[1]);
+    if (!Number.isFinite(value) || value <= 0) {
+      continue;
+    }
+    if (match[2] === "px") {
+      baseWidths.push(Math.round(value));
+      continue;
+    }
+    for (const viewportWidth of resuxResponsiveViewportWidths) {
+      baseWidths.push(Math.round((viewportWidth * value) / 100));
+    }
+  }
+
+  const safeDensities = densities.length
+    ? [...new Set(densities)]
+      .filter((entry) => Number.isFinite(entry) && entry > 0)
+      .sort((left, right) => left - right)
+    : [1];
+  const expandedWidths = baseWidths.flatMap((width) =>
+    safeDensities.map((density) => Math.round(width * density)),
+  );
+
+  if (!expandedWidths.length && Number.isFinite(maxWidth) && (maxWidth as number) > 0) {
+    return [Math.max(1, Math.round(maxWidth as number))];
+  }
+  return normalizeResuxImageWidthCandidates(expandedWidths, maxWidth);
+}
+
+function normalizeResuxImageWidthCandidates(
+  candidates: number[],
+  maxWidth?: number,
+): number[] {
+  const resolvedMaxWidth = Number.isFinite(maxWidth) && (maxWidth as number) > 0
+    ? Math.round(maxWidth as number)
+    : Number.POSITIVE_INFINITY;
+  const normalized = [...new Set(candidates
+    .map((entry) => Number(entry))
+    .filter((entry) => Number.isFinite(entry) && entry > 0)
+    .map((entry) => Math.min(8192, Math.max(1, Math.round(entry)), resolvedMaxWidth)))]
+    .sort((left, right) => left - right);
+  const compacted: number[] = [];
+  for (const width of normalized) {
+    const previous = compacted[compacted.length - 1];
+    const shouldKeep = previous === undefined
+      || width - previous >= 24
+      || (Number.isFinite(resolvedMaxWidth) && width === resolvedMaxWidth);
+    if (shouldKeep) {
+      compacted.push(width);
+    }
+  }
+  return compacted;
+}
+
+function resolveResuxImageCandidateHeight(
+  input: ResuxImageRenderInput,
+  width: number,
+): number | undefined {
+  if (!input.height) {
+    return undefined;
+  }
+  if (!input.width) {
+    return input.height;
+  }
+  const scaledHeight = Math.round((input.height / input.width) * width);
+  return Math.max(1, scaledHeight);
 }
 
 function registerResuxImagePreload(
@@ -1887,16 +2449,44 @@ function renderResuxImgTag(
 ): string {
   const attrs: string[] = [];
   const isDeferredLazy = input.deferLazy && input.loading.toLowerCase() === "lazy";
+  const placeholderSrc = input.placeholderSrc;
+  const placeholderClass = input.placeholderClass;
+  const placeholderStyle = input.placeholderStyle;
+  const aspectRatioStyle = resolveAspectRatioStyle(input.width, input.height, input.attrs.style, placeholderStyle);
+  const placeholderBackground = placeholderSrc
+    ? `background-image: url('${placeholderSrc}'); background-size: cover; background-position: center; background-repeat: no-repeat`
+    : undefined;
+  const mergedClass = mergeClassNames(input.attrs.class, placeholderClass);
+  const mergedStyle = mergeInlineStyles(
+    input.attrs.style,
+    aspectRatioStyle,
+    !isDeferredLazy ? placeholderBackground : undefined,
+    placeholderStyle,
+  );
+  const initialSrc = isDeferredLazy
+    ? (placeholderSrc ?? resuxLazyPlaceholderSrc)
+    : src;
   const mergedAttrs = {
     ...input.attrs,
-    src: isDeferredLazy ? resuxLazyPlaceholderSrc : src,
+    ...(mergedClass ? { class: mergedClass } : {}),
+    ...(mergedStyle ? { style: mergedStyle } : {}),
+    src: initialSrc,
     alt: input.alt,
     loading: input.loading,
     decoding: input.decoding,
+    "data-resux-media": "img",
     ...(isDeferredLazy ? { "data-rx-lazy-image": "true" } : {}),
-    ...(isDeferredLazy ? { "data-rx-lazy-src": src } : {}),
-    ...(isDeferredLazy && srcset ? { "data-rx-lazy-srcset": srcset } : {}),
+    ...(isDeferredLazy ? { "data-resux-lazy": "true" } : {}),
+    ...(isDeferredLazy ? { "data-rx-lazy-src": src, "data-src": src } : {}),
+    ...(isDeferredLazy ? { "data-rx-lazy-root-margin": input.lazyRootMargin } : {}),
+    ...(isDeferredLazy ? { "data-rx-lazy-threshold": String(input.lazyThreshold) } : {}),
+    ...(isDeferredLazy && srcset ? { "data-rx-lazy-srcset": srcset, "data-srcset": srcset } : {}),
     ...(isDeferredLazy && input.sizes ? { "data-rx-lazy-sizes": input.sizes } : {}),
+    ...(placeholderSrc ? { "data-rx-placeholder-src": placeholderSrc, "data-placeholder": placeholderSrc } : {}),
+    ...(placeholderClass ? { "data-rx-placeholder-class": placeholderClass } : {}),
+    ...(placeholderStyle ? { "data-rx-placeholder-style": placeholderStyle } : {}),
+    ...(placeholderSrc ? { "data-rx-placeholder-active": "true", "data-resux-placeholder-active": "true" } : {}),
+    ...(input.fallbackSrc ? { "data-rx-fallback-src": input.fallbackSrc } : {}),
     ...(input.fetchPriority ? { fetchpriority: input.fetchPriority } : {}),
     ...(input.width ? { width: String(input.width) } : {}),
     ...(input.height ? { height: String(input.height) } : {}),
@@ -1975,6 +2565,9 @@ function readBooleanProp(value: unknown, fallback: boolean): boolean {
   }
   if (typeof value === "string") {
     const normalized = value.trim().toLowerCase();
+    if (normalized === "") {
+      return true;
+    }
     if (normalized === "true" || normalized === "1" || normalized === "yes") {
       return true;
     }
@@ -1985,12 +2578,207 @@ function readBooleanProp(value: unknown, fallback: boolean): boolean {
   return fallback;
 }
 
+function resolveMediaPlaceholderSource(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === false) {
+    return undefined;
+  }
+  if (value === true) {
+    return resuxDefaultPlaceholderSrc;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const normalized = trimmed.toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") {
+    return resuxDefaultPlaceholderSrc;
+  }
+  if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") {
+    return undefined;
+  }
+  if (looksLikeMediaSource(trimmed)) {
+    return trimmed;
+  }
+  return createTextPlaceholderDataUri(trimmed);
+}
+
+function looksLikeMediaSource(value: string): boolean {
+  return (
+    value.startsWith("/")
+    || value.startsWith("./")
+    || value.startsWith("../")
+    || value.startsWith("http://")
+    || value.startsWith("https://")
+    || value.startsWith("data:image/")
+    || value.startsWith("blob:")
+  );
+}
+
+function createTextPlaceholderDataUri(value: string): string {
+  const safeLabel = escapeSvgText(value);
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-label="${safeLabel}">`
+    + `<rect width="640" height="360" fill="#0f172a"/>`
+    + `<rect x="24" y="24" width="592" height="312" rx="20" fill="#111827" stroke="#334155" stroke-width="2"/>`
+    + `<text x="320" y="192" fill="#cbd5e1" font-size="30" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif">${safeLabel}</text>`
+    + `</svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+function escapeSvgText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function mergeClassNames(...values: Array<string | undefined>): string | undefined {
+  const tokens = values
+    .flatMap((value) => String(value ?? "").split(/\s+/))
+    .map((token) => token.trim())
+    .filter(Boolean);
+  return tokens.length ? [...new Set(tokens)].join(" ") : undefined;
+}
+
+function mergeInlineStyles(...values: Array<string | undefined>): string | undefined {
+  const parts = values
+    .flatMap((value) => String(value ?? "").split(";"))
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return parts.length ? parts.join("; ") : undefined;
+}
+
+function hasInlineStyleProperty(styleValue: unknown, propertyName: string): boolean {
+  if (typeof styleValue !== "string") {
+    return false;
+  }
+  const normalized = propertyName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`(^|;)\\s*${normalized}\\s*:`, "i");
+  return pattern.test(styleValue);
+}
+
+function resolveAspectRatioStyle(
+  width: number | undefined,
+  height: number | undefined,
+  ...styleValues: Array<unknown>
+): string | undefined {
+  if (!width || !height) {
+    return undefined;
+  }
+  if (styleValues.some((entry) => hasInlineStyleProperty(entry, "aspect-ratio"))) {
+    return undefined;
+  }
+  return `aspect-ratio: ${width} / ${height}`;
+}
+
+function resolvePictureSourceInputs(
+  value: unknown,
+  fallbackInput: ResuxImageRenderInput,
+): ResuxPictureSourceInput[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const resolved: ResuxPictureSourceInput[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      continue;
+    }
+    const record = entry as Record<string, unknown>;
+    const src = readStringProp(record.src) ?? fallbackInput.src;
+    if (!src) {
+      continue;
+    }
+    const hasQuality = Object.prototype.hasOwnProperty.call(record, "quality");
+    const hasFormat = Object.prototype.hasOwnProperty.call(record, "format");
+    const explicitFormat = readStringProp(record.format);
+    const sourceWidths = parseImageNumberList(record.widths) ?? fallbackInput.widths;
+    const baseModifiers = resolveResuxImageModifierProps(record.modifiers);
+    const modifiers: ResuxImageModifiers = normalizeImageModifiers({
+      ...fallbackInput.modifiers,
+      ...baseModifiers,
+      ...(hasFormat && !explicitFormat ? { format: false } : {}),
+      ...(hasQuality && !readNumberProp(record.quality) ? { quality: false } : {}),
+      ...(readStringProp(record.fit) ? { fit: readStringProp(record.fit)! as ResuxImageFit } : {}),
+      ...(readNumberProp(record.width) ? { width: readNumberProp(record.width)! } : {}),
+      ...(readNumberProp(record.height) ? { height: readNumberProp(record.height)! } : {}),
+      ...(readNumberProp(record.quality) ? { quality: readNumberProp(record.quality)! } : {}),
+      ...(explicitFormat ? { format: explicitFormat } : {}),
+    });
+
+    resolved.push({
+      src,
+      srcset: readStringProp(record.srcset),
+      type: readStringProp(record.type),
+      media: readStringProp(record.media),
+      sizes: readStringProp(record.sizes) ?? fallbackInput.sizes,
+      width: readNumberProp(record.width) ?? fallbackInput.width,
+      height: readNumberProp(record.height) ?? fallbackInput.height,
+      widths: sourceWidths,
+      quality: hasQuality
+        ? readNumberProp(record.quality)
+        : fallbackInput.quality,
+      format: hasFormat
+        ? explicitFormat
+        : fallbackInput.format,
+      fit: (readStringProp(record.fit) as ResuxImageFit | undefined) ?? fallbackInput.fit,
+      modifiers,
+    });
+  }
+
+  return resolved;
+}
+
+function resolveVideoSources(value: unknown): ResuxVideoSourceInput[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const sources: ResuxVideoSourceInput[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      continue;
+    }
+    const record = entry as Record<string, unknown>;
+    const src = readStringProp(record.src);
+    if (!src) {
+      continue;
+    }
+    sources.push({
+      src,
+      type: readStringProp(record.type),
+    });
+  }
+  return sources;
+}
+
 function resuxImageMimeType(format: string): string {
   const normalized = format.toLowerCase();
   if (normalized === "jpg") {
     return "image/jpeg";
   }
   return normalized.startsWith("image/") ? normalized : `image/${normalized}`;
+}
+
+function inferImageMimeTypeFromSource(src: string): string | undefined {
+  const clean = src.split(/[?#]/)[0]?.toLowerCase();
+  if (!clean) {
+    return undefined;
+  }
+  const dotIndex = clean.lastIndexOf(".");
+  if (dotIndex < 0) {
+    return undefined;
+  }
+  const extension = clean.slice(dotIndex + 1);
+  if (!extension) {
+    return undefined;
+  }
+  return resuxImageMimeType(extension);
 }
 
 function renderVueIsland(
@@ -2236,7 +3024,7 @@ export class AsyncResuxRenderer {
         components: this.components,
         layouts: this.layouts,
         pageMeta: this.pageMeta,
-        addHeadEntry: (entry) => this.headEntries.push(entry),
+        addHeadEntry: (entry) => insertHeadEntryWithPriority(this.headEntries, entry),
         renderPage,
         renderSlot,
         renderLayout: (name, slot) => this.renderLayout(name, slot)
@@ -2513,6 +3301,8 @@ function mergeHead(entries: HeadEntry[]): HeadEntry {
     }
   }
 
+  merged.link = sortHeadLinksForPriority(merged.link ?? []);
+
   return merged;
 }
 
@@ -2520,11 +3310,23 @@ function renderHead(head: HeadEntry): string {
   const tags: string[] = [];
   tags.push(`<title>${escapeHtml(head.title ?? "Resux App")}</title>`);
 
+  const links = sortHeadLinksForPriority(head.link ?? []);
+  const highPriorityImagePreloads = links.filter((link) =>
+    isPriorityImagePreloadLink(link)
+  );
+  const remainingLinks = links.filter((link) =>
+    !isPriorityImagePreloadLink(link)
+  );
+
+  for (const link of highPriorityImagePreloads) {
+    tags.push(`<link data-rx-head="true" ${renderAttributes(link)}>`);
+  }
+
   for (const meta of head.meta ?? []) {
     tags.push(`<meta data-rx-head="true" ${renderAttributes(meta)}>`);
   }
 
-  for (const link of head.link ?? []) {
+  for (const link of remainingLinks) {
     tags.push(`<link data-rx-head="true" ${renderAttributes(link)}>`);
   }
 
@@ -2533,6 +3335,60 @@ function renderHead(head: HeadEntry): string {
   }
 
   return tags.join("");
+}
+
+function sortHeadLinksForPriority(links: Record<string, string>[]): Record<string, string>[] {
+  return links
+    .map((link, index) => ({
+      link,
+      index,
+      priority: isPriorityImagePreloadLink(link)
+        ? 0
+        : normalizeHeadLinkRel(link) === "preload"
+          ? 1
+          : 2,
+    }))
+    .sort((left, right) => left.priority - right.priority || left.index - right.index)
+    .map((entry) => entry.link);
+}
+
+function normalizeHeadLinkRel(link: Record<string, string>): string {
+  return String(link.rel ?? "").trim().toLowerCase();
+}
+
+function isPriorityImagePreloadLink(link: Record<string, string>): boolean {
+  if (normalizeHeadLinkRel(link) !== "preload") {
+    return false;
+  }
+  return String(link.as ?? "").trim().toLowerCase() === "image";
+}
+
+function isPriorityImagePreloadEntry(entry: HeadEntry): boolean {
+  return (
+    !entry.title
+    && !entry.meta
+    && !entry.style
+    && Array.isArray(entry.link)
+    && entry.link.length > 0
+    && entry.link.every((link) => isPriorityImagePreloadLink(link))
+  );
+}
+
+function insertHeadEntryWithPriority(entries: HeadEntry[], entry: HeadEntry): void {
+  if (!isPriorityImagePreloadEntry(entry)) {
+    entries.push(entry);
+    return;
+  }
+
+  const insertionIndex = entries.findIndex(
+    (candidate) => !isPriorityImagePreloadEntry(candidate),
+  );
+  if (insertionIndex === -1) {
+    entries.push(entry);
+    return;
+  }
+
+  entries.splice(insertionIndex, 0, entry);
 }
 
 function escapeStyleContent(css: string): string {
@@ -2670,7 +3526,7 @@ function collectPatches(
       });
     }
 
-    if (node.tag !== "ResuxImg" && node.tag !== "ResuxPicture") {
+    if (node.tag !== "ResuxImg" && node.tag !== "ResuxPicture" && node.tag !== "ResuxVideo") {
       for (const attr of node.attrs) {
         if (attr.kind === "dynamic" && attr.bindingId) {
           patches.push({
@@ -2739,11 +3595,18 @@ let routeTransitionProgressTimer = 0;
 let routeTransitionStartedAt = 0;
 let routeTransitionVisible = false;
 let routeTransitionIndicator = null;
-let lazyImageObserver = null;
+const lazyImageObservers = new Map();
+const lazyVideoObservers = new Map();
 const clientPluginIds = new Set();
 const clientMiddlewareById = new Map();
 const clientProvides = globalThis.__RESUX_PROVIDES__ ||= {};
 const RESUX_LAZY_PLACEHOLDER_SRC = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+const RESUX_DEFAULT_PLACEHOLDER_SRC = "/__resux/resux-placeholder.svg";
+const observedLazyImages = new Set();
+const observedLazyVideos = new Set();
+const lazyImageObserverByElement = new WeakMap();
+const lazyVideoObserverByElement = new WeakMap();
+const failedMediaSources = new Set();
 
 const __rxFlags = {
   isReactive: "__v_isReactive",
@@ -3267,6 +4130,7 @@ function createClientImageBuilder(route, runtimeConfig) {
     const providerName = String(options.provider || imageConfig.provider || "resux").trim().toLowerCase();
     const providerConfig = imageConfig.providers[providerName] || {};
     const baseURL = providerConfig.baseURL || (providerName === "vercel" ? "/_vercel/image" : "/__resux/image");
+    const cacheOption = normalizeClientImageCacheValue(options.cache ?? imageConfig.cache);
     const modifiers = {
       ...(providerConfig.modifiers || {}),
       ...(Number.isFinite(imageConfig.quality) ? { quality: Math.round(imageConfig.quality) } : {}),
@@ -3294,6 +4158,7 @@ function createClientImageBuilder(route, runtimeConfig) {
     const sourceDescriptor = providerName === "vercel"
       ? { publicSource: normalizedSrc }
       : rewriteClientImageSourceForDisplayFormat(normalizedSrc, normalizedFormat);
+    const useGeneratedCache = providerName === "resux" && typeof cacheOption === "string" && cacheOption.length > 0;
 
     if (providerName === "vercel") {
       query.set("url", normalizedSrc);
@@ -3323,9 +4188,145 @@ function createClientImageBuilder(route, runtimeConfig) {
       query.set(key, String(value));
     }
 
+    if (useGeneratedCache) {
+      query.set("cache", cacheOption);
+      const generatedPath = createClientGeneratedImageRoutePath(
+        sourceDescriptor.publicSource,
+        sourceDescriptor.originalSource,
+        normalizedFormat,
+        modifiers,
+      );
+      const queryString = query.toString();
+      return queryString ? generatedPath + "?" + queryString : generatedPath;
+    }
+
     const separator = baseURL.includes("?") ? "&" : "?";
     return query.toString() ? baseURL + separator + query.toString() : baseURL;
   };
+}
+
+function normalizeClientImageCacheValue(value) {
+  if (value === undefined || value === null || value === false) {
+    return undefined;
+  }
+  if (value === true) {
+    return "1d";
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value <= 0) {
+      return undefined;
+    }
+    return String(Math.round(value));
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") {
+      return "1d";
+    }
+    if (normalized === "false" || normalized === "0" || normalized === "off" || normalized === "no") {
+      return undefined;
+    }
+    return normalized;
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    for (const key of ["maxAge", "expiresIn", "ttl"]) {
+      const normalized = normalizeClientImageCacheValue(value[key]);
+      if (normalized) {
+        return normalized;
+      }
+    }
+  }
+  return undefined;
+}
+
+function createClientGeneratedImageRoutePath(source, originalSource, normalizedFormat, modifiers) {
+  const extension =
+    normalizedFormat
+    || inferClientImageExtensionFromSource(source)
+    || inferClientImageExtensionFromSource(originalSource)
+    || "bin";
+  const signature = createClientImageTransformSignature(source, originalSource, normalizedFormat, modifiers);
+  const digest = hashClientImageSignature(signature);
+  return "/_resux/generated/images/" + digest + "." + extension;
+}
+
+function createClientImageTransformSignature(source, originalSource, normalizedFormat, modifiers) {
+  const entries = ["src=" + source];
+  if (originalSource) {
+    entries.push("original=" + originalSource);
+  }
+
+  const width = Number(modifiers.width);
+  if (Number.isFinite(width) && width > 0) {
+    entries.push("w=" + Math.round(width));
+  }
+  const height = Number(modifiers.height);
+  if (Number.isFinite(height) && height > 0) {
+    entries.push("h=" + Math.round(height));
+  }
+  if (typeof modifiers.fit === "string" && modifiers.fit) {
+    entries.push("fit=" + modifiers.fit);
+  }
+  if (normalizedFormat) {
+    entries.push("f=" + normalizedFormat);
+  }
+  const quality = Number(modifiers.quality);
+  if (Number.isFinite(quality) && quality > 0) {
+    entries.push("q=" + Math.round(quality));
+  }
+
+  const extraKeys = Object.keys(modifiers)
+    .filter((key) => !["width", "height", "quality", "fit", "format", "cache"].includes(key))
+    .sort();
+  for (const key of extraKeys) {
+    const value = modifiers[key];
+    if (value === undefined || value === null || value === false) {
+      continue;
+    }
+    entries.push(key + "=" + String(value));
+  }
+
+  return entries.join("&");
+}
+
+function hashClientImageSignature(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function inferClientImageExtensionFromSource(value) {
+  if (!value) {
+    return undefined;
+  }
+
+  const trimmed = String(value).trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if (trimmed.startsWith("data:")) {
+    const mimeMatch = /^data:image\/([a-zA-Z0-9.+-]+);/i.exec(trimmed);
+    if (!mimeMatch) {
+      return undefined;
+    }
+    const normalized = mimeMatch[1].toLowerCase();
+    return normalized === "jpg" ? "jpeg" : normalized;
+  }
+
+  const withoutQuery = trimmed.split(/[?#]/)[0];
+  const dotIndex = withoutQuery.lastIndexOf(".");
+  if (dotIndex < 0) {
+    return undefined;
+  }
+  const extension = withoutQuery.slice(dotIndex + 1).toLowerCase();
+  if (!extension) {
+    return undefined;
+  }
+  return extension === "jpg" ? "jpeg" : extension;
 }
 
 function normalizeClientImageOutputFormat(value) {
@@ -3413,8 +4414,11 @@ function readClientImageConfig(runtimeConfig) {
     : undefined;
   return {
     provider: typeof image.provider === "string" ? image.provider : undefined,
-    quality: Number.isFinite(image.quality) ? Math.round(image.quality) : undefined,
+    quality: Number.isFinite(image.quality)
+      ? Math.min(100, Math.max(1, Math.round(Number(image.quality) || 1)))
+      : undefined,
     format: typeof image.format === "string" ? image.format : undefined,
+    cache: normalizeClientImageCacheValue(image.cache),
     densities: densities && densities.length ? densities : undefined,
     providers
   };
@@ -3682,14 +4686,28 @@ function installResux() {
   document.addEventListener("focusin", (event) => {
     void prefetchNavigationTarget(event);
   });
+  document.addEventListener("load", handleManagedMediaLoad, true);
+  document.addEventListener("error", handleManagedMediaError, true);
+  document.addEventListener("loadedmetadata", handleManagedVideoReady, true);
+  document.addEventListener("loadeddata", handleManagedVideoReady, true);
+  document.addEventListener("canplay", handleManagedVideoReady, true);
   for (const eventName of ["input", "change", "submit", "keydown", "keyup", "keypress", "mousedown", "mouseup", "blur", "focusout"]) {
     document.addEventListener(eventName, (event) => {
       void handleDelegatedEvent(eventName, event);
     });
   }
+  for (const eventName of ["load", "error", "loadstart", "loadedmetadata", "loadeddata", "canplay", "lazy-load-start", "lazy-load-complete"]) {
+    document.addEventListener(eventName, (event) => {
+      void handleDelegatedEvent(eventName, event);
+    }, true);
+  }
   if (typeof window !== "undefined" && typeof history !== "undefined" && typeof location !== "undefined") {
     window.addEventListener("popstate", () => {
-      void navigateTo(location.pathname + location.search, { replace: true });
+      void navigateTo(location.pathname + location.search + location.hash, {
+        replace: true,
+        force: true,
+        preserveScroll: true,
+      });
     });
     if (!history.state || !history.state.__resux) {
       history.replaceState({ __resux: true, path: location.pathname + location.search }, "", location.href);
@@ -3717,7 +4735,15 @@ async function initializeClientRuntime() {
   }
   void resumePendingAsyncData();
   void mountVueIslands();
-  activateDeferredLazyImages();
+  activateDeferredLazyMedia();
+  applyReducedMotionVideoPreference();
+}
+
+function activateDeferredLazyMedia(root = document) {
+  cleanupDetachedLazyMedia();
+  activateDeferredLazyImages(root);
+  activateDeferredLazyVideos(root);
+  dispatchPageReadyEvent(root);
 }
 
 function activateDeferredLazyImages(root = document) {
@@ -3725,53 +4751,100 @@ function activateDeferredLazyImages(root = document) {
   if (!images.length) {
     return;
   }
-
-  const observer = getLazyImageObserver();
   for (const image of images) {
-    if (image.getAttribute("data-rx-lazy-ready") === "true") {
+    if (!isManagedMediaConnected(image)) {
       continue;
     }
+    if (
+      image.getAttribute("data-rx-lazy-ready") === "true"
+      || image.getAttribute("data-resux-loaded") === "true"
+      || image.getAttribute("data-resux-error-handled") === "true"
+      || observedLazyImages.has(image)
+    ) {
+      continue;
+    }
+    const observer = getLazyImageObserver(image);
     if (!observer) {
       revealDeferredLazyImage(image);
       continue;
     }
+    observedLazyImages.add(image);
+    lazyImageObserverByElement.set(image, observer);
+    image.setAttribute("data-rx-lazy-observed", "true");
+    image.setAttribute("data-resux-observed", "true");
     observer.observe(image);
   }
 }
 
-function getLazyImageObserver() {
-  if (lazyImageObserver) {
-    return lazyImageObserver;
-  }
+function getLazyImageObserver(image) {
   if (typeof IntersectionObserver !== "function") {
     return null;
   }
-  lazyImageObserver = new IntersectionObserver((entries) => {
+  const rootMargin = image.getAttribute("data-rx-lazy-root-margin") || "0px 0px";
+  const thresholdRaw = Number(image.getAttribute("data-rx-lazy-threshold"));
+  const threshold = Number.isFinite(thresholdRaw) ? Math.min(1, Math.max(0, thresholdRaw)) : 0;
+  const key = rootMargin + "|" + String(threshold);
+  if (lazyImageObservers.has(key)) {
+    return lazyImageObservers.get(key);
+  }
+  const observer = new IntersectionObserver((entries) => {
     for (const entry of entries) {
       if (!entry.isIntersecting && entry.intersectionRatio <= 0) {
         continue;
       }
       const target = entry.target;
-      lazyImageObserver?.unobserve(target);
+      observer.unobserve(target);
       revealDeferredLazyImage(target);
     }
-  }, { rootMargin: "320px 0px" });
-  return lazyImageObserver;
+  }, { rootMargin, threshold });
+  lazyImageObservers.set(key, observer);
+  return observer;
 }
 
 function revealDeferredLazyImage(image) {
-  if (!image || image.getAttribute("data-rx-lazy-ready") === "true") {
+  if (!image || !isManagedMediaConnected(image)) {
+    return;
+  }
+  unobserveLazyImage(image);
+
+  if (
+    image.getAttribute("data-rx-lazy-ready") === "true"
+    || image.getAttribute("data-resux-loaded") === "true"
+    || image.getAttribute("data-resux-error-handled") === "true"
+  ) {
     return;
   }
 
+  const targetSrc = image.getAttribute("data-rx-lazy-src") || image.getAttribute("data-src") || "";
+  if (targetSrc && mediaSourceWasFailed(image, targetSrc)) {
+    applyKnownImageFailure(image, targetSrc);
+    return;
+  }
+  if (
+    targetSrc
+    && image.getAttribute("data-resux-loading") === "true"
+    && mediaUrlsEqual(getCurrentMediaUrl(image), targetSrc, image)
+  ) {
+    return;
+  }
+
+  dispatchManagedEvent(image, "lazy-load-start");
+  image.setAttribute("data-rx-lazy-pending", "true");
+  image.setAttribute("data-rx-lazy-ready", "true");
+  image.setAttribute("data-resux-loading", "true");
+
   const picture = image.closest ? image.closest("picture") : null;
   if (picture && picture.querySelectorAll) {
+    picture.setAttribute("data-resux-loading", "true");
     picture.querySelectorAll("source[data-rx-lazy-srcset]").forEach((source) => {
       const nextSrcset = source.getAttribute("data-rx-lazy-srcset");
-      if (nextSrcset) {
+      if (nextSrcset && !mediaSourceWasFailed(image, nextSrcset)) {
         source.setAttribute("srcset", nextSrcset);
+      } else if (nextSrcset) {
+        source.setAttribute("data-rx-failed-srcset", nextSrcset);
       }
       source.removeAttribute("data-rx-lazy-srcset");
+      source.removeAttribute("data-srcset");
       const nextSizes = source.getAttribute("data-rx-lazy-sizes");
       if (nextSizes) {
         source.setAttribute("sizes", nextSizes);
@@ -3781,24 +4854,633 @@ function revealDeferredLazyImage(image) {
   }
 
   const srcset = image.getAttribute("data-rx-lazy-srcset");
-  if (srcset) {
+  if (srcset && !mediaSourceWasFailed(image, srcset)) {
     image.setAttribute("srcset", srcset);
   }
   image.removeAttribute("data-rx-lazy-srcset");
+  image.removeAttribute("data-srcset");
   const sizes = image.getAttribute("data-rx-lazy-sizes");
   if (sizes) {
     image.setAttribute("sizes", sizes);
   }
   image.removeAttribute("data-rx-lazy-sizes");
 
-  const src = image.getAttribute("data-rx-lazy-src");
-  if (src) {
-    image.setAttribute("src", src);
+  if (targetSrc && shouldAssignMediaSource(image, targetSrc)) {
+    image.setAttribute("src", targetSrc);
   } else if (image.getAttribute("src") === RESUX_LAZY_PLACEHOLDER_SRC) {
     image.removeAttribute("src");
   }
   image.removeAttribute("data-rx-lazy-src");
-  image.setAttribute("data-rx-lazy-ready", "true");
+  image.removeAttribute("data-src");
+}
+
+function activateDeferredLazyVideos(root = document) {
+  const videos = root.querySelectorAll ? root.querySelectorAll("video[data-rx-lazy-video='true']") : [];
+  if (!videos.length) {
+    return;
+  }
+  for (const video of videos) {
+    if (!isManagedMediaConnected(video)) {
+      continue;
+    }
+    if (
+      video.getAttribute("data-rx-lazy-ready") === "true"
+      || video.getAttribute("data-resux-loaded") === "true"
+      || video.getAttribute("data-resux-error-handled") === "true"
+      || observedLazyVideos.has(video)
+    ) {
+      continue;
+    }
+    const observer = getLazyVideoObserver(video);
+    if (!observer) {
+      revealDeferredLazyVideo(video);
+      continue;
+    }
+    observedLazyVideos.add(video);
+    lazyVideoObserverByElement.set(video, observer);
+    video.setAttribute("data-rx-lazy-observed", "true");
+    video.setAttribute("data-resux-observed", "true");
+    observer.observe(video);
+  }
+}
+
+function getLazyVideoObserver(video) {
+  if (typeof IntersectionObserver !== "function") {
+    return null;
+  }
+  const rootMargin = video.getAttribute("data-rx-lazy-root-margin") || "320px 0px";
+  const thresholdRaw = Number(video.getAttribute("data-rx-lazy-threshold"));
+  const threshold = Number.isFinite(thresholdRaw) ? Math.min(1, Math.max(0, thresholdRaw)) : 0;
+  const key = rootMargin + "|" + String(threshold);
+  if (lazyVideoObservers.has(key)) {
+    return lazyVideoObservers.get(key);
+  }
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting && entry.intersectionRatio <= 0) {
+        continue;
+      }
+      const target = entry.target;
+      observer.unobserve(target);
+      revealDeferredLazyVideo(target);
+    }
+  }, { rootMargin, threshold });
+  lazyVideoObservers.set(key, observer);
+  return observer;
+}
+
+function revealDeferredLazyVideo(video) {
+  if (!video || !isManagedMediaConnected(video)) {
+    return;
+  }
+  unobserveLazyVideo(video);
+
+  if (
+    video.getAttribute("data-rx-lazy-ready") === "true"
+    || video.getAttribute("data-resux-loaded") === "true"
+    || video.getAttribute("data-resux-error-handled") === "true"
+  ) {
+    return;
+  }
+
+  const targetSrc = video.getAttribute("data-rx-lazy-src") || video.getAttribute("data-src") || "";
+  if (targetSrc && mediaSourceWasFailed(video, targetSrc)) {
+    applyKnownVideoFailure(video, targetSrc);
+    return;
+  }
+
+  dispatchManagedEvent(video, "lazy-load-start");
+
+  const preload = video.getAttribute("data-rx-lazy-preload") || "metadata";
+  video.setAttribute("preload", preload);
+  const sourceNodes = video.querySelectorAll
+    ? video.querySelectorAll("source[data-rx-lazy-src]")
+    : [];
+  sourceNodes.forEach((source) => {
+    const nextSrc = source.getAttribute("data-rx-lazy-src");
+    if (nextSrc && !mediaSourceWasFailed(video, nextSrc)) {
+      source.setAttribute("src", nextSrc);
+    }
+    source.removeAttribute("data-rx-lazy-src");
+    source.removeAttribute("data-src");
+  });
+  if (targetSrc && sourceNodes.length === 0 && shouldAssignMediaSource(video, targetSrc)) {
+    video.setAttribute("src", targetSrc);
+  }
+  video.removeAttribute("data-rx-lazy-src");
+  video.removeAttribute("data-src");
+  video.removeAttribute("data-rx-lazy-video");
+  video.setAttribute("data-rx-lazy-pending", "true");
+  video.setAttribute("data-rx-lazy-ready", "true");
+  video.setAttribute("data-resux-loading", "true");
+  video.setAttribute("data-resux-video-loading", "true");
+
+  if (typeof video.load === "function" && video.getAttribute("data-rx-load-called") !== "true") {
+    video.setAttribute("data-rx-load-called", "true");
+    try {
+      video.load();
+    } catch {
+      // Ignore load() runtime failures from older browsers.
+    }
+  }
+  if (shouldAutoplayManagedVideo(video)) {
+    attemptManagedVideoPlay(video);
+  }
+}
+
+function applyReducedMotionVideoPreference(root = document) {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return;
+  }
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    return;
+  }
+  const videos = root.querySelectorAll ? root.querySelectorAll("video[data-rx-respect-reduced-motion='true']") : [];
+  videos.forEach((video) => {
+    if (video.getAttribute("data-rx-force-autoplay") === "true") {
+      return;
+    }
+    video.removeAttribute("autoplay");
+    if (typeof video.pause === "function") {
+      video.pause();
+    }
+  });
+}
+
+function shouldAutoplayManagedVideo(video) {
+  if (video.getAttribute("data-rx-autoplay-requested") !== "true") {
+    return false;
+  }
+  if (video.getAttribute("data-rx-force-autoplay") === "true") {
+    return true;
+  }
+  if (video.getAttribute("data-rx-respect-reduced-motion") !== "true") {
+    return true;
+  }
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return true;
+  }
+  return !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function attemptManagedVideoPlay(video) {
+  if (!video || video.getAttribute("data-rx-play-attempted") === "true") {
+    return;
+  }
+  video.setAttribute("data-rx-play-attempted", "true");
+  if (typeof video.play !== "function") {
+    return;
+  }
+  const playResult = video.play();
+  if (playResult && typeof playResult.catch === "function") {
+    playResult.catch(() => {});
+  }
+}
+
+function dispatchManagedEvent(target, name, detail = {}) {
+  if (!target || typeof target.dispatchEvent !== "function") {
+    return;
+  }
+  const view = target.ownerDocument?.defaultView ?? (typeof window !== "undefined" ? window : undefined);
+  const CustomEventCtor = view && typeof view.CustomEvent === "function"
+    ? view.CustomEvent
+    : null;
+  if (!CustomEventCtor) {
+    return;
+  }
+  target.dispatchEvent(new CustomEventCtor(name, { bubbles: true, detail }));
+}
+
+function handleManagedMediaLoad(event) {
+  const target = event && event.target;
+  if (!target || !target.tagName) {
+    return;
+  }
+  const tag = String(target.tagName).toLowerCase();
+  if (tag !== "img") {
+    return;
+  }
+  if (target.getAttribute("data-rx-lazy-image") === "true" && target.getAttribute("data-rx-lazy-ready") !== "true") {
+    return;
+  }
+  if (target.getAttribute("data-rx-lazy-pending") === "true") {
+    target.removeAttribute("data-rx-lazy-pending");
+    dispatchManagedEvent(target, "lazy-load-complete");
+  }
+  target.setAttribute("data-resux-loaded", "true");
+  target.removeAttribute("data-resux-loading");
+  clearManagedPlaceholderState(target);
+}
+
+function handleManagedVideoReady(event) {
+  const target = event && event.target;
+  if (!target || !target.tagName || String(target.tagName).toLowerCase() !== "video") {
+    return;
+  }
+
+  if ((event.type === "loadedmetadata" || event.type === "canplay") && shouldAutoplayManagedVideo(target)) {
+    attemptManagedVideoPlay(target);
+  }
+  if (event.type !== "loadedmetadata" && event.type !== "loadeddata" && event.type !== "canplay") {
+    return;
+  }
+  if (target.getAttribute("data-rx-lazy-pending") === "true") {
+    target.removeAttribute("data-rx-lazy-pending");
+    dispatchManagedEvent(target, "lazy-load-complete");
+  }
+  target.setAttribute("data-resux-loaded", "true");
+  target.removeAttribute("data-resux-loading");
+  target.removeAttribute("data-resux-video-loading");
+  clearManagedPlaceholderState(target);
+  if (target.getAttribute("data-rx-placeholder-src")) {
+    const realPoster = target.getAttribute("data-rx-poster");
+    if (realPoster) {
+      target.setAttribute("poster", realPoster);
+    } else {
+      target.removeAttribute("poster");
+    }
+  }
+}
+
+function handleManagedMediaError(event) {
+  const target = event && event.target;
+  if (!target || !target.tagName) {
+    return;
+  }
+  const tag = String(target.tagName).toLowerCase();
+  if (tag === "img") {
+    handleManagedImageError(target);
+    return;
+  }
+
+  if (tag === "source") {
+    const parentVideo = target.parentElement && String(target.parentElement.tagName || "").toLowerCase() === "video"
+      ? target.parentElement
+      : null;
+    if (parentVideo) {
+      markFailedMediaSource(parentVideo, target.getAttribute("src") || target.getAttribute("data-rx-lazy-src") || "");
+    }
+    return;
+  }
+
+  if (tag === "video") {
+    handleManagedVideoError(target);
+  }
+}
+
+function handleManagedImageError(target) {
+  if (!isManagedMediaConnected(target)) {
+    return;
+  }
+  if (target.getAttribute("data-rx-lazy-image") === "true" && target.getAttribute("data-rx-lazy-ready") !== "true") {
+    return;
+  }
+
+  unobserveLazyImage(target);
+  const failedSrc = getCurrentMediaUrl(target) || target.getAttribute("data-rx-lazy-src") || "";
+  markFailedMediaSource(target, failedSrc);
+  target.setAttribute("data-resux-error", "true");
+  target.setAttribute("data-rx-error", "true");
+  target.removeAttribute("data-resux-loading");
+  disablePictureSources(target);
+
+  const fallbackSrc = target.getAttribute("data-rx-fallback-src");
+  if (target.getAttribute("data-resux-error-handled") === "true") {
+    if (
+      target.getAttribute("data-rx-fallback-active") === "true"
+      && fallbackSrc
+      && mediaUrlsEqual(failedSrc, fallbackSrc, target)
+    ) {
+      showManagedImagePlaceholder(target, failedSrc);
+    }
+    return;
+  }
+
+  if (fallbackSrc && shouldAssignMediaSource(target, fallbackSrc)) {
+    markMediaErrorHandled(target);
+    target.setAttribute("data-rx-fallback-used", "true");
+    target.setAttribute("data-rx-fallback-active", "true");
+    target.setAttribute("data-resux-fallback-active", "true");
+    target.removeAttribute("srcset");
+    target.removeAttribute("sizes");
+    target.removeAttribute("data-rx-lazy-srcset");
+    target.removeAttribute("data-rx-lazy-sizes");
+    target.setAttribute("src", fallbackSrc);
+    return;
+  }
+
+  markMediaErrorHandled(target);
+  showManagedImagePlaceholder(target, failedSrc);
+}
+
+function applyKnownImageFailure(target, failedSrc) {
+  markFailedMediaSource(target, failedSrc);
+  target.setAttribute("data-resux-error", "true");
+  target.setAttribute("data-rx-error", "true");
+  target.removeAttribute("data-resux-loading");
+  disablePictureSources(target);
+  const fallbackSrc = target.getAttribute("data-rx-fallback-src");
+  markMediaErrorHandled(target);
+  if (fallbackSrc && shouldAssignMediaSource(target, fallbackSrc)) {
+    target.setAttribute("data-rx-fallback-used", "true");
+    target.setAttribute("data-rx-fallback-active", "true");
+    target.setAttribute("data-resux-fallback-active", "true");
+    target.removeAttribute("srcset");
+    target.removeAttribute("sizes");
+    target.setAttribute("src", fallbackSrc);
+    return;
+  }
+  showManagedImagePlaceholder(target, failedSrc);
+}
+
+function handleManagedVideoError(video) {
+  if (!isManagedMediaConnected(video)) {
+    return;
+  }
+
+  const failedSrc = getCurrentVideoUrl(video);
+  markFailedMediaSource(video, failedSrc);
+  video.setAttribute("data-resux-error", "true");
+  video.setAttribute("data-rx-error", "true");
+  video.removeAttribute("data-resux-loading");
+  video.removeAttribute("data-resux-video-loading");
+
+  if (video.getAttribute("data-rx-lazy-video") === "true" && video.getAttribute("data-rx-lazy-ready") !== "true") {
+    applyVideoPosterFallback(video, failedSrc);
+    return;
+  }
+
+  unobserveLazyVideo(video);
+  if (video.getAttribute("data-resux-error-handled") === "true") {
+    return;
+  }
+
+  markMediaErrorHandled(video);
+  clearManagedVideoSources(video);
+  applyVideoPosterFallback(video, failedSrc);
+}
+
+function applyKnownVideoFailure(video, failedSrc) {
+  markFailedMediaSource(video, failedSrc);
+  video.setAttribute("data-resux-error", "true");
+  video.setAttribute("data-rx-error", "true");
+  video.removeAttribute("data-resux-loading");
+  video.removeAttribute("data-resux-video-loading");
+  markMediaErrorHandled(video);
+  clearManagedVideoSources(video);
+  applyVideoPosterFallback(video, failedSrc);
+}
+
+function applyVideoPosterFallback(video, failedSrc) {
+  const fallbackPoster = video.getAttribute("data-rx-fallback-poster");
+  if (fallbackPoster && !mediaUrlsEqual(video.getAttribute("poster") || "", fallbackPoster, video)) {
+    video.setAttribute("poster", fallbackPoster);
+    video.setAttribute("data-rx-fallback-active", "true");
+    video.setAttribute("data-resux-fallback-active", "true");
+    return;
+  }
+
+  const placeholder = video.getAttribute("data-rx-placeholder-src");
+  if (placeholder && !mediaUrlsEqual(placeholder, failedSrc, video)) {
+    video.setAttribute("poster", placeholder);
+    video.setAttribute("data-rx-placeholder-active", "true");
+    video.setAttribute("data-resux-placeholder-active", "true");
+  }
+}
+
+function showManagedImagePlaceholder(target, failedSrc) {
+  const placeholder = target.getAttribute("data-rx-placeholder-src");
+  if (placeholder && shouldAssignMediaSource(target, placeholder) && !mediaUrlsEqual(placeholder, failedSrc, target)) {
+    target.removeAttribute("srcset");
+    target.removeAttribute("sizes");
+    target.setAttribute("src", placeholder);
+    target.setAttribute("data-rx-placeholder-active", "true");
+    target.setAttribute("data-resux-placeholder-active", "true");
+    return;
+  }
+  target.setAttribute("data-rx-placeholder-active", "true");
+  target.setAttribute("data-resux-placeholder-active", "true");
+}
+
+function disablePictureSources(image) {
+  const picture = image.closest ? image.closest("picture") : null;
+  if (!picture || !picture.querySelectorAll) {
+    return;
+  }
+  picture.setAttribute("data-resux-error", "true");
+  picture.querySelectorAll("source").forEach((source) => {
+    const srcset = source.getAttribute("srcset") || source.getAttribute("data-rx-lazy-srcset");
+    if (srcset) {
+      source.setAttribute("data-rx-failed-srcset", srcset);
+    }
+    source.removeAttribute("srcset");
+    source.removeAttribute("sizes");
+    source.removeAttribute("data-rx-lazy-srcset");
+    source.removeAttribute("data-rx-lazy-sizes");
+    source.removeAttribute("data-srcset");
+  });
+}
+
+function clearManagedVideoSources(video) {
+  if (typeof video.pause === "function") {
+    try {
+      video.pause();
+    } catch {}
+  }
+  video.removeAttribute("src");
+  video.removeAttribute("data-rx-lazy-src");
+  video.removeAttribute("data-src");
+  if (video.querySelectorAll) {
+    video.querySelectorAll("source").forEach((source) => {
+      const src = source.getAttribute("src") || source.getAttribute("data-rx-lazy-src");
+      if (src) {
+        source.setAttribute("data-rx-failed-src", src);
+      }
+      source.removeAttribute("src");
+      source.removeAttribute("data-rx-lazy-src");
+      source.removeAttribute("data-src");
+    });
+  }
+}
+
+function clearManagedPlaceholderState(target) {
+  clearManagedPlaceholderStyle(target);
+  const placeholderClass = target.getAttribute("data-rx-placeholder-class");
+  if (placeholderClass && target.classList) {
+    for (const token of placeholderClass.split(/\s+/).filter(Boolean)) {
+      target.classList.remove(token);
+    }
+  }
+  target.removeAttribute("data-rx-placeholder-active");
+  target.removeAttribute("data-resux-placeholder-active");
+}
+
+function clearManagedPlaceholderStyle(target) {
+  const style = target && target.getAttribute ? target.getAttribute("style") : "";
+  if (!style) {
+    return;
+  }
+  const placeholderStyle = target.getAttribute("data-rx-placeholder-style") || "";
+  const nextStyle = style
+    .replace(/background-image\s*:[^;]+;?/gi, "")
+    .replace(/background-size\s*:[^;]+;?/gi, "")
+    .replace(/background-position\s*:[^;]+;?/gi, "")
+    .replace(/background-repeat\s*:[^;]+;?/gi, "")
+    .split(";")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry && !placeholderStyle.split(";").map((item) => item.trim()).filter(Boolean).includes(entry))
+    .join("; ")
+    .replace(/\s{2,}/g, " ")
+    .trim()
+    .replace(/;+$/g, "");
+  if (!nextStyle) {
+    target.removeAttribute("style");
+    return;
+  }
+  target.setAttribute("style", nextStyle);
+}
+
+function shouldAssignMediaSource(target, nextSrc) {
+  if (!nextSrc || mediaSourceWasFailed(target, nextSrc)) {
+    return false;
+  }
+  const current = getCurrentMediaUrl(target);
+  if (current && mediaUrlsEqual(current, nextSrc, target)) {
+    return false;
+  }
+  const attrSrc = target.getAttribute ? target.getAttribute("src") : "";
+  if (attrSrc && mediaUrlsEqual(attrSrc, nextSrc, target)) {
+    return false;
+  }
+  return true;
+}
+
+function getCurrentMediaUrl(target) {
+  return String(target?.currentSrc || target?.getAttribute?.("src") || "");
+}
+
+function getCurrentVideoUrl(video) {
+  const direct = String(video?.currentSrc || video?.getAttribute?.("src") || "");
+  if (direct) {
+    return direct;
+  }
+  const source = video?.querySelector ? video.querySelector("source[src], source[data-rx-lazy-src]") : null;
+  return String(source?.getAttribute("src") || source?.getAttribute("data-rx-lazy-src") || "");
+}
+
+function markFailedMediaSource(target, src) {
+  if (!target || !src) {
+    return;
+  }
+  target.setAttribute("data-rx-failed-src", src);
+  target.setAttribute("data-resux-failed-src", src);
+  for (const candidate of mediaSourceCandidates(src)) {
+    const normalized = normalizeMediaUrl(candidate, target);
+    if (normalized) {
+      failedMediaSources.add(normalized);
+    }
+  }
+}
+
+function markMediaErrorHandled(target) {
+  target.setAttribute("data-rx-error-handled", "true");
+  target.setAttribute("data-resux-error-handled", "true");
+}
+
+function mediaSourceWasFailed(target, src) {
+  const failed = target?.getAttribute?.("data-rx-failed-src") || target?.getAttribute?.("data-resux-failed-src") || "";
+  if (failed && src && mediaUrlsEqual(failed, src, target)) {
+    return true;
+  }
+  return mediaSourceCandidates(src).some((candidate) => {
+    const normalized = normalizeMediaUrl(candidate, target);
+    return Boolean(normalized && failedMediaSources.has(normalized));
+  });
+}
+
+function mediaSourceCandidates(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return [];
+  }
+  if (!raw.includes(",")) {
+    return [raw.split(/\s+/)[0]].filter(Boolean);
+  }
+  return raw
+    .split(",")
+    .map((entry) => entry.trim().split(/\s+/)[0])
+    .filter(Boolean);
+}
+
+function mediaUrlsEqual(left, right, target) {
+  const normalizedLeft = normalizeMediaUrl(left, target);
+  const normalizedRight = normalizeMediaUrl(right, target);
+  return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
+}
+
+function normalizeMediaUrl(value, target) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+  try {
+    const view = target?.ownerDocument?.defaultView || (typeof window !== "undefined" ? window : null);
+    const base = view?.location?.href || (typeof location !== "undefined" ? location.href : "http://localhost/");
+    return new URL(raw, base).href;
+  } catch {
+    return raw;
+  }
+}
+
+function isManagedMediaConnected(target) {
+  if (!target) {
+    return false;
+  }
+  if (target.isConnected === true) {
+    return true;
+  }
+  const root = target.ownerDocument && target.ownerDocument.documentElement;
+  return Boolean(root && root.contains && root.contains(target));
+}
+
+function unobserveLazyImage(image) {
+  const observer = lazyImageObserverByElement.get(image);
+  if (observer) {
+    observer.unobserve(image);
+  }
+  observedLazyImages.delete(image);
+  lazyImageObserverByElement.delete(image);
+  image.removeAttribute("data-rx-lazy-observed");
+  image.removeAttribute("data-resux-observed");
+}
+
+function unobserveLazyVideo(video) {
+  const observer = lazyVideoObserverByElement.get(video);
+  if (observer) {
+    observer.unobserve(video);
+  }
+  observedLazyVideos.delete(video);
+  lazyVideoObserverByElement.delete(video);
+  video.removeAttribute("data-rx-lazy-observed");
+  video.removeAttribute("data-resux-observed");
+}
+
+function cleanupDetachedLazyMedia() {
+  for (const image of Array.from(observedLazyImages)) {
+    if (!isManagedMediaConnected(image)) {
+      unobserveLazyImage(image);
+    }
+  }
+  for (const video of Array.from(observedLazyVideos)) {
+    if (!isManagedMediaConnected(video)) {
+      unobserveLazyVideo(video);
+    }
+  }
+}
+
+function dispatchPageReadyEvent(root) {
+  const target = root && typeof root.dispatchEvent === "function" ? root : document;
+  dispatchManagedEvent(target, "resux:page-ready", { root });
 }
 
 function createAsyncDataResource(value, pending = false, error = null) {
@@ -4147,7 +5829,7 @@ async function navigateTo(target, options = {}) {
   const routePath = nextUrl.pathname + nextUrl.search;
   const currentUrl = new URL(location.href);
   const currentRoutePath = currentUrl.pathname + currentUrl.search;
-  if (routePath === currentRoutePath && nextUrl.hash === currentUrl.hash) {
+  if (!options.force && routePath === currentRoutePath && nextUrl.hash === currentUrl.hash) {
     return;
   }
   const transitionToken = ++routeTransitionToken;
@@ -4191,8 +5873,7 @@ async function navigateTo(target, options = {}) {
 
     const root = document.getElementById("__resux");
     if (!root) {
-      location.href = nextUrl.href;
-      return;
+      throw new Error("Missing Resux root for client navigation.");
     }
 
     if (transitionToken !== routeTransitionToken) {
@@ -4213,20 +5894,24 @@ async function navigateTo(target, options = {}) {
     clearScopeCacheExcept(preserved.scopeIds);
     void resumePendingAsyncData();
     void mountVueIslands(preserved.root);
-    activateDeferredLazyImages(preserved.root);
+    activateDeferredLazyMedia(preserved.root);
+    applyReducedMotionVideoPreference(preserved.root);
 
-    if (nextUrl.hash) {
+    if (!options.preserveScroll && nextUrl.hash) {
       document.getElementById(nextUrl.hash.slice(1))?.scrollIntoView();
-    } else if (typeof scrollTo === "function") {
+    } else if (!options.preserveScroll && typeof scrollTo === "function") {
       scrollTo(0, 0);
     }
     if (transitionToken === routeTransitionToken) {
       setRouteTransition("complete", { path: routePath });
       completed = true;
     }
-  } catch {
+  } catch (error) {
     setRouteTransition("error", { path: routePath });
-    location.href = nextUrl.href;
+    dispatchManagedEvent(document, "resux:navigation-error", {
+      path: routePath,
+      message: error instanceof Error ? error.message : String(error)
+    });
   } finally {
     if (!completed && transitionToken === routeTransitionToken) {
       setRouteTransition("idle", { path: routePath });
@@ -4729,7 +6414,7 @@ function collectPatches(nodes, scope, locals, patches, styleScopeId) {
     if (node.html) {
       patches.push({ type: "html", id: node.html.bindingId, value: sanitizeHtml(evaluateExpression(node.html.expression, scope, locals)) });
     }
-    if (node.tag !== "ResuxImg" && node.tag !== "ResuxPicture") {
+    if (node.tag !== "ResuxImg" && node.tag !== "ResuxPicture" && node.tag !== "ResuxVideo") {
       for (const attr of node.attrs) {
         if (attr.kind === "dynamic" && attr.bindingId) {
           const attrName = nativeAttributeName(node, attr.name);
@@ -4775,6 +6460,9 @@ function renderElement(node, scope, locals, styleScopeId) {
   if (node.tag === "ResuxPicture") {
     return renderClientResuxPicture(node, scope, locals, styleScopeId);
   }
+  if (node.tag === "ResuxVideo") {
+    return renderClientResuxVideo(node, scope, locals, styleScopeId);
+  }
   const tag = nativeElementTag(node);
   const attrs = [];
   for (const attr of node.attrs) {
@@ -4812,6 +6500,7 @@ const clientImageReservedProps = new Set([
   "src",
   "alt",
   "provider",
+  "cache",
   "modifiers",
   "quality",
   "fit",
@@ -4828,8 +6517,176 @@ const clientImageReservedProps = new Set([
   "loading",
   "decoding",
   "fetchpriority",
-  "fetchPriority"
+  "fetchPriority",
+  "placeholder",
+  "placeholderClass",
+  "placeholderStyle",
+  "fallback",
+  "fallbackSrc",
+  "sources",
+  "rootMargin",
+  "threshold"
 ]);
+const RESUX_CLIENT_RESPONSIVE_VIEWPORT_WIDTHS = [320, 640, 768, 1024, 1280, 1536, 1920, 2560];
+
+function renderClientResuxVideo(node, scope, locals, styleScopeId) {
+  const props = {};
+  for (const attr of node.attrs) {
+    const normalizedName = attr.name.replace(/-([a-zA-Z0-9])/g, (_, char) => char.toUpperCase());
+    props[normalizedName] = attr.kind === "static"
+      ? attr.value
+      : evaluateExpression(attr.value, scope, locals);
+  }
+  const explicitLoading = readClientStringProp(props.loading);
+  const explicitLazy = props.lazy === undefined
+    ? undefined
+    : readClientBooleanProp(props.lazy, true);
+  const lazy = explicitLazy ?? (explicitLoading ? explicitLoading === "lazy" : false);
+  const deferLazy = explicitLoading === "lazy" || explicitLazy === true || lazy;
+  const src = readClientStringProp(props.src);
+  const poster = readClientStringProp(props.poster);
+  const fallbackPoster = readClientStringProp(props.fallbackPoster);
+  const width = readClientNumberProp(props.width);
+  const height = readClientNumberProp(props.height);
+  const placeholderSrc = resolveClientPlaceholderSource(props.placeholder);
+  const preload = readClientStringProp(props.preload) || "metadata";
+  const ariaLabel = readClientStringProp(props.ariaLabel || props["aria-label"]);
+  const rootMargin = readClientStringProp(props.rootMargin) || "320px 0px";
+  const thresholdRaw = Number(props.threshold);
+  const threshold = Number.isFinite(thresholdRaw)
+    ? Math.min(1, Math.max(0, thresholdRaw))
+    : 0;
+  const forceAutoplay = readClientBooleanProp(props.forceAutoplay, false);
+  const autoplay = readClientBooleanProp(props.autoplay, false);
+  const resolvedSources = resolveClientVideoSources(props.sources);
+  const hasSourceChildren = resolvedSources.length > 0;
+  const styleParts = [];
+  if (typeof props.style === "string" && props.style.trim()) {
+    styleParts.push(props.style.trim().replace(/;+\s*$/, ""));
+  }
+  if (props.aspectRatio !== undefined && props.aspectRatio !== null && props.aspectRatio !== false) {
+    const aspectValue = String(props.aspectRatio).trim();
+    if (aspectValue) {
+      styleParts.push("aspect-ratio: " + aspectValue);
+    }
+  } else {
+    const ratioStyle = resolveClientAspectRatioStyle(width, height, props.style);
+    if (ratioStyle) {
+      styleParts.push(ratioStyle);
+    }
+  }
+  styleParts.push("display: block");
+  styleParts.push("width: 100%");
+  styleParts.push("max-width: 100%");
+  if (!styleParts.some((entry) => /(^|;)\s*height\s*:/.test(entry))) {
+    styleParts.push("height: auto");
+  }
+  const attrs = [];
+  for (const [name, rawValue] of Object.entries(props)) {
+    if (rawValue === undefined || rawValue === null || rawValue === false) {
+      continue;
+    }
+    if (
+      name === "aspectRatio"
+      || name === "style"
+      || name === "lazy"
+      || name === "loading"
+      || name === "placeholder"
+      || name === "fallbackPoster"
+      || name === "rootMargin"
+      || name === "threshold"
+      || name === "sources"
+      || name === "forceAutoplay"
+      || name === "ariaLabel"
+      || name === "autoplay"
+      || name === "src"
+      || name === "poster"
+      || name === "preload"
+      || name === "fallbackText"
+    ) {
+      continue;
+    }
+    const attrName = name === "className"
+      ? "class"
+      : name === "playsInline"
+        ? "playsinline"
+        : name === "crossOrigin"
+          ? "crossorigin"
+          : name === "referrerPolicy"
+            ? "referrerpolicy"
+            : name;
+    attrs.push(attrName + '="' + escapeAttribute(stringifyAttributeValue(attrName, rawValue)) + '"');
+  }
+  if (!hasSourceChildren && !deferLazy && src) {
+    attrs.push('src="' + escapeAttribute(src) + '"');
+  }
+  attrs.push('data-resux-media="video"');
+  if (deferLazy && src) {
+    attrs.push('data-rx-lazy-src="' + escapeAttribute(src) + '"');
+    attrs.push('data-src="' + escapeAttribute(src) + '"');
+  }
+  if (deferLazy) {
+    attrs.push('data-rx-lazy-video="true"');
+    attrs.push('data-resux-lazy="true"');
+    attrs.push('data-rx-lazy-root-margin="' + escapeAttribute(rootMargin) + '"');
+    attrs.push('data-rx-lazy-threshold="' + escapeAttribute(String(threshold)) + '"');
+    attrs.push('data-rx-lazy-preload="' + escapeAttribute(preload) + '"');
+    attrs.push('preload="none"');
+  } else if (preload) {
+    attrs.push('preload="' + escapeAttribute(preload) + '"');
+  }
+  if (poster) {
+    attrs.push('data-rx-poster="' + escapeAttribute(poster) + '"');
+  }
+  if (fallbackPoster) {
+    attrs.push('data-rx-fallback-poster="' + escapeAttribute(fallbackPoster) + '"');
+  }
+  if (placeholderSrc) {
+    attrs.push('data-rx-placeholder-src="' + escapeAttribute(placeholderSrc) + '"');
+    attrs.push('data-placeholder="' + escapeAttribute(placeholderSrc) + '"');
+    attrs.push('data-rx-placeholder-active="true"');
+    attrs.push('data-resux-placeholder-active="true"');
+  }
+  const initialPoster = placeholderSrc || poster;
+  if (initialPoster) {
+    attrs.push('poster="' + escapeAttribute(initialPoster) + '"');
+  }
+  if (autoplay) {
+    attrs.push('autoplay="autoplay"');
+    attrs.push('data-rx-autoplay-requested="true"');
+    if (!forceAutoplay) {
+      attrs.push('data-rx-respect-reduced-motion="true"');
+    } else {
+      attrs.push('data-rx-force-autoplay="true"');
+    }
+  }
+  if (ariaLabel) {
+    attrs.push('aria-label="' + escapeAttribute(ariaLabel) + '"');
+  }
+  if (styleParts.length > 0) {
+    attrs.push('style="' + escapeAttribute(styleParts.join("; ")) + '"');
+  }
+  if (styleScopeId) {
+    attrs.push(styleScopeId + '=""');
+  }
+  const attrText = attrs.length ? " " + attrs.join(" ") : "";
+  const sourceTags = hasSourceChildren
+    ? resolvedSources
+      .map((source) => {
+        const sourceAttrs = deferLazy
+          ? ['data-rx-lazy-src="' + escapeAttribute(source.src) + '"', 'data-src="' + escapeAttribute(source.src) + '"']
+          : ['src="' + escapeAttribute(source.src) + '"'];
+        if (source.type) {
+          sourceAttrs.push('type="' + escapeAttribute(source.type) + '"');
+        }
+        return "<source " + sourceAttrs.join(" ") + ">";
+      })
+      .join("")
+    : "";
+  const children = node.children.map((child) => renderNode(child, scope, locals, styleScopeId)).join("");
+  const fallbackText = escapeHtml(readClientStringProp(props.fallbackText) || "Your browser does not support the video tag.");
+  return "<video" + attrText + ">" + sourceTags + children + fallbackText + "</video>";
+}
 
 function renderClientResuxImg(node, scope, locals, styleScopeId) {
   const input = resolveClientImageRenderInput(node, scope, locals);
@@ -4841,6 +6698,7 @@ function renderClientResuxImg(node, scope, locals, styleScopeId) {
   const builder = createClientImageBuilder(app.route, app.$config);
   const src = builder(input.src, {
     provider: input.provider,
+    cache: input.cache,
     width: input.width,
     height: input.height,
     quality: input.quality,
@@ -4857,11 +6715,20 @@ function renderClientResuxPicture(node, scope, locals, styleScopeId) {
   if (!input.src) {
     return "";
   }
+  const props = {};
+  for (const attr of node.attrs) {
+    const normalizedName = attr.name.replace(/-([a-zA-Z0-9])/g, (_, char) => char.toUpperCase());
+    props[normalizedName] = attr.kind === "static"
+      ? attr.value
+      : evaluateExpression(attr.value, scope, locals);
+  }
 
   const app = getClientResuxApp();
   const builder = createClientImageBuilder(app.route, app.$config);
-  const fallbackSrc = builder(input.src, {
+  const fallbackSource = input.fallbackSrc || input.src;
+  const fallbackSrc = builder(fallbackSource, {
     provider: input.provider,
+    cache: input.cache,
     width: input.width,
     height: input.height,
     quality: input.quality,
@@ -4870,37 +6737,81 @@ function renderClientResuxPicture(node, scope, locals, styleScopeId) {
   });
   const fallbackSrcset = buildClientImageSrcset(builder, {
     ...input,
+    src: fallbackSource,
     format: undefined
   });
   const manualChildren = node.children.map((child) => renderNode(child, scope, locals, styleScopeId)).join("");
-  const generatedSources = input.formats
-    .map((format) => {
-      const sourceSrcset = buildClientImageSrcset(builder, {
+  const explicitSources = resolveClientPictureSourceInputs(props.sources, input);
+  const sourceInputs = explicitSources.length
+    ? explicitSources
+    : input.formats.map((format) => ({
+      src: input.src,
+      widths: input.widths,
+      width: input.width,
+      height: input.height,
+      quality: input.quality,
+      format,
+      fit: input.fit,
+      sizes: input.sizes,
+      modifiers: input.modifiers,
+      type: clientImageMimeType(format)
+    }));
+  const generatedSources = sourceInputs
+    .map((entry) => {
+      const sourceInput = entry;
+      const sourceRenderInput = {
         ...input,
-        format
-      });
-      const resolvedSrcset = sourceSrcset || builder(input.src, {
+        src: sourceInput.src,
+        width: sourceInput.width,
+        height: sourceInput.height,
+        widths: sourceInput.widths,
+        sizes: sourceInput.sizes,
+        quality: sourceInput.quality,
+        format: sourceInput.format,
+        fit: sourceInput.fit,
+        modifiers: sourceInput.modifiers,
+        placeholderSrc: undefined,
+        placeholderClass: undefined,
+        placeholderStyle: undefined,
+        fallbackSrc: undefined,
+        attrs: {},
+        preload: false,
+        deferLazy: input.deferLazy
+      };
+      const sourceSrcset = sourceInput.srcset || buildClientImageSrcset(builder, sourceRenderInput);
+      const sourceUrl = builder(sourceInput.src, {
         provider: input.provider,
-        width: input.width,
-        height: input.height,
-        quality: input.quality,
-        fit: input.fit,
-        format,
-        modifiers: input.modifiers
+        cache: input.cache,
+        width: sourceInput.width,
+        height: sourceInput.height,
+        quality: sourceInput.quality,
+        fit: sourceInput.fit,
+        format: sourceInput.format,
+        modifiers: sourceInput.modifiers
       });
+      const resolvedSrcset = sourceSrcset || sourceUrl;
       if (!resolvedSrcset) {
         return "";
       }
-      const sourceAttrs = ['type="' + escapeAttribute(clientImageMimeType(format)) + '"'];
+      const sourceAttrs = [];
+      const sourceType = sourceInput.type
+        || (sourceInput.format ? clientImageMimeType(sourceInput.format) : inferClientImageMimeTypeFromSource(sourceInput.src));
+      if (sourceType) {
+        sourceAttrs.push('type="' + escapeAttribute(sourceType) + '"');
+      }
+      if (sourceInput.media) {
+        sourceAttrs.push('media="' + escapeAttribute(sourceInput.media) + '"');
+      }
       if (input.deferLazy) {
         sourceAttrs.push('data-rx-lazy-srcset="' + escapeAttribute(resolvedSrcset) + '"');
-        if (input.sizes) {
-          sourceAttrs.push('data-rx-lazy-sizes="' + escapeAttribute(input.sizes) + '"');
+        sourceAttrs.push('data-srcset="' + escapeAttribute(resolvedSrcset) + '"');
+        if (sourceInput.sizes) {
+          sourceAttrs.push('data-rx-lazy-sizes="' + escapeAttribute(sourceInput.sizes) + '"');
         }
       } else {
         sourceAttrs.push('srcset="' + escapeAttribute(resolvedSrcset) + '"');
-        if (input.sizes) {
-          sourceAttrs.push('sizes="' + escapeAttribute(input.sizes) + '"');
+        if (sourceInput.sizes) {
+          sourceAttrs.push('sizes="' + escapeAttribute(sourceInput.sizes) + '"');
         }
       }
       return "<source " + sourceAttrs.join(" ") + ">";
@@ -4908,7 +6819,7 @@ function renderClientResuxPicture(node, scope, locals, styleScopeId) {
     .filter(Boolean)
     .join("");
   const img = renderClientResuxImgTag(input, fallbackSrc, fallbackSrcset, undefined);
-  const attrs = [];
+  const attrs = ['data-resux-media="picture"'];
   if (styleScopeId) {
     attrs.push(styleScopeId + '=""');
   }
@@ -4929,6 +6840,14 @@ function resolveClientImageRenderInput(node, scope, locals) {
   const explicitFormats = parseClientImageFormats(
     props.formats || (explicitFormat && explicitFormat.includes(",") ? explicitFormat : undefined)
   );
+  const hasExplicitQuality = Object.prototype.hasOwnProperty.call(props, "quality");
+  const hasExplicitFormat = Object.prototype.hasOwnProperty.call(props, "format");
+  const explicitQuality = readClientNumberProp(props.quality);
+  const modifiers = normalizeClientImageModifiers({
+    ...normalizeClientImageModifiers(props.modifiers),
+    ...(hasExplicitFormat && !explicitFormat ? { format: false } : {}),
+    ...(hasExplicitQuality && !explicitQuality ? { quality: false } : {})
+  });
   const priority = readClientBooleanProp(props.priority, false);
   const preload = readClientBooleanProp(props.preload, priority);
   const explicitLoading = readClientStringProp(props.loading);
@@ -4938,12 +6857,23 @@ function resolveClientImageRenderInput(node, scope, locals) {
   const lazy = explicitLazy ?? (explicitLoading ? explicitLoading === "lazy" : !priority);
   const loading = explicitLoading || (lazy ? "lazy" : "eager");
   const deferLazy = explicitLoading === "lazy" || explicitLazy === true;
-  const quality = readClientNumberProp(props.quality) || imageConfig.quality;
+  const lazyRootMargin = readClientStringProp(props.rootMargin) || "0px 0px";
+  const lazyThresholdRaw = Number(props.threshold);
+  const lazyThreshold = Number.isFinite(lazyThresholdRaw)
+    ? Math.min(1, Math.max(0, lazyThresholdRaw))
+    : 0;
+  const quality = hasExplicitQuality
+    ? explicitQuality
+    : (explicitQuality ?? imageConfig.quality);
+  const cache = normalizeClientImageCacheValue(props.cache ?? imageConfig.cache);
   const densities = parseClientImageNumberList(props.densities)
     || imageConfig.densities
     || [1, 2];
+  const src = readClientStringProp(props.src)
+    || readClientStringProp(props.fallbackSrc ?? props.fallback)
+    || "";
   return {
-    src: readClientStringProp(props.src) || "",
+    src,
     alt: readClientStringProp(props.alt) || "",
     width: readClientNumberProp(props.width),
     height: readClientNumberProp(props.height),
@@ -4954,14 +6884,23 @@ function resolveClientImageRenderInput(node, scope, locals) {
     decoding: readClientStringProp(props.decoding) || "async",
     fetchPriority: readClientStringProp(props.fetchpriority || props.fetchPriority) || (priority ? "high" : undefined),
     provider: readClientStringProp(props.provider),
+    cache,
     quality,
     fit: readClientStringProp(props.fit),
-    format: explicitFormats.length ? undefined : explicitFormat || imageConfig.format,
+    format: explicitFormats.length
+      ? undefined
+      : (hasExplicitFormat ? explicitFormat : (explicitFormat || imageConfig.format)),
     formats: explicitFormats,
-    modifiers: normalizeClientImageModifiers(props.modifiers),
+    placeholderSrc: resolveClientPlaceholderSource(props.placeholder),
+    placeholderClass: readClientStringProp(props.placeholderClass),
+    placeholderStyle: readClientStringProp(props.placeholderStyle),
+    fallbackSrc: readClientStringProp(props.fallbackSrc ?? props.fallback),
+    modifiers,
     attrs: collectClientImageAttrs(props),
     preload,
-    deferLazy
+    deferLazy,
+    lazyRootMargin,
+    lazyThreshold
   };
 }
 
@@ -4992,7 +6931,16 @@ function normalizeClientImageModifiers(value) {
   }
   const modifiers = {};
   for (const [key, entry] of Object.entries(value)) {
-    if (entry === undefined || entry === null || entry === false) {
+    if (entry === false) {
+      if (key === "format" || key === "quality") {
+        modifiers[key] = false;
+      }
+      continue;
+    }
+    if (entry === undefined || entry === null) {
+      continue;
+    }
+    if (key === "cache") {
       continue;
     }
     if (key === "width" || key === "height" || key === "quality") {
@@ -5008,15 +6956,14 @@ function normalizeClientImageModifiers(value) {
 }
 
 function buildClientImageSrcset(builder, input) {
-  const widthCandidates = input.widths.length
-    ? [...new Set(input.widths)].sort((left, right) => left - right)
-    : [];
+  const widthCandidates = resolveClientImageWidthCandidates(input);
   if (widthCandidates.length) {
     return widthCandidates
       .map((width) => builder(input.src, {
         provider: input.provider,
+        cache: input.cache,
         width,
-        height: input.height,
+        height: resolveClientImageCandidateHeight(input, width),
         quality: input.quality,
         fit: input.fit,
         format: input.format,
@@ -5034,6 +6981,7 @@ function buildClientImageSrcset(builder, input) {
       const height = input.height ? Math.max(1, Math.round(input.height * density)) : undefined;
       return builder(input.src, {
         provider: input.provider,
+        cache: input.cache,
         width,
         height,
         quality: input.quality,
@@ -5045,19 +6993,133 @@ function buildClientImageSrcset(builder, input) {
     .join(", ");
 }
 
+function resolveClientImageWidthCandidates(input) {
+  const explicitWidths = input.widths.length
+    ? normalizeClientImageWidthCandidates(input.widths, input.width)
+    : [];
+  if (explicitWidths.length) {
+    return explicitWidths;
+  }
+  if (!input.sizes) {
+    return [];
+  }
+  return resolveClientImageWidthsFromSizes(input.sizes, input.densities, input.width);
+}
+
+function resolveClientImageWidthsFromSizes(sizes, densities, maxWidth) {
+  const descriptors = String(sizes)
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+  const baseWidths = [];
+  for (const descriptor of descriptors) {
+    const matches = [...descriptor.matchAll(/([0-9]*\.?[0-9]+)\s*(px|vw)\b/g)];
+    const match = matches[matches.length - 1];
+    if (!match) {
+      continue;
+    }
+    const value = Number(match[1]);
+    if (!Number.isFinite(value) || value <= 0) {
+      continue;
+    }
+    if (match[2] === "px") {
+      baseWidths.push(Math.round(value));
+      continue;
+    }
+    for (const viewportWidth of RESUX_CLIENT_RESPONSIVE_VIEWPORT_WIDTHS) {
+      baseWidths.push(Math.round((viewportWidth * value) / 100));
+    }
+  }
+
+  const safeDensities = densities.length
+    ? [...new Set(densities)]
+      .filter((entry) => Number.isFinite(entry) && entry > 0)
+      .sort((left, right) => left - right)
+    : [1];
+  const expandedWidths = baseWidths.flatMap((width) =>
+    safeDensities.map((density) => Math.round(width * density))
+  );
+
+  if (!expandedWidths.length && Number.isFinite(maxWidth) && maxWidth > 0) {
+    return [Math.max(1, Math.round(maxWidth))];
+  }
+  return normalizeClientImageWidthCandidates(expandedWidths, maxWidth);
+}
+
+function normalizeClientImageWidthCandidates(candidates, maxWidth) {
+  const resolvedMaxWidth = Number.isFinite(maxWidth) && maxWidth > 0
+    ? Math.round(maxWidth)
+    : Number.POSITIVE_INFINITY;
+  const normalized = [...new Set(candidates
+    .map((entry) => Number(entry))
+    .filter((entry) => Number.isFinite(entry) && entry > 0)
+    .map((entry) => Math.min(8192, Math.max(1, Math.round(entry)), resolvedMaxWidth)))]
+    .sort((left, right) => left - right);
+  const compacted = [];
+  for (const width of normalized) {
+    const previous = compacted[compacted.length - 1];
+    const shouldKeep = previous === undefined
+      || width - previous >= 24
+      || (Number.isFinite(resolvedMaxWidth) && width === resolvedMaxWidth);
+    if (shouldKeep) {
+      compacted.push(width);
+    }
+  }
+  return compacted;
+}
+
+function resolveClientImageCandidateHeight(input, width) {
+  if (!input.height) {
+    return undefined;
+  }
+  if (!input.width) {
+    return input.height;
+  }
+  const scaledHeight = Math.round((input.height / input.width) * width);
+  return Math.max(1, scaledHeight);
+}
+
 function renderClientResuxImgTag(input, src, srcset, styleScopeId) {
   const attrs = [];
   const isDeferredLazy = input.deferLazy && String(input.loading || "").toLowerCase() === "lazy";
+  const placeholderSrc = input.placeholderSrc;
+  const placeholderClass = input.placeholderClass;
+  const placeholderStyle = input.placeholderStyle;
+  const aspectRatioStyle = resolveClientAspectRatioStyle(input.width, input.height, input.attrs.style, placeholderStyle);
+  const placeholderBackground = placeholderSrc
+    ? "background-image: url('" + placeholderSrc + "'); background-size: cover; background-position: center; background-repeat: no-repeat"
+    : undefined;
+  const mergedClass = mergeClientClassNames(input.attrs.class, placeholderClass);
+  const mergedStyle = mergeClientInlineStyles(
+    input.attrs.style,
+    aspectRatioStyle,
+    !isDeferredLazy ? placeholderBackground : undefined,
+    placeholderStyle
+  );
+  const initialSrc = isDeferredLazy
+    ? (placeholderSrc || RESUX_LAZY_PLACEHOLDER_SRC)
+    : src;
   const mergedAttrs = {
     ...input.attrs,
-    src: isDeferredLazy ? RESUX_LAZY_PLACEHOLDER_SRC : src,
+    ...(mergedClass ? { class: mergedClass } : {}),
+    ...(mergedStyle ? { style: mergedStyle } : {}),
+    src: initialSrc,
     alt: input.alt,
     loading: input.loading,
     decoding: input.decoding,
+    "data-resux-media": "img",
     ...(isDeferredLazy ? { "data-rx-lazy-image": "true" } : {}),
-    ...(isDeferredLazy ? { "data-rx-lazy-src": src } : {}),
-    ...(isDeferredLazy && srcset ? { "data-rx-lazy-srcset": srcset } : {}),
+    ...(isDeferredLazy ? { "data-resux-lazy": "true" } : {}),
+    ...(isDeferredLazy ? { "data-rx-lazy-src": src, "data-src": src } : {}),
+    ...(isDeferredLazy ? { "data-rx-lazy-root-margin": input.lazyRootMargin } : {}),
+    ...(isDeferredLazy ? { "data-rx-lazy-threshold": String(input.lazyThreshold) } : {}),
+    ...(isDeferredLazy && srcset ? { "data-rx-lazy-srcset": srcset, "data-srcset": srcset } : {}),
     ...(isDeferredLazy && input.sizes ? { "data-rx-lazy-sizes": input.sizes } : {}),
+    ...(placeholderSrc ? { "data-rx-placeholder-src": placeholderSrc, "data-placeholder": placeholderSrc } : {}),
+    ...(placeholderClass ? { "data-rx-placeholder-class": placeholderClass } : {}),
+    ...(placeholderStyle ? { "data-rx-placeholder-style": placeholderStyle } : {}),
+    ...(placeholderSrc ? { "data-rx-placeholder-active": "true", "data-resux-placeholder-active": "true" } : {}),
+    ...(input.fallbackSrc ? { "data-rx-fallback-src": input.fallbackSrc } : {}),
     ...(input.fetchPriority ? { fetchpriority: input.fetchPriority } : {}),
     ...(input.width ? { width: String(input.width) } : {}),
     ...(input.height ? { height: String(input.height) } : {}),
@@ -5132,6 +7194,9 @@ function readClientBooleanProp(value, fallback) {
   }
   if (typeof value === "string") {
     const normalized = value.trim().toLowerCase();
+    if (normalized === "") {
+      return true;
+    }
     if (normalized === "true" || normalized === "1" || normalized === "yes") {
       return true;
     }
@@ -5140,6 +7205,187 @@ function readClientBooleanProp(value, fallback) {
     }
   }
   return fallback;
+}
+
+function resolveClientPlaceholderSource(value) {
+  if (value === undefined || value === null || value === false) {
+    return undefined;
+  }
+  if (value === true) {
+    return RESUX_DEFAULT_PLACEHOLDER_SRC;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const normalized = trimmed.toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") {
+    return RESUX_DEFAULT_PLACEHOLDER_SRC;
+  }
+  if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") {
+    return undefined;
+  }
+  if (looksLikeClientMediaSource(trimmed)) {
+    return trimmed;
+  }
+  return createClientTextPlaceholderDataUri(trimmed);
+}
+
+function looksLikeClientMediaSource(value) {
+  return value.startsWith("/")
+    || value.startsWith("./")
+    || value.startsWith("../")
+    || value.startsWith("http://")
+    || value.startsWith("https://")
+    || value.startsWith("data:image/")
+    || value.startsWith("blob:");
+}
+
+function createClientTextPlaceholderDataUri(value) {
+  const safeLabel = escapeClientSvgText(value);
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-label="' + safeLabel + '">'
+    + '<rect width="640" height="360" fill="#0f172a"/>'
+    + '<rect x="24" y="24" width="592" height="312" rx="20" fill="#111827" stroke="#334155" stroke-width="2"/>'
+    + '<text x="320" y="192" fill="#cbd5e1" font-size="30" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif">' + safeLabel + '</text>'
+    + '</svg>';
+  return "data:image/svg+xml," + encodeURIComponent(svg);
+}
+
+function escapeClientSvgText(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function mergeClientClassNames() {
+  const values = Array.from(arguments);
+  const tokens = values
+    .flatMap((value) => String(value || "").split(/\s+/))
+    .map((token) => token.trim())
+    .filter(Boolean);
+  return tokens.length ? [...new Set(tokens)].join(" ") : undefined;
+}
+
+function mergeClientInlineStyles() {
+  const values = Array.from(arguments);
+  const parts = values
+    .flatMap((value) => String(value || "").split(";"))
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return parts.length ? parts.join("; ") : undefined;
+}
+
+function hasClientInlineStyleProperty(styleValue, propertyName) {
+  if (typeof styleValue !== "string") {
+    return false;
+  }
+  const normalized = String(propertyName).replace(/[.*+?^{}$()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp("(^|;)\\s*" + normalized + "\\s*:", "i");
+  return pattern.test(styleValue);
+}
+
+function resolveClientAspectRatioStyle(width, height) {
+  const styleValues = Array.from(arguments).slice(2);
+  if (!width || !height) {
+    return undefined;
+  }
+  if (styleValues.some((entry) => hasClientInlineStyleProperty(entry, "aspect-ratio"))) {
+    return undefined;
+  }
+  return "aspect-ratio: " + width + " / " + height;
+}
+
+function inferClientImageMimeTypeFromSource(src) {
+  const clean = String(src || "").split(/[?#]/)[0].toLowerCase();
+  if (!clean) {
+    return undefined;
+  }
+  const dotIndex = clean.lastIndexOf(".");
+  if (dotIndex < 0) {
+    return undefined;
+  }
+  const extension = clean.slice(dotIndex + 1);
+  if (!extension) {
+    return undefined;
+  }
+  return clientImageMimeType(extension);
+}
+
+function resolveClientPictureSourceInputs(value, fallbackInput) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const resolved = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      continue;
+    }
+    const record = entry;
+    const src = readClientStringProp(record.src) || fallbackInput.src;
+    if (!src) {
+      continue;
+    }
+    const hasQuality = Object.prototype.hasOwnProperty.call(record, "quality");
+    const hasFormat = Object.prototype.hasOwnProperty.call(record, "format");
+    const explicitFormat = readClientStringProp(record.format);
+    const explicitQuality = readClientNumberProp(record.quality);
+    const widths = parseClientImageNumberList(record.widths) || fallbackInput.widths;
+    const baseModifiers = normalizeClientImageModifiers(record.modifiers);
+    const modifiers = normalizeClientImageModifiers({
+      ...fallbackInput.modifiers,
+      ...baseModifiers,
+      ...(hasFormat && !explicitFormat ? { format: false } : {}),
+      ...(hasQuality && !explicitQuality ? { quality: false } : {}),
+      ...(readClientStringProp(record.fit) ? { fit: readClientStringProp(record.fit) } : {}),
+      ...(readClientNumberProp(record.width) ? { width: readClientNumberProp(record.width) } : {}),
+      ...(readClientNumberProp(record.height) ? { height: readClientNumberProp(record.height) } : {}),
+      ...(explicitQuality ? { quality: explicitQuality } : {}),
+      ...(explicitFormat ? { format: explicitFormat } : {})
+    });
+    resolved.push({
+      src,
+      srcset: readClientStringProp(record.srcset),
+      type: readClientStringProp(record.type),
+      media: readClientStringProp(record.media),
+      sizes: readClientStringProp(record.sizes) || fallbackInput.sizes,
+      width: readClientNumberProp(record.width) || fallbackInput.width,
+      height: readClientNumberProp(record.height) || fallbackInput.height,
+      widths,
+      quality: hasQuality ? explicitQuality : fallbackInput.quality,
+      format: hasFormat ? explicitFormat : fallbackInput.format,
+      fit: readClientStringProp(record.fit) || fallbackInput.fit,
+      modifiers
+    });
+  }
+  return resolved;
+}
+
+function resolveClientVideoSources(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const sources = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      continue;
+    }
+    const src = readClientStringProp(entry.src);
+    if (!src) {
+      continue;
+    }
+    sources.push({
+      src,
+      type: readClientStringProp(entry.type)
+    });
+  }
+  return sources;
 }
 
 function clientImageMimeType(format) {
@@ -5215,7 +7461,8 @@ function applyPatches(scopeId, patches) {
     });
   }
   if (needsLazyImageActivation) {
-    activateDeferredLazyImages();
+    activateDeferredLazyMedia();
+    applyReducedMotionVideoPreference();
   }
 }
 

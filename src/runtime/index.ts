@@ -631,6 +631,81 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
 [data-rx-block] {
   display: contents !important;
 }
+[data-rx-video-shell="true"] {
+  position: relative;
+  display: block;
+  isolation: isolate;
+}
+[data-rx-video-shell="true"] > video {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #020617;
+}
+[data-rx-video-controls] {
+  position: absolute;
+  left: 0.75rem;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 0.8rem;
+  background: var(--rx-video-controls-bg, rgba(2, 6, 23, 0.74));
+  color: var(--rx-video-controls-fg, #e2e8f0);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  backdrop-filter: blur(8px);
+  opacity: 0;
+  transform: translateY(0.45rem);
+  transition: opacity 160ms ease, transform 160ms ease;
+  pointer-events: none;
+}
+[data-rx-video-shell="true"]:hover [data-rx-video-controls],
+[data-rx-video-shell="true"]:focus-within [data-rx-video-controls],
+[data-rx-video-shell="true"][data-rx-video-state="paused"] [data-rx-video-controls] {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+[data-rx-video-shell="true"][data-rx-video-controls-ready="false"] [data-rx-video-controls] {
+  opacity: 0;
+  transform: translateY(0.55rem);
+  pointer-events: none;
+}
+[data-rx-video-controls] .rx-video-btn {
+  appearance: none;
+  border: 0;
+  border-radius: 0.6rem;
+  background: rgba(15, 23, 42, 0.86);
+  color: inherit;
+  font: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.01em;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.45rem 0.6rem;
+  min-width: 2.35rem;
+  cursor: pointer;
+}
+[data-rx-video-controls] .rx-video-btn:hover {
+  background: rgba(30, 41, 59, 0.94);
+}
+[data-rx-video-controls] .rx-video-time {
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
+}
+[data-rx-video-controls] .rx-video-seek {
+  flex: 1 1 auto;
+  min-width: 3.5rem;
+}
+[data-rx-video-controls] .rx-video-volume {
+  width: 4.4rem;
+}
+[data-rx-video-controls] input[type="range"] {
+  accent-color: var(--rx-video-controls-accent, #38bdf8);
+}
 [data-rx-loading-indicator] {
   position: fixed;
   inset: 0 0 auto;
@@ -1904,6 +1979,20 @@ function renderResuxVideo(
     : 0;
   const forceAutoplay = readBooleanProp(props.forceAutoplay, false);
   const autoplay = readBooleanProp(props.autoplay, false);
+  const controlsRequested = readBooleanProp(props.controls, false);
+  const nativeControls = readBooleanProp(props.nativeControls, false);
+  const customControls = controlsRequested && !nativeControls;
+  const controlsColor = readStringProp(props.controlsColor) ?? "#e2e8f0";
+  const controlsBackground = readStringProp(props.controlsBackground) ?? "rgba(2, 6, 23, 0.74)";
+  const controlsAccent = readStringProp(props.controlsAccent) ?? "#38bdf8";
+  const controlsClass = readStringProp(props.controlsClass);
+  const controlsStyle = readStringProp(props.controlsStyle);
+  const iconPlay = readStringProp(props.controlsIconPlay ?? props.iconPlay) ?? "Play";
+  const iconPause = readStringProp(props.controlsIconPause ?? props.iconPause) ?? "Pause";
+  const iconMute = readStringProp(props.controlsIconMute ?? props.iconMute) ?? "Mute";
+  const iconUnmute = readStringProp(props.controlsIconUnmute ?? props.iconUnmute) ?? "Sound";
+  const iconFullscreen = readStringProp(props.controlsIconFullscreen ?? props.iconFullscreen) ?? "Full";
+  const iconExitFullscreen = readStringProp(props.controlsIconExitFullscreen ?? props.iconExitFullscreen) ?? "Exit";
   const resolvedSources = resolveVideoSources(props.sources);
   const hasSourceChildren = resolvedSources.length > 0;
 
@@ -1951,6 +2040,25 @@ function renderResuxVideo(
       || name === "poster"
       || name === "preload"
       || name === "fallbackText"
+      || name === "controls"
+      || name === "nativeControls"
+      || name === "controlsColor"
+      || name === "controlsBackground"
+      || name === "controlsAccent"
+      || name === "controlsClass"
+      || name === "controlsStyle"
+      || name === "controlsIconPlay"
+      || name === "controlsIconPause"
+      || name === "controlsIconMute"
+      || name === "controlsIconUnmute"
+      || name === "controlsIconFullscreen"
+      || name === "controlsIconExitFullscreen"
+      || name === "iconPlay"
+      || name === "iconPause"
+      || name === "iconMute"
+      || name === "iconUnmute"
+      || name === "iconFullscreen"
+      || name === "iconExitFullscreen"
     ) {
       continue;
     }
@@ -2013,6 +2121,12 @@ function renderResuxVideo(
       attrs.push('data-rx-force-autoplay="true"');
     }
   }
+  if (controlsRequested && nativeControls) {
+    attrs.push('controls="controls"');
+  }
+  if (customControls) {
+    attrs.push('data-rx-custom-controls="true"');
+  }
   if (ariaLabel) {
     attrs.push(`aria-label="${escapeAttribute(ariaLabel)}"`);
   }
@@ -2036,7 +2150,47 @@ function renderResuxVideo(
     : "";
   const children = renderTemplateNodes(node.children, context, locals);
   const fallbackText = escapeHtml(readStringProp(props.fallbackText) ?? "Your browser does not support the video tag.");
-  return `<video${attrText}>${sourceTags}${children}${fallbackText}</video>`;
+  const videoMarkup = `<video${attrText}>${sourceTags}${children}${fallbackText}</video>`;
+  if (!customControls) {
+    return videoMarkup;
+  }
+  const shellClass = mergeClassNames("rx-video-shell", controlsClass);
+  const shellStyle = mergeInlineStyles(
+    "position: relative",
+    "display: block",
+    "isolation: isolate",
+    `--rx-video-controls-fg: ${controlsColor}`,
+    `--rx-video-controls-bg: ${controlsBackground}`,
+    `--rx-video-controls-accent: ${controlsAccent}`,
+    controlsStyle,
+  );
+  const shellAttrs: string[] = [
+    'data-rx-video-shell="true"',
+    `data-rx-video-controls-ready="${deferLazy ? "false" : "true"}"`,
+    `data-rx-video-icon-play="${escapeAttribute(iconPlay)}"`,
+    `data-rx-video-icon-pause="${escapeAttribute(iconPause)}"`,
+    `data-rx-video-icon-mute="${escapeAttribute(iconMute)}"`,
+    `data-rx-video-icon-unmute="${escapeAttribute(iconUnmute)}"`,
+    `data-rx-video-icon-fullscreen="${escapeAttribute(iconFullscreen)}"`,
+    `data-rx-video-icon-exit-fullscreen="${escapeAttribute(iconExitFullscreen)}"`,
+  ];
+  if (shellClass) {
+    shellAttrs.push(`class="${escapeAttribute(shellClass)}"`);
+  }
+  if (shellStyle) {
+    shellAttrs.push(`style="${escapeAttribute(shellStyle)}"`);
+  }
+  appendStyleScopeAttribute(shellAttrs, context.styleScopeId);
+  const controlsMarkup = `<div class="rx-video-controls" data-rx-video-controls role="group" aria-label="Video controls">`
+    + `<button type="button" class="rx-video-btn rx-video-toggle" data-rx-video-toggle aria-label="Play video">${escapeHtml(iconPlay)}</button>`
+    + `<span class="rx-video-time" data-rx-video-current>0:00</span>`
+    + `<input class="rx-video-seek" data-rx-video-seek type="range" min="0" max="100" step="0.1" value="0" aria-label="Seek video">`
+    + `<span class="rx-video-time" data-rx-video-duration>0:00</span>`
+    + `<button type="button" class="rx-video-btn rx-video-mute" data-rx-video-mute aria-label="Toggle mute">${escapeHtml(iconUnmute)}</button>`
+    + `<input class="rx-video-volume" data-rx-video-volume type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume">`
+    + `<button type="button" class="rx-video-btn rx-video-fullscreen" data-rx-video-fullscreen aria-label="Toggle fullscreen">${escapeHtml(iconFullscreen)}</button>`
+    + `</div>`;
+  return `<div ${shellAttrs.join(" ")}>${videoMarkup}${controlsMarkup}</div>`;
 }
 
 function renderResuxPicture(
@@ -3609,6 +3763,7 @@ const observedLazyVideos = new Set();
 const lazyImageObserverByElement = new WeakMap();
 const lazyVideoObserverByElement = new WeakMap();
 const failedMediaSources = new Set();
+const initializedVideoControlShells = new WeakSet();
 
 const __rxFlags = {
   isReactive: "__v_isReactive",
@@ -4739,6 +4894,7 @@ async function initializeClientRuntime() {
   void mountVueIslands();
   activateDeferredLazyMedia();
   applyReducedMotionVideoPreference();
+  initializeManagedVideoControls();
 }
 
 function activateDeferredLazyMedia(root = document) {
@@ -5041,6 +5197,184 @@ function attemptManagedVideoPlay(video) {
   if (playResult && typeof playResult.catch === "function") {
     playResult.catch(() => {});
   }
+}
+
+function initializeManagedVideoControls(root = document) {
+  const shells = root.querySelectorAll ? root.querySelectorAll('[data-rx-video-shell="true"]') : [];
+  if (!shells.length) {
+    return;
+  }
+  shells.forEach((shell) => {
+    if (initializedVideoControlShells.has(shell)) {
+      const existingVideo = shell.querySelector ? shell.querySelector("video[data-resux-media='video']") : null;
+      if (existingVideo) {
+        updateManagedVideoControlShell(shell, existingVideo);
+      }
+      return;
+    }
+
+    const video = shell.querySelector ? shell.querySelector("video[data-resux-media='video']") : null;
+    const toggleButton = shell.querySelector ? shell.querySelector("[data-rx-video-toggle]") : null;
+    const muteButton = shell.querySelector ? shell.querySelector("[data-rx-video-mute]") : null;
+    const fullscreenButton = shell.querySelector ? shell.querySelector("[data-rx-video-fullscreen]") : null;
+    const seekInput = shell.querySelector ? shell.querySelector("[data-rx-video-seek]") : null;
+    const volumeInput = shell.querySelector ? shell.querySelector("[data-rx-video-volume]") : null;
+    if (!video || !toggleButton || !muteButton || !fullscreenButton || !seekInput || !volumeInput) {
+      return;
+    }
+
+    initializedVideoControlShells.add(shell);
+    video.removeAttribute("controls");
+    if (Number.isFinite(video.volume)) {
+      volumeInput.value = String(Math.min(1, Math.max(0, video.volume)));
+    }
+
+    const sync = () => updateManagedVideoControlShell(shell, video);
+    const syncEvents = ["play", "pause", "timeupdate", "loadedmetadata", "durationchange", "volumechange", "loadeddata", "canplay", "lazy-load-start", "lazy-load-complete"];
+    syncEvents.forEach((name) => video.addEventListener(name, sync));
+    if (typeof document !== "undefined") {
+      document.addEventListener("fullscreenchange", sync);
+      document.addEventListener("webkitfullscreenchange", sync);
+    }
+
+    toggleButton.addEventListener("click", (event) => {
+      if (event && typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+      if (video.paused) {
+        const playResult = video.play();
+        if (playResult && typeof playResult.catch === "function") {
+          playResult.catch(() => {});
+        }
+      } else if (typeof video.pause === "function") {
+        video.pause();
+      }
+      sync();
+    });
+
+    muteButton.addEventListener("click", (event) => {
+      if (event && typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+      if (video.muted || video.volume <= 0.01) {
+        video.muted = false;
+        if (video.volume <= 0.01) {
+          video.volume = 0.6;
+        }
+      } else {
+        video.muted = true;
+      }
+      sync();
+    });
+
+    seekInput.addEventListener("input", () => {
+      const duration = Number(video.duration);
+      if (!Number.isFinite(duration) || duration <= 0) {
+        return;
+      }
+      const ratio = Number(seekInput.value) / 100;
+      video.currentTime = Math.min(duration, Math.max(0, duration * ratio));
+      sync();
+    });
+
+    volumeInput.addEventListener("input", () => {
+      const nextVolume = Math.min(1, Math.max(0, Number(volumeInput.value)));
+      if (!Number.isFinite(nextVolume)) {
+        return;
+      }
+      video.volume = nextVolume;
+      video.muted = nextVolume <= 0.01;
+      sync();
+    });
+
+    fullscreenButton.addEventListener("click", (event) => {
+      if (event && typeof event.preventDefault === "function") {
+        event.preventDefault();
+      }
+      const isFullscreen = Boolean(
+        document.fullscreenElement && (document.fullscreenElement === shell || document.fullscreenElement.contains(shell))
+      );
+      if (isFullscreen) {
+        if (typeof document.exitFullscreen === "function") {
+          void document.exitFullscreen().catch(() => {});
+        } else if (typeof document.webkitExitFullscreen === "function") {
+          document.webkitExitFullscreen();
+        }
+      } else if (typeof shell.requestFullscreen === "function") {
+        void shell.requestFullscreen().catch(() => {});
+      } else if (typeof shell.webkitRequestFullscreen === "function") {
+        shell.webkitRequestFullscreen();
+      }
+      sync();
+    });
+
+    sync();
+  });
+}
+
+function updateManagedVideoControlShell(shell, video) {
+  if (!shell || !video) {
+    return;
+  }
+  const toggleButton = shell.querySelector ? shell.querySelector("[data-rx-video-toggle]") : null;
+  const muteButton = shell.querySelector ? shell.querySelector("[data-rx-video-mute]") : null;
+  const fullscreenButton = shell.querySelector ? shell.querySelector("[data-rx-video-fullscreen]") : null;
+  const seekInput = shell.querySelector ? shell.querySelector("[data-rx-video-seek]") : null;
+  const volumeInput = shell.querySelector ? shell.querySelector("[data-rx-video-volume]") : null;
+  const currentTimeLabel = shell.querySelector ? shell.querySelector("[data-rx-video-current]") : null;
+  const durationLabel = shell.querySelector ? shell.querySelector("[data-rx-video-duration]") : null;
+  if (!toggleButton || !muteButton || !fullscreenButton || !seekInput || !volumeInput || !currentTimeLabel || !durationLabel) {
+    return;
+  }
+
+  const lazyPending = video.getAttribute("data-rx-lazy-video") === "true" && video.getAttribute("data-rx-lazy-ready") !== "true";
+  shell.setAttribute("data-rx-video-controls-ready", lazyPending ? "false" : "true");
+  shell.setAttribute("data-rx-video-state", video.paused ? "paused" : "playing");
+
+  const iconPlay = shell.getAttribute("data-rx-video-icon-play") || "Play";
+  const iconPause = shell.getAttribute("data-rx-video-icon-pause") || "Pause";
+  const iconMute = shell.getAttribute("data-rx-video-icon-mute") || "Mute";
+  const iconUnmute = shell.getAttribute("data-rx-video-icon-unmute") || "Sound";
+  const iconFullscreen = shell.getAttribute("data-rx-video-icon-fullscreen") || "Full";
+  const iconExitFullscreen = shell.getAttribute("data-rx-video-icon-exit-fullscreen") || "Exit";
+
+  toggleButton.textContent = video.paused ? iconPlay : iconPause;
+  toggleButton.setAttribute("aria-label", video.paused ? "Play video" : "Pause video");
+
+  const muted = video.muted || video.volume <= 0.01;
+  muteButton.textContent = muted ? iconMute : iconUnmute;
+  muteButton.setAttribute("aria-label", muted ? "Unmute video" : "Mute video");
+
+  const duration = Number(video.duration);
+  const currentTime = Number(video.currentTime);
+  const hasDuration = Number.isFinite(duration) && duration > 0;
+  const safeCurrentTime = Number.isFinite(currentTime) ? currentTime : 0;
+  seekInput.value = hasDuration ? String(Math.min(100, Math.max(0, (safeCurrentTime / duration) * 100))) : "0";
+  currentTimeLabel.textContent = formatManagedMediaTime(safeCurrentTime);
+  durationLabel.textContent = formatManagedMediaTime(hasDuration ? duration : 0);
+
+  const volumeValue = Number.isFinite(video.volume) ? video.volume : 0;
+  volumeInput.value = String(Math.min(1, Math.max(0, volumeValue)));
+
+  const isFullscreen = Boolean(
+    document.fullscreenElement && (document.fullscreenElement === shell || document.fullscreenElement.contains(shell))
+  );
+  fullscreenButton.textContent = isFullscreen ? iconExitFullscreen : iconFullscreen;
+  fullscreenButton.setAttribute("aria-label", isFullscreen ? "Exit fullscreen" : "Enter fullscreen");
+}
+
+function formatManagedMediaTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return "0:00";
+  }
+  const totalSeconds = Math.floor(seconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const remaining = totalSeconds % 60;
+  if (hours > 0) {
+    return hours + ":" + String(minutes).padStart(2, "0") + ":" + String(remaining).padStart(2, "0");
+  }
+  return minutes + ":" + String(remaining).padStart(2, "0");
 }
 
 function dispatchManagedEvent(target, name, detail = {}) {
@@ -5919,6 +6253,7 @@ async function navigateTo(target, options = {}) {
     void mountVueIslands(preserved.root);
     activateDeferredLazyMedia(preserved.root);
     applyReducedMotionVideoPreference(preserved.root);
+    initializeManagedVideoControls(preserved.root);
 
     if (!options.preserveScroll && nextUrl.hash) {
       document.getElementById(nextUrl.hash.slice(1))?.scrollIntoView();
@@ -6599,6 +6934,20 @@ function renderClientResuxVideo(node, scope, locals, styleScopeId) {
     : 0;
   const forceAutoplay = readClientBooleanProp(props.forceAutoplay, false);
   const autoplay = readClientBooleanProp(props.autoplay, false);
+  const controlsRequested = readClientBooleanProp(props.controls, false);
+  const nativeControls = readClientBooleanProp(props.nativeControls, false);
+  const customControls = controlsRequested && !nativeControls;
+  const controlsColor = readClientStringProp(props.controlsColor) || "#e2e8f0";
+  const controlsBackground = readClientStringProp(props.controlsBackground) || "rgba(2, 6, 23, 0.74)";
+  const controlsAccent = readClientStringProp(props.controlsAccent) || "#38bdf8";
+  const controlsClass = readClientStringProp(props.controlsClass);
+  const controlsStyle = readClientStringProp(props.controlsStyle);
+  const iconPlay = readClientStringProp(props.controlsIconPlay || props.iconPlay) || "Play";
+  const iconPause = readClientStringProp(props.controlsIconPause || props.iconPause) || "Pause";
+  const iconMute = readClientStringProp(props.controlsIconMute || props.iconMute) || "Mute";
+  const iconUnmute = readClientStringProp(props.controlsIconUnmute || props.iconUnmute) || "Sound";
+  const iconFullscreen = readClientStringProp(props.controlsIconFullscreen || props.iconFullscreen) || "Full";
+  const iconExitFullscreen = readClientStringProp(props.controlsIconExitFullscreen || props.iconExitFullscreen) || "Exit";
   const resolvedSources = resolveClientVideoSources(props.sources);
   const hasSourceChildren = resolvedSources.length > 0;
   const styleParts = [];
@@ -6644,6 +6993,25 @@ function renderClientResuxVideo(node, scope, locals, styleScopeId) {
       || name === "poster"
       || name === "preload"
       || name === "fallbackText"
+      || name === "controls"
+      || name === "nativeControls"
+      || name === "controlsColor"
+      || name === "controlsBackground"
+      || name === "controlsAccent"
+      || name === "controlsClass"
+      || name === "controlsStyle"
+      || name === "controlsIconPlay"
+      || name === "controlsIconPause"
+      || name === "controlsIconMute"
+      || name === "controlsIconUnmute"
+      || name === "controlsIconFullscreen"
+      || name === "controlsIconExitFullscreen"
+      || name === "iconPlay"
+      || name === "iconPause"
+      || name === "iconMute"
+      || name === "iconUnmute"
+      || name === "iconFullscreen"
+      || name === "iconExitFullscreen"
     ) {
       continue;
     }
@@ -6703,6 +7071,12 @@ function renderClientResuxVideo(node, scope, locals, styleScopeId) {
       attrs.push('data-rx-force-autoplay="true"');
     }
   }
+  if (controlsRequested && nativeControls) {
+    attrs.push('controls="controls"');
+  }
+  if (customControls) {
+    attrs.push('data-rx-custom-controls="true"');
+  }
   if (ariaLabel) {
     attrs.push('aria-label="' + escapeAttribute(ariaLabel) + '"');
   }
@@ -6728,7 +7102,49 @@ function renderClientResuxVideo(node, scope, locals, styleScopeId) {
     : "";
   const children = node.children.map((child) => renderNode(child, scope, locals, styleScopeId)).join("");
   const fallbackText = escapeHtml(readClientStringProp(props.fallbackText) || "Your browser does not support the video tag.");
-  return "<video" + attrText + ">" + sourceTags + children + fallbackText + "</video>";
+  const videoMarkup = "<video" + attrText + ">" + sourceTags + children + fallbackText + "</video>";
+  if (!customControls) {
+    return videoMarkup;
+  }
+  const shellClass = mergeClientClassNames("rx-video-shell", controlsClass);
+  const shellStyle = mergeClientInlineStyles(
+    "position: relative",
+    "display: block",
+    "isolation: isolate",
+    "--rx-video-controls-fg: " + controlsColor,
+    "--rx-video-controls-bg: " + controlsBackground,
+    "--rx-video-controls-accent: " + controlsAccent,
+    controlsStyle
+  );
+  const shellAttrs = [
+    'data-rx-video-shell="true"',
+    'data-rx-video-controls-ready="' + (deferLazy ? "false" : "true") + '"',
+    'data-rx-video-icon-play="' + escapeAttribute(iconPlay) + '"',
+    'data-rx-video-icon-pause="' + escapeAttribute(iconPause) + '"',
+    'data-rx-video-icon-mute="' + escapeAttribute(iconMute) + '"',
+    'data-rx-video-icon-unmute="' + escapeAttribute(iconUnmute) + '"',
+    'data-rx-video-icon-fullscreen="' + escapeAttribute(iconFullscreen) + '"',
+    'data-rx-video-icon-exit-fullscreen="' + escapeAttribute(iconExitFullscreen) + '"'
+  ];
+  if (shellClass) {
+    shellAttrs.push('class="' + escapeAttribute(shellClass) + '"');
+  }
+  if (shellStyle) {
+    shellAttrs.push('style="' + escapeAttribute(shellStyle) + '"');
+  }
+  if (styleScopeId) {
+    shellAttrs.push(styleScopeId + '=""');
+  }
+  const controlsMarkup = '<div class="rx-video-controls" data-rx-video-controls role="group" aria-label="Video controls">'
+    + '<button type="button" class="rx-video-btn rx-video-toggle" data-rx-video-toggle aria-label="Play video">' + escapeHtml(iconPlay) + '</button>'
+    + '<span class="rx-video-time" data-rx-video-current>0:00</span>'
+    + '<input class="rx-video-seek" data-rx-video-seek type="range" min="0" max="100" step="0.1" value="0" aria-label="Seek video">'
+    + '<span class="rx-video-time" data-rx-video-duration>0:00</span>'
+    + '<button type="button" class="rx-video-btn rx-video-mute" data-rx-video-mute aria-label="Toggle mute">' + escapeHtml(iconUnmute) + '</button>'
+    + '<input class="rx-video-volume" data-rx-video-volume type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume">'
+    + '<button type="button" class="rx-video-btn rx-video-fullscreen" data-rx-video-fullscreen aria-label="Toggle fullscreen">' + escapeHtml(iconFullscreen) + '</button>'
+    + "</div>";
+  return "<div " + shellAttrs.join(" ") + ">" + videoMarkup + controlsMarkup + "</div>";
 }
 
 function renderClientResuxImg(node, scope, locals, styleScopeId) {
@@ -7506,6 +7922,7 @@ function applyPatches(scopeId, patches) {
   if (needsLazyImageActivation) {
     activateDeferredLazyMedia();
     applyReducedMotionVideoPreference();
+    initializeManagedVideoControls();
   }
 }
 

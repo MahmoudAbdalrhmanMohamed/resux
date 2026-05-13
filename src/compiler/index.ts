@@ -146,6 +146,16 @@ interface GeneratedHandler {
   source: string;
 }
 
+interface CompileTemplateNodeOptions {
+  ifExpressionOverride?: string;
+}
+
+interface ConditionalDirectiveInfo {
+  kind: "if" | "else-if" | "else";
+  directive: DirectiveNode;
+  expression?: string;
+}
+
 type ResuxConfig = Record<string, unknown> & {
   app?: { head?: unknown };
   css?: unknown;
@@ -695,10 +705,130 @@ function compileTemplate(
   };
 
   return {
-    nodes: ast.children.map((child) => compileTemplateNode(child, state)).filter(Boolean) as TemplateNode[],
+    nodes: compileTemplateChildren(ast.children, state),
     handlers: state.handlers,
     inlineHandlers: state.inlineHandlers
   };
+}
+
+function compileTemplateChildren(children: TemplateChildNode[], state: CompileTemplateState): TemplateNode[] {
+  const nodes: TemplateNode[] = [];
+  let conditionalChainExpressions: string[] | null = null;
+
+  for (const child of children) {
+    if (child.type === NodeTypes.ELEMENT) {
+      const conditionalDirective = resolveConditionalDirective(child, state);
+      if (!conditionalDirective) {
+        conditionalChainExpressions = null;
+        const compiledNode = compileTemplateNode(child, state);
+        if (compiledNode) {
+          nodes.push(compiledNode);
+        }
+        continue;
+      }
+
+      if (conditionalDirective.kind === "if") {
+        const expression = transformTemplateExpression(
+          conditionalDirective.expression!,
+          state.templateRefBindings,
+          state.file,
+          conditionalDirective.directive
+        );
+        conditionalChainExpressions = [expression];
+        const compiledNode = compileTemplateNode(child, state, { ifExpressionOverride: expression });
+        if (compiledNode) {
+          nodes.push(compiledNode);
+        }
+        continue;
+      }
+
+      if (!conditionalChainExpressions || conditionalChainExpressions.length === 0) {
+        throw new ResuxCompileError(
+          `v-${conditionalDirective.kind} must follow a sibling with v-if or v-else-if.`,
+          locationFromVueNode(state.file, conditionalDirective.directive),
+        );
+      }
+
+      if (conditionalDirective.kind === "else-if") {
+        const branchExpression = transformTemplateExpression(
+          conditionalDirective.expression!,
+          state.templateRefBindings,
+          state.file,
+          conditionalDirective.directive
+        );
+        const expression = `${buildConditionalChainGuard(conditionalChainExpressions)} && (${branchExpression})`;
+        conditionalChainExpressions.push(branchExpression);
+        const compiledNode = compileTemplateNode(child, state, { ifExpressionOverride: expression });
+        if (compiledNode) {
+          nodes.push(compiledNode);
+        }
+        continue;
+      }
+
+      const expression = buildConditionalChainGuard(conditionalChainExpressions);
+      conditionalChainExpressions = null;
+      const compiledNode = compileTemplateNode(child, state, { ifExpressionOverride: expression });
+      if (compiledNode) {
+        nodes.push(compiledNode);
+      }
+      continue;
+    }
+
+    if (child.type !== NodeTypes.TEXT || child.content.trim().length > 0) {
+      conditionalChainExpressions = null;
+    }
+
+    const compiledNode = compileTemplateNode(child, state);
+    if (compiledNode) {
+      nodes.push(compiledNode);
+    }
+  }
+
+  return nodes;
+}
+
+function buildConditionalChainGuard(expressions: string[]): string {
+  return expressions.map((expression) => `!(${expression})`).join(" && ");
+}
+
+function resolveConditionalDirective(node: ElementNode, state: CompileTemplateState): ConditionalDirectiveInfo | null {
+  let conditional: ConditionalDirectiveInfo | null = null;
+  for (const prop of node.props) {
+    if (prop.type !== NodeTypes.DIRECTIVE) {
+      continue;
+    }
+    if (prop.name !== "if" && prop.name !== "else-if" && prop.name !== "else") {
+      continue;
+    }
+    if (conditional) {
+      throw new ResuxCompileError(
+        "Only one conditional directive is allowed per element.",
+        locationFromVueNode(state.file, prop),
+      );
+    }
+
+    const expression = expressionContent(prop.exp).trim();
+    if ((prop.name === "if" || prop.name === "else-if") && expression.length === 0) {
+      throw new ResuxCompileError(
+        `v-${prop.name} needs an expression.`,
+        locationFromVueNode(state.file, prop),
+      );
+    }
+    if (prop.name === "else" && expression.length > 0) {
+      throw new ResuxCompileError(
+        "v-else does not accept an expression.",
+        locationFromVueNode(state.file, prop),
+      );
+    }
+
+    conditional = {
+      kind: prop.name,
+      directive: prop,
+      expression: expression.length > 0 ? expression : undefined,
+    };
+  }
+
+  return conditional;
 }
 
 function expressionContent(node: unknown): string {
@@ -708,7 +838,11 @@ function expressionContent(node: unknown): string {
   return "";
 }
 
-function compileTemplateNode(node: TemplateChildNode, state: CompileTemplateState): TemplateNode | null {
+function compileTemplateNode(
+  node: TemplateChildNode,
+  state: CompileTemplateState,
+  options: CompileTemplateNodeOptions = {},
+): TemplateNode | null {
   if (node.type === NodeTypes.TEXT) {
     return {
       type: "text",
@@ -735,7 +869,7 @@ function compileTemplateNode(node: TemplateChildNode, state: CompileTemplateStat
     tag: node.tag,
     attrs,
     events,
-    children: node.children.map((child) => compileTemplateNode(child, state)).filter(Boolean) as TemplateNode[]
+    children: compileTemplateChildren(node.children, state)
   };
 
   for (const prop of node.props) {
@@ -788,6 +922,9 @@ function compileTemplateNode(node: TemplateChildNode, state: CompileTemplateStat
     }
 
     if (prop.name === "if") {
+      if (options.ifExpressionOverride) {
+        continue;
+      }
       const expression = expressionContent(prop.exp);
       if (!expression) {
         throw new ResuxCompileError("v-if needs an expression.", locationFromVueNode(state.file, prop));
@@ -797,6 +934,16 @@ function compileTemplateNode(node: TemplateChildNode, state: CompileTemplateStat
         blockId: nextBindingId(state)
       };
       continue;
+    }
+
+    if (prop.name === "else-if" || prop.name === "else") {
+      if (options.ifExpressionOverride) {
+        continue;
+      }
+      throw new ResuxCompileError(
+        `v-${prop.name} must follow a sibling with v-if or v-else-if.`,
+        locationFromVueNode(state.file, prop),
+      );
     }
 
     if (prop.name === "for") {
@@ -875,6 +1022,13 @@ function compileTemplateNode(node: TemplateChildNode, state: CompileTemplateStat
     }
 
     throw new ResuxCompileError(`v-${prop.name} is not supported in the v1 compiler.`, locationFromVueNode(state.file, prop));
+  }
+
+  if (options.ifExpressionOverride) {
+    element.if = {
+      expression: options.ifExpressionOverride,
+      blockId: nextBindingId(state),
+    };
   }
 
   return element;

@@ -65,6 +65,56 @@ function increment() {
     expect(JSON.stringify(component.template)).toContain("count.value > 0");
   });
 
+  it("compiles v-if / v-else-if / v-else chains", () => {
+    const component = compileVueSource(
+      `<script setup>
+const mode = useState("mode", () => "idle")
+</script>
+<template>
+  <p v-if="mode === 'idle'">Idle</p>
+  <p v-else-if="mode === 'loading'">Loading</p>
+  <p v-else>Done</p>
+</template>`,
+      {
+        file: "ConditionalChain.vue",
+        id: "m0",
+        name: "ConditionalChain"
+      }
+    );
+
+    const branches = component.template
+      .filter((node): node is Extract<(typeof component.template)[number], { type: "element" }> => node.type === "element");
+
+    expect(branches).toHaveLength(3);
+    expect(branches[0].if?.expression).toContain("mode.value === 'idle'");
+    expect(branches[1].if?.expression).toContain("!(mode.value === 'idle') && (mode.value === 'loading')");
+    expect(branches[2].if?.expression).toContain("!(mode.value === 'idle') && !(mode.value === 'loading')");
+  });
+
+  it("rejects orphaned v-else and v-else-if directives", () => {
+    expect(() =>
+      compileVueSource(
+        `<template><p v-else>Orphan</p></template>`,
+        {
+          file: "OrphanElse.vue",
+          id: "m0",
+          name: "OrphanElse"
+        }
+      )
+    ).toThrow(/must follow a sibling with v-if or v-else-if/);
+
+    expect(() =>
+      compileVueSource(
+        `<template><p v-else-if="ready">Orphan</p></template>`,
+        {
+          file: "OrphanElseIf.vue",
+          id: "m0",
+          name: "OrphanElseIf"
+        }
+      )
+    ).toThrow(/must follow a sibling with v-if or v-else-if/);
+  });
+
   it("compiles plain and scoped style blocks from Resux SFCs", () => {
     const component = compileVueSource(
       `<script setup>

@@ -583,7 +583,7 @@ The v1 compiler supports:
 - Plain named events: `@click="increment"`.
 - Inline event expressions that only capture resumable values, plus named handlers such as `@click="increment"`.
 - Resumability-safe event modifiers: `.prevent`, `.stop`, `.self`, `.once`, system/mouse modifiers, and key filters such as `.enter`.
-- `v-if`.
+- `v-if`, `v-else-if`, and `v-else`.
 - `v-show`.
 - `v-text`.
 - Sanitized `v-html`.

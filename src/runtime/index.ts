@@ -3764,6 +3764,7 @@ const lazyImageObserverByElement = new WeakMap();
 const lazyVideoObserverByElement = new WeakMap();
 const failedMediaSources = new Set();
 const initializedVideoControlShells = new WeakSet();
+const registeredDelegatedEvents = new Set();
 
 const __rxFlags = {
   isReactive: "__v_isReactive",
@@ -4826,6 +4827,62 @@ export function createClientComponent(definition) {
   };
 }
 
+function shouldCaptureDelegatedEvent(eventName) {
+  return (
+    eventName === "focus"
+    || eventName === "blur"
+    || eventName === "mouseenter"
+    || eventName === "mouseleave"
+    || eventName === "pointerenter"
+    || eventName === "pointerleave"
+    || eventName === "load"
+    || eventName === "error"
+    || eventName === "invalid"
+  );
+}
+
+function registerDelegatedEvent(eventName, useCapture = false) {
+  if (!eventName || eventName === "click") {
+    return;
+  }
+  const key = eventName + ":" + (useCapture ? "1" : "0");
+  if (registeredDelegatedEvents.has(key)) {
+    return;
+  }
+  registeredDelegatedEvents.add(key);
+  document.addEventListener(eventName, (event) => {
+    void handleDelegatedEvent(eventName, event);
+  }, useCapture);
+}
+
+function registerDelegatedEventsFromDom(root = document) {
+  const eventNames = new Set();
+  const collect = (element) => {
+    if (!element || !element.attributes) {
+      return;
+    }
+    for (const attribute of Array.from(element.attributes)) {
+      if (!attribute || typeof attribute.name !== "string" || !attribute.name.startsWith("data-rx-on-")) {
+        continue;
+      }
+      const eventName = attribute.name.slice("data-rx-on-".length).trim();
+      if (eventName) {
+        eventNames.add(eventName);
+      }
+    }
+  };
+  if (root && root.nodeType === 1) {
+    collect(root);
+  }
+  const iterableRoot = root && root.querySelectorAll ? root : document;
+  if (iterableRoot && iterableRoot.querySelectorAll) {
+    iterableRoot.querySelectorAll("*").forEach((element) => collect(element));
+  }
+  eventNames.forEach((eventName) => {
+    registerDelegatedEvent(eventName, shouldCaptureDelegatedEvent(eventName));
+  });
+}
+
 function installResux() {
   if (globalThis.__RESUX_INSTALLED__) {
     return;
@@ -4849,15 +4906,12 @@ function installResux() {
   document.addEventListener("loadeddata", handleManagedVideoReady, true);
   document.addEventListener("canplay", handleManagedVideoReady, true);
   for (const eventName of ["input", "change", "submit", "keydown", "keyup", "keypress", "mousedown", "mouseup", "blur", "focusout"]) {
-    document.addEventListener(eventName, (event) => {
-      void handleDelegatedEvent(eventName, event);
-    });
+    registerDelegatedEvent(eventName, false);
   }
   for (const eventName of ["load", "error", "loadstart", "loadedmetadata", "loadeddata", "canplay", "lazy-load-start", "lazy-load-complete"]) {
-    document.addEventListener(eventName, (event) => {
-      void handleDelegatedEvent(eventName, event);
-    }, true);
+    registerDelegatedEvent(eventName, true);
   }
+  registerDelegatedEventsFromDom(document);
   if (typeof window !== "undefined" && typeof history !== "undefined" && typeof location !== "undefined") {
     window.addEventListener("popstate", () => {
       void navigateTo(location.pathname + location.search + location.hash, {
@@ -4895,6 +4949,7 @@ async function initializeClientRuntime() {
   activateDeferredLazyMedia();
   applyReducedMotionVideoPreference();
   initializeManagedVideoControls();
+  registerDelegatedEventsFromDom(document);
 }
 
 function activateDeferredLazyMedia(root = document) {
@@ -6254,6 +6309,7 @@ async function navigateTo(target, options = {}) {
     activateDeferredLazyMedia(preserved.root);
     applyReducedMotionVideoPreference(preserved.root);
     initializeManagedVideoControls(preserved.root);
+    registerDelegatedEventsFromDom(preserved.root);
 
     if (!options.preserveScroll && nextUrl.hash) {
       document.getElementById(nextUrl.hash.slice(1))?.scrollIntoView();
@@ -7877,6 +7933,7 @@ function nativeAttributeName(node, name) {
 
 function applyPatches(scopeId, patches) {
   let needsLazyImageActivation = false;
+  let needsDelegatedEventRegistration = false;
   for (const patch of patches) {
     if (patch.type === "text") {
       document.querySelectorAll('[data-rx-text="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
@@ -7909,6 +7966,7 @@ function applyPatches(scopeId, patches) {
         element.innerHTML = patch.value;
         void mountVueIslands(element);
         needsLazyImageActivation = true;
+        needsDelegatedEventRegistration = true;
       });
       continue;
     }
@@ -7917,12 +7975,16 @@ function applyPatches(scopeId, patches) {
       element.innerHTML = patch.value;
       void mountVueIslands(element);
       needsLazyImageActivation = true;
+      needsDelegatedEventRegistration = true;
     });
   }
   if (needsLazyImageActivation) {
     activateDeferredLazyMedia();
     applyReducedMotionVideoPreference();
     initializeManagedVideoControls();
+  }
+  if (needsDelegatedEventRegistration) {
+    registerDelegatedEventsFromDom(document);
   }
 }
 

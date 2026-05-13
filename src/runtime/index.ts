@@ -5113,24 +5113,41 @@ function handleManagedMediaError(event) {
   if (!target || !target.tagName) {
     return;
   }
-  const tag = String(target.tagName).toLowerCase();
-  if (tag === "img") {
-    handleManagedImageError(target);
-    return;
-  }
-
-  if (tag === "source") {
-    const parentVideo = target.parentElement && String(target.parentElement.tagName || "").toLowerCase() === "video"
-      ? target.parentElement
-      : null;
-    if (parentVideo) {
-      markFailedMediaSource(parentVideo, target.getAttribute("src") || target.getAttribute("data-rx-lazy-src") || "");
+  const delegatedErrorTarget = target.closest
+    ? target.closest("[data-rx-on-error]")
+    : null;
+  if (!delegatedErrorTarget) {
+    if (typeof event.preventDefault === "function") {
+      event.preventDefault();
     }
-    return;
+    if (typeof event.stopImmediatePropagation === "function") {
+      event.stopImmediatePropagation();
+    } else if (typeof event.stopPropagation === "function") {
+      event.stopPropagation();
+    }
   }
+  const tag = String(target.tagName).toLowerCase();
+  try {
+    if (tag === "img") {
+      handleManagedImageError(target);
+      return;
+    }
 
-  if (tag === "video") {
-    handleManagedVideoError(target);
+    if (tag === "source") {
+      const parentVideo = target.parentElement && String(target.parentElement.tagName || "").toLowerCase() === "video"
+        ? target.parentElement
+        : null;
+      if (parentVideo) {
+        markFailedMediaSource(parentVideo, target.getAttribute("src") || target.getAttribute("data-rx-lazy-src") || "");
+      }
+      return;
+    }
+
+    if (tag === "video") {
+      handleManagedVideoError(target);
+    }
+  } catch {
+    // Never allow media load failures to cascade into app-level runtime failures.
   }
 }
 
@@ -6260,20 +6277,38 @@ async function handleDelegatedEvent(eventName, event) {
     event.stopPropagation();
   }
   const marker = target.getAttribute("data-rx-on-" + eventName);
-  const [scopeId, moduleId, handlerName] = marker.split(":");
-  const payload = globalThis.__RESUX__;
-  const component = await importComponent(moduleId, payload.modules, devImportRevision);
-  let scopeRecord = scopeCache.get(scopeId);
-  if (!scopeRecord) {
-    scopeRecord = await component.createScope(payload.scopes[scopeId], payload.route);
-    scopeCache.set(scopeId, scopeRecord);
+  if (!marker) {
+    return;
   }
-  const patches = await component.run(scopeRecord, handlerName, event);
-  const serialized = component.serialize(scopeRecord);
-  payload.scopes[scopeId].props = serialized.props;
-  payload.scopes[scopeId].state = serialized.state;
-  payload.scopes[scopeId].asyncData = serialized.asyncData;
-  applyPatches(scopeId, patches);
+  const [scopeId, moduleId, handlerName] = marker.split(":");
+  if (!scopeId || !moduleId || !handlerName) {
+    return;
+  }
+  const payload = globalThis.__RESUX__;
+  if (!payload || !payload.modules || !payload.scopes || !payload.scopes[scopeId]) {
+    return;
+  }
+  try {
+    const component = await importComponent(moduleId, payload.modules, devImportRevision);
+    let scopeRecord = scopeCache.get(scopeId);
+    if (!scopeRecord) {
+      scopeRecord = await component.createScope(payload.scopes[scopeId], payload.route);
+      scopeCache.set(scopeId, scopeRecord);
+    }
+    const patches = await component.run(scopeRecord, handlerName, event);
+    const serialized = component.serialize(scopeRecord);
+    payload.scopes[scopeId].props = serialized.props;
+    payload.scopes[scopeId].state = serialized.state;
+    payload.scopes[scopeId].asyncData = serialized.asyncData;
+    applyPatches(scopeId, patches);
+  } catch (error) {
+    dispatchManagedEvent(document, "resux:handler-error", {
+      event: eventName,
+      scopeId,
+      handler: handlerName,
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }
 }
 
 function readEventModifiers(target, eventName) {

@@ -242,10 +242,11 @@ export async function assertResuxServerManifest(
     );
   }
 
-  const manifestPath = path.join(serverRoot, "manifest.mjs");
-  if (!(await pathExists(manifestPath))) {
+  const manifestJsonPath = path.join(appRoot, ".resux", "manifest.json");
+  const configPath = path.join(serverRoot, "config.mjs");
+  if (!(await pathExists(manifestJsonPath)) && !(await pathExists(configPath))) {
     throw new Error(
-      "Resux deployment is missing .resux/server/manifest.mjs. Run `resux build` and retry.",
+      "Resux deployment is missing .resux/manifest.json or .resux/server/config.mjs. Run `resux build` and retry.",
     );
   }
 }

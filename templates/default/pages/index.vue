@@ -15,6 +15,21 @@ type StarterStats = {
 const { data, pending, error } = await useAsyncData("starter-stats", ({ signal }) => {
   return $fetch<StarterStats>("/api/stats", { signal })
 })
+const stats = reactive<StarterStats>({
+  response: "",
+  routes: "",
+  mode: ""
+})
+watchEffect(() => {
+  if (!data.value) {
+    return
+  }
+  stats.response = data.value.response
+  stats.routes = data.value.routes
+  stats.mode = data.value.mode
+})
+const statsError = computed(() => error.value?.message ?? "")
+const hasStats = computed(() => Boolean(data.value && !pending.value && !error.value))
 
 useSeoMeta({
   title: appName,
@@ -61,21 +76,21 @@ function increment() {
       </div>
       <div v-if="error" class="stat error-state">
         <span>Stats unavailable</span>
-        <strong>{{ error.message }}</strong>
+        <strong>{{ statsError }}</strong>
         <a href="/">Try again</a>
       </div>
-      <div v-if="!pending && !error && data" class="stats-grid">
+      <div v-if="hasStats" class="stats-grid">
         <article class="stat">
           <span>Response</span>
-          <strong>{{ data.response }}</strong>
+          <strong>{{ stats.response }}</strong>
         </article>
         <article class="stat">
           <span>Routes</span>
-          <strong>{{ data.routes }}</strong>
+          <strong>{{ stats.routes }}</strong>
         </article>
         <article class="stat">
           <span>Mode</span>
-          <strong v-text="data.mode">Mode</strong>
+          <strong v-text="stats.mode">Mode</strong>
         </article>
       </div>
     </section>

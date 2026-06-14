@@ -1,5 +1,5 @@
 import path from "node:path";
-import { pathExists } from "./common.js";
+import { assertRuntimeClientAsset, ensureResuxClientAssets, pathExists } from "./common.js";
 import type {
   DeployBuildContext,
   DeployDetectionContext,
@@ -26,10 +26,22 @@ function inferPreset(context: DeployDetectionContext): string {
 }
 
 async function postBuild(context: DeployBuildContext): Promise<void> {
-  const targetLabel = context.nitroPreset ?? "cloudflare";
-  throw new Error(
-    `Resux deploy target "${targetLabel}" is not implemented yet. Use deploy.target="node" or "vercel".`,
-  );
+  await ensureResuxClientAssets(context.appRoot, [
+    {
+      root: path.join(context.appRoot, ".output", "public"),
+      target: path.join(context.appRoot, ".output", "public", "__resux"),
+    },
+    {
+      root: path.join(context.appRoot, "dist"),
+      target: path.join(context.appRoot, "dist", "__resux"),
+    },
+  ]);
+
+  if (await pathExists(path.join(context.appRoot, ".output", "public"))) {
+    await assertRuntimeClientAsset(path.join(context.appRoot, ".output", "public"));
+  } else if (await pathExists(path.join(context.appRoot, "dist"))) {
+    await assertRuntimeClientAsset(path.join(context.appRoot, "dist"));
+  }
 }
 
 export const cloudflareDeployModule: DeployTargetModule = {

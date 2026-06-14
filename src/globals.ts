@@ -6,8 +6,11 @@ import type {
   EventHandlerEvent,
   HeadEntry,
   MaybeRef,
+  ResuxError,
   ResuxAppLike,
   ResuxConfigInput,
+  ResuxLazyPackageLoader,
+  ResuxLazyPackageOptions,
   ResuxModule,
   PageMeta,
   Ref,
@@ -17,6 +20,9 @@ import type {
   ResuxRouteMiddleware,
   ResuxRouter,
   RuntimeConfig,
+  ClientEnhancementSetup,
+  PackageAdapterDefinition,
+  UseClientEnhancementOptions,
   ResuxImageBuilder,
   SeoMetaInput,
   ServerMiddleware,
@@ -62,6 +68,20 @@ declare global {
   const apiURL: (path: string) => string;
   const useFetch: <T = unknown>(url: string, init?: RequestInit) => Promise<Ref<T>>;
   const $fetch: <T = unknown>(url: string, init?: RequestInit) => Promise<T>;
+  const useError: () => Ref<ResuxError | null>;
+  const clearError: () => void;
+  const showError: (input: string | Partial<ResuxError>) => never;
+  const createError: (input: string | Partial<ResuxError>) => ResuxError;
+  const useLazyPackage: <T = unknown>(name: string, options?: ResuxLazyPackageOptions) => Promise<T>;
+  const useClientPackage: <T = unknown>(name: string, options?: Omit<ResuxLazyPackageOptions, "clientOnly" | "mode">) => Promise<T>;
+  const usePackageReady: (name: string) => boolean;
+  const defineLazyPackage: <T = unknown>(name: string, options?: ResuxLazyPackageOptions) => ResuxLazyPackageLoader<T>;
+  const defineClientOnlyPackage: <T = unknown>(name: string, options?: Omit<ResuxLazyPackageOptions, "clientOnly" | "mode">) => ResuxLazyPackageLoader<T>;
+  const definePackageAdapter: <TOptions extends Record<string, unknown> = Record<string, unknown>>(
+    definition: PackageAdapterDefinition<TOptions>
+  ) => { name: string; setup: ClientEnhancementSetup };
+  const defineClientEnhancement: (name: string, setup: ClientEnhancementSetup) => { name: string; setup: ClientEnhancementSetup };
+  const useClientEnhancement: (name: string, options?: UseClientEnhancementOptions) => Promise<{ ready: boolean; activate: () => Promise<void>; dispose: () => Promise<void> }>;
   const onMounted: (callback: () => unknown | Promise<unknown>) => void;
   const definePageMeta: (_meta: PageMeta) => void;
   const defineResuxConfig: <T extends ResuxConfigInput>(config: T) => T;

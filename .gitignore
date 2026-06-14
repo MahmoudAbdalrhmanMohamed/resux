@@ -7,3 +7,10 @@ coverage/
 .resux/
 **/.resux/
 docs
+
+# Test temporary directories
+.resux-test-package-registry-*
+.resux-test-package-subpaths-*
+
+# Packaged archives
+*.tgz

@@ -1,6 +1,4 @@
-import { defineNitroConfig } from "nitropack/config";
-
-export default defineNitroConfig({
+export default {
   compatibilityDate: "2026-05-02",
   // Resux uses top-level /plugins, /modules, and /middleware for app features.
   // Nitro auto-scans these folders too, so exclude them from Nitro scanning.
@@ -14,7 +12,8 @@ export default defineNitroConfig({
     },
     {
       dir: ".resux/client",
-      baseURL: "/__resux"
+      baseURL: "/__resux",
+      fallthrough: true
     }
   ],
   serverAssets: [
@@ -65,6 +64,11 @@ export default defineNitroConfig({
         "cache-control": "public, max-age=31536000, immutable"
       }
     },
+    "/__resux/image": {
+      headers: {
+        "cache-control": "public, max-age=31536000, immutable"
+      }
+    },
     "/api/**": {
       headers: {
         "cache-control": "no-store"
@@ -80,4 +84,4 @@ export default defineNitroConfig({
     crawlLinks: false,
     routes: []
   }
-});
+};

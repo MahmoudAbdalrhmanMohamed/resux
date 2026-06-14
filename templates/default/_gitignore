@@ -1,6 +1,9 @@
-node_modules/
-.resux/
-.nitro/
-.output/
-dist/
+.resux
+.resux-nitro
+.nitro
+.output
+dist
+node_modules
 .env
+.env.*
+!.env.example

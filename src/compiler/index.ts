@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -7,7 +7,22 @@ import { compileStyle, parse as parseSfc, type SFCStyleBlock } from "@vue/compil
 import vuePlugin from "@vitejs/plugin-vue";
 import ts from "typescript";
 import { build as viteBuild } from "vite";
-import { getClientRuntimeSource, type ComponentStyle, type ElementTemplateNode, type PageMeta, type TemplateAttribute, type TemplateEvent, type TemplateNode } from "../runtime/index.js";
+import { createResux } from "../core/resux.js";
+import type { ResuxHooks } from "../core/hooks.js";
+import { ResuxModuleContainer, type ResuxModuleContext as CoreResuxModuleContext, type ResuxModuleContributions } from "../core/module-container.js";
+import { buildLocalePath, normalizeI18nRuntimeConfig, type ResuxI18nRuntimeConfig } from "../i18n/shared.js";
+import { withResuxKitContext } from "../kit/index.js";
+import {
+  getClientRuntimeSource,
+  type ComponentStyle,
+  type ElementTemplateNode,
+  type PageMeta,
+  type ResuxPackageMode,
+  type ResuxPackagesConfig,
+  type TemplateAttribute,
+  type TemplateEvent,
+  type TemplateNode,
+} from "../runtime/index.js";
 
 const require = createRequire(import.meta.url);
 
@@ -55,6 +70,13 @@ export interface CompiledPlugin {
   mode: "all" | "server" | "client";
   serverSource: string;
   clientSource: string;
+}
+
+export interface ClientEnhancementManifestEntry {
+  name: string;
+  id: string;
+  file: string;
+  src: string;
 }
 
 export interface CompiledMiddleware {
@@ -106,6 +128,7 @@ export interface BuildResult {
   components: CompiledComponent[];
   layouts: CompiledComponent[];
   plugins: CompiledPlugin[];
+  clientEnhancements: ClientEnhancementManifestEntry[];
   middleware: CompiledMiddleware[];
   serverMiddleware: CompiledServerMiddleware[];
   serverHandlers: ServerHandlerRecord[];
@@ -118,6 +141,9 @@ export interface BuildResult {
 export interface BuildOptions {
   vite?: "build" | "dev";
   server?: "bundle" | "modules";
+  hooks?: ResuxHooks;
+  changedPath?: string;
+  traceBuild?: boolean;
 }
 
 interface ScriptAnalysis {
@@ -130,6 +156,31 @@ interface ScriptAnalysis {
   handlers: Map<string, ts.Node>;
   sourceFile: ts.SourceFile;
   pageMeta?: PageMeta;
+}
+
+type PackageUsageMode = "all" | "client" | "server";
+
+interface PackageSourceFileInput {
+  file: string;
+  mode: PackageUsageMode;
+}
+
+interface PackageManifestEntry {
+  name: string;
+  specifiers: string[];
+  files: string[];
+  modes: PackageUsageMode[];
+  dynamic: boolean;
+  cssImports: string[];
+  missing: boolean;
+  declaredMode: ResuxPackageMode;
+  warnings: string[];
+}
+
+interface ClientRuntimePackageRegistry {
+  importers: string[];
+  cssByPackage: Record<string, string[]>;
+  declared: string[];
 }
 
 interface CompileTemplateState {
@@ -159,6 +210,9 @@ interface ConditionalDirectiveInfo {
 type ResuxConfig = Record<string, unknown> & {
   app?: { head?: unknown };
   css?: unknown;
+  i18n?: unknown;
+  packages?: unknown;
+  video?: unknown;
   modules?: unknown;
   deploy?: {
     target?: "auto" | "node" | "vercel" | "netlify" | "cloudflare" | "static";
@@ -168,15 +222,7 @@ type ResuxConfig = Record<string, unknown> & {
   runtimeConfig?: Record<string, unknown>;
 };
 
-interface ResuxModuleContext {
-  rootDir: string;
-  buildDir: string;
-  options: ResuxConfig;
-  addCss(href: string): void;
-  addHead(head: Record<string, unknown>): void;
-  addRouteRule(path: string, rule: RouteRuleConfig): void;
-  extendRuntimeConfig(config: Record<string, unknown>): void;
-}
+type ResuxModuleContext = CoreResuxModuleContext;
 
 type ResuxModuleSetup = (options: unknown, context: ResuxModuleContext) => unknown | Promise<unknown>;
 
@@ -234,167 +280,457 @@ const RESUMABLE_HANDLER_ALLOWED_GLOBALS = new Set([
   "useRuntimeConfig",
   "useResuxApp",
   "useResuxImage",
+  "useI18n",
   "apiURL",
   "useFetch",
   "$fetch",
+  "useError",
+  "clearError",
+  "showError",
+  "createError",
+  "useLazyPackage",
+  "useClientPackage",
+  "usePackageReady",
+  "defineLazyPackage",
+  "defineClientOnlyPackage",
+  "definePackageAdapter",
+  "defineClientEnhancement",
+  "useClientEnhancement",
   "onMounted",
   "definePageMeta",
   "defineProps"
 ]);
+
+const BUILTIN_AUTO_IMPORTS: Array<{ from: string; name: string; as?: string }> = [
+  { from: "resuxjs", name: "useRoute" },
+  { from: "resuxjs", name: "useRouter" },
+  { from: "resuxjs", name: "navigateTo" },
+  { from: "resuxjs", name: "abortNavigation" },
+  { from: "resuxjs", name: "useHead" },
+  { from: "resuxjs", name: "useSeoMeta" },
+  { from: "resuxjs", name: "useRuntimeConfig" },
+  { from: "resuxjs", name: "useState" },
+  { from: "resuxjs", name: "useFetch" },
+  { from: "resuxjs", name: "useAsyncData" },
+  { from: "resuxjs", name: "$fetch" },
+  { from: "resuxjs", name: "useError" },
+  { from: "resuxjs", name: "clearError" },
+  { from: "resuxjs", name: "showError" },
+  { from: "resuxjs", name: "createError" },
+  { from: "resuxjs", name: "useLazyPackage" },
+  { from: "resuxjs", name: "useClientPackage" },
+  { from: "resuxjs", name: "usePackageReady" },
+  { from: "resuxjs", name: "defineLazyPackage" },
+  { from: "resuxjs", name: "defineClientOnlyPackage" },
+  { from: "resuxjs", name: "definePackageAdapter" },
+  { from: "resuxjs", name: "defineClientEnhancement" },
+  { from: "resuxjs", name: "useClientEnhancement" }
+];
+
+const SUPPORT_CLIENT_RUNTIME_HELPERS = [
+  "useLazyPackage",
+  "useClientPackage",
+  "usePackageReady",
+  "defineLazyPackage",
+  "defineClientOnlyPackage",
+  "definePackageAdapter",
+  "defineClientEnhancement",
+  "useClientEnhancement",
+] as const;
+
+const CLIENT_ENHANCEMENT_DIR_CANDIDATES = [
+  "client-enhancements",
+  "enhancements",
+  path.join("app", "client-enhancements"),
+  path.join("app", "enhancements"),
+] as const;
+
+interface SupportModuleTranspileOptions {
+  prefix?: string;
+  autoImports?: Array<{ from: string; names: readonly string[] }>;
+  rewriteImports?: Record<string, string>;
+}
 
 export async function buildProject(appRoot: string, outDir = path.join(appRoot, ".resux"), options: BuildOptions = {}): Promise<BuildResult> {
   const absoluteRoot = path.resolve(appRoot);
   const absoluteOut = path.resolve(outDir);
   const buildOptions = {
     vite: options.vite ?? "build",
-    server: options.server ?? (options.vite === "dev" ? "modules" : "bundle")
+    server: options.server ?? (options.vite === "dev" ? "modules" : "bundle"),
+    hooks: options.hooks,
+    traceBuild: options.traceBuild === true
   };
-  await cleanGeneratedOutput(absoluteOut);
-  await mkdir(path.join(absoluteOut, "server"), { recursive: true });
-  await mkdir(path.join(absoluteOut, "server", "resux-plugins"), { recursive: true });
-  await mkdir(path.join(absoluteOut, "server", "resux-middleware"), { recursive: true });
-  await mkdir(path.join(absoluteOut, "server", "request-middleware"), { recursive: true });
-  await mkdir(path.join(absoluteOut, "server", "handlers"), { recursive: true });
-  await mkdir(path.join(absoluteOut, "server", "config-modules"), { recursive: true });
-  await mkdir(path.join(absoluteOut, "client", "handlers"), { recursive: true });
-  await mkdir(path.join(absoluteOut, "client", "vue-islands"), { recursive: true });
-  await mkdir(path.join(absoluteOut, "client", "plugins"), { recursive: true });
-  await mkdir(path.join(absoluteOut, "client", "middleware"), { recursive: true });
-  await mkdir(path.join(absoluteOut, "vite-client", "handlers"), { recursive: true });
-  await mkdir(path.join(absoluteOut, "vite-client", "vue-islands"), { recursive: true });
-  await mkdir(path.join(absoluteOut, "vite-client", "plugins"), { recursive: true });
-  await mkdir(path.join(absoluteOut, "vite-client", "middleware"), { recursive: true });
+  const mode = buildOptions.vite === "dev" ? "dev" : "build";
+  const incrementalDevBuild = mode === "dev" && typeof options.changedPath === "string" && options.changedPath.length > 0;
+  const hooks = buildOptions.hooks ?? createResux({ rootDir: absoluteRoot, buildDir: absoluteOut, config: {} }).hooks;
 
-  const runtimeConfig = await readRuntimeConfig(absoluteRoot, absoluteOut);
-  const routeRules = createRouteRules(runtimeConfig);
-  const componentFiles = await discoverAppVueFiles(absoluteRoot, "components");
-  const pageFiles = await discoverAppVueFiles(absoluteRoot, "pages");
-  const layoutFiles = await discoverAppVueFiles(absoluteRoot, "layouts");
-  const appFile = await optionalFile(path.join(absoluteRoot, "app.vue"))
-    ?? await optionalFile(path.join(absoluteRoot, "app", "app.vue"));
-  const errorFile = await optionalFile(path.join(absoluteRoot, "error.vue"))
-    ?? await optionalFile(path.join(absoluteRoot, "app", "error.vue"));
-  const pluginFiles = await discoverSupportTsFiles(absoluteRoot, "plugins");
-  const middlewareFiles = await discoverSupportTsFiles(absoluteRoot, "middleware");
-  const serverMiddlewareFiles = await discoverSupportTsFiles(absoluteRoot, path.join("server", "middleware"));
-  const serverHandlerFiles = [
-    ...await discoverServerFiles(path.join(absoluteRoot, "server", "api"), "/api"),
-    ...await discoverServerFiles(path.join(absoluteRoot, "server", "routes"), "")
-  ];
-  const vueIslands = await discoverVueIslands(absoluteRoot);
-  const allFiles = [...componentFiles, ...layoutFiles, ...pageFiles, ...(appFile ? [appFile] : []), ...(errorFile ? [errorFile] : [])];
-  const idByFile = new Map<string, string>();
-  const compiledByFile = new Map<string, CompiledComponent>();
-  let index = 0;
+  try {
+    await hooks.callHook("build:before", { appRoot: absoluteRoot, outDir: absoluteOut, mode });
+    if (!incrementalDevBuild) {
+      await cleanGeneratedOutput(absoluteOut);
+    }
+    await ensureGeneratedDirs(absoluteOut, buildOptions.vite === "dev");
 
-  for (const file of allFiles) {
-    idByFile.set(file, `m${index++}`);
-  }
+    const { config: runtimeConfig, moduleContainer } = await readRuntimeConfig(absoluteRoot, absoluteOut, hooks);
+    const contributions = moduleContainer.contributions;
+    await hooks.callHook("config:resolved", { rootDir: absoluteRoot, buildDir: absoluteOut, config: runtimeConfig });
+    await hooks.callHook("app:resolve", { appRoot: absoluteRoot, outDir: absoluteOut });
 
-  for (const file of allFiles) {
-    const component = await compileVueFile(file, {
-      id: idByFile.get(file)!,
-      name: inferComponentName(absoluteRoot, file)
+    const routeRules = createRouteRules(runtimeConfig);
+    const componentDirs = unique([
+      path.join(absoluteRoot, "components"),
+      path.join(absoluteRoot, "app", "components"),
+      ...contributions.componentDirs.map((entry) => path.resolve(absoluteRoot, entry.path))
+    ]);
+    await hooks.callHook("components:dirs", { dirs: componentDirs });
+    const componentFiles = await discoverVueFilesFromDirs(componentDirs);
+    componentFiles.push(...contributions.components.map((entry) => path.resolve(absoluteRoot, entry.file)));
+    const uniqueComponentFiles = unique(componentFiles).sort((left, right) => normalizePath(left).localeCompare(normalizePath(right)));
+
+    const pageFiles = await discoverAppVueFiles(absoluteRoot, "pages");
+    const layoutFiles = await discoverAppVueFiles(absoluteRoot, "layouts");
+    const appFile = await optionalFile(path.join(absoluteRoot, "app.vue"))
+      ?? await optionalFile(path.join(absoluteRoot, "app", "app.vue"));
+    const errorFile = await optionalFile(path.join(absoluteRoot, "error.vue"))
+      ?? await optionalFile(path.join(absoluteRoot, "app", "error.vue"));
+
+    const pluginDirs = [
+      path.join(absoluteRoot, "plugins"),
+      path.join(absoluteRoot, "app", "plugins"),
+      path.join(absoluteRoot, "enhancements"),
+      path.join(absoluteRoot, "client-enhancements"),
+      path.join(absoluteRoot, "app", "enhancements"),
+      path.join(absoluteRoot, "app", "client-enhancements"),
+    ];
+    await hooks.callHook("plugins:dirs", { dirs: pluginDirs });
+    const pluginFiles = await discoverSupportTsFiles(absoluteRoot, "plugins");
+    const modulePluginEntries = contributions.plugins.map((entry) => ({
+      file: path.resolve(absoluteRoot, entry.src),
+      mode: entry.mode ?? "all"
+    }));
+    const pluginModeByFile = new Map<string, "all" | "server" | "client">();
+    for (const entry of modulePluginEntries) {
+      pluginModeByFile.set(entry.file, entry.mode);
+      pluginFiles.push(entry.file);
+    }
+    const clientEnhancementFiles = await discoverClientEnhancementFiles(absoluteRoot);
+    for (const file of clientEnhancementFiles) {
+      if (!pluginModeByFile.has(file)) {
+        pluginModeByFile.set(file, "client");
+      }
+      pluginFiles.push(file);
+    }
+    const clientEnhancementFileSet = new Set(
+      clientEnhancementFiles.map((file) => normalizePath(path.resolve(file))),
+    );
+
+    const middlewareDirs = [path.join(absoluteRoot, "middleware"), path.join(absoluteRoot, "app", "middleware")];
+    await hooks.callHook("middleware:dirs", { dirs: middlewareDirs });
+    const middlewareFiles = await discoverSupportTsFiles(absoluteRoot, "middleware");
+    const moduleMiddlewareEntries = contributions.middleware.map((entry) => ({
+      file: path.resolve(absoluteRoot, entry.src),
+      mode: entry.mode ?? "all",
+      global: entry.global === true,
+      name: entry.name
+    }));
+    const middlewareMetaByFile = new Map<string, { mode: "all" | "server" | "client"; global: boolean; name: string }>();
+    for (const entry of moduleMiddlewareEntries) {
+      middlewareMetaByFile.set(entry.file, entry);
+      middlewareFiles.push(entry.file);
+    }
+
+    const serverMiddlewareFiles = await discoverSupportTsFiles(absoluteRoot, path.join("server", "middleware"));
+    const serverHandlerFiles = [
+      ...await discoverServerFiles(path.join(absoluteRoot, "server", "api"), "/api"),
+      ...await discoverServerFiles(path.join(absoluteRoot, "server", "routes"), "")
+    ];
+    for (const handler of contributions.serverHandlers) {
+      serverHandlerFiles.push({
+        file: path.resolve(absoluteRoot, handler.handler),
+        path: normalizeRoutePath(handler.route)
+      });
+    }
+
+    const vueIslands = await discoverVueIslands(absoluteRoot);
+    const allFiles = [...uniqueComponentFiles, ...layoutFiles, ...pageFiles, ...(appFile ? [appFile] : []), ...(errorFile ? [errorFile] : [])];
+    const idByFile = new Map<string, string>();
+    const compiledByFile = new Map<string, CompiledComponent>();
+    let index = 0;
+
+    for (const file of allFiles) {
+      idByFile.set(file, `m${index++}`);
+    }
+
+    for (const file of allFiles) {
+      const component = await compileVueFile(file, {
+        id: idByFile.get(file)!,
+        name: inferComponentName(absoluteRoot, file)
+      });
+      compiledByFile.set(file, component);
+      await writeFile(path.join(absoluteOut, "server", `${component.id}.mjs`), component.serverSource, "utf8");
+      await writeFile(path.join(absoluteOut, "vite-client", "handlers", `${component.id}.mjs`), component.clientSource, "utf8");
+    }
+
+    const baseRoutes = createRouteManifest(absoluteRoot, pageFiles, idByFile, compiledByFile);
+    for (const extender of contributions.pagesExtenders) {
+      await extender(baseRoutes as unknown as Array<Record<string, unknown>>);
+    }
+    await hooks.callHook("pages:extend", { pages: baseRoutes as unknown as Array<Record<string, unknown>> });
+    const routes = localizeRouteManifest(baseRoutes, runtimeConfig);
+    await hooks.callHook("pages:resolved", { pages: routes as unknown as Array<Record<string, unknown>> });
+
+    const components = allFiles.map((file) => compiledByFile.get(file)!);
+    const layouts = layoutFiles.map((file) => compiledByFile.get(file)!);
+    const plugins = unique(pluginFiles).sort((left, right) => normalizePath(left).localeCompare(normalizePath(right))).map((file, pluginIndex) => {
+      const compiled = compilePluginFile(file, pluginIndex);
+      const mode = pluginModeByFile.get(file);
+      if (mode) {
+        compiled.mode = mode;
+      }
+      return compiled;
     });
-    compiledByFile.set(file, component);
-    await writeFile(path.join(absoluteOut, "server", `${component.id}.mjs`), component.serverSource, "utf8");
-    await writeFile(path.join(absoluteOut, "vite-client", "handlers", `${component.id}.mjs`), component.clientSource, "utf8");
-  }
+    const clientEnhancements = plugins
+      .filter((plugin) => (
+        plugin.mode !== "server"
+        && clientEnhancementFileSet.has(normalizePath(path.resolve(plugin.file)))
+      ))
+      .map((plugin) => ({
+        name: supportFileBaseName(plugin.file),
+        id: plugin.id,
+        file: plugin.file,
+        src: `/__resux/plugins/${plugin.id}.mjs`,
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name) || normalizePath(left.file).localeCompare(normalizePath(right.file)));
+    const middleware = unique(middlewareFiles).sort((left, right) => normalizePath(left).localeCompare(normalizePath(right))).map((file, middlewareIndex) => {
+      const compiled = compileMiddlewareFile(file, middlewareIndex);
+      const meta = middlewareMetaByFile.get(file);
+      if (meta) {
+        compiled.mode = meta.mode;
+        compiled.global = meta.global;
+        compiled.name = kebabCase(meta.name);
+      }
+      return compiled;
+    });
+    const serverMiddleware = serverMiddlewareFiles.map((file, middlewareIndex) => compileServerMiddlewareFile(file, middlewareIndex));
+    const serverHandlers = uniqueServerHandlers(serverHandlerFiles).map((record, handlerIndex) => compileServerHandlerFile(record.file, handlerIndex, record.path));
+    const app = appFile ? compiledByFile.get(appFile) : undefined;
+    const error = errorFile ? compiledByFile.get(errorFile) : undefined;
+    await hooks.callHook("components:extend", { components: components as unknown as Array<Record<string, unknown>> });
+    await hooks.callHook("plugins:extend", { plugins: plugins as unknown as Array<Record<string, unknown>> });
+    await hooks.callHook("middleware:extend", { middleware: middleware as unknown as Array<Record<string, unknown>> });
 
-  const routes = createRouteManifest(absoluteRoot, pageFiles, idByFile, compiledByFile);
-  const components = allFiles.map((file) => compiledByFile.get(file)!);
-  const layouts = layoutFiles.map((file) => compiledByFile.get(file)!);
-  const plugins = pluginFiles.map((file, pluginIndex) => compilePluginFile(file, pluginIndex));
-  const middleware = middlewareFiles.map((file, middlewareIndex) => compileMiddlewareFile(file, middlewareIndex));
-  const serverMiddleware = serverMiddlewareFiles.map((file, middlewareIndex) => compileServerMiddlewareFile(file, middlewareIndex));
-  const serverHandlers = serverHandlerFiles.map((record, handlerIndex) => compileServerHandlerFile(record.file, handlerIndex, record.path));
-  const app = appFile ? compiledByFile.get(appFile) : undefined;
-  const error = errorFile ? compiledByFile.get(errorFile) : undefined;
-
-  for (const plugin of plugins) {
-    if (plugin.mode !== "client") {
-      await writeFile(path.join(absoluteOut, "server", "resux-plugins", `${plugin.id}.mjs`), plugin.serverSource, "utf8");
+    for (const plugin of plugins) {
+      if (plugin.mode !== "client") {
+        await writeFile(path.join(absoluteOut, "server", "resux-plugins", `${plugin.id}.mjs`), plugin.serverSource, "utf8");
+      }
+      if (plugin.mode !== "server") {
+        await writeFile(path.join(absoluteOut, "vite-client", "plugins", `${plugin.id}.mjs`), plugin.clientSource, "utf8");
+      }
     }
-    if (plugin.mode !== "server") {
-      await writeFile(path.join(absoluteOut, "vite-client", "plugins", `${plugin.id}.mjs`), plugin.clientSource, "utf8");
+    await writeClientEnhancementManifests(absoluteOut, clientEnhancements);
+
+    for (const entry of middleware) {
+      if (entry.mode !== "client") {
+        await writeFile(path.join(absoluteOut, "server", "resux-middleware", `${entry.id}.mjs`), entry.serverSource, "utf8");
+      }
+      if (entry.mode !== "server") {
+        await writeFile(path.join(absoluteOut, "vite-client", "middleware", `${entry.id}.mjs`), entry.clientSource, "utf8");
+      }
     }
-  }
 
-  for (const entry of middleware) {
-    if (entry.mode !== "client") {
-      await writeFile(path.join(absoluteOut, "server", "resux-middleware", `${entry.id}.mjs`), entry.serverSource, "utf8");
+    for (const entry of serverMiddleware) {
+      await writeFile(path.join(absoluteOut, "server", "request-middleware", `${entry.id}.mjs`), entry.source, "utf8");
     }
-    if (entry.mode !== "server") {
-      await writeFile(path.join(absoluteOut, "vite-client", "middleware", `${entry.id}.mjs`), entry.clientSource, "utf8");
+
+    for (const handler of serverHandlers) {
+      await writeFile(path.join(absoluteOut, "server", "handlers", `${handler.id}.mjs`), handler.source, "utf8");
     }
-  }
 
-  for (const entry of serverMiddleware) {
-    await writeFile(path.join(absoluteOut, "server", "request-middleware", `${entry.id}.mjs`), entry.source, "utf8");
-  }
+    for (const island of vueIslands) {
+      const islandEntryDir = path.join(absoluteOut, "vite-client", "vue-islands");
+      await writeFile(path.join(islandEntryDir, `${island.name}.mjs`), createVueIslandClientSource(island, islandEntryDir), "utf8");
+    }
 
-  for (const handler of serverHandlers) {
-    await writeFile(path.join(absoluteOut, "server", "handlers", `${handler.id}.mjs`), handler.source, "utf8");
-  }
+    const importDirs = unique([
+      path.join(absoluteRoot, "composables"),
+      path.join(absoluteRoot, "utils"),
+      path.join(absoluteRoot, "shared"),
+      path.join(absoluteRoot, "server", "utils"),
+      ...contributions.importDirs.map((dir) => path.resolve(absoluteRoot, dir))
+    ]);
+    await hooks.callHook("imports:dirs", { dirs: importDirs });
+    const discoveredAutoImports = await discoverAutoImportsFromDirs(absoluteRoot, importDirs);
+    const mergedImports = dedupeImports([...contributions.imports, ...discoveredAutoImports]);
+    await hooks.callHook("imports:extend", { imports: mergedImports as unknown as Array<Record<string, unknown>> });
+    await hooks.callHook("app:templates", { outDir: absoluteOut, templatesDir: path.join(absoluteOut, "templates") });
+    const generatedTemplateFiles = await writeModuleTemplates(absoluteOut, contributions);
+    await hooks.callHook("app:templatesGenerated", { outDir: absoluteOut, files: generatedTemplateFiles });
 
-  for (const island of vueIslands) {
-    const islandEntryDir = path.join(absoluteOut, "vite-client", "vue-islands");
-    await writeFile(path.join(islandEntryDir, `${island.name}.mjs`), createVueIslandClientSource(island, islandEntryDir), "utf8");
-  }
+    const additionalSharedPackageFiles = unique([
+      ...await discoverSupportTsFiles(absoluteRoot, "composables"),
+      ...await discoverSupportTsFiles(absoluteRoot, "utils"),
+      ...await discoverSupportTsFiles(absoluteRoot, "shared"),
+    ]);
+    const additionalServerPackageFiles = unique([
+      ...await discoverSupportTsFiles(absoluteRoot, path.join("server", "utils")),
+      ...await discoverSupportTsFiles(absoluteRoot, path.join("server", "plugins")),
+    ]);
+    const packageSources: PackageSourceFileInput[] = uniquePackageSourceFiles([
+      ...components.map((component) => ({ file: component.file, mode: "all" as const })),
+      ...plugins.map((plugin) => ({ file: plugin.file, mode: plugin.mode as PackageUsageMode })),
+      ...middleware.map((entry) => ({ file: entry.file, mode: entry.mode as PackageUsageMode })),
+      ...serverMiddleware.map((entry) => ({ file: entry.file, mode: "server" as const })),
+      ...serverHandlers.map((entry) => ({ file: entry.file, mode: "server" as const })),
+      ...additionalSharedPackageFiles.map((file) => ({ file, mode: "all" as const })),
+      ...additionalServerPackageFiles.map((file) => ({ file, mode: "server" as const })),
+    ]);
+    const packageDiagnostics = await analyzePackageUsage(
+      absoluteRoot,
+      packageSources,
+      runtimeConfig,
+    );
+    const packageRegistry = createClientRuntimePackageRegistry(
+      absoluteRoot,
+      readConfiguredPackages(runtimeConfig),
+      packageDiagnostics,
+    );
 
-  if (buildOptions.vite === "dev") {
-    await writeViteClientRuntime(absoluteOut);
-  } else {
-    await buildClientAssets(absoluteRoot, absoluteOut, components, plugins, middleware, vueIslands);
-  }
-  await writeFile(
-    path.join(absoluteOut, "server", "manifest.mjs"),
-    createServerManifestSource(routes, components, layouts, plugins, middleware, serverMiddleware, serverHandlers, vueIslands, app, error, runtimeConfig, buildOptions),
-    "utf8"
-  );
-  if (buildOptions.server === "bundle") {
-    await buildServerBundle(absoluteRoot, absoluteOut);
-  }
-  await writeFile(path.join(absoluteOut, "manifest.json"), JSON.stringify({
-    routes,
-    components: components.map(({ id, name, file, handlers, styles, styleScopeId, meta }) => ({ id, name, file, handlers, styles, styleScopeId, meta })),
-    layouts: layouts.map(({ id, name, file, styles, styleScopeId }) => ({ id, name, file, styles, styleScopeId })),
-    plugins: plugins.map(({ id, file, mode }) => ({ id, file, mode })),
-    middleware: middleware.map(({ id, name, file, global, mode }) => ({ id, name, file, global, mode })),
-    serverMiddleware: serverMiddleware.map(({ id, file }) => ({ id, file })),
-    serverHandlers: serverHandlers.map(({ id, path: routePath, file, params }) => ({ id, path: routePath, file, params })),
-    vueIslands,
-    app: app?.id,
-    error: error?.id,
-    runtimeConfig,
-    routeRules,
-    features: buildOptions
-  }, null, 2), "utf8");
+    if (buildOptions.vite === "dev") {
+      await writeViteClientRuntime(absoluteOut, packageRegistry);
+      await hooks.callHook("vite:compiled", { outDir: absoluteOut, dev: true });
+    } else {
+      await buildClientAssets(
+        absoluteRoot,
+        absoluteOut,
+        components,
+        plugins,
+        middleware,
+        vueIslands,
+        packageRegistry,
+        hooks,
+        contributions,
+      );
+      await hooks.callHook("vite:compiled", { outDir: absoluteOut, dev: false });
+    }
+    await ensureServerComponentModules(absoluteOut, components);
 
-  return {
-    appRoot: absoluteRoot,
-    outDir: absoluteOut,
-    routes,
-    components,
-    layouts,
-    plugins,
-    middleware,
-    serverMiddleware,
-    serverHandlers,
-    vueIslands,
-    routeRules,
-    app,
-    error
-  };
+    const runtimeArtifacts = buildRuntimeArtifacts({
+      routes,
+      components,
+      layouts,
+      plugins,
+      clientEnhancements,
+      middleware,
+      serverMiddleware,
+      serverHandlers,
+      vueIslands,
+      app,
+      error,
+      runtimeConfig,
+      routeRules,
+      packages: packageDiagnostics,
+      buildOptions: { vite: buildOptions.vite, server: buildOptions.server },
+      contributions: {
+        ...contributions,
+        imports: mergedImports
+      }
+    });
+
+    await hooks.callHook("build:manifest", { manifest: runtimeArtifacts.manifest as Record<string, unknown>, outDir: absoluteOut });
+    await writeFile(
+      path.join(absoluteOut, "server", "manifest.mjs"),
+      createServerManifestSource(routes, components, layouts, plugins, middleware, serverMiddleware, serverHandlers, vueIslands, app, error, runtimeConfig, buildOptions),
+      "utf8"
+    );
+    await writeGeneratedArtifacts(absoluteOut, runtimeArtifacts, buildOptions.vite === "dev");
+    await hooks.callHook("prepare:types", {
+      outDir: absoluteOut,
+      files: [
+        path.join(absoluteOut, "resux.d.ts"),
+        path.join(absoluteOut, "imports.d.ts"),
+        path.join(absoluteOut, "components.d.ts"),
+        path.join(absoluteOut, "server-routes.d.ts")
+      ]
+    });
+
+    if (buildOptions.server === "bundle") {
+      await buildServerBundle(absoluteRoot, absoluteOut);
+    }
+
+    await hooks.callHook("build:done", { appRoot: absoluteRoot, outDir: absoluteOut, mode });
+    return {
+      appRoot: absoluteRoot,
+      outDir: absoluteOut,
+      routes,
+      components,
+      layouts,
+      plugins,
+      clientEnhancements,
+      middleware,
+      serverMiddleware,
+      serverHandlers,
+      vueIslands,
+      routeRules,
+      app,
+      error
+    };
+  } catch (error) {
+    await hooks.callHook("build:error", { appRoot: absoluteRoot, outDir: absoluteOut, mode, error });
+    throw error;
+  }
 }
 
 async function cleanGeneratedOutput(outDir: string): Promise<void> {
+  const directoryRmOptions = {
+    recursive: true,
+    force: true,
+    maxRetries: 6,
+    retryDelay: 40,
+  } as const;
   await mkdir(outDir, { recursive: true });
-  await rm(path.join(outDir, "server"), { recursive: true, force: true });
-  await rm(path.join(outDir, "server-bundle"), { recursive: true, force: true });
-  await rm(path.join(outDir, "client"), { recursive: true, force: true });
-  await rm(path.join(outDir, "vite-client"), { recursive: true, force: true });
+  await rm(path.join(outDir, "server"), directoryRmOptions);
+  await rm(path.join(outDir, "server-bundle"), directoryRmOptions);
+  await rm(path.join(outDir, "client"), directoryRmOptions);
+  await rm(path.join(outDir, "vite-client"), directoryRmOptions);
+  await rm(path.join(outDir, "manifest"), directoryRmOptions);
+  await rm(path.join(outDir, "types"), directoryRmOptions);
+  await rm(path.join(outDir, "cache"), directoryRmOptions);
+  await rm(path.join(outDir, "dev"), directoryRmOptions);
+  await rm(path.join(outDir, "templates"), directoryRmOptions);
+  await rm(path.join(outDir, "app.mjs"), { force: true });
+  await rm(path.join(outDir, "routes.mjs"), { force: true });
+  await rm(path.join(outDir, "plugins.mjs"), { force: true });
+  await rm(path.join(outDir, "middleware.mjs"), { force: true });
+  await rm(path.join(outDir, "components.mjs"), { force: true });
+  await rm(path.join(outDir, "imports.mjs"), { force: true });
+  await rm(path.join(outDir, "resux.d.ts"), { force: true });
+  await rm(path.join(outDir, "imports.d.ts"), { force: true });
+  await rm(path.join(outDir, "components.d.ts"), { force: true });
+  await rm(path.join(outDir, "server-routes.d.ts"), { force: true });
   await rm(path.join(outDir, "manifest.json"), { force: true });
+  await rm(path.join(outDir, "client-enhancements.mjs"), { force: true });
+}
+
+async function ensureGeneratedDirs(outDir: string, _dev: boolean): Promise<void> {
+  await mkdir(path.join(outDir, "server"), { recursive: true });
+  await mkdir(path.join(outDir, "server", "resux-plugins"), { recursive: true });
+  await mkdir(path.join(outDir, "server", "resux-middleware"), { recursive: true });
+  await mkdir(path.join(outDir, "server", "request-middleware"), { recursive: true });
+  await mkdir(path.join(outDir, "server", "handlers"), { recursive: true });
+  await mkdir(path.join(outDir, "server", "config-modules"), { recursive: true });
+  await mkdir(path.join(outDir, "client", "handlers"), { recursive: true });
+  await mkdir(path.join(outDir, "client", "vue-islands"), { recursive: true });
+  await mkdir(path.join(outDir, "client", "plugins"), { recursive: true });
+  await mkdir(path.join(outDir, "client", "middleware"), { recursive: true });
+  await mkdir(path.join(outDir, "vite-client", "handlers"), { recursive: true });
+  await mkdir(path.join(outDir, "vite-client", "vue-islands"), { recursive: true });
+  await mkdir(path.join(outDir, "vite-client", "plugins"), { recursive: true });
+  await mkdir(path.join(outDir, "vite-client", "middleware"), { recursive: true });
+  await mkdir(path.join(outDir, "manifest"), { recursive: true });
+  await mkdir(path.join(outDir, "types"), { recursive: true });
+  await mkdir(path.join(outDir, "cache"), { recursive: true });
+  await mkdir(path.join(outDir, "templates"), { recursive: true });
+  await mkdir(path.join(outDir, "dev"), { recursive: true });
 }
 
 async function buildServerBundle(root: string, outDir: string): Promise<void> {
@@ -435,10 +771,13 @@ async function buildClientAssets(
   components: CompiledComponent[],
   plugins: CompiledPlugin[],
   middleware: CompiledMiddleware[],
-  vueIslands: VueIslandRecord[]
+  vueIslands: VueIslandRecord[],
+  packageRegistry: ClientRuntimePackageRegistry,
+  hooks?: ResuxHooks,
+  contributions?: ResuxModuleContributions
 ): Promise<void> {
   const inputRoot = path.join(outDir, "vite-client");
-  const runtimeInput = await writeViteClientRuntime(outDir);
+  const runtimeInput = await writeViteClientRuntime(outDir, packageRegistry);
 
   const input: Record<string, string> = {
     "runtime-client": runtimeInput
@@ -461,14 +800,15 @@ async function buildClientAssets(
   }
 
   try {
-    await viteBuild({
+    const viteConfig: Record<string, unknown> = {
       root,
       configFile: false,
       publicDir: false,
+      base: "/__resux/",
       appType: "custom",
       clearScreen: false,
       logLevel: "warn",
-      plugins: [vuePlugin()],
+      plugins: [vuePlugin(), ...(contributions?.vitePlugins ?? [])],
       resolve: {
         alias: {
           vue: require.resolve("vue")
@@ -483,7 +823,7 @@ async function buildClientAssets(
         rollupOptions: {
           input,
           preserveEntrySignatures: "strict",
-          external: (id) => id === "/__resux/runtime-client.mjs",
+          external: (id: string) => id === "/__resux/runtime-client.mjs",
           output: {
             format: "es",
             entryFileNames: "[name].mjs",
@@ -492,7 +832,15 @@ async function buildClientAssets(
           }
         }
       }
-    });
+    };
+
+    for (const extender of contributions?.viteConfigExtenders ?? []) {
+      await extender(viteConfig);
+    }
+    if (hooks) {
+      await hooks.callHook("vite:extendConfig", { config: viteConfig, dev: false });
+    }
+    await viteBuild(viteConfig as Parameters<typeof viteBuild>[0]);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Vite client build failed. Ensure vite is installed. ${message}`);
@@ -501,10 +849,44 @@ async function buildClientAssets(
   }
 }
 
-async function writeViteClientRuntime(outDir: string): Promise<string> {
+async function writeViteClientRuntime(
+  outDir: string,
+  packageRegistry: ClientRuntimePackageRegistry,
+): Promise<string> {
   const runtimeInput = path.join(outDir, "vite-client", "runtime-client.mjs");
-  await writeFile(runtimeInput, getClientRuntimeSource(), "utf8");
+  await writeFile(
+    runtimeInput,
+    getClientRuntimeSource({
+      packageRegistry: {
+        importers: packageRegistry.importers,
+        css: packageRegistry.cssByPackage,
+        declared: packageRegistry.declared,
+      },
+    }),
+    "utf8",
+  );
   return runtimeInput;
+}
+
+function createClientEnhancementManifestSource(entries: ClientEnhancementManifestEntry[]): string {
+  const imports = entries
+    .map((entry) => `import ${JSON.stringify(entry.src)};`)
+    .join("\n");
+  const names = [...new Set(entries.map((entry) => entry.name))];
+  if (imports) {
+    return `${imports}\n\nexport const clientEnhancements = ${JSON.stringify(names, null, 2)};\n`;
+  }
+  return `export const clientEnhancements = ${JSON.stringify(names, null, 2)};\n`;
+}
+
+async function writeClientEnhancementManifests(
+  outDir: string,
+  entries: ClientEnhancementManifestEntry[],
+): Promise<void> {
+  const source = createClientEnhancementManifestSource(entries);
+  await writeFile(path.join(outDir, "client-enhancements.mjs"), source, "utf8");
+  await writeFile(path.join(outDir, "vite-client", "client-enhancements.mjs"), source, "utf8");
+  await writeFile(path.join(outDir, "client", "client-enhancements.mjs"), source, "utf8");
 }
 
 export async function compileVueFile(file: string, options: { id: string; name?: string }): Promise<CompiledComponent> {
@@ -687,6 +1069,69 @@ export function createRouteManifest(
       };
     })
     .sort((a, b) => routeScore(b.path) - routeScore(a.path) || a.path.localeCompare(b.path));
+}
+
+async function ensureServerComponentModules(outDir: string, components: CompiledComponent[]): Promise<void> {
+  for (const component of components) {
+    const file = path.join(outDir, "server", `${component.id}.mjs`);
+    if (await existsFile(file)) {
+      continue;
+    }
+    await writeFile(file, component.serverSource, "utf8");
+  }
+}
+
+function localizeRouteManifest(routes: RouteManifestRecord[], runtimeConfig: Record<string, unknown>): RouteManifestRecord[] {
+  const i18n = readRuntimeI18nConfig(runtimeConfig);
+  if (!i18n) {
+    return routes;
+  }
+
+  const localeCodes = i18n.strategy === "no_prefix"
+    ? [i18n.defaultLocale]
+    : i18n.locales.map((locale) => locale.code);
+  const localized: RouteManifestRecord[] = [];
+  const seenPaths = new Set<string>();
+
+  for (const route of routes) {
+    for (const localeCode of localeCodes) {
+      const localizedPath = buildLocalePath(route.path, localeCode, i18n);
+      if (seenPaths.has(localizedPath)) {
+        continue;
+      }
+      seenPaths.add(localizedPath);
+      localized.push({
+        ...route,
+        path: localizedPath,
+        id: route.id
+      });
+    }
+  }
+
+  return localized
+    .sort((a, b) => routeScore(b.path) - routeScore(a.path) || a.path.localeCompare(b.path))
+    .map((route, index) => ({
+      ...route,
+      id: `r${index}`
+    }));
+}
+
+function readRuntimeI18nConfig(runtimeConfig: Record<string, unknown>): ResuxI18nRuntimeConfig | null {
+  const directPublicConfig = isPlainObject(runtimeConfig.public)
+    ? runtimeConfig.public
+    : null;
+  const nestedRuntimeConfig = isPlainObject(runtimeConfig.runtimeConfig)
+    ? runtimeConfig.runtimeConfig
+    : null;
+  const nestedPublicConfig = nestedRuntimeConfig && isPlainObject(nestedRuntimeConfig.public)
+    ? nestedRuntimeConfig.public
+    : null;
+  const publicConfig = directPublicConfig ?? nestedPublicConfig;
+  if (!publicConfig) {
+    return null;
+  }
+  const i18n = publicConfig.i18n;
+  return normalizeI18nRuntimeConfig(i18n);
 }
 
 function compileTemplate(
@@ -1332,7 +1777,7 @@ function unwrapAwaitExpression(node: ts.Expression | undefined): ts.Expression |
 }
 
 function isTemplateRefFactory(name: string): boolean {
-    return ["ref", "computed", "toRef", "useState", "useAsyncData", "useFetch", "useResuxImage"].includes(name);
+    return ["ref", "computed", "toRef", "useState", "useAsyncData", "useFetch", "useResuxImage", "useError"].includes(name);
 }
 
 function isAsyncDataFactory(name: string): boolean {
@@ -1524,6 +1969,7 @@ function isResumableInitializer(node: ts.Expression | undefined): boolean {
       "useRuntimeConfig",
       "useResuxApp",
       "useResuxImage",
+      "usePackageReady",
       "defineProps"
     ].includes(node.expression.text);
   }
@@ -1564,7 +2010,7 @@ function createComponentModuleSource(options: {
     options.analysis.imports,
     `const __template = ${JSON.stringify(options.template, null, 2)};`,
     `async function __rx_setup(__ctx) {`,
-    `const { ref, reactive, computed, watch, watchEffect, readonly, toRef, toRefs, unref, isRef, isReactive, isReadonly, nextTick, useState, useAsyncData, useRoute, useRouter, useHead, useSeoMeta, useRuntimeConfig, useResuxApp, useResuxImage, apiURL, useFetch, $fetch, onMounted, definePageMeta, defineProps } = __ctx;`,
+    `const { ref, reactive, computed, watch, watchEffect, readonly, toRef, toRefs, unref, isRef, isReactive, isReadonly, nextTick, useState, useAsyncData, useRoute, useRouter, useHead, useSeoMeta, useRuntimeConfig, useResuxApp, useResuxImage, apiURL, useFetch, $fetch, useError, clearError, showError, createError, useLazyPackage, useClientPackage, usePackageReady, defineLazyPackage, defineClientOnlyPackage, definePackageAdapter, defineClientEnhancement, useClientEnhancement, onMounted, definePageMeta, defineProps } = __ctx;`,
     options.analysis.setupBody,
     `return { ${options.analysis.bindings.join(", ")} };`,
     `}`,
@@ -1815,12 +2261,21 @@ function createAppHead(runtimeConfig: Record<string, unknown>) {
 
 function createRuntimeConfig(config: Record<string, unknown>): Record<string, unknown> {
   const runtimeConfig = (config as ResuxConfig).runtimeConfig;
+  const packagesConfig = isPlainObject((config as ResuxConfig).packages)
+    ? (config as ResuxConfig).packages as Record<string, unknown>
+    : null;
+  const videoConfig = isPlainObject((config as ResuxConfig).video)
+    ? (config as ResuxConfig).video as Record<string, unknown>
+    : null;
+  const publicConfig = (runtimeConfig?.public && typeof runtimeConfig.public === "object" && !Array.isArray(runtimeConfig.public))
+    ? runtimeConfig.public as Record<string, unknown>
+    : {};
   return {
     ...(runtimeConfig ?? {}),
     public: {
-      ...((runtimeConfig?.public && typeof runtimeConfig.public === "object" && !Array.isArray(runtimeConfig.public))
-        ? runtimeConfig.public as Record<string, unknown>
-        : {})
+      ...publicConfig,
+      ...(packagesConfig ? { packages: packagesConfig } : {}),
+      ...(videoConfig ? { video: videoConfig } : {}),
     }
   };
 }
@@ -1944,8 +2399,24 @@ function compilePluginFile(file: string, index: number): CompiledPlugin {
     id: `p${index}`,
     file,
     mode,
-    serverSource: transpileSupportModule(file, `import { defineResuxPlugin } from "resuxjs/runtime";\n`),
-    clientSource: transpileSupportModule(file, `import { defineResuxPlugin } from "/__resux/runtime-client.mjs";\n`)
+    serverSource: transpileSupportModule(file, {
+      prefix: `import { defineResuxPlugin } from "resuxjs/runtime";\n`,
+      autoImports: [{
+        from: "resuxjs/runtime",
+        names: SUPPORT_CLIENT_RUNTIME_HELPERS,
+      }],
+    }),
+    clientSource: transpileSupportModule(file, {
+      prefix: `import { defineResuxPlugin } from "/__resux/runtime-client.mjs";\n`,
+      autoImports: [{
+        from: "/__resux/runtime-client.mjs",
+        names: SUPPORT_CLIENT_RUNTIME_HELPERS,
+      }],
+      rewriteImports: {
+        "resuxjs": "/__resux/runtime-client.mjs",
+        "resuxjs/runtime": "/__resux/runtime-client.mjs",
+      },
+    })
   };
 }
 
@@ -1991,9 +2462,14 @@ function compileServerHandlerFile(file: string, index: number, routePath: string
   };
 }
 
-function transpileSupportModule(file: string, prefix = ""): string {
+function transpileSupportModule(file: string, input: string | SupportModuleTranspileOptions = ""): string {
   const source = ts.sys.readFile(file) ?? "";
-  return ts.transpileModule(`${prefix}${source}`, {
+  const options: SupportModuleTranspileOptions = typeof input === "string"
+    ? { prefix: input }
+    : input;
+  const rewrittenSource = rewriteSupportModuleImports(source, options.rewriteImports);
+  const autoImportPrefix = createSupportModuleAutoImportPrefix(file, rewrittenSource, options.autoImports ?? []);
+  return ts.transpileModule(`${options.prefix ?? ""}${autoImportPrefix}${rewrittenSource}`, {
     compilerOptions: {
       target: ts.ScriptTarget.ES2022,
       module: ts.ModuleKind.ES2022,
@@ -2002,7 +2478,142 @@ function transpileSupportModule(file: string, prefix = ""): string {
   }).outputText;
 }
 
-async function readRuntimeConfig(root: string, outDir: string): Promise<Record<string, unknown>> {
+function rewriteSupportModuleImports(source: string, rewrites?: Record<string, string>): string {
+  if (!rewrites || Object.keys(rewrites).length === 0) {
+    return source;
+  }
+  let output = source;
+  for (const [from, to] of Object.entries(rewrites)) {
+    if (!from || !to || from === to) {
+      continue;
+    }
+    const escapedFrom = escapeRegExp(from);
+    output = output.replace(
+      new RegExp(`(\\bfrom\\s+["'])${escapedFrom}(["'])`, "g"),
+      `$1${to}$2`,
+    );
+    output = output.replace(
+      new RegExp(`(\\bimport\\s*\\(\\s*["'])${escapedFrom}(["']\\s*\\))`, "g"),
+      `$1${to}$2`,
+    );
+  }
+  return output;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function createSupportModuleAutoImportPrefix(
+  file: string,
+  source: string,
+  autoImports: Array<{ from: string; names: readonly string[] }>,
+): string {
+  if (!autoImports.length) {
+    return "";
+  }
+
+  const declared = collectSupportModuleTopLevelBindings(file, source);
+  const lines: string[] = [];
+
+  for (const entry of autoImports) {
+    const seen = new Set<string>();
+    const names: string[] = [];
+
+    for (const name of entry.names) {
+      if (seen.has(name) || declared.has(name)) {
+        continue;
+      }
+      seen.add(name);
+      const pattern = new RegExp(`\\b${name}\\b`);
+      if (!pattern.test(source)) {
+        continue;
+      }
+      names.push(name);
+    }
+
+    if (names.length > 0) {
+      lines.push(`import { ${names.join(", ")} } from ${JSON.stringify(entry.from)};`);
+    }
+  }
+
+  if (!lines.length) {
+    return "";
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
+function collectSupportModuleTopLevelBindings(file: string, source: string): Set<string> {
+  const bindings = new Set<string>();
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement)) {
+      const clause = statement.importClause;
+      if (!clause) {
+        continue;
+      }
+      if (clause.name) {
+        bindings.add(clause.name.text);
+      }
+      if (clause.namedBindings) {
+        if (ts.isNamespaceImport(clause.namedBindings)) {
+          bindings.add(clause.namedBindings.name.text);
+        } else {
+          for (const element of clause.namedBindings.elements) {
+            bindings.add(element.name.text);
+          }
+        }
+      }
+      continue;
+    }
+
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        for (const name of collectBindingNames(declaration.name)) {
+          bindings.add(name);
+        }
+      }
+      continue;
+    }
+
+    if (ts.isFunctionDeclaration(statement) && statement.name) {
+      bindings.add(statement.name.text);
+      continue;
+    }
+
+    if (ts.isClassDeclaration(statement) && statement.name) {
+      bindings.add(statement.name.text);
+      continue;
+    }
+
+    if (ts.isEnumDeclaration(statement)) {
+      bindings.add(statement.name.text);
+      continue;
+    }
+
+    if (ts.isTypeAliasDeclaration(statement)) {
+      bindings.add(statement.name.text);
+      continue;
+    }
+
+    if (ts.isInterfaceDeclaration(statement)) {
+      bindings.add(statement.name.text);
+      continue;
+    }
+  }
+
+  return bindings;
+}
+
+interface RuntimeConfigReadResult {
+  config: Record<string, unknown>;
+  moduleContainer: ResuxModuleContainer;
+}
+
+async function readRuntimeConfig(root: string, outDir: string, hooks: ResuxHooks): Promise<RuntimeConfigReadResult> {
+  const moduleContainer = new ResuxModuleContainer();
   const candidates = [
     "resux.config.ts",
     "resux.config.mjs",
@@ -2026,13 +2637,15 @@ async function readRuntimeConfig(root: string, outDir: string): Promise<Record<s
     await writeFile(outputFile, compiled, "utf8");
     const imported = await import(`${pathToFileURL(outputFile).href}?t=${Date.now()}`);
     const config = (imported.default ?? {}) as ResuxConfig;
-    await applyConfiguredModules(config, root, outDir);
+    Object.assign(config, createResux({ rootDir: root, buildDir: outDir, config }).options);
+    const context = moduleContainer.createContext(config, root, outDir, hooks);
+    await applyConfiguredModules(config, root, outDir, context);
     delete config.modules;
     await writeFile(outputFile, `export default ${JSON.stringify(config, null, 2)};`, "utf8");
-    return config;
+    return { config, moduleContainer };
   }
 
-  return {};
+  return { config: createResux({ rootDir: root, buildDir: outDir, config: {} }).options, moduleContainer };
 }
 
 function normalizeConfigHelpers(source: string): string {
@@ -2041,66 +2654,19 @@ function normalizeConfigHelpers(source: string): string {
     .replace(/\bdefineResuxModule\s*\(/g, "(");
 }
 
-async function applyConfiguredModules(config: ResuxConfig, root: string, outDir: string): Promise<void> {
+async function applyConfiguredModules(
+  config: ResuxConfig,
+  root: string,
+  outDir: string,
+  context: ResuxModuleContext
+): Promise<void> {
   const modules = Array.isArray(config.modules) ? config.modules : [];
-  const context = createModuleContext(config, root, outDir);
 
   for (const moduleEntry of modules) {
     const { module, options } = await resolveModuleEntry(moduleEntry, root, outDir);
     const setup = getModuleSetup(module);
-    await setup(createModuleOptions(module, options), context);
+    await Promise.resolve(withResuxKitContext(context, () => setup(createModuleOptions(module, options), context)));
   }
-}
-
-function createModuleContext(config: ResuxConfig, root: string, outDir: string): ResuxModuleContext {
-  return {
-    rootDir: root,
-    buildDir: outDir,
-    options: config,
-    addCss(href: string): void {
-      config.css = [...(Array.isArray(config.css) ? config.css : []), href];
-    },
-    addHead(head: Record<string, unknown>): void {
-      const app = config.app && typeof config.app === "object" ? config.app : {};
-      const currentHead = app.head && typeof app.head === "object" ? app.head as Record<string, unknown> : {};
-      app.head = mergeHeadConfig(currentHead, head);
-      config.app = app;
-    },
-    addRouteRule(routePath: string, rule: RouteRuleConfig): void {
-      if (!routePath.startsWith("/")) {
-        throw new Error(`Route rules need an absolute path. Received "${routePath}".`);
-      }
-      config.routeRules = {
-        ...(config.routeRules ?? {}),
-        [routePath]: {
-          ...(config.routeRules?.[routePath] ?? {}),
-          ...rule,
-          headers: {
-            ...(config.routeRules?.[routePath]?.headers ?? {}),
-            ...(rule.headers ?? {})
-          }
-        }
-      };
-    },
-    extendRuntimeConfig(runtimeConfig: Record<string, unknown>): void {
-      config.runtimeConfig = deepMerge(config.runtimeConfig ?? {}, runtimeConfig);
-    }
-  };
-}
-
-function mergeHeadConfig(current: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
-  return {
-    ...current,
-    ...next,
-    meta: [
-      ...(Array.isArray(current.meta) ? current.meta : []),
-      ...(Array.isArray(next.meta) ? next.meta : [])
-    ],
-    link: [
-      ...(Array.isArray(current.link) ? current.link : []),
-      ...(Array.isArray(next.link) ? next.link : [])
-    ]
-  };
 }
 
 function deepMerge<T extends Record<string, unknown>>(base: T, next: Record<string, unknown>): T {
@@ -2185,7 +2751,19 @@ function resolveBuiltinModule(specifier: string): BuiltinResuxModule | null {
   return builtinModules[normalized] ?? null;
 }
 
+const i18nBuiltinModule: BuiltinResuxModule = {
+  async setup(options, resux) {
+    const imported = await import("../i18n/index.js");
+    const module = imported.default ?? imported;
+    const setup = getModuleSetup(module);
+    await setup(options, resux);
+  }
+};
+
 const builtinModules: Record<string, BuiltinResuxModule> = {
+  i18n: i18nBuiltinModule,
+  "resuxjs/i18n": i18nBuiltinModule,
+  "@resuxjs/i18n": i18nBuiltinModule,
   security: {
     defaults: {
       route: "/**",
@@ -2225,6 +2803,7 @@ const builtinModules: Record<string, BuiltinResuxModule> = {
       resux.addRouteRule("/__resux/handlers/**", { cache: assetCache });
       resux.addRouteRule("/__resux/vue-islands/**", { cache: assetCache });
       resux.addRouteRule("/__resux/image", { cache: assetCache });
+      resux.addRouteRule("/__resux/video", { cache: assetCache });
 
       if (input.routePayloadNoStore !== false) {
         resux.addRouteRule("/__resux/route", { cache: false });
@@ -2339,6 +2918,14 @@ async function discoverAppVueFiles(root: string, dirName: string): Promise<strin
   ]);
 }
 
+async function discoverVueFilesFromDirs(dirs: string[]): Promise<string[]> {
+  const files: string[] = [];
+  for (const dir of dirs) {
+    files.push(...await discoverVueFiles(dir));
+  }
+  return unique(files);
+}
+
 async function discoverSupportTsFiles(root: string, dirName: string): Promise<string[]> {
   const dirs = [path.join(root, dirName), path.join(root, "app", dirName)];
   const files: string[] = [];
@@ -2348,6 +2935,747 @@ async function discoverSupportTsFiles(root: string, dirName: string): Promise<st
   }
 
   return unique(files).sort((left, right) => normalizePath(left).localeCompare(normalizePath(right)));
+}
+
+function isClientEnhancementSupportFile(file: string): boolean {
+  return /\.client\.[cm]?[tj]s$/.test(file) && !/\.d\.[cm]?[tj]s$/.test(file);
+}
+
+async function discoverClientEnhancementFiles(root: string): Promise<string[]> {
+  const files: string[] = [];
+  for (const relativeDir of CLIENT_ENHANCEMENT_DIR_CANDIDATES) {
+    const absoluteDir = path.join(root, relativeDir);
+    files.push(...await discoverSupportTsFilesInDir(absoluteDir));
+  }
+  return unique(files)
+    .map((file) => path.resolve(file))
+    .filter((file) => isClientEnhancementSupportFile(file))
+    .sort((left, right) => normalizePath(left).localeCompare(normalizePath(right)));
+}
+
+async function discoverAutoImportsFromDirs(
+  root: string,
+  dirs: string[]
+): Promise<Array<{ from: string; name: string; as?: string }>> {
+  const entries: Array<{ from: string; name: string; as?: string }> = [];
+  for (const dir of dirs) {
+    const files = await discoverSupportTsFilesInDir(dir);
+    for (const file of files) {
+      const source = await readFile(file, "utf8");
+      const names = collectNamedExportsFromSource(file, source);
+      const relative = normalizePath(path.relative(root, file).replace(/\.[cm]?[tj]s$/, ""));
+      const from = relative.startsWith(".") ? relative : `./${relative}`;
+      for (const name of names) {
+        entries.push({ from, name });
+      }
+    }
+  }
+  return dedupeImports(entries);
+}
+
+function collectNamedExportsFromSource(file: string, source: string): string[] {
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
+  const names = new Set<string>();
+  for (const statement of sourceFile.statements) {
+    if (!isStatementExported(statement)) {
+      continue;
+    }
+    if (ts.isFunctionDeclaration(statement) && statement.name) {
+      names.add(statement.name.text);
+      continue;
+    }
+    if (ts.isClassDeclaration(statement) && statement.name) {
+      names.add(statement.name.text);
+      continue;
+    }
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name)) {
+          names.add(declaration.name.text);
+        }
+      }
+      continue;
+    }
+    if (ts.isExportDeclaration(statement) && statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+      for (const specifier of statement.exportClause.elements) {
+        names.add(specifier.name.text);
+      }
+    }
+  }
+  return [...names].sort();
+}
+
+function isStatementExported(statement: ts.Statement): boolean {
+  const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) : undefined;
+  return Boolean(modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword));
+}
+
+function uniqueServerHandlers(records: Array<{ file: string; path: string }>): Array<{ file: string; path: string }> {
+  const map = new Map<string, { file: string; path: string }>();
+  for (const record of records) {
+    const key = `${normalizeRoutePath(record.path)}::${normalizePath(path.resolve(record.file))}`;
+    map.set(key, { file: path.resolve(record.file), path: normalizeRoutePath(record.path) });
+  }
+  return [...map.values()].sort((left, right) => left.path.localeCompare(right.path) || normalizePath(left.file).localeCompare(normalizePath(right.file)));
+}
+
+async function writeModuleTemplates(outDir: string, contributions: ResuxModuleContributions): Promise<string[]> {
+  const written: string[] = [];
+  for (const template of [...contributions.templates, ...contributions.typeTemplates]) {
+    if (template.write === false) {
+      continue;
+    }
+    const target = path.join(outDir, "templates", template.filename);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, await template.getContents(), "utf8");
+    written.push(target);
+  }
+  return written.sort((left, right) => normalizePath(left).localeCompare(normalizePath(right)));
+}
+
+interface RuntimeArtifactsInput {
+  routes: RouteManifestRecord[];
+  components: CompiledComponent[];
+  layouts: CompiledComponent[];
+  plugins: CompiledPlugin[];
+  clientEnhancements: ClientEnhancementManifestEntry[];
+  middleware: CompiledMiddleware[];
+  serverMiddleware: CompiledServerMiddleware[];
+  serverHandlers: ServerHandlerRecord[];
+  vueIslands: VueIslandRecord[];
+  app?: CompiledComponent;
+  error?: CompiledComponent;
+  runtimeConfig: Record<string, unknown>;
+  routeRules: Record<string, RouteRuleConfig>;
+  packages: PackageManifestEntry[];
+  buildOptions: { vite: "build" | "dev"; server: "bundle" | "modules" };
+  contributions: ResuxModuleContributions;
+}
+
+interface RuntimeArtifacts {
+  manifest: Record<string, unknown>;
+  buildManifest: Record<string, unknown>;
+  routesSource: string;
+  pluginsSource: string;
+  middlewareSource: string;
+  componentsSource: string;
+  importsSource: string;
+  appSource: string;
+  resuxDts: string;
+  importsDts: string;
+  componentsDts: string;
+  serverRoutesDts: string;
+  diagnostics: {
+    routeManifest: Record<string, unknown>[];
+    pluginManifest: Record<string, unknown>[];
+    clientEnhancementManifest: Record<string, unknown>[];
+    middlewareManifest: Record<string, unknown>[];
+    componentManifest: Record<string, unknown>[];
+  };
+}
+
+function buildRuntimeArtifacts(input: RuntimeArtifactsInput): RuntimeArtifacts {
+  const manifest = {
+    routes: input.routes,
+    components: input.components.map(({ id, name, file, handlers, styles, styleScopeId, meta }) => ({ id, name, file, handlers, styles, styleScopeId, meta })),
+    layouts: input.layouts.map(({ id, name, file, styles, styleScopeId }) => ({ id, name, file, styles, styleScopeId })),
+    plugins: input.plugins.map(({ id, file, mode }) => ({ id, file, mode })),
+    clientEnhancements: input.clientEnhancements.map(({ name, id, file, src }) => ({ name, id, file, src })),
+    middleware: input.middleware.map(({ id, name, file, global, mode }) => ({ id, name, file, global, mode })),
+    serverMiddleware: input.serverMiddleware.map(({ id, file }) => ({ id, file })),
+    serverHandlers: input.serverHandlers.map(({ id, path: routePath, file, params }) => ({ id, path: routePath, file, params })),
+    vueIslands: input.vueIslands,
+    app: input.app?.id,
+    error: input.error?.id,
+    runtimeConfig: input.runtimeConfig,
+    routeRules: input.routeRules,
+    packages: input.packages,
+    features: input.buildOptions
+  };
+
+  const buildManifest = {
+    routes: input.routes.map((route) => route.path),
+    serverHandlers: input.serverHandlers.map((handler) => ({ path: handler.path, file: handler.file })),
+    plugins: input.plugins.map((plugin) => ({ file: plugin.file, mode: plugin.mode })),
+    clientEnhancements: input.clientEnhancements.map((entry) => ({ name: entry.name, id: entry.id, file: entry.file, src: entry.src })),
+    middleware: input.middleware.map((entry) => ({ name: entry.name, file: entry.file, mode: entry.mode, global: entry.global })),
+    components: input.components.map((component) => ({ name: component.name, file: component.file })),
+    assets: [],
+    imageTransforms: [],
+    routeRules: Object.entries(input.routeRules).map(([routePath, rule]) => ({ path: routePath, rule })),
+    runtimeConfig: input.runtimeConfig,
+    packages: input.packages
+  };
+
+  const componentNames = unique(input.components.map((component) => component.name).filter(Boolean)).sort();
+  const imports = dedupeImports([...BUILTIN_AUTO_IMPORTS, ...input.contributions.imports]);
+  const importsSignatures = imports
+    .map((entry) => `${entry.name}${entry.as ? ` as ${entry.as}` : ""} from ${entry.from}`)
+    .join("\n");
+
+  const routesSource = `export default ${JSON.stringify(input.routes.map((route) => ({ id: route.id, path: route.path, file: route.file, params: route.params, componentId: route.componentId, meta: route.meta })), null, 2)};\n`;
+  const pluginsSource = `export default ${JSON.stringify(input.plugins.map((plugin) => ({ id: plugin.id, file: plugin.file, mode: plugin.mode })), null, 2)};\n`;
+  const middlewareSource = `export default ${JSON.stringify(input.middleware.map((entry) => ({ id: entry.id, name: entry.name, file: entry.file, global: entry.global, mode: entry.mode })), null, 2)};\n`;
+  const componentsSource = `export default ${JSON.stringify(input.components.map((component) => ({ id: component.id, name: component.name, file: component.file })), null, 2)};\n`;
+  const importsSource = `export default ${JSON.stringify(imports, null, 2)};\n`;
+  const appSource = [
+    `import routes from "./routes.mjs";`,
+    `import plugins from "./plugins.mjs";`,
+    `import middleware from "./middleware.mjs";`,
+    `import components from "./components.mjs";`,
+    `import imports from "./imports.mjs";`,
+    `export default {`,
+    `  app: ${JSON.stringify(input.app?.id ?? null)},`,
+    `  error: ${JSON.stringify(input.error?.id ?? null)},`,
+    `  routes,`,
+    `  plugins,`,
+    `  middleware,`,
+    `  components,`,
+    `  imports`,
+    `};`,
+    ``
+  ].join("\n");
+  const resuxDts = [
+    `export interface ResuxGeneratedAppManifest {`,
+    `  app: string | null;`,
+    `  error: string | null;`,
+    `  routes: Array<{ id: string; path: string; file: string; params: string[]; componentId: string }>;`,
+    `  plugins: Array<{ id: string; file: string; mode: "all" | "server" | "client" }>;`,
+    `  clientEnhancements: Array<{ name: string; id: string; file: string; src: string }>;`,
+    `  middleware: Array<{ id: string; name: string; file: string; mode: "all" | "server" | "client"; global: boolean }>;`,
+    `  components: Array<{ id: string; name: string; file: string }>;`,
+    `  imports: Array<{ from: string; name: string; as?: string }>;`,
+    `}`,
+    `declare const manifest: ResuxGeneratedAppManifest;`,
+    `export default manifest;`,
+    ``
+  ].join("\n");
+  const importsDts = [
+    `// Generated by Resux`,
+    `declare module "resuxjs" {`,
+    `  export interface ResuxAutoImportsRegistry {`,
+    ...(importsSignatures ? imports.map((entry) => `    "${entry.as ?? entry.name}": typeof import("${entry.from}")["${entry.name}"];`) : ["    // no user imports detected"]),
+    `  }`,
+    `}`,
+    `export {};`,
+    ``
+  ].join("\n");
+  const componentsDts = [
+    `declare module "resuxjs/components" {`,
+    `  export interface ResuxComponentsRegistry {`,
+    ...(componentNames.length ? componentNames.map((name) => `    "${name}": unknown;`) : ["    // no components detected"]),
+    `  }`,
+    `}`,
+    `export {};`,
+    ``
+  ].join("\n");
+  const serverRoutesDts = [
+    `declare module "resuxjs/server-routes" {`,
+    `  export interface ResuxServerRouteMap {`,
+    ...(input.serverHandlers.length
+      ? input.serverHandlers.map((handler) => `    "${handler.path}": unknown;`)
+      : ["    // no server routes detected"]),
+    `  }`,
+    `}`,
+    `export {};`,
+    ``
+  ].join("\n");
+
+  return {
+    manifest: manifest as Record<string, unknown>,
+    buildManifest: buildManifest as Record<string, unknown>,
+    routesSource,
+    pluginsSource,
+    middlewareSource,
+    componentsSource,
+    importsSource,
+    appSource,
+    resuxDts,
+    importsDts,
+    componentsDts,
+    serverRoutesDts,
+    diagnostics: {
+      routeManifest: input.routes.map((route) => ({ id: route.id, path: route.path, file: route.file, params: route.params })),
+      pluginManifest: input.plugins.map((plugin) => ({ id: plugin.id, file: plugin.file, mode: plugin.mode })),
+      clientEnhancementManifest: input.clientEnhancements.map((entry) => ({ name: entry.name, id: entry.id, file: entry.file, src: entry.src })),
+      middlewareManifest: input.middleware.map((entry) => ({ id: entry.id, name: entry.name, file: entry.file, global: entry.global, mode: entry.mode })),
+      componentManifest: input.components.map((component) => ({ id: component.id, name: component.name, file: component.file }))
+    }
+  };
+}
+
+async function writeGeneratedArtifacts(outDir: string, artifacts: RuntimeArtifacts, dev: boolean): Promise<void> {
+  await writeFile(path.join(outDir, "manifest.json"), JSON.stringify(artifacts.manifest, null, 2), "utf8");
+  await writeFile(path.join(outDir, "manifest", "build-manifest.json"), JSON.stringify(artifacts.buildManifest, null, 2), "utf8");
+  await writeFile(path.join(outDir, "routes.mjs"), artifacts.routesSource, "utf8");
+  await writeFile(path.join(outDir, "plugins.mjs"), artifacts.pluginsSource, "utf8");
+  await writeFile(path.join(outDir, "middleware.mjs"), artifacts.middlewareSource, "utf8");
+  await writeFile(path.join(outDir, "components.mjs"), artifacts.componentsSource, "utf8");
+  await writeFile(path.join(outDir, "imports.mjs"), artifacts.importsSource, "utf8");
+  await writeFile(path.join(outDir, "app.mjs"), artifacts.appSource, "utf8");
+  await writeFile(path.join(outDir, "resux.d.ts"), artifacts.resuxDts, "utf8");
+  await writeFile(path.join(outDir, "imports.d.ts"), artifacts.importsDts, "utf8");
+  await writeFile(path.join(outDir, "components.d.ts"), artifacts.componentsDts, "utf8");
+  await writeFile(path.join(outDir, "server-routes.d.ts"), artifacts.serverRoutesDts, "utf8");
+  await writeFile(path.join(outDir, "types", "resux.d.ts"), artifacts.resuxDts, "utf8");
+  await writeFile(path.join(outDir, "types", "imports.d.ts"), artifacts.importsDts, "utf8");
+  await writeFile(path.join(outDir, "types", "components.d.ts"), artifacts.componentsDts, "utf8");
+  await writeFile(path.join(outDir, "types", "server-routes.d.ts"), artifacts.serverRoutesDts, "utf8");
+  if (!dev) {
+    return;
+  }
+  await mkdir(path.join(outDir, "dev"), { recursive: true });
+  await writeFile(path.join(outDir, "dev", "route-manifest.json"), JSON.stringify(artifacts.diagnostics.routeManifest, null, 2), "utf8");
+  await writeFile(path.join(outDir, "dev", "plugin-manifest.json"), JSON.stringify(artifacts.diagnostics.pluginManifest, null, 2), "utf8");
+  await writeFile(path.join(outDir, "dev", "client-enhancement-manifest.json"), JSON.stringify(artifacts.diagnostics.clientEnhancementManifest, null, 2), "utf8");
+  await writeFile(path.join(outDir, "dev", "middleware-manifest.json"), JSON.stringify(artifacts.diagnostics.middlewareManifest, null, 2), "utf8");
+  await writeFile(path.join(outDir, "dev", "component-manifest.json"), JSON.stringify(artifacts.diagnostics.componentManifest, null, 2), "utf8");
+  await writeFile(path.join(outDir, "dev", "imports.d.ts"), artifacts.importsDts, "utf8");
+  await writeFile(path.join(outDir, "dev", "resux.d.ts"), artifacts.resuxDts, "utf8");
+}
+
+function uniquePackageSourceFiles(entries: PackageSourceFileInput[]): PackageSourceFileInput[] {
+  const map = new Map<string, PackageSourceFileInput>();
+  for (const entry of entries) {
+    const resolved = path.resolve(entry.file);
+    const key = normalizePath(resolved);
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, { file: resolved, mode: entry.mode });
+      continue;
+    }
+    if (existing.mode === entry.mode) {
+      continue;
+    }
+    map.set(key, { file: resolved, mode: "all" });
+  }
+  return [...map.values()].sort((left, right) => normalizePath(left.file).localeCompare(normalizePath(right.file)));
+}
+
+function isPackageSpecifier(specifier: string): boolean {
+  if (!specifier) {
+    return false;
+  }
+  if (
+    specifier.startsWith(".")
+    || specifier.startsWith("/")
+    || specifier.startsWith("http://")
+    || specifier.startsWith("https://")
+    || specifier.startsWith("data:")
+    || specifier.startsWith("file:")
+    || specifier.startsWith("virtual:")
+    || specifier.startsWith("node:")
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function normalizePackageName(specifier: string): string {
+  const clean = specifier.split("?")[0]?.split("#")[0] ?? specifier;
+  const segments = clean.split("/");
+  if (clean.startsWith("@")) {
+    return segments.length >= 2 ? `${segments[0]}/${segments[1]}` : clean;
+  }
+  return segments[0] ?? clean;
+}
+
+function collectPackageImportsFromSource(source: string): Array<{ specifier: string; dynamic: boolean; css: boolean }> {
+  const imports: Array<{ specifier: string; dynamic: boolean; css: boolean }> = [];
+  const staticRegex = /import\s+(?:type\s+)?(?:[^"'()]*?\s+from\s+)?["']([^"']+)["']/g;
+  const dynamicRegex = /import\(\s*["']([^"']+)["']\s*\)/g;
+  const requireRegex = /require\(\s*["']([^"']+)["']\s*\)/g;
+  const packageApiRegex = /(?:useClientPackage|useLazyPackage|defineClientOnlyPackage|defineLazyPackage)(?:\s*<[\s\S]*?>)?\(\s*([A-Za-z_$][A-Za-z0-9_$]*|["'][^"']+["'])\s*(?:,\s*\{([\s\S]*?)\})?\s*\)/g;
+  const packageConstRegex = /(?:^|[;\r\n])\s*const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*["']([^"']+)["']/g;
+  const cssArrayRegex = /css\s*:\s*\[([\s\S]*?)\]/g;
+  const cssStringRegex = /css\s*:\s*["']([^"']+)["']/g;
+  const stringLiteralRegex = /["']([^"']+)["']/g;
+  const packageConstMap = new Map<string, string>();
+
+  for (const match of source.matchAll(packageConstRegex)) {
+    const name = (match[1] ?? "").trim();
+    const value = (match[2] ?? "").trim();
+    if (!name || !value) {
+      continue;
+    }
+    packageConstMap.set(name, value);
+  }
+
+  for (const match of source.matchAll(staticRegex)) {
+    const specifier = match[1] ?? "";
+    imports.push({
+      specifier,
+      dynamic: false,
+      css: /\.css(?:[?#]|$)/i.test(specifier),
+    });
+  }
+  for (const match of source.matchAll(dynamicRegex)) {
+    const specifier = match[1] ?? "";
+    imports.push({
+      specifier,
+      dynamic: true,
+      css: /\.css(?:[?#]|$)/i.test(specifier),
+    });
+  }
+  for (const match of source.matchAll(requireRegex)) {
+    const specifier = match[1] ?? "";
+    imports.push({
+      specifier,
+      dynamic: false,
+      css: /\.css(?:[?#]|$)/i.test(specifier),
+    });
+  }
+  for (const match of source.matchAll(packageApiRegex)) {
+    const token = (match[1] ?? "").trim();
+    const specifier = token.startsWith("\"") || token.startsWith("'")
+      ? token.slice(1, -1).trim()
+      : (packageConstMap.get(token) ?? "");
+    const optionsSource = match[2] ?? "";
+    if (specifier.length > 0) {
+      imports.push({
+        specifier,
+        dynamic: true,
+        css: false,
+      });
+    }
+    for (const cssArray of optionsSource.matchAll(cssArrayRegex)) {
+      const content = cssArray[1] ?? "";
+      for (const cssEntry of content.matchAll(stringLiteralRegex)) {
+        const cssSpecifier = (cssEntry[1] ?? "").trim();
+        if (!cssSpecifier) {
+          continue;
+        }
+        imports.push({
+          specifier: cssSpecifier,
+          dynamic: true,
+          css: true,
+        });
+      }
+    }
+    for (const cssValue of optionsSource.matchAll(cssStringRegex)) {
+      const cssSpecifier = (cssValue[1] ?? "").trim();
+      if (!cssSpecifier) {
+        continue;
+      }
+      imports.push({
+        specifier: cssSpecifier,
+        dynamic: true,
+        css: true,
+      });
+    }
+  }
+
+  return imports;
+}
+
+function readConfiguredPackages(runtimeConfig: Record<string, unknown>): ResuxPackagesConfig {
+  const directPackages = (runtimeConfig as ResuxConfig).packages;
+  if (isPlainObject(directPackages)) {
+    return directPackages as ResuxPackagesConfig;
+  }
+  const nestedRuntimeConfig = isPlainObject((runtimeConfig as ResuxConfig).runtimeConfig)
+    ? (runtimeConfig as ResuxConfig).runtimeConfig as Record<string, unknown>
+    : null;
+  const nestedPublic = nestedRuntimeConfig && isPlainObject(nestedRuntimeConfig.public)
+    ? nestedRuntimeConfig.public as Record<string, unknown>
+    : null;
+  const nestedPackages = nestedPublic?.packages;
+  if (isPlainObject(nestedPackages)) {
+    return nestedPackages as ResuxPackagesConfig;
+  }
+  return {};
+}
+
+function normalizeConfiguredPackageList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return [...new Set(value
+    .map((entry) => String(entry ?? "").trim())
+    .filter((entry) => entry.length > 0))]
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeConfiguredPackageCssMap(config: ResuxPackagesConfig): Record<string, string[]> {
+  const output: Record<string, string[]> = {};
+  if (!config.css || typeof config.css !== "object" || Array.isArray(config.css)) {
+    return output;
+  }
+  for (const [packageName, entries] of Object.entries(config.css)) {
+    const normalizedPackageName = String(packageName || "").trim();
+    if (!normalizedPackageName || !Array.isArray(entries)) {
+      continue;
+    }
+    const normalizedEntries = [...new Set(entries
+      .map((entry) => String(entry || "").trim())
+      .filter((entry) => entry.length > 0))]
+      .sort((left, right) => left.localeCompare(right));
+    if (normalizedEntries.length > 0) {
+      output[normalizedPackageName] = normalizedEntries;
+    }
+  }
+  return output;
+}
+
+function canResolvePackageSpecifier(appRoot: string, specifier: string): boolean {
+  try {
+    require.resolve(specifier, { paths: [appRoot] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function createClientRuntimePackageRegistry(
+  appRoot: string,
+  configuredPackages: ResuxPackagesConfig,
+  packageDiagnostics: PackageManifestEntry[],
+): ClientRuntimePackageRegistry {
+  const importers = new Set<string>();
+  const declaredPackages = new Set<string>();
+  const cssByPackage = normalizeConfiguredPackageCssMap(configuredPackages);
+  const configuredModeMap = configuredPackages.mode && typeof configuredPackages.mode === "object" && !Array.isArray(configuredPackages.mode)
+    ? configuredPackages.mode
+    : {};
+  const configuredLazy = normalizeConfiguredPackageList(configuredPackages.lazy);
+  const configuredClientOnly = normalizeConfiguredPackageList(configuredPackages.clientOnly);
+
+  for (const packageName of configuredLazy) {
+    declaredPackages.add(packageName);
+    importers.add(packageName);
+  }
+  for (const packageName of configuredClientOnly) {
+    declaredPackages.add(packageName);
+    importers.add(packageName);
+  }
+  for (const packageName of Object.keys(configuredModeMap)) {
+    const normalizedPackageName = String(packageName || "").trim();
+    if (!normalizedPackageName) {
+      continue;
+    }
+    declaredPackages.add(normalizedPackageName);
+    const mode = normalizeConfiguredPackageMode(configuredModeMap[normalizedPackageName], "ssr");
+    if (mode !== "serverOnly") {
+      importers.add(normalizedPackageName);
+    }
+  }
+  for (const [packageName, cssEntries] of Object.entries(cssByPackage)) {
+    declaredPackages.add(packageName);
+    importers.add(packageName);
+    for (const entry of cssEntries) {
+      importers.add(entry);
+    }
+  }
+  if (Array.isArray(configuredPackages.css)) {
+    for (const entry of configuredPackages.css) {
+      const normalized = String(entry || "").trim();
+      if (!normalized) {
+        continue;
+      }
+      importers.add(normalized);
+    }
+  }
+
+  for (const packageEntry of packageDiagnostics) {
+    declaredPackages.add(packageEntry.name);
+    const includeImporter = packageEntry.declaredMode !== "serverOnly"
+      && packageEntry.modes.some((mode) => mode !== "server");
+    if (includeImporter) {
+      importers.add(packageEntry.name);
+      for (const specifier of packageEntry.specifiers) {
+        const normalizedSpecifier = String(specifier || "").trim();
+        if (!normalizedSpecifier || !isPackageSpecifier(normalizedSpecifier)) {
+          continue;
+        }
+        importers.add(normalizedSpecifier);
+        declaredPackages.add(normalizedSpecifier);
+      }
+    }
+    for (const cssSpecifier of packageEntry.cssImports) {
+      const normalizedCssSpecifier = String(cssSpecifier || "").trim();
+      if (!normalizedCssSpecifier) {
+        continue;
+      }
+      const cssOwner = normalizePackageName(normalizedCssSpecifier);
+      if (!cssByPackage[cssOwner]) {
+        cssByPackage[cssOwner] = [];
+      }
+      if (!cssByPackage[cssOwner].includes(normalizedCssSpecifier)) {
+        cssByPackage[cssOwner].push(normalizedCssSpecifier);
+      }
+      importers.add(normalizedCssSpecifier);
+    }
+  }
+
+  const resolvedImporters = [...importers]
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .filter((entry) => isPackageSpecifier(entry))
+    .filter((entry) => canResolvePackageSpecifier(appRoot, entry))
+    .sort((left, right) => left.localeCompare(right));
+
+  const normalizedCssByPackage: Record<string, string[]> = {};
+  for (const [packageName, entries] of Object.entries(cssByPackage)) {
+    const normalizedEntries = [...new Set(entries
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0))]
+      .sort((left, right) => left.localeCompare(right));
+    if (normalizedEntries.length > 0) {
+      normalizedCssByPackage[packageName] = normalizedEntries;
+    }
+  }
+
+  return {
+    importers: resolvedImporters,
+    cssByPackage: normalizedCssByPackage,
+    declared: [...declaredPackages].sort((left, right) => left.localeCompare(right)),
+  };
+}
+
+function normalizeConfiguredPackageMode(value: unknown, fallback: ResuxPackageMode = "ssr"): ResuxPackageMode {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  const normalized = value.trim();
+  if (
+    normalized === "ssr"
+    || normalized === "clientOnly"
+    || normalized === "serverOnly"
+    || normalized === "progressive"
+  ) {
+    return normalized;
+  }
+  return fallback;
+}
+
+function resolveConfiguredPackageMode(
+  packageName: string,
+  config: ResuxPackagesConfig,
+): ResuxPackageMode {
+  if (config.mode && typeof config.mode === "object" && !Array.isArray(config.mode)) {
+    const direct = (config.mode as Record<string, unknown>)[packageName];
+    if (direct) {
+      return normalizeConfiguredPackageMode(direct, "ssr");
+    }
+  }
+  const serverOnly = Array.isArray(config.serverOnly) ? config.serverOnly.map(String) : [];
+  if (serverOnly.includes(packageName)) {
+    return "serverOnly";
+  }
+  const clientOnly = Array.isArray(config.clientOnly) ? config.clientOnly.map(String) : [];
+  if (clientOnly.includes(packageName)) {
+    return "clientOnly";
+  }
+  return "ssr";
+}
+
+async function analyzePackageUsage(
+  appRoot: string,
+  sources: PackageSourceFileInput[],
+  runtimeConfig: Record<string, unknown>,
+): Promise<PackageManifestEntry[]> {
+  const configuredPackages = readConfiguredPackages(runtimeConfig);
+  const map = new Map<string, {
+    files: Set<string>;
+    modes: Set<PackageUsageMode>;
+    dynamic: boolean;
+    specifiers: Set<string>;
+    cssImports: Set<string>;
+    declaredMode: ResuxPackageMode;
+    warnings: Set<string>;
+  }>();
+  const ignoredPackages = new Set(["resuxjs", "vue", "h3", "nitropack", "typescript"]);
+
+  for (const entry of sources) {
+    let sourceText = "";
+    try {
+      sourceText = await readFile(entry.file, "utf8");
+    } catch {
+      continue;
+    }
+    const imports = collectPackageImportsFromSource(sourceText);
+    for (const imported of imports) {
+      if (!isPackageSpecifier(imported.specifier)) {
+        continue;
+      }
+      const packageName = normalizePackageName(imported.specifier);
+      if (!packageName || ignoredPackages.has(packageName)) {
+        continue;
+      }
+      const usage = map.get(packageName) ?? {
+        files: new Set<string>(),
+        modes: new Set<PackageUsageMode>(),
+        dynamic: false,
+        specifiers: new Set<string>(),
+        cssImports: new Set<string>(),
+        declaredMode: resolveConfiguredPackageMode(packageName, configuredPackages),
+        warnings: new Set<string>(),
+      };
+      usage.files.add(normalizePath(path.relative(appRoot, entry.file)));
+      usage.modes.add(entry.mode);
+      usage.dynamic = usage.dynamic || imported.dynamic;
+      usage.specifiers.add(imported.specifier);
+      if (imported.css) {
+        usage.cssImports.add(imported.specifier);
+      }
+      if (entry.mode === "server" && (usage.declaredMode === "clientOnly" || usage.declaredMode === "progressive")) {
+        usage.warnings.add(`Package "${packageName}" is marked ${usage.declaredMode} but appears in server files.`);
+      }
+      if (entry.mode !== "server" && usage.declaredMode === "serverOnly") {
+        usage.warnings.add(`Package "${packageName}" is marked serverOnly but appears in client files.`);
+      }
+      if (usage.declaredMode === "progressive" && entry.mode === "all") {
+        usage.warnings.add(`Package "${packageName}" is marked progressive. Prefer loading it inside a client enhancement instead of setup-time imports.`);
+      }
+      if (
+        entry.mode === "server"
+        && usage.declaredMode === "ssr"
+        && /(swiper|gsap|chart\.js|echarts|plyr|animejs|video\.js)/i.test(packageName)
+      ) {
+        usage.warnings.add(
+          `Package "${packageName}" may be browser-only but is imported in server files. Consider packages.mode["${packageName}"] = "clientOnly" or "progressive".`,
+        );
+      }
+      map.set(packageName, usage);
+    }
+  }
+
+  const output: PackageManifestEntry[] = [];
+  for (const [name, usage] of map.entries()) {
+    let missing = false;
+    try {
+      require.resolve(name, { paths: [appRoot] });
+    } catch {
+      missing = true;
+      usage.warnings.add(`Package "${name}" is imported but not installed.`);
+    }
+    output.push({
+      name,
+      specifiers: [...usage.specifiers].sort(),
+      files: [...usage.files].sort(),
+      modes: [...usage.modes].sort(),
+      dynamic: usage.dynamic,
+      cssImports: [...usage.cssImports].sort(),
+      missing,
+      declaredMode: usage.declaredMode,
+      warnings: [...usage.warnings].sort(),
+    });
+  }
+
+  return output.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function dedupeImports(entries: Array<{ from: string; name: string; as?: string }>): Array<{ from: string; name: string; as?: string }> {
+  const map = new Map<string, { from: string; name: string; as?: string }>();
+  for (const entry of entries) {
+    const key = `${entry.from}::${entry.name}::${entry.as ?? ""}`;
+    map.set(key, entry);
+  }
+  return [...map.values()].sort((left, right) => {
+    const leftKey = `${left.from}:${left.name}:${left.as ?? ""}`;
+    const rightKey = `${right.from}:${right.name}:${right.as ?? ""}`;
+    return leftKey.localeCompare(rightKey);
+  });
 }
 
 async function discoverSupportTsFilesInDir(dir: string): Promise<string[]> {
@@ -2436,6 +3764,15 @@ async function optionalFile(file: string): Promise<string | null> {
     return file;
   } catch {
     return null;
+  }
+}
+
+async function existsFile(file: string): Promise<boolean> {
+  try {
+    await stat(file);
+    return true;
+  } catch {
+    return false;
   }
 }
 

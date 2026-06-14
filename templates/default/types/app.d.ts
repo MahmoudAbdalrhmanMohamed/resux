@@ -1,0 +1,3 @@
+import "resuxjs/globals";
+
+export {};

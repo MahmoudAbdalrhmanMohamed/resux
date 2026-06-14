@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildProject, compileVueSource, createRouteManifest, ResuxCompileError } from "resuxjs/compiler";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -34,6 +34,62 @@ describe("route manifest", () => {
     expect(manifest.matchRoute("/docs/guide/intro")?.params).toEqual({ slug: "guide/intro" });
     expect(manifest.matchRoute("/docs")?.params).toEqual({ slug: "" });
   }, 20000);
+
+  it("generates localized routes only when i18n module is enabled", async () => {
+    const root = path.join(os.tmpdir(), `resux-i18n-routes-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Home</main></template>");
+    await writeFile(path.join(root, "pages", "about.vue"), "<template><main>About</main></template>");
+    await writeFile(path.join(root, "resux.config.ts"), `export default defineResuxConfig({
+  modules: ["resuxjs/i18n"],
+  i18n: {
+    defaultLocale: "en",
+    fallbackLocale: "en",
+    strategy: "prefix_except_default",
+    locales: [
+      { code: "en", name: "English", dir: "ltr" },
+      { code: "ar", name: "Arabic", dir: "rtl" }
+    ],
+    messages: {
+      en: { demo: { title: "Home" } },
+      ar: { demo: { title: "Home AR" } }
+    }
+  }
+})`, "utf8");
+
+    await buildProject(root);
+    const manifest = JSON.parse(await readFile(path.join(root, ".resux", "manifest.json"), "utf8")) as {
+      routes: Array<{ path: string }>;
+    };
+    const paths = manifest.routes.map((route) => route.path);
+
+    expect(paths).toEqual(expect.arrayContaining(["/", "/about", "/ar", "/ar/about"]));
+    expect(paths).not.toContain("/en");
+    expect(new Set(paths).size).toBe(paths.length);
+  }, 20000);
+
+  it("keeps incremental dev builds stable without wiping generated directories", async () => {
+    const root = path.join(os.tmpdir(), `resux-dev-incremental-${Date.now()}`);
+    const outDir = path.join(root, ".resux");
+    const indexFile = path.join(root, "pages", "index.vue");
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await writeFile(indexFile, "<template><main>Initial</main></template>");
+
+    await buildProject(root, outDir, { vite: "dev" });
+    const sentinel = path.join(outDir, "vite-client", "sentinel.mjs");
+    await writeFile(sentinel, "export const preserved = true;\n", "utf8");
+
+    await writeFile(indexFile, "<template><main>Updated</main></template>");
+    await buildProject(root, outDir, { vite: "dev", changedPath: indexFile });
+
+    const sentinelSource = await readFile(sentinel, "utf8");
+    expect(sentinelSource).toContain("preserved");
+
+    const manifest = JSON.parse(await readFile(path.join(outDir, "manifest.json"), "utf8")) as {
+      routes: Array<{ path: string }>;
+    };
+    expect(manifest.routes.some((route) => route.path === "/")).toBe(true);
+  }, 25000);
 });
 
 describe("sfc compiler", () => {
@@ -616,6 +672,157 @@ describe("project build manifest", () => {
     await expect(readFile(path.join(root, ".resux", "client", "middleware", `${serverOnlyMiddleware!.id}.mjs`), "utf8")).rejects.toThrow();
   }, 20000);
 
+  it("auto-discovers client enhancement files and injects runtime helper imports", async () => {
+    const root = path.join(os.tmpdir(), `resux-client-enhancements-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await mkdir(path.join(root, "client-enhancements"), { recursive: true });
+    await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Home</main></template>");
+    await writeFile(
+      path.join(root, "client-enhancements", "swiper-carousel.client.ts"),
+      `defineClientEnhancement("swiper-carousel", async (target) => {
+  await useClientPackage("swiper", { css: ["swiper/css"] });
+  target.setAttribute("data-ready", "true");
+});`,
+    );
+
+    const result = await buildProject(root, undefined, { vite: "dev" });
+    const enhancementPlugin = result.plugins.find((entry) => entry.file.endsWith("swiper-carousel.client.ts"));
+    expect(enhancementPlugin).toBeDefined();
+    expect(enhancementPlugin?.mode).toBe("client");
+    const clientModule = await readFile(
+      path.join(root, ".resux", "vite-client", "plugins", `${enhancementPlugin!.id}.mjs`),
+      "utf8",
+    );
+    const enhancementManifest = await readFile(path.join(root, ".resux", "client-enhancements.mjs"), "utf8");
+    const viteEnhancementManifest = await readFile(path.join(root, ".resux", "vite-client", "client-enhancements.mjs"), "utf8");
+    const clientEnhancementManifest = await readFile(path.join(root, ".resux", "client", "client-enhancements.mjs"), "utf8");
+    const runtimeClient = await readFile(path.join(root, ".resux", "vite-client", "runtime-client.mjs"), "utf8");
+
+    expect(clientModule).toMatch(
+      /import\s+\{\s*(?:defineClientEnhancement,\s*useClientPackage|useClientPackage,\s*defineClientEnhancement)\s*\}\s+from\s+"\/__resux\/runtime-client\.mjs";/,
+    );
+    expect(clientModule).toContain('defineClientEnhancement("swiper-carousel"');
+    expect(enhancementManifest).toContain(`import "/__resux/plugins/${enhancementPlugin!.id}.mjs";`);
+    expect(enhancementManifest).toContain('"swiper-carousel"');
+    expect(viteEnhancementManifest).toContain(`import "/__resux/plugins/${enhancementPlugin!.id}.mjs";`);
+    expect(clientEnhancementManifest).toContain(`import "/__resux/plugins/${enhancementPlugin!.id}.mjs";`);
+    expect(runtimeClient).toContain("export {");
+    expect(runtimeClient).toContain("defineClientEnhancement");
+    expect(runtimeClient).toContain("useClientPackage");
+    expect(runtimeClient).toContain('[data-resux-enhancement], [use-client-enhancement]');
+    expect(runtimeClient).toContain('data-resux-trigger');
+  }, 20000);
+
+  it("injects definePackageAdapter from runtime client helpers for enhancement adapters", async () => {
+    const root = path.join(os.tmpdir(), `resux-client-enhancement-adapter-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await mkdir(path.join(root, "client-enhancements"), { recursive: true });
+    await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Home</main></template>");
+    await writeFile(
+      path.join(root, "client-enhancements", "adapter-demo.client.ts"),
+      `definePackageAdapter({
+  name: "adapter-demo",
+  imports: [],
+  enhance(target) {
+    target.setAttribute("data-adapter-ready", "true");
+  }
+});`,
+    );
+
+    const result = await buildProject(root, undefined, { vite: "dev" });
+    const enhancementPlugin = result.plugins.find((entry) => entry.file.endsWith("adapter-demo.client.ts"));
+    expect(enhancementPlugin).toBeDefined();
+    const clientModule = await readFile(
+      path.join(root, ".resux", "vite-client", "plugins", `${enhancementPlugin!.id}.mjs`),
+      "utf8",
+    );
+
+    expect(clientModule).toMatch(
+      /import\s+\{\s*definePackageAdapter\s*\}\s+from\s+"\/__resux\/runtime-client\.mjs";/,
+    );
+    expect(clientModule).toContain('name: "adapter-demo"');
+  }, 20000);
+
+  it("rewrites resuxjs imports in client enhancement files to runtime-client helpers", async () => {
+    const root = path.join(os.tmpdir(), `resux-client-enhancement-rewrite-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await mkdir(path.join(root, "client-enhancements"), { recursive: true });
+    await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Home</main></template>");
+    await writeFile(
+      path.join(root, "client-enhancements", "imported-helper.client.ts"),
+      `import { defineClientEnhancement } from "resuxjs";
+defineClientEnhancement("imported-helper", async (target) => {
+  target.setAttribute("data-imported", "true");
+});`,
+    );
+
+    const result = await buildProject(root, undefined, { vite: "dev" });
+    const enhancementPlugin = result.plugins.find((entry) => entry.file.endsWith("imported-helper.client.ts"));
+    expect(enhancementPlugin).toBeDefined();
+    const clientModule = await readFile(
+      path.join(root, ".resux", "vite-client", "plugins", `${enhancementPlugin!.id}.mjs`),
+      "utf8",
+    );
+
+    expect(clientModule).toContain('from "/__resux/runtime-client.mjs"');
+    expect(clientModule).not.toContain('from "resuxjs"');
+  }, 20000);
+
+  it("builds client enhancement chunks with __resux asset base paths for preview serving", async () => {
+    const root = path.join(os.tmpdir(), `resux-enhancement-preview-base-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await mkdir(path.join(root, "client-enhancements"), { recursive: true });
+    await writeFile(
+      path.join(root, "pages", "index.vue"),
+      `<template><main use-client-enhancement="style-demo" data-trigger="immediate">Preview Base</main></template>`,
+      "utf8",
+    );
+    await writeFile(
+      path.join(root, "client-enhancements", "style-demo.client.ts"),
+      `defineClientEnhancement("style-demo", async (target) => {
+  const vueModule = await import("vue");
+  target.setAttribute("data-style-demo", typeof vueModule.reactive === "function" ? "ready" : "missing");
+});`,
+      "utf8",
+    );
+
+    const result = await buildProject(root, undefined, { vite: "build" });
+    const enhancementPlugin = result.plugins.find((entry) => entry.file.endsWith("style-demo.client.ts"));
+    expect(enhancementPlugin).toBeDefined();
+
+    const pluginModule = await readFile(
+      path.join(root, ".resux", "client", "plugins", `${enhancementPlugin!.id}.mjs`),
+      "utf8",
+    );
+    expect(pluginModule).toContain("../chunks/");
+
+    const chunkFiles = await readdir(path.join(root, ".resux", "client", "chunks"));
+    const preloadHelperFile = chunkFiles.find((file) => file.startsWith("preload-helper-"));
+    expect(preloadHelperFile).toBeDefined();
+    const preloadHelperSource = await readFile(
+      path.join(root, ".resux", "client", "chunks", preloadHelperFile!),
+      "utf8",
+    );
+    expect(preloadHelperSource).toContain("/__resux/");
+  }, 20000);
+
+  it("generates an empty client enhancement manifest when no enhancement files are present", async () => {
+    const root = path.join(os.tmpdir(), `resux-empty-enhancements-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Home</main></template>");
+
+    await buildProject(root, undefined, { vite: "dev" });
+
+    const enhancementManifest = await readFile(path.join(root, ".resux", "client-enhancements.mjs"), "utf8");
+    const viteEnhancementManifest = await readFile(path.join(root, ".resux", "vite-client", "client-enhancements.mjs"), "utf8");
+    const clientEnhancementManifest = await readFile(path.join(root, ".resux", "client", "client-enhancements.mjs"), "utf8");
+
+    expect(enhancementManifest).toContain("export const clientEnhancements = [];");
+    expect(viteEnhancementManifest).toContain("export const clientEnhancements = [];");
+    expect(clientEnhancementManifest).toContain("export const clientEnhancements = [];");
+    expect(enhancementManifest).not.toContain('import "/__resux/plugins/');
+  }, 20000);
+
   it("keeps Resux plugins separate from Nitro plugin auto-discovery folders", async () => {
     const root = path.join(os.tmpdir(), `resux-nitro-separation-${Date.now()}`);
     await mkdir(path.join(root, "pages"), { recursive: true });
@@ -732,6 +939,84 @@ describe("project build manifest", () => {
     await expect(readFile(path.join(root, ".resux", "client", "runtime-client.mjs"), "utf8")).rejects.toThrow();
     await expect(readFile(path.join(root, ".resux", "server-bundle", "index.mjs"), "utf8")).rejects.toThrow();
   });
+
+  it("generates a static client package importer registry without raw import(packageName)", async () => {
+    const root = path.join(process.cwd(), `.resux-test-package-registry-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await writeFile(
+      path.join(root, "pages", "index.vue"),
+      `<script setup>
+const loadVue = defineClientOnlyPackage("vue", { css: ["vue"] })
+</script>
+<template><main>Package Registry</main></template>`,
+    );
+    await writeFile(
+      path.join(root, "resux.config.ts"),
+      `export default defineResuxConfig({
+  packages: {
+    lazy: ["vue"],
+    clientOnly: ["vue"],
+    css: {
+      vue: ["vue"]
+    }
+  }
+})`,
+    );
+
+    await buildProject(root, undefined, { vite: "dev" });
+    const runtimeClient = await readFile(path.join(root, ".resux", "vite-client", "runtime-client.mjs"), "utf8");
+
+    expect(runtimeClient).toContain("const resuxPackageImporters = {");
+    expect(runtimeClient).toContain('"vue": () => import("vue")');
+    expect(runtimeClient).toContain('const resuxPackageCssImports = {"vue":["vue"]}');
+    expect(runtimeClient).not.toContain("await import(packageName)");
+    expect(runtimeClient).not.toContain("import(/* @vite-ignore */ packageName)");
+  }, 20000);
+
+  it("detects package API calls that use const string identifiers", async () => {
+    const root = path.join(process.cwd(), `.resux-test-package-registry-const-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await writeFile(
+      path.join(root, "pages", "index.vue"),
+      `<script setup>
+const DEMO_PACKAGE = "vite"
+const loadPackage = useClientPackage<Record<string, unknown>>(DEMO_PACKAGE, {
+  css: ["vite"],
+})
+void loadPackage
+</script>
+<template><main>Package Registry Const</main></template>`,
+    );
+
+    await buildProject(root, undefined, { vite: "dev" });
+    const runtimeClient = await readFile(path.join(root, ".resux", "vite-client", "runtime-client.mjs"), "utf8");
+
+    expect(runtimeClient).toContain('"vite": () => import("vite")');
+    expect(runtimeClient).toContain('const resuxPackageCssImports = {"vite":["vite"]}');
+    expect(runtimeClient).not.toContain("await import(packageName)");
+    expect(runtimeClient).not.toContain("import(/* @vite-ignore */ packageName)");
+  }, 20000);
+
+  it("registers package subpath specifiers used by package APIs", async () => {
+    const root = path.join(process.cwd(), `.resux-test-package-subpaths-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await writeFile(
+      path.join(root, "pages", "index.vue"),
+      `<script setup>
+const COMPILER_DOM_PACKAGE = "@vue/compiler-dom/dist/compiler-dom.cjs.js"
+const loadCompilerDom = useClientPackage<Record<string, unknown>>(COMPILER_DOM_PACKAGE)
+void loadCompilerDom
+</script>
+<template><main>Package Subpaths</main></template>`,
+    );
+
+    await buildProject(root, undefined, { vite: "dev" });
+    const runtimeClient = await readFile(path.join(root, ".resux", "vite-client", "runtime-client.mjs"), "utf8");
+
+    expect(runtimeClient).toContain('"@vue/compiler-dom/dist/compiler-dom.cjs.js": () => import("@vue/compiler-dom/dist/compiler-dom.cjs.js")');
+    expect(runtimeClient).not.toContain("await import(packageName)");
+    expect(runtimeClient).not.toContain("import(/* @vite-ignore */ packageName)");
+  }, 20000);
 
   it("discovers and bundles Vue islands", async () => {
     const root = path.join(os.tmpdir(), `resux-vue-islands-${Date.now()}`);

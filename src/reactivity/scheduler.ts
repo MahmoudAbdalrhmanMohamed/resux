@@ -3,6 +3,7 @@ const resolvedPromise = Promise.resolve();
 type Job = () => void;
 
 const queue = new Set<Job>();
+const postFlushQueue = new Set<Job>();
 let flushing = false;
 let flushPromise: Promise<void> | null = null;
 
@@ -17,7 +18,8 @@ export function queueJob(job: Job): void {
 }
 
 export function queuePostFlushCb(job: Job): void {
-  queueJob(job);
+  postFlushQueue.add(job);
+  queueFlush();
 }
 
 function queueFlush(): void {
@@ -30,11 +32,27 @@ function queueFlush(): void {
 
 function flushJobs(): void {
   try {
-    for (const job of queue) {
-      job();
+    let hasJobs = true;
+    while (hasJobs) {
+      hasJobs = false;
+      if (queue.size > 0) {
+        const currentQueue = Array.from(queue);
+        queue.clear();
+        for (let i = 0; i < currentQueue.length; i++) {
+          currentQueue[i]();
+        }
+        hasJobs = true;
+      }
+      if (postFlushQueue.size > 0) {
+        const currentPostQueue = Array.from(postFlushQueue);
+        postFlushQueue.clear();
+        for (let i = 0; i < currentPostQueue.length; i++) {
+          currentPostQueue[i]();
+        }
+        hasJobs = true;
+      }
     }
   } finally {
-    queue.clear();
     flushing = false;
     flushPromise = null;
   }

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Window } from "happy-dom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   defineComponent,
   getClientRuntimeSource,
@@ -13,6 +13,12 @@ import {
   setHeader,
   type ComponentDefinition
 } from "resuxjs/runtime";
+
+let runtimeImportCounter = 0;
+function nextRuntimeImportQuery() {
+  runtimeImportCounter += 1;
+  return `${Date.now()}-${runtimeImportCounter}`;
+}
 
 describe("runtime SSR", () => {
   it("renders object interpolation as JSON text instead of [object Object]", async () => {
@@ -554,6 +560,7 @@ describe("runtime SSR", () => {
     });
 
     expect(result.html).toContain('loading="eager"');
+    expect(result.html).toContain('data-resux-img="loading"');
     expect(result.html).toContain('fetchpriority="high"');
     expect(result.html).toContain('width="1920"');
     expect(result.html).toContain('height="1080"');
@@ -624,6 +631,7 @@ describe("runtime SSR", () => {
     });
 
     expect(result.html).toContain('data-rx-lazy-image="true"');
+    expect(result.html).toContain('data-resux-img="idle"');
     expect(result.html).toContain('data-rx-lazy-src="/__resux/image?src=%2Fimages%2Flazy.jpg&amp;w=320&amp;q=75"');
     expect(result.html).toContain('data-rx-lazy-root-margin="0px 0px"');
     expect(result.html).toContain('data-rx-lazy-threshold="0"');
@@ -679,8 +687,348 @@ describe("runtime SSR", () => {
       route: { path: "/media", params: {}, query: {} },
     });
 
-    expect(result.html).toContain('style="aspect-ratio: 1280 / 720"');
+    expect(result.html).toContain("aspect-ratio: 1280 / 720");
     expect(result.html).toContain('style="aspect-ratio: 1280 / 720; display: block; width: 100%; max-width: 100%; height: auto"');
+    expect(result.html).toContain('data-resux-video="idle"');
+  });
+
+  it("renders ResuxVideo hero preload links and skip-control shell attributes", async () => {
+    const page = defineComponent({
+      id: "m-video-hero-preload",
+      name: "VideoHeroPreloadPage",
+      file: "VideoHeroPreloadPage.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [
+        {
+          type: "element",
+          tag: "ResuxVideo",
+          attrs: [
+            { kind: "static", name: "src", value: "/media-test/videos/sample-video.mp4" },
+            { kind: "static", name: "controls", value: "true" },
+            { kind: "static", name: "hero", value: "true" },
+            { kind: "static", name: "priority", value: "true" },
+            { kind: "static", name: "preload-link", value: "true" },
+            { kind: "static", name: "skip-controls", value: "true" },
+            { kind: "static", name: "skip-seconds", value: "10" },
+          ],
+          events: [],
+          children: [],
+        },
+      ],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/media", params: {}, query: {} },
+    });
+
+    expect(result.html).toContain('data-rx-video-hero="true"');
+    expect(result.html).toContain('fetchpriority="high"');
+    expect(result.html).toContain('data-rx-video-shell="true"');
+    expect(result.html).toContain('data-rx-video-skip-controls="true"');
+    expect(result.html).toContain('data-rx-video-skip-backward="10"');
+    expect(result.html).toContain('data-rx-video-skip-forward="10"');
+    expect(result.html).toContain('data-rx-video-skip-overlay-zone');
+    expect(result.html).toContain('data-rx-video-click-to-play="true"');
+    expect(result.html).toContain('data-rx-video-double-click-fullscreen="true"');
+    expect(result.html).toContain('data-rx-video-side-click-skip="true"');
+    expect(result.html).toContain('data-resux-video-zone="left"');
+    expect(result.html).toContain('data-resux-video-zone="center"');
+    expect(result.html).toContain('data-resux-video-zone="right"');
+    expect(result.html).toContain('data-resux-video="loading"');
+    expect(result.head.link).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        rel: "preload",
+        as: "video",
+        href: "/media-test/videos/sample-video.mp4",
+        type: "video/mp4",
+        fetchpriority: "high",
+      })
+    ]));
+    const videoPreloads = (result.head.link ?? []).filter(
+      (entry) => entry.rel === "preload" && entry.as === "video",
+    );
+    expect(videoPreloads).toHaveLength(1);
+  });
+
+  it("does not emit a video preload link for lazy videos by default", async () => {
+    const page = defineComponent({
+      id: "m-video-lazy-no-preload",
+      name: "VideoLazyNoPreloadPage",
+      file: "VideoLazyNoPreloadPage.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [
+        {
+          type: "element",
+          tag: "ResuxVideo",
+          attrs: [
+            { kind: "static", name: "src", value: "/media-test/videos/sample-video.mp4" },
+            { kind: "static", name: "lazy", value: "true" },
+            { kind: "static", name: "controls", value: "true" },
+          ],
+          events: [],
+          children: [],
+        },
+      ],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/media", params: {}, query: {} },
+    });
+
+    const videoPreloads = (result.head.link ?? []).filter(
+      (entry) => entry.rel === "preload" && entry.as === "video",
+    );
+    expect(videoPreloads).toHaveLength(0);
+  });
+
+  it("normalizes preload as values in SSR head output", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const page = defineComponent({
+        id: "m-preload-normalize",
+        name: "PreloadNormalizePage",
+        file: "PreloadNormalizePage.vue",
+        handlers: [],
+        async script() {
+          return {};
+        },
+        template: [{ type: "element", tag: "main", attrs: [], events: [], children: [{ type: "text", value: "Head" }] }],
+      });
+
+      const result = await renderApp({
+        page,
+        route: { path: "/head", params: {}, query: {} },
+        appHead: {
+          link: [
+            { rel: "preload", as: "priority", href: "/images/hero.webp" },
+            { rel: "preload", as: "fetchpriority", href: "/styles/app.css" },
+            { rel: "preload", as: "video/mp4", href: "/media-test/videos/sample-video.mp4" },
+            { rel: "preload", as: "mp4", href: "/media-test/videos/sample-video-alt.mp4" },
+            { rel: "preload", as: "webp", href: "/images/poster.webp" },
+            { rel: "modulepreload", as: "module", href: "/__resux/client/chunk.mjs" },
+            { rel: "preload", as: "resux-image", href: "/unknown-asset" },
+          ],
+        },
+      });
+      const html = renderDocument(result);
+
+      expect(html).toContain('rel="preload" as="image" href="/images/hero.webp"');
+      expect(html).toContain('rel="preload" as="style" href="/styles/app.css"');
+      expect(html).toContain('rel="preload" as="video" href="/media-test/videos/sample-video.mp4"');
+      expect(html).toContain('rel="preload" as="video" href="/media-test/videos/sample-video-alt.mp4"');
+      expect(html).toContain('rel="preload" as="image" href="/images/poster.webp"');
+      expect(html).toContain('rel="modulepreload" href="/__resux/client/chunk.mjs"');
+      expect(html).not.toContain('as="module"');
+      expect(html).not.toContain('as="priority"');
+      expect(html).not.toContain('as="mp4"');
+      expect(html).not.toContain('as="video/mp4"');
+      expect(html).not.toContain('as="webp"');
+      expect(html).not.toContain('as="fetchpriority"');
+      expect(html).not.toContain('as="resux-image"');
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[resux] Skipping invalid preload link for "/unknown-asset". Unsupported as="resux-image".',
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("uses custom controls by default and supports controls load/icon configuration", async () => {
+    const page = defineComponent({
+      id: "m-video-controls-mode",
+      name: "VideoControlsModePage",
+      file: "VideoControlsModePage.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [
+        {
+          type: "element",
+          tag: "ResuxVideo",
+          attrs: [
+            { kind: "static", name: "src", value: "/media-test/videos/sample-video.mp4" },
+            { kind: "static", name: "controls", value: "true" },
+            { kind: "static", name: "controls-load", value: "lazy" },
+            { kind: "static", name: "icons-load", value: "lazy" },
+            { kind: "static", name: "theme", value: "light" },
+            { kind: "static", name: "accent-color", value: "#22c55e" },
+          ],
+          events: [],
+          children: [],
+        },
+      ],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/video", params: {}, query: {} },
+      runtimeConfig: {
+        public: {
+          video: {
+            controlsMode: "custom",
+            controlsLoad: "lazy",
+            iconsLoad: "lazy",
+          },
+        },
+      },
+    });
+
+    expect(result.html).toContain('data-rx-video-shell="true"');
+    expect(result.html).toContain('data-rx-video-custom-controls="true"');
+    expect(result.html).toContain('data-rx-video-controls-load="lazy"');
+    expect(result.html).toContain('data-rx-video-icons-load="lazy"');
+    expect(result.html).toContain('data-rx-video-theme="light"');
+    expect(result.html).toContain('data-rx-video-controls-activated="false"');
+    expect(result.html).toContain('data-rx-video-icon-play-fallback="Play"');
+    expect(result.html).toContain('data-rx-video-show-progress="true"');
+  });
+
+  it("builds generated video transform URLs when format and quality variants are requested", async () => {
+    const page = defineComponent({
+      id: "m-video-transform-url",
+      name: "VideoTransformUrlPage",
+      file: "VideoTransformUrlPage.vue",
+      handlers: [],
+      async script() {
+        return {
+          transformFormats: ["webm", "mp4"],
+          transformQualities: [480, 720],
+        };
+      },
+      template: [
+        {
+          type: "element",
+          tag: "ResuxVideo",
+          attrs: [
+            { kind: "static", name: "src", value: "/media-test/videos/sample-video.mp4" },
+            { kind: "dynamic", name: "formats", value: "transformFormats", bindingId: "b0" },
+            { kind: "dynamic", name: "qualities", value: "transformQualities", bindingId: "b1" },
+            { kind: "static", name: "controls", value: "true" },
+            { kind: "static", name: "quality-control", value: "true" },
+          ],
+          events: [],
+          children: [],
+        },
+      ],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/video", params: {}, query: {} },
+      runtimeConfig: {
+        public: {
+          video: {
+            transforms: {
+              enabled: true,
+              cache: true,
+            },
+          },
+        },
+      },
+    });
+
+    expect(result.html).toContain("/_resux/generated/videos/");
+    expect(result.html).toContain("format=webm");
+    expect(result.html).toContain("quality=480");
+    expect(result.html).toContain('cache=1d');
+    expect(result.html).toContain('<option value="480p" selected>480p</option>');
+    expect(result.html).toContain('<option value="720p">720p</option>');
+    expect(result.html).toContain('data-rx-video-quality-control="true"');
+  });
+
+  it("keeps original video source when format is explicitly disabled", async () => {
+    const page = defineComponent({
+      id: "m-video-transform-disabled",
+      name: "VideoTransformDisabledPage",
+      file: "VideoTransformDisabledPage.vue",
+      handlers: [],
+      async script() {
+        return {
+          disableFormat: null,
+        };
+      },
+      template: [
+        {
+          type: "element",
+          tag: "ResuxVideo",
+          attrs: [
+            { kind: "static", name: "src", value: "/media-test/videos/sample-video.mp4" },
+            { kind: "dynamic", name: "format", value: "disableFormat", bindingId: "b0" },
+            { kind: "static", name: "controls", value: "true" },
+          ],
+          events: [],
+          children: [],
+        },
+      ],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/video", params: {}, query: {} },
+      runtimeConfig: {
+        public: {
+          video: {
+            transforms: {
+              enabled: true,
+              cache: true,
+            },
+          },
+        },
+      },
+    });
+
+    expect(result.html).toContain('src="/media-test/videos/sample-video.mp4"');
+    expect(result.html).not.toContain("/_resux/generated/videos/");
+    expect(result.html).not.toContain("/__resux/video?");
+  });
+
+  it("derives quality selector options from source quality labels", async () => {
+    const page = defineComponent({
+      id: "m-video-quality-from-sources",
+      name: "VideoQualityFromSourcesPage",
+      file: "VideoQualityFromSourcesPage.vue",
+      handlers: [],
+      async script() {
+        return {
+          sourceVariants: [
+            { src: "/media-test/videos/sample-480.mp4", type: "video/mp4", quality: "480p" },
+            { src: "/media-test/videos/sample-720.mp4", type: "video/mp4", quality: "720p" },
+          ],
+        };
+      },
+      template: [
+        {
+          type: "element",
+          tag: "ResuxVideo",
+          attrs: [
+            { kind: "dynamic", name: "sources", value: "sourceVariants", bindingId: "b0" },
+            { kind: "static", name: "controls", value: "true" },
+            { kind: "static", name: "quality-control", value: "true" },
+          ],
+          events: [],
+          children: [],
+        },
+      ],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/video", params: {}, query: {} },
+    });
+
+    expect(result.html).toContain('data-rx-video-quality-control="true"');
+    expect(result.html).toContain('<option value="480p" selected>480p</option>');
+    expect(result.html).toContain('<option value="720p">720p</option>');
+    expect(result.html).toContain('data-rx-video-default-quality="480p"');
   });
 
   it("normalizes dynamic class and style values", async () => {
@@ -965,6 +1313,44 @@ describe("runtime SSR", () => {
     expect(result.html).toContain('<main class="page" data-v-rx-s-m0="">Styled</main>');
     expect(documentHtml).toContain('<style data-rx-head="true" data-rx-style="m0-0">.page[data-v-rx-s-m0]{color:red}</style>');
   });
+
+  it("throws a friendly SSR error for client-only package loading", async () => {
+    const page = defineComponent({
+      id: "m-pkg-client-only",
+      name: "ClientOnlyPackagePage",
+      file: "pages/client-only-package.vue",
+      handlers: [],
+      async script(ctx) {
+        await ctx.useLazyPackage("swiper", { mode: "clientOnly" });
+        return {};
+      },
+      template: [{ type: "element", tag: "main", attrs: [], events: [], children: [{ type: "text", value: "Package" }] }]
+    });
+
+    await expect(renderApp({
+      page,
+      route: { path: "/pkg", params: {}, query: {} }
+    })).rejects.toThrow(/browser-only and was imported during SSR/i);
+  });
+
+  it("throws a friendly missing package error", async () => {
+    const page = defineComponent({
+      id: "m-pkg-missing",
+      name: "MissingPackagePage",
+      file: "pages/missing-package.vue",
+      handlers: [],
+      async script(ctx) {
+        await ctx.useLazyPackage("resux-missing-package-name");
+        return {};
+      },
+      template: [{ type: "element", tag: "main", attrs: [], events: [], children: [{ type: "text", value: "Missing" }] }]
+    });
+
+    await expect(renderApp({
+      page,
+      route: { path: "/pkg-missing", params: {}, query: {} }
+    })).rejects.toThrow(/is not installed\. Run "npm install resux-missing-package-name"/i);
+  });
 });
 
 describe("server event helpers", () => {
@@ -1057,11 +1443,845 @@ export default createClientComponent({ id: "m0", name: "ApiUrl", file: "ApiUrl.v
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     window.document.querySelector("button")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await waitForText(window, "/api/test");
 
     expect(window.document.querySelector("[data-rx-text='s0:b0']")?.textContent).toBe("/api/test");
+  });
+
+  it("activates visible client enhancements immediately when the target is already visible", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-enhancement-visible-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const pluginFile = path.join(tempDir, "enhancement.mjs");
+    const manifestFile = path.join(tempDir, "client-enhancements.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const runtimeImportUrl = `${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`;
+    await writeFile(
+      pluginFile,
+      `import { defineClientEnhancement } from ${JSON.stringify(runtimeImportUrl)};
+defineClientEnhancement("swiper-carousel", async (target) => {
+  target.setAttribute("data-enhanced", "true");
+  return () => {
+    target.setAttribute("data-cleaned", "true");
+  };
+});
+`,
+      "utf8",
+    );
+    await writeFile(
+      manifestFile,
+      `import ${JSON.stringify(pathToFileURL(pluginFile).href)};
+export const clientEnhancements = ["swiper-carousel"];
+`,
+      "utf8",
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <section id="slider" data-resux-enhancement="swiper-carousel" data-resux-trigger="visible"></section>
+      </div>
+    `;
+    const target = window.document.getElementById("slider") as HTMLElement;
+    target.getBoundingClientRect = () => ({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 500,
+      bottom: 200,
+      width: 500,
+      height: 200,
+      toJSON: () => "",
+    }) as unknown as DOMRect;
+
+    let observedCount = 0;
+    class MockIntersectionObserver {
+      constructor() {
+        observedCount++;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+
+    const lifecycleEvents: string[] = [];
+    for (const eventName of ["found", "triggered", "loading", "ready", "cleanup-ready"]) {
+      window.addEventListener(`resux:enhancement:${eventName}`, () => {
+        lifecycleEvents.push(eventName);
+      });
+    }
+
+    (window as unknown as { __RESUX_CLIENT_ENHANCEMENTS_SRC__?: string }).__RESUX_CLIENT_ENHANCEMENTS_SRC__ = pathToFileURL(manifestFile).href;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      IntersectionObserver: MockIntersectionObserver,
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(runtimeImportUrl);
+    await waitForCondition(() => target.getAttribute("data-enhanced") === "true");
+
+    expect(target.getAttribute("data-enhanced")).toBe("true");
+    expect(observedCount).toBe(0);
+    expect(target.getAttribute("data-resux-enhancement-status")).toBe("active");
+    expect(lifecycleEvents).toEqual(expect.arrayContaining(["found", "triggered", "loading", "ready", "cleanup-ready"]));
+  });
+
+  it("supports enhancement alias attributes and executes cleanup disposers", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-enhancement-alias-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const pluginFile = path.join(tempDir, "enhancement.mjs");
+    const manifestFile = path.join(tempDir, "client-enhancements.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const runtimeImportUrl = `${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`;
+    await writeFile(
+      pluginFile,
+      `import { defineClientEnhancement } from ${JSON.stringify(runtimeImportUrl)};
+defineClientEnhancement("alias-demo", async (target) => {
+  target.setAttribute("data-enhanced", "true");
+  return () => {
+    target.setAttribute("data-cleaned", "true");
+  };
+});
+`,
+      "utf8",
+    );
+    await writeFile(
+      manifestFile,
+      `import ${JSON.stringify(pathToFileURL(pluginFile).href)};
+export const clientEnhancements = ["alias-demo"];
+`,
+      "utf8",
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <section id="alias-target" use-client-enhancement="alias-demo" data-trigger="visible"></section>
+      </div>
+    `;
+    const target = window.document.getElementById("alias-target") as HTMLElement;
+    target.getBoundingClientRect = () => ({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 400,
+      bottom: 160,
+      width: 400,
+      height: 160,
+      toJSON: () => "",
+    }) as unknown as DOMRect;
+
+    (window as unknown as { __RESUX_CLIENT_ENHANCEMENTS_SRC__?: string }).__RESUX_CLIENT_ENHANCEMENTS_SRC__ = pathToFileURL(manifestFile).href;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    const runtimeModule = await import(runtimeImportUrl);
+    await waitForCondition(() => target.getAttribute("data-enhanced") === "true");
+    expect(target.getAttribute("data-enhanced")).toBe("true");
+    expect(target.getAttribute("data-rx-enhancement")).toBe("alias-demo");
+
+    await runtimeModule.disposeClientEnhancements();
+    expect(target.getAttribute("data-cleaned")).toBe("true");
+  });
+
+  it("activates visible enhancements after IntersectionObserver reports intersection", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-enhancement-observed-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const pluginFile = path.join(tempDir, "enhancement.mjs");
+    const manifestFile = path.join(tempDir, "client-enhancements.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const runtimeImportUrl = `${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`;
+    await writeFile(
+      pluginFile,
+      `import { defineClientEnhancement } from ${JSON.stringify(runtimeImportUrl)};
+defineClientEnhancement("observed-demo", async (target) => {
+  target.setAttribute("data-enhanced", "true");
+});
+`,
+      "utf8",
+    );
+    await writeFile(
+      manifestFile,
+      `import ${JSON.stringify(pathToFileURL(pluginFile).href)};
+export const clientEnhancements = ["observed-demo"];
+`,
+      "utf8",
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <section id="observed-target" data-resux-enhancement="observed-demo" data-resux-trigger="visible"></section>
+      </div>
+    `;
+    const target = window.document.getElementById("observed-target") as HTMLElement;
+    target.getBoundingClientRect = () => ({
+      x: 0,
+      y: 1400,
+      top: 1400,
+      left: 0,
+      right: 300,
+      bottom: 1500,
+      width: 300,
+      height: 100,
+      toJSON: () => "",
+    }) as unknown as DOMRect;
+
+    let observerCallback: ((entries: Array<{ target: Element; isIntersecting: boolean; intersectionRatio: number }>) => void) | null = null;
+    class MockIntersectionObserver {
+      constructor(callback: (entries: Array<{ target: Element; isIntersecting: boolean; intersectionRatio: number }>) => void) {
+        observerCallback = callback;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+
+    (window as unknown as { __RESUX_CLIENT_ENHANCEMENTS_SRC__?: string }).__RESUX_CLIENT_ENHANCEMENTS_SRC__ = pathToFileURL(manifestFile).href;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      IntersectionObserver: MockIntersectionObserver,
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(runtimeImportUrl);
+    await waitForCondition(() => typeof observerCallback === "function");
+    expect(target.getAttribute("data-enhanced")).toBeNull();
+    expect(observerCallback).toBeTypeOf("function");
+
+    observerCallback?.([{ target, isIntersecting: true, intersectionRatio: 1 }]);
+    await waitForCondition(() => target.getAttribute("data-enhanced") === "true");
+
+    expect(target.getAttribute("data-enhanced")).toBe("true");
+    expect(target.getAttribute("data-resux-enhancement-status")).toBe("active");
+  });
+
+  it("activates visible enhancements when visibility polling detects an already-visible element", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-enhancement-visible-poll-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const pluginFile = path.join(tempDir, "enhancement.mjs");
+    const manifestFile = path.join(tempDir, "client-enhancements.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const runtimeImportUrl = `${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`;
+    await writeFile(
+      pluginFile,
+      `import { defineClientEnhancement } from ${JSON.stringify(runtimeImportUrl)};
+defineClientEnhancement("poll-visible-demo", async (target) => {
+  target.setAttribute("data-enhanced", "true");
+});
+`,
+      "utf8",
+    );
+    await writeFile(
+      manifestFile,
+      `import ${JSON.stringify(pathToFileURL(pluginFile).href)};
+export const clientEnhancements = ["poll-visible-demo"];
+`,
+      "utf8",
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <section id="poll-target" data-resux-enhancement="poll-visible-demo" data-resux-trigger="visible"></section>
+      </div>
+    `;
+    const target = window.document.getElementById("poll-target") as HTMLElement;
+
+    let isVisible = false;
+    target.getBoundingClientRect = () => ({
+      x: 0,
+      y: isVisible ? 0 : 1600,
+      top: isVisible ? 0 : 1600,
+      left: 0,
+      right: 320,
+      bottom: isVisible ? 120 : 1720,
+      width: 320,
+      height: 120,
+      toJSON: () => "",
+    }) as unknown as DOMRect;
+
+    class MockIntersectionObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+
+    (window as unknown as { __RESUX_CLIENT_ENHANCEMENTS_SRC__?: string }).__RESUX_CLIENT_ENHANCEMENTS_SRC__ = pathToFileURL(manifestFile).href;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      IntersectionObserver: MockIntersectionObserver,
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(runtimeImportUrl);
+    setTimeout(() => {
+      isVisible = true;
+    }, 300);
+
+    await waitForCondition(() => target.getAttribute("data-enhanced") === "true");
+    expect(target.getAttribute("data-enhanced")).toBe("true");
+    expect(target.getAttribute("data-resux-enhancement-status")).toBe("active");
+  });
+
+  it("supports immediate client enhancement trigger", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-enhancement-immediate-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const pluginFile = path.join(tempDir, "enhancement.mjs");
+    const manifestFile = path.join(tempDir, "client-enhancements.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const runtimeImportUrl = `${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`;
+    await writeFile(
+      pluginFile,
+      `import { defineClientEnhancement } from ${JSON.stringify(runtimeImportUrl)};
+defineClientEnhancement("immediate-demo", async (target) => {
+  target.setAttribute("data-enhanced", "true");
+});
+`,
+      "utf8",
+    );
+    await writeFile(
+      manifestFile,
+      `import ${JSON.stringify(pathToFileURL(pluginFile).href)};
+export const clientEnhancements = ["immediate-demo"];
+`,
+      "utf8",
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <section id="immediate-target" data-resux-enhancement="immediate-demo" data-resux-trigger="immediate"></section>
+      </div>
+    `;
+    const target = window.document.getElementById("immediate-target") as HTMLElement;
+    target.getBoundingClientRect = () => ({
+      x: 0,
+      y: 2500,
+      top: 2500,
+      left: 0,
+      right: 300,
+      bottom: 2600,
+      width: 300,
+      height: 100,
+      toJSON: () => "",
+    }) as unknown as DOMRect;
+
+    (window as unknown as { __RESUX_CLIENT_ENHANCEMENTS_SRC__?: string }).__RESUX_CLIENT_ENHANCEMENTS_SRC__ = pathToFileURL(manifestFile).href;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(runtimeImportUrl);
+    await waitForCondition(() => target.getAttribute("data-enhanced") === "true");
+    expect(target.getAttribute("data-enhanced")).toBe("true");
+    expect(target.getAttribute("data-resux-enhancement-status")).toBe("active");
+  });
+
+  it("supports page-load client enhancement trigger after window load", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-enhancement-page-load-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const pluginFile = path.join(tempDir, "enhancement.mjs");
+    const manifestFile = path.join(tempDir, "client-enhancements.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const runtimeImportUrl = `${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`;
+    await writeFile(
+      pluginFile,
+      `import { defineClientEnhancement } from ${JSON.stringify(runtimeImportUrl)};
+defineClientEnhancement("page-load-demo", async (target) => {
+  target.setAttribute("data-enhanced", "true");
+});
+`,
+      "utf8",
+    );
+    await writeFile(
+      manifestFile,
+      `import ${JSON.stringify(pathToFileURL(pluginFile).href)};
+export const clientEnhancements = ["page-load-demo"];
+`,
+      "utf8",
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <section id="page-load-target" data-resux-enhancement="page-load-demo" data-resux-trigger="page-load"></section>
+      </div>
+    `;
+    const target = window.document.getElementById("page-load-target") as HTMLElement;
+
+    Object.defineProperty(window.document, "readyState", {
+      configurable: true,
+      value: "interactive",
+    });
+
+    (window as unknown as { __RESUX_CLIENT_ENHANCEMENTS_SRC__?: string }).__RESUX_CLIENT_ENHANCEMENTS_SRC__ = pathToFileURL(manifestFile).href;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {},
+      },
+      __RESUX_INSTALLED__: false,
+    });
+
+    await import(runtimeImportUrl);
+    await waitForCondition(() => target.getAttribute("data-resux-enhancement-status") === "found");
+    expect(target.getAttribute("data-enhanced")).toBeNull();
+
+    window.dispatchEvent(new window.Event("load"));
+    await waitForCondition(() => target.getAttribute("data-enhanced") === "true");
+
+    expect(target.getAttribute("data-enhanced")).toBe("true");
+    expect(target.getAttribute("data-resux-enhancement-status")).toBe("active");
+  });
+
+  it("passes parsed data-resux-options to client enhancements", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-enhancement-options-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const pluginFile = path.join(tempDir, "enhancement.mjs");
+    const manifestFile = path.join(tempDir, "client-enhancements.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const runtimeImportUrl = `${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`;
+    await writeFile(
+      pluginFile,
+      `import { defineClientEnhancement } from ${JSON.stringify(runtimeImportUrl)};
+defineClientEnhancement("options-demo", async (target, options) => {
+  target.setAttribute("data-options-foo", String(options?.foo ?? ""));
+  target.setAttribute("data-options-copy", String(options?.options?.foo ?? ""));
+});
+`,
+      "utf8",
+    );
+    await writeFile(
+      manifestFile,
+      `import ${JSON.stringify(pathToFileURL(pluginFile).href)};
+export const clientEnhancements = ["options-demo"];
+`,
+      "utf8",
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <section
+          id="options-target"
+          data-resux-enhancement="options-demo"
+          data-resux-trigger="immediate"
+          data-resux-options='{"foo":"bar"}'
+        ></section>
+      </div>
+    `;
+    const target = window.document.getElementById("options-target") as HTMLElement;
+
+    (window as unknown as { __RESUX_CLIENT_ENHANCEMENTS_SRC__?: string }).__RESUX_CLIENT_ENHANCEMENTS_SRC__ = pathToFileURL(manifestFile).href;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {},
+      },
+      __RESUX_INSTALLED__: false,
+    });
+
+    await import(runtimeImportUrl);
+    await waitForCondition(() => target.getAttribute("data-resux-enhancement-status") === "active");
+
+    expect(target.getAttribute("data-options-foo")).toBe("bar");
+    expect(target.getAttribute("data-options-copy")).toBe("bar");
+    expect(target.getAttribute("data-resux-options")).toBe('{"foo":"bar"}');
+  });
+
+  it("reports parse errors when data-resux-options contains invalid JSON", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-enhancement-options-error-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const pluginFile = path.join(tempDir, "enhancement.mjs");
+    const manifestFile = path.join(tempDir, "client-enhancements.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const runtimeImportUrl = `${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`;
+    await writeFile(
+      pluginFile,
+      `import { defineClientEnhancement } from ${JSON.stringify(runtimeImportUrl)};
+defineClientEnhancement("options-error-demo", async (target) => {
+  target.setAttribute("data-enhanced", "true");
+});
+`,
+      "utf8",
+    );
+    await writeFile(
+      manifestFile,
+      `import ${JSON.stringify(pathToFileURL(pluginFile).href)};
+export const clientEnhancements = ["options-error-demo"];
+`,
+      "utf8",
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <section
+          id="options-error-target"
+          data-resux-enhancement="options-error-demo"
+          data-resux-trigger="immediate"
+          data-resux-options='{"foo":'
+        ></section>
+      </div>
+    `;
+    const target = window.document.getElementById("options-error-target") as HTMLElement;
+
+    (window as unknown as { __RESUX_CLIENT_ENHANCEMENTS_SRC__?: string }).__RESUX_CLIENT_ENHANCEMENTS_SRC__ = pathToFileURL(manifestFile).href;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {},
+      },
+      __RESUX_INSTALLED__: false,
+    });
+
+    await import(runtimeImportUrl);
+    await waitForCondition(() => target.getAttribute("data-resux-enhancement-status") === "error");
+
+    expect(target.getAttribute("data-enhanced")).toBeNull();
+    expect(target.getAttribute("data-rx-enhancement-error")).toContain("Failed to parse options");
+    expect(target.getAttribute("data-rx-enhancement-error")).toContain("data-resux-options");
+  });
+
+  it("marks missing client enhancements with friendly errors instead of staying pending", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-enhancement-missing-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const manifestFile = path.join(tempDir, "client-enhancements.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+    await writeFile(manifestFile, "export const clientEnhancements = [];\n", "utf8");
+
+    const runtimeImportUrl = `${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`;
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <section id="missing-target" data-resux-enhancement="missing-enhancement" data-resux-trigger="visible"></section>
+      </div>
+    `;
+    const target = window.document.getElementById("missing-target") as HTMLElement;
+    target.getBoundingClientRect = () => ({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 320,
+      bottom: 120,
+      width: 320,
+      height: 120,
+      toJSON: () => "",
+    }) as unknown as DOMRect;
+
+    let enhancementError = "";
+    window.addEventListener("resux:enhancement:error", (event) => {
+      enhancementError = String((event as CustomEvent).detail?.error ?? "");
+    });
+
+    (window as unknown as { __RESUX_CLIENT_ENHANCEMENTS_SRC__?: string }).__RESUX_CLIENT_ENHANCEMENTS_SRC__ = pathToFileURL(manifestFile).href;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(runtimeImportUrl);
+    await waitForCondition(() => target.getAttribute("data-resux-enhancement-status") === "error");
+
+    expect(target.getAttribute("data-resux-enhancement-status")).toBe("error");
+    expect(target.getAttribute("data-rx-enhancement-error")).toContain('Client enhancement "missing-enhancement" was used but not registered.');
+    expect(target.getAttribute("data-rx-enhancement-error")).toContain("client-enhancements/missing-enhancement.client.ts");
+    expect(enhancementError).toContain("missing-enhancement");
+  });
+
+  it("supports keyboard interaction trigger for client enhancements", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-enhancement-interaction-keyboard-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const pluginFile = path.join(tempDir, "enhancement.mjs");
+    const manifestFile = path.join(tempDir, "client-enhancements.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const runtimeImportUrl = `${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`;
+    await writeFile(
+      pluginFile,
+      `import { defineClientEnhancement } from ${JSON.stringify(runtimeImportUrl)};
+defineClientEnhancement("interaction-keyboard-demo", async (target) => {
+  target.setAttribute("data-enhanced", "true");
+});
+`,
+      "utf8",
+    );
+    await writeFile(
+      manifestFile,
+      `import ${JSON.stringify(pathToFileURL(pluginFile).href)};
+export const clientEnhancements = ["interaction-keyboard-demo"];
+`,
+      "utf8",
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <section
+          id="keyboard-target"
+          tabindex="0"
+          data-resux-enhancement="interaction-keyboard-demo"
+          data-resux-trigger="interaction"
+        ></section>
+      </div>
+    `;
+    const target = window.document.getElementById("keyboard-target") as HTMLElement;
+
+    (window as unknown as { __RESUX_CLIENT_ENHANCEMENTS_SRC__?: string }).__RESUX_CLIENT_ENHANCEMENTS_SRC__ = pathToFileURL(manifestFile).href;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(runtimeImportUrl);
+    await waitForCondition(() => target.getAttribute("data-resux-enhancement-status") === "found");
+
+    target.dispatchEvent(new window.KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    await waitForCondition(() => target.getAttribute("data-resux-enhancement-status") === "active");
+    expect(target.getAttribute("data-resux-enhancement-status")).toBe("active");
+  });
+
+  it("emits package loading/loaded/css events when a client package enhancement resolves", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-enhancement-package-events-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const packageFile = path.join(tempDir, "demo-package.mjs");
+    const pluginFile = path.join(tempDir, "enhancement.mjs");
+    const manifestFile = path.join(tempDir, "client-enhancements.mjs");
+    const packageSpecifier = pathToFileURL(packageFile).href;
+    await writeFile(
+      runtimeFile,
+      getClientRuntimeSource({
+        packageRegistry: {
+          importers: [packageSpecifier],
+          declared: [packageSpecifier],
+        },
+      }),
+      "utf8",
+    );
+    await writeFile(packageFile, "export const ready = true;\nexport default { ready };\n", "utf8");
+
+    const runtimeImportUrl = `${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`;
+    await writeFile(
+      pluginFile,
+      `import { defineClientEnhancement, useClientPackage } from ${JSON.stringify(runtimeImportUrl)};
+defineClientEnhancement("package-events-demo", async (target) => {
+  await useClientPackage(${JSON.stringify(packageSpecifier)}, {
+    preferDefault: false,
+    css: ["/assets/demo-package.css"]
+  });
+  target.setAttribute("data-enhanced", "true");
+});
+`,
+      "utf8",
+    );
+    await writeFile(
+      manifestFile,
+      `import ${JSON.stringify(pathToFileURL(pluginFile).href)};
+export const clientEnhancements = ["package-events-demo"];
+`,
+      "utf8",
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <section id="package-events-target" data-resux-enhancement="package-events-demo" data-resux-trigger="immediate"></section>
+      </div>
+    `;
+    const target = window.document.getElementById("package-events-target") as HTMLElement;
+    const packageEvents: string[] = [];
+    const cssEntries: string[] = [];
+    window.addEventListener("resux:package:loading", () => packageEvents.push("loading"));
+    window.addEventListener("resux:package:loaded", () => packageEvents.push("loaded"));
+    window.addEventListener("resux:package-css:loaded", (event) => {
+      cssEntries.push(String((event as CustomEvent).detail?.entry ?? ""));
+    });
+
+    (window as unknown as { __RESUX_CLIENT_ENHANCEMENTS_SRC__?: string }).__RESUX_CLIENT_ENHANCEMENTS_SRC__ = pathToFileURL(manifestFile).href;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(runtimeImportUrl);
+    await waitForCondition(() => target.getAttribute("data-enhanced") === "true");
+
+    expect(packageEvents).toEqual(expect.arrayContaining(["loading", "loaded"]));
+    expect(cssEntries).toContain("/assets/demo-package.css");
+  });
+
+  it("emits package error events when a configured client package is missing from the generated registry", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-enhancement-package-error-events-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const pluginFile = path.join(tempDir, "enhancement.mjs");
+    const manifestFile = path.join(tempDir, "client-enhancements.mjs");
+    const missingPackage = "resux-missing-registry-package";
+    await writeFile(
+      runtimeFile,
+      getClientRuntimeSource({
+        packageRegistry: {
+          declared: [missingPackage],
+        },
+      }),
+      "utf8",
+    );
+
+    const runtimeImportUrl = `${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`;
+    await writeFile(
+      pluginFile,
+      `import { defineClientEnhancement, useClientPackage } from ${JSON.stringify(runtimeImportUrl)};
+defineClientEnhancement("package-error-demo", async () => {
+  await useClientPackage(${JSON.stringify(missingPackage)});
+});
+`,
+      "utf8",
+    );
+    await writeFile(
+      manifestFile,
+      `import ${JSON.stringify(pathToFileURL(pluginFile).href)};
+export const clientEnhancements = ["package-error-demo"];
+`,
+      "utf8",
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <section id="package-error-target" data-resux-enhancement="package-error-demo" data-resux-trigger="immediate"></section>
+      </div>
+    `;
+    const target = window.document.getElementById("package-error-target") as HTMLElement;
+    let packageErrorDetail = "";
+    window.addEventListener("resux:package:error", (event) => {
+      packageErrorDetail = String((event as CustomEvent).detail?.error ?? "");
+    });
+
+    (window as unknown as { __RESUX_CLIENT_ENHANCEMENTS_SRC__?: string }).__RESUX_CLIENT_ENHANCEMENTS_SRC__ = pathToFileURL(manifestFile).href;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(runtimeImportUrl);
+    await waitForCondition(() => target.getAttribute("data-resux-enhancement-status") === "error");
+    expect(packageErrorDetail).toContain(missingPackage);
+    expect(packageErrorDetail).toContain("generated client registry");
   });
 
   it("ignores same-route link clicks without refetching route payloads", async () => {
@@ -1111,7 +2331,7 @@ export default createClientComponent({ id: "m0", name: "ApiUrl", file: "ApiUrl.v
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -1172,7 +2392,7 @@ export default createClientComponent({ id: "m0", name: "Stats", file: "Stats.vue
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     await waitForHtml(window, "Ready");
 
     expect(window.document.body.innerHTML).not.toContain("Loading stats");
@@ -1235,7 +2455,7 @@ export default createClientComponent({ id: "m0", name: "Stats", file: "Stats.vue
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     await waitForHtml(window, "Fetch failed for /api/stats: 500");
 
     expect(window.document.body.innerHTML).not.toContain("Loading stats");
@@ -1307,7 +2527,7 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     await waitForHtml(window, "Ada");
     await waitForHtml(window, "Fetch failed for /api/stats: 500");
 
@@ -1366,7 +2586,7 @@ export default createClientComponent({ id: "m0", name: "Counter", file: "Counter
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     window.document.querySelector("button")!.dispatchEvent(new window.Event("click", { bubbles: true }));
     await waitForText(window, "1");
     window.document.querySelector("button")!.dispatchEvent(new window.Event("click", { bubbles: true }));
@@ -1438,7 +2658,7 @@ export default createClientComponent({ id: "m0", name: "RouterPage", file: "Rout
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     window.document.querySelector("button")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await waitForHtml(window, "<main>About</main>");
 
@@ -1490,7 +2710,7 @@ export default createClientComponent({ id: "m0", name: "Form", file: "Form.vue",
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     const event = new window.Event("submit", { bubbles: true, cancelable: true });
     const allowed = window.document.querySelector("form")!.dispatchEvent(event);
     await waitForText(window, "1");
@@ -1548,7 +2768,7 @@ export default createClientComponent({ id: "m0", name: "Model", file: "Model.vue
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     const input = window.document.querySelector("input") as HTMLInputElement;
     input.value = "Typed";
     input.dispatchEvent(new window.Event("input", { bubbles: true }));
@@ -1616,7 +2836,7 @@ export default createClientComponent({ id: "m0", name: "Model", file: "Model.vue
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await waitForHtml(window, "<main>Post 42</main>");
 
@@ -1627,6 +2847,82 @@ export default createClientComponent({ id: "m0", name: "Model", file: "Model.vue
     expect((globalThis as any).__RESUX__.route.params.id).toBe("42");
     expect(window.document.title).toBe("Post 42");
     expect(window.document.head.innerHTML).toContain('name="route"');
+  });
+
+  it("normalizes preload head links on client navigation updates", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const tempDir = path.join(os.tmpdir(), `resux-head-normalize-client-${Date.now()}`);
+      await mkdir(tempDir, { recursive: true });
+      const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+      await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+      const window = new Window({ url: "http://localhost/" });
+      window.document.body.innerHTML = `
+        <div id="__resux">
+          <a href="/head">Head</a>
+          <main>Home</main>
+        </div>
+      `;
+
+      Object.assign(globalThis, {
+        document: window.document,
+        window,
+        location: window.location,
+        history: window.history,
+        scrollTo: () => undefined,
+        fetch: async () => {
+          return new Response(
+            JSON.stringify({
+              html: "<main>Head</main>",
+              head: {
+                title: "Head",
+                link: [
+                  { rel: "preload", as: "priority", href: "/images/lcp.webp" },
+                  { rel: "preload", as: "fetchpriority", href: "/styles/route.css" },
+                  { rel: "preload", as: "video/mp4", href: "/media-test/videos/sample-video.mp4" },
+                  { rel: "preload", as: "webp", href: "/images/poster.webp" },
+                  { rel: "modulepreload", as: "module", href: "/__resux/client/chunk-head.mjs" },
+                  { rel: "preload", as: "resux-video", href: "/unknown-client-preload" },
+                ]
+              },
+              payload: {
+                route: { path: "/head", params: {}, query: {} },
+                scopes: {},
+                modules: {}
+              }
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" }
+            }
+          );
+        },
+        __RESUX__: {
+          route: { path: "/", params: {}, query: {} },
+          scopes: {},
+          modules: {}
+        },
+        __RESUX_INSTALLED__: false
+      });
+
+      await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+      window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+      await waitForHtml(window, "<main>Head</main>");
+
+      const links = Array.from(window.document.querySelectorAll("link[data-rx-head='true']"));
+      expect(links.some((link) => link.getAttribute("rel") === "preload" && link.getAttribute("as") === "image" && link.getAttribute("href") === "/images/lcp.webp")).toBe(true);
+      expect(links.some((link) => link.getAttribute("rel") === "preload" && link.getAttribute("as") === "style" && link.getAttribute("href") === "/styles/route.css")).toBe(true);
+      expect(links.some((link) => link.getAttribute("rel") === "preload" && link.getAttribute("as") === "video" && link.getAttribute("href") === "/media-test/videos/sample-video.mp4")).toBe(true);
+      expect(links.some((link) => link.getAttribute("rel") === "preload" && link.getAttribute("as") === "image" && link.getAttribute("href") === "/images/poster.webp")).toBe(true);
+      expect(links.some((link) => link.getAttribute("rel") === "modulepreload" && !link.hasAttribute("as") && link.getAttribute("href") === "/__resux/client/chunk-head.mjs")).toBe(true);
+      expect(links.some((link) => link.getAttribute("href") === "/unknown-client-preload")).toBe(false);
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[resux] Skipping invalid preload link for "/unknown-client-preload". Unsupported as="resux-video".',
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("ignores same-route link clicks without fetching or rerendering", async () => {
@@ -1665,7 +2961,7 @@ export default createClientComponent({ id: "m0", name: "Model", file: "Model.vue
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await new Promise((resolve) => setTimeout(resolve, 40));
 
@@ -1722,7 +3018,7 @@ export default createClientComponent({ id: "m0", name: "Model", file: "Model.vue
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     window.history.replaceState({ __resux: true, path: "/media" }, "", "/media");
     window.dispatchEvent(new window.Event("popstate"));
     await waitForHtml(window, "<main>Media</main>");
@@ -1800,7 +3096,7 @@ export default createClientComponent({ id: "m0", name: "ImagePatch", file: "Imag
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     window.document.querySelector("button")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await waitForHtml(window, "<img");
 
@@ -1912,7 +3208,7 @@ export default defineResuxRouteMiddleware((to, from) => {
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await waitForHtml(window, "<main>Login</main>");
 
@@ -1998,7 +3294,7 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     await waitForSignal();
     window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await waitForHtml(window, "<main>About</main>");
@@ -2076,7 +3372,7 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     window.document.querySelector('a[href="/about"]')!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await waitForHtml(window, "<main class=\"page\">About</main>");
 
@@ -2135,7 +3431,7 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     window.document.querySelector('a[href="/about"]')!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await waitForHtml(window, '<main class="about">About</main>');
 
@@ -2205,7 +3501,7 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await fetchStarted;
 
@@ -2282,7 +3578,7 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     const image = window.document.querySelector("img[data-rx-lazy-image]") as HTMLImageElement;
     const source = window.document.querySelector("source[type='image/avif']") as HTMLSourceElement;
 
@@ -2298,6 +3594,63 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     expect(image.getAttribute("srcset")).toBe("/img/sample.webp 1x, /img/sample@2x.webp 2x");
     expect(source.getAttribute("srcset")).toBe("/img/sample.avif 1x");
     expect(image.getAttribute("data-rx-lazy-ready")).toBe("true");
+    expect(image.getAttribute("data-resux-revealed")).toBe("true");
+    expect(image.getAttribute("data-resux-img")).toBe("loading");
+  });
+
+  it("keeps image placeholders until decode settles", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-image-decode-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const window = new Window({ url: "http://localhost/media" });
+    window.document.body.innerHTML = `
+      <div id="__resux"><main>Media</main></div>
+      <img
+        data-resux-media="img"
+        data-resux-img="loading"
+        data-resux-loading="true"
+        data-rx-placeholder-src="/__resux/resux-placeholder.svg"
+        data-rx-placeholder-active="true"
+        data-resux-placeholder-active="true"
+        style="background-image: url('/__resux/resux-placeholder.svg'); background-size: cover; background-position: center; background-repeat: no-repeat;"
+        src="/media-test/images/hero-square.jpg"
+        alt="Decode test"
+      >
+    `;
+
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      __RESUX__: {
+        route: { path: "/media", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+
+    const image = window.document.querySelector("img[data-resux-media='img']") as HTMLImageElement;
+    let resolveDecode: (() => void) | null = null;
+    image.decode = (() => new Promise<void>((resolve) => {
+      resolveDecode = resolve;
+    })) as HTMLImageElement["decode"];
+
+    image.dispatchEvent(new window.Event("load", { bubbles: true }));
+    expect(image.getAttribute("data-rx-placeholder-active")).toBe("true");
+    expect(image.getAttribute("data-resux-img")).toBe("loading");
+
+    resolveDecode?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(image.getAttribute("data-rx-placeholder-active")).toBeNull();
+    expect(image.getAttribute("data-resux-img")).toBe("loaded");
   });
 
   it("handles lazy picture failures once and switches to fallback without reusing failed sources", async () => {
@@ -2347,7 +3700,7 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     const image = window.document.querySelector("img[data-rx-lazy-image]") as HTMLImageElement;
     const source = window.document.querySelector("source[type='image/webp']") as HTMLSourceElement;
 
@@ -2420,12 +3773,14 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       loadCalls++;
     };
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     const source = window.document.querySelector("source") as HTMLSourceElement;
 
     observerCallback!([{ target: video, isIntersecting: true, intersectionRatio: 1 }]);
     expect(source.getAttribute("src")).toBe("/media-test/videos/missing.mp4");
     expect(video.getAttribute("preload")).toBe("metadata");
+    expect(video.getAttribute("data-resux-revealed")).toBe("true");
+    expect(video.getAttribute("data-resux-video-loading")).toBe("true");
     expect(loadCalls).toBe(1);
 
     Object.defineProperty(video, "currentSrc", {
@@ -2441,6 +3796,558 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
 
     video.dispatchEvent(new window.Event("error", { bubbles: true }));
     expect(loadCalls).toBe(1);
+  });
+
+  it("applies video click zones, skip actions, and control-safe interactions", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-video-speed-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const window = new Window({ url: "http://localhost/media" });
+    window.document.body.innerHTML = `
+      <div id="__resux"><main>Media</main></div>
+      <div
+        data-rx-video-shell="true"
+        data-rx-video-controls-ready="true"
+        data-rx-video-icon-play=">"
+        data-rx-video-icon-pause="||"
+        data-rx-video-icon-mute="M"
+        data-rx-video-icon-unmute="S"
+        data-rx-video-icon-fullscreen="[ ]"
+        data-rx-video-icon-exit-fullscreen="X"
+        data-rx-video-speed-control="true"
+        data-rx-video-speeds="0.5,0.75,1,1.25,1.5,2"
+        data-rx-video-default-speed="1.25"
+        data-rx-video-show-speed-icon="true"
+        data-rx-video-speed-label="Playback speed"
+        data-rx-video-skip-controls="true"
+        data-rx-video-side-click-skip="true"
+        data-rx-video-click-to-play="true"
+        data-rx-video-double-click-fullscreen="true"
+        data-rx-video-has-interaction-zones="true"
+        data-rx-video-skip-backward="5"
+        data-rx-video-skip-forward="10"
+        data-rx-video-show-skip-overlay="true"
+        data-rx-video-disable-skip-on-controls="true"
+        data-rx-video-custom-controls="true"
+      >
+        <video data-resux-media="video" data-rx-video-default-speed="1.25" data-resux-video="ready"></video>
+        <div class="rx-video-click-zones" data-rx-video-click-zones data-rx-video-skip-overlay-zone aria-hidden="false">
+          <button type="button" class="rx-video-zone rx-video-zone-left" data-rx-video-zone="left" data-resux-video-zone="left" aria-label="Skip backward 5s"></button>
+          <button type="button" class="rx-video-zone rx-video-zone-center" data-rx-video-zone="center" data-resux-video-zone="center" aria-label="Toggle play or pause video"></button>
+          <button type="button" class="rx-video-zone rx-video-zone-right" data-rx-video-zone="right" data-resux-video-zone="right" aria-label="Skip forward 10s"></button>
+        </div>
+        <div class="rx-video-controls" data-rx-video-controls data-resux-video-control="true" role="group" aria-label="Video controls">
+          <button type="button" class="rx-video-btn rx-video-toggle" data-rx-video-toggle data-resux-video-control="true" aria-label="Play video">></button>
+          <span class="rx-video-time" data-rx-video-current>0:00</span>
+          <input class="rx-video-seek" data-rx-video-seek data-resux-video-control="true" type="range" min="0" max="100" step="0.1" value="0" aria-label="Seek video">
+          <span class="rx-video-time" data-rx-video-duration>0:00</span>
+          <button type="button" class="rx-video-btn rx-video-mute" data-rx-video-mute data-resux-video-control="true" aria-label="Toggle mute">S</button>
+          <input class="rx-video-volume" data-rx-video-volume data-resux-video-control="true" type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume">
+          <button type="button" class="rx-video-btn rx-video-speed" data-rx-video-speed data-resux-video-control="true" aria-label="Playback speed">>> 1x</button>
+          <button type="button" class="rx-video-btn rx-video-fullscreen" data-rx-video-fullscreen data-resux-video-control="true" aria-label="Toggle fullscreen">[ ]</button>
+        </div>
+      </div>
+    `;
+
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      __RESUX__: {
+        route: { path: "/media", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+
+    const video = window.document.querySelector("video[data-resux-media='video']") as HTMLVideoElement;
+    const shell = window.document.querySelector("[data-rx-video-shell='true']") as HTMLElement;
+    const speedButton = window.document.querySelector("[data-rx-video-speed]") as HTMLButtonElement;
+    const leftZone = window.document.querySelector("[data-rx-video-zone='left']") as HTMLButtonElement;
+    const centerZone = window.document.querySelector("[data-rx-video-zone='center']") as HTMLButtonElement;
+    const rightZone = window.document.querySelector("[data-rx-video-zone='right']") as HTMLButtonElement;
+    const seekInput = window.document.querySelector("[data-rx-video-seek]") as HTMLInputElement;
+
+    let paused = true;
+    let playCalls = 0;
+    let pauseCalls = 0;
+    Object.defineProperty(video, "paused", {
+      configurable: true,
+      get: () => paused,
+    });
+    video.play = (() => {
+      paused = false;
+      playCalls++;
+      return Promise.resolve();
+    }) as HTMLMediaElement["play"];
+    video.pause = (() => {
+      paused = true;
+      pauseCalls++;
+    }) as HTMLMediaElement["pause"];
+
+    let fullscreenElement: Element | null = null;
+    Object.defineProperty(window.document, "fullscreenElement", {
+      configurable: true,
+      get: () => fullscreenElement,
+    });
+    (shell as unknown as { requestFullscreen: () => Promise<void> }).requestFullscreen = async () => {
+      fullscreenElement = shell;
+    };
+    (window.document as unknown as { exitFullscreen: () => Promise<void> }).exitFullscreen = async () => {
+      fullscreenElement = null;
+    };
+
+    expect(video.playbackRate).toBe(1.25);
+    expect(speedButton.textContent).toContain("1.25x");
+
+    speedButton.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    expect(video.playbackRate).toBe(1.5);
+    expect(speedButton.textContent).toContain("1.5x");
+
+    Object.defineProperty(video, "duration", { configurable: true, value: 120 });
+    video.currentTime = 40;
+    leftZone.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    expect(video.currentTime).toBe(35);
+
+    rightZone.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    expect(video.currentTime).toBe(45);
+
+    video.currentTime = 2;
+    leftZone.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    expect(video.currentTime).toBe(0);
+
+    video.currentTime = 118;
+    rightZone.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    expect(video.currentTime).toBe(120);
+
+    centerZone.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    await new Promise((resolve) => setTimeout(resolve, 240));
+    expect(playCalls).toBe(1);
+    expect(video.getAttribute("data-resux-video")).toBe("playing");
+
+    centerZone.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    await new Promise((resolve) => setTimeout(resolve, 240));
+    expect(pauseCalls).toBe(1);
+
+    centerZone.dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0 }));
+    expect(fullscreenElement).toBe(shell);
+
+    video.currentTime = 10;
+    seekInput.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    expect(video.currentTime).toBe(10);
+  });
+
+  it("preserves playback state when switching managed video quality options", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-video-quality-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const qualityOptions = [
+      {
+        id: "480p",
+        label: "480p",
+        sources: [{ src: "/media-test/videos/sample-480.mp4", type: "video/mp4" }],
+      },
+      {
+        id: "720p",
+        label: "720p",
+        sources: [{ src: "/media-test/videos/sample-720.mp4", type: "video/mp4" }],
+      },
+    ];
+    const serializedQualities = JSON.stringify(qualityOptions).replace(/"/g, "&quot;");
+
+    const window = new Window({ url: "http://localhost/media" });
+    window.document.body.innerHTML = `
+      <div id="__resux"><main>Media</main></div>
+      <div
+        data-rx-video-shell="true"
+        data-rx-video-controls-ready="true"
+        data-rx-video-custom-controls="true"
+        data-rx-video-quality-control="true"
+        data-rx-video-qualities="${serializedQualities}"
+        data-rx-video-default-quality="480p"
+      >
+        <video
+          data-resux-media="video"
+          data-rx-video-active-quality="480p"
+          data-rx-video-active-source-signature="/media-test/videos/sample-480.mp4|video/mp4"
+          data-resux-video="playing"
+          src="/media-test/videos/sample-480.mp4"
+        >
+          <source src="/media-test/videos/sample-480.mp4" type="video/mp4">
+        </video>
+        <div class="rx-video-controls" data-rx-video-controls data-resux-video-control="true" role="group" aria-label="Video controls">
+          <button type="button" data-rx-video-toggle data-resux-video-control="true">Play</button>
+          <span data-rx-video-current>0:00</span>
+          <input data-rx-video-seek data-resux-video-control="true" type="range" min="0" max="100" step="0.1" value="0">
+          <span data-rx-video-duration>0:00</span>
+          <button type="button" data-rx-video-mute data-resux-video-control="true">Mute</button>
+          <input data-rx-video-volume data-resux-video-control="true" type="range" min="0" max="1" step="0.05" value="1">
+          <label data-rx-video-quality-wrap data-resux-video-control="true">
+            <select data-rx-video-quality data-resux-video-control="true">
+              <option value="480p">480p</option>
+              <option value="720p">720p</option>
+            </select>
+          </label>
+          <button type="button" data-rx-video-fullscreen data-resux-video-control="true">Fullscreen</button>
+        </div>
+      </div>
+    `;
+
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      __RESUX__: {
+        route: { path: "/media", params: {}, query: {} },
+        scopes: {},
+        modules: {},
+      },
+      __RESUX_INSTALLED__: false,
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+
+    const video = window.document.querySelector("video[data-resux-media='video']") as HTMLVideoElement;
+    const qualitySelect = window.document.querySelector("[data-rx-video-quality]") as HTMLSelectElement;
+    const source = window.document.querySelector("video source") as HTMLSourceElement;
+
+    let paused = false;
+    let playCalls = 0;
+    Object.defineProperty(video, "paused", {
+      configurable: true,
+      get: () => paused,
+    });
+    video.play = (() => {
+      paused = false;
+      playCalls++;
+      return Promise.resolve();
+    }) as HTMLMediaElement["play"];
+
+    let loadCalls = 0;
+    video.load = (() => {
+      loadCalls++;
+    }) as HTMLMediaElement["load"];
+
+    Object.defineProperty(video, "duration", { configurable: true, value: 120 });
+    video.currentTime = 42;
+    video.playbackRate = 1.5;
+    video.volume = 0.35;
+    video.muted = true;
+
+    qualitySelect.value = "720p";
+    qualitySelect.dispatchEvent(new window.Event("change", { bubbles: true, cancelable: true }));
+
+    expect(loadCalls).toBe(1);
+    expect(source.getAttribute("src")).toBe("/media-test/videos/sample-720.mp4");
+    expect(video.getAttribute("data-rx-video-active-quality")).toBe("720p");
+    expect(video.getAttribute("data-rx-video-pending-quality")).toBe("720p");
+
+    video.dispatchEvent(new window.Event("loadedmetadata", { bubbles: true }));
+    video.dispatchEvent(new window.Event("canplay", { bubbles: true }));
+
+    expect(video.currentTime).toBe(42);
+    expect(video.playbackRate).toBe(1.5);
+    expect(video.volume).toBeCloseTo(0.35);
+    expect(video.muted).toBe(true);
+    expect(playCalls).toBeGreaterThan(0);
+  });
+
+  it("waits for page-ready before revealing defer-until-page-ready videos", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-video-page-ready-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const window = new Window({ url: "http://localhost/media" });
+    Object.defineProperty(window.document, "readyState", {
+      configurable: true,
+      value: "loading",
+    });
+    window.document.body.innerHTML = `
+      <div id="__resux"><main>Media</main></div>
+      <video
+        data-rx-lazy-video="true"
+        data-rx-lazy-src="/media-test/videos/sample-video.mp4"
+        data-rx-lazy-preload="metadata"
+        data-rx-video-defer-ready="true"
+        data-rx-video-ready-reveal="true"
+        preload="none"
+      ></video>
+    `;
+
+    let observerConstructed = 0;
+    class MockIntersectionObserver {
+      constructor() {
+        observerConstructed++;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      IntersectionObserver: MockIntersectionObserver,
+      requestIdleCallback: (callback: () => void) => {
+        callback();
+        return 1;
+      },
+      __RESUX__: {
+        route: { path: "/media", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    const video = window.document.querySelector("video") as HTMLVideoElement;
+    let loadCalls = 0;
+    video.load = () => {
+      loadCalls++;
+    };
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+    expect(video.getAttribute("data-resux-revealed")).toBeNull();
+    expect(observerConstructed).toBe(0);
+    expect(loadCalls).toBe(0);
+
+    Object.defineProperty(window.document, "readyState", {
+      configurable: true,
+      value: "complete",
+    });
+    window.dispatchEvent(new window.Event("load"));
+
+    expect(video.getAttribute("data-resux-revealed")).toBe("true");
+    expect(video.getAttribute("data-resux-video-loading")).toBe("true");
+    expect(video.getAttribute("preload")).toBe("metadata");
+    expect(video.getAttribute("src")).toBe("/media-test/videos/sample-video.mp4");
+    expect(loadCalls).toBe(1);
+  });
+
+  it("blocks managed media anchor navigation to generated assets", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-media-link-guard-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const window = new Window({ url: "http://localhost/media" });
+    window.document.body.innerHTML = `
+      <div id="__resux"><main>Media</main></div>
+      <a href="/_resux/generated/images/abcd1234.webp?src=%2Fmedia-test%2Fimages%2Fhero-large.jpg&cache=1d" id="media-link">
+        <img data-resux-media="img" src="/resux-placeholder.svg" alt="media">
+      </a>
+    `;
+
+    let routeFetchCalls = 0;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      fetch: async () => {
+        routeFetchCalls++;
+        return new Response(
+          JSON.stringify({
+            payload: {
+              route: { path: "/media", params: {}, query: {} },
+              scopes: {},
+              modules: {},
+              config: { public: {} }
+            },
+            html: `<main>Media</main>`,
+            head: {}
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      },
+      __RESUX__: {
+        route: { path: "/media", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+
+    const mediaImage = window.document.querySelector("img[data-resux-media='img']") as HTMLImageElement;
+    const clickEvent = new window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+    mediaImage.dispatchEvent(clickEvent);
+
+    expect(clickEvent.defaultPrevented).toBe(true);
+    expect(routeFetchCalls).toBe(0);
+  });
+
+  it("blocks managed media anchor navigation for generated video assets", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-video-link-guard-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const window = new Window({ url: "http://localhost/media" });
+    window.document.body.innerHTML = `
+      <div id="__resux"><main>Media</main></div>
+      <a href="/_resux/generated/videos/abcd1234.mp4?src=%2Fmedia-test%2Fvideos%2Fsample-video.mp4&cache=1d" id="video-link">
+        <video data-resux-media="video" src="/media-test/videos/sample-video.mp4"></video>
+      </a>
+    `;
+
+    let routeFetchCalls = 0;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      fetch: async () => {
+        routeFetchCalls++;
+        return new Response(
+          JSON.stringify({
+            payload: {
+              route: { path: "/media", params: {}, query: {} },
+              scopes: {},
+              modules: {},
+              config: { public: {} }
+            },
+            html: `<main>Media</main>`,
+            head: {}
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      },
+      __RESUX__: {
+        route: { path: "/media", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+
+    const mediaVideo = window.document.querySelector("video[data-resux-media='video']") as HTMLVideoElement;
+    const clickEvent = new window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+    mediaVideo.dispatchEvent(clickEvent);
+
+    expect(clickEvent.defaultPrevented).toBe(true);
+    expect(routeFetchCalls).toBe(0);
+  });
+
+  it("ignores router interception for media control targets inside anchors", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-media-click-ignore-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const window = new Window({ url: "http://localhost/media" });
+    window.document.body.innerHTML = `
+      <div id="__resux"><main>Media</main></div>
+      <a href="/about" id="about-link">
+        <button type="button" data-rx-video-toggle>Play</button>
+      </a>
+    `;
+
+    let routeFetchCalls = 0;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      fetch: async () => {
+        routeFetchCalls++;
+        return new Response(
+          JSON.stringify({
+            payload: {
+              route: { path: "/about", params: {}, query: {} },
+              scopes: {},
+              modules: {},
+              config: { public: {} }
+            },
+            html: "<main>About</main>",
+            head: {}
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      },
+      __RESUX__: {
+        route: { path: "/media", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+
+    const playButton = window.document.querySelector("[data-rx-video-toggle]") as HTMLButtonElement;
+    const clickEvent = new window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+    playButton.dispatchEvent(clickEvent);
+
+    expect(clickEvent.defaultPrevented).toBe(false);
+    expect(routeFetchCalls).toBe(0);
+  });
+
+  it("ignores prefetch for media/static links", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-media-prefetch-ignore-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const window = new Window({ url: "http://localhost/media" });
+    window.document.body.innerHTML = `
+      <div id="__resux"><main>Media</main></div>
+      <a href="/media-test/videos/sample-video.mp4" id="media-prefetch-link">
+        <img data-resux-media="img" src="/resux-placeholder.svg" alt="media">
+      </a>
+    `;
+
+    let routeFetchCalls = 0;
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      fetch: async () => {
+        routeFetchCalls++;
+        return new Response(
+          JSON.stringify({
+            payload: {
+              route: { path: "/media", params: {}, query: {} },
+              scopes: {},
+              modules: {},
+              config: { public: {} }
+            },
+            html: "<main>Media</main>",
+            head: {}
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      },
+      __RESUX__: {
+        route: { path: "/media", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+
+    const mediaImage = window.document.querySelector("img[data-resux-media='img']") as HTMLImageElement;
+    mediaImage.dispatchEvent(new window.MouseEvent("pointerover", { bubbles: true, cancelable: true }));
+
+    expect(routeFetchCalls).toBe(0);
   });
 
   it("preserves the active layout across client-side navigation", async () => {
@@ -2504,7 +4411,7 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await waitForHtml(window, "<main>About</main>");
 
@@ -2556,7 +4463,7 @@ export default createClientComponent({ id: "m0", name: "Counter", file: "Counter
       __RESUX_INSTALLED__: false
     });
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     window.document.querySelector("button")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await waitForText(window, "1:old");
 
@@ -2570,7 +4477,7 @@ export default createClientComponent({ id: "m0", name: "Counter", file: "Counter
 });
 
 async function waitForText(window: Window, expected: string): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt++) {
+  for (let attempt = 0; attempt < 150; attempt++) {
     if (window.document.querySelector("[data-rx-text='s0:b0']")?.textContent === expected) {
       return;
     }
@@ -2579,7 +4486,7 @@ async function waitForText(window: Window, expected: string): Promise<void> {
 }
 
 async function waitForHtml(window: Window, expected: string): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt++) {
+  for (let attempt = 0; attempt < 150; attempt++) {
     if (window.document.body.innerHTML.includes(expected)) {
       return;
     }
@@ -2588,10 +4495,24 @@ async function waitForHtml(window: Window, expected: string): Promise<void> {
 }
 
 async function waitForSignal(): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt++) {
+  for (let attempt = 0; attempt < 150; attempt++) {
     if ((globalThis as any).__RESUX_TEST_SIGNAL__) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
+
+async function waitForCondition(
+  predicate: () => boolean,
+  timeoutMs = 2000,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+

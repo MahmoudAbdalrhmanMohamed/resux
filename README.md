@@ -14,6 +14,12 @@ Create a new app with the latest published Resux package:
 npx resuxjs@latest init
 ```
 
+You can also use the lightweight create wrapper:
+
+```sh
+npx create-resuxjs@latest
+```
+
 With a project directory:
 
 ```sh
@@ -24,6 +30,18 @@ With create options:
 
 ```sh
 npx resuxjs@latest init my-app --no-install
+```
+
+Choose optional starter features:
+
+```sh
+npx resuxjs@latest init my-app --features i18n,pwa
+```
+
+Enable i18n hreflang alternate links explicitly:
+
+```sh
+npx resuxjs@latest init my-app --features i18n --hreflang
 ```
 
 Generated apps use a single Resux dependency, similar to Nuxt apps installing `nuxt`:
@@ -75,6 +93,44 @@ import { renderApp } from "resuxjs/runtime"
 import { createResuxNodeHandler } from "resuxjs/node"
 ```
 
+Optional modules and features stay tree-shakable and are only included when configured.
+
+## Optional i18n
+
+Resux i18n is opt-in through the `resuxjs/i18n` module. It is not included in default runtime output unless enabled.
+
+```ts
+export default defineResuxConfig({
+  modules: ["resuxjs/i18n"],
+  i18n: {
+    defaultLocale: "en",
+    fallbackLocale: "en",
+    strategy: "prefix_except_default",
+    locales: [
+      { code: "en", name: "English", dir: "ltr" },
+      { code: "ar", name: "العربية", dir: "rtl" }
+    ],
+    messages: {
+      en: () => import("./locales/en.json"),
+      ar: () => import("./locales/ar.json")
+    },
+    seo: {
+      hreflang: true
+    }
+  }
+})
+```
+
+Use i18n helpers in pages/components:
+
+```ts
+import { useI18n } from "resuxjs/i18n"
+
+const i18n = useI18n()
+const title = i18n.t("demo.title")
+const toArabic = i18n.switchLocalePath("ar")
+```
+
 ## Development
 
 ```sh
@@ -82,6 +138,7 @@ npm install
 npm run typecheck
 npm run build
 npm test
+npm run test:templates
 ```
 
 Run the full publish-readiness check:
@@ -115,13 +172,22 @@ The `resux` CLI supports:
 resux init <project-dir>
 resux dev <app-root>
 resux build <app-root>
+resux prepare <app-root>
 resux preview <app-root>
 resux start <app-root>
 resux inspect <app-root>
+resux check <app-root>
 resux deploy <app-root>
 ```
 
 If `<app-root>` is omitted, Resux uses the current directory.
+
+Starter templates are selectable from `resux init` / `npm create resuxjs@latest`:
+
+```sh
+npx create-resuxjs@latest my-app --template default
+# templates: minimal, default, full, i18n, pwa, media, package-compatibility, dashboard
+```
 
 Useful server flags:
 
@@ -131,6 +197,14 @@ resux preview --host 0.0.0.0 --port 4000
 resux start --host 0.0.0.0 --port 3000
 resux inspect
 resux inspect --json
+resux inspect routes
+resux inspect packages
+resux inspect bundles --json
+resux inspect seo --json
+resux check
+resux check --json
+resux check --fix
+resux prepare
 resux deploy . --preset docker
 resux deploy . --preset nitro
 resux --help
@@ -141,6 +215,14 @@ Build output is written to:
 
 ```txt
 <app-root>/.resux
+```
+
+Generated integration directories are bootstrapped automatically by `resux dev`, `resux build`, `resux preview`, `resux prepare`, and `resux check --fix`:
+
+```txt
+<app-root>/.resux
+<app-root>/.resux-nitro
+<app-root>/.nitro
 ```
 
 ## App Types
@@ -213,11 +295,13 @@ The generated starter keeps Resux-style scripts:
 ```json
 {
   "scripts": {
-    "dev": "resux dev .",
-    "build": "resux build .",
-    "preview": "resux preview .",
-    "start": "node .output/server/index.mjs",
-    "inspect": "resux inspect ."
+    "prepare": "resux prepare",
+    "dev": "resux dev",
+    "build": "resux build",
+    "preview": "resux preview",
+    "start": "resux start",
+    "inspect": "resux inspect",
+    "typecheck": "vue-tsc --noEmit"
   }
 }
 ```
@@ -455,7 +539,7 @@ Server middleware can continue by returning nothing, use h3-style helpers such a
 - Component CSS from `<style>` and `<style scoped>`, included in SSR output and updated during client-side navigation.
 - Auto-discovered route middleware from `middleware/**/*`, including `.global`, `.client`, and `.server` files.
 - Request-time server middleware from `server/middleware`.
-- Auto-discovered plugins from `plugins/**/*` with `.client` / `.server` mode suffix support and stable filename ordering.
+- Auto-discovered plugins from `plugins/**/*` plus client enhancement entries from `enhancements/**/*` and `client-enhancements/**/*` (including `app/*` variants), with `.client` / `.server` mode suffix support and stable filename ordering.
 - Server API/routes from `server/api` and `server/routes`.
 - Server handler helpers: `readBody(event)`, `getQuery(event)`, and `setHeader(event, name, value)`, backed by h3.
 - `error.vue` for custom 404/500 rendering.
@@ -468,13 +552,61 @@ Server middleware can continue by returning nothing, use h3-style helpers such a
 - Vite-powered dev serving, production client/server bundling, and minification for the resume runtime and handler chunks.
 - Dev rebuilds with automatic browser reloads, without adding Vue hydration.
 - `resux inspect` and `resux inspect --json` for route and build diagnostics.
+- `resux inspect routes|plugins|middleware|imports|components|build|images|server|packages|templates|bundles|seo`.
+- `resux check`, `resux check --json`, and `resux check --fix` for project readiness checks and safe file scaffolding.
 - `resux deploy --preset node|docker|nitro` for deployment file generation.
 - Serialized route, state, and async data payloads.
 - Resumable event handlers such as `@click="increment"`.
 - Lazy client handler chunks loaded on first interaction.
 - Client-side navigation, persistent same-layout DOM, built-in route transition progress, and hover/focus route payload prefetch for same-origin links.
-- Stable core composables: `useState`, `useAsyncData`, `useRoute`, `useRouter`, `useHead`, `useSeoMeta`, `useRuntimeConfig`, `useResuxApp`, `apiURL`, `useFetch`, `$fetch`, and `onMounted`.
+- Stable core composables: `useState`, `useAsyncData`, `useRoute`, `useRouter`, `useHead`, `useSeoMeta`, `useRuntimeConfig`, `useResuxApp`, `apiURL`, `useFetch`, `$fetch`, `useError`, `clearError`, `showError`, `createError`, and `onMounted`.
+- Lazy package helpers: `useLazyPackage`, `useClientPackage`, `usePackageReady`, `defineLazyPackage`, `defineClientOnlyPackage`, `defineClientEnhancement`, and `useClientEnhancement`.
+- Package mode classification via `packages.mode` (`ssr`, `clientOnly`, `serverOnly`, `progressive`) with diagnostics in `resux inspect packages`.
+- Client runtime package registries are generated with static importers (no raw `import(packageName)` in generated runtime), including package API calls that use const string identifiers and package subpaths (for example `swiper/modules` and `swiper/css/*`).
 - `useAsyncData` returns a Nuxt-like resource with reactive `data`, `pending`, and `error` refs, plus `value` as a data alias for compatibility. Use `await useAsyncData(...)` when you want SSR to fetch before rendering the page; omit `await` when you intentionally want an SSR skeleton that resumes in the browser.
+
+## SSR-First Package Enhancements
+
+Use semantic SSR markup first, then enhance only in the browser:
+
+```vue
+<section
+  use-client-enhancement="swiper-carousel"
+  data-trigger="visible"
+>
+  <ul class="swiper-wrapper">
+    <li class="swiper-slide">...</li>
+  </ul>
+</section>
+```
+
+Register the enhancement in a client-only support file (for example `client-enhancements/swiper-carousel.client.ts`):
+
+```ts
+defineClientEnhancement("swiper-carousel", async (target) => {
+  const [
+    { default: Swiper },
+    { Navigation, Pagination },
+  ] = await Promise.all([
+    useClientPackage("swiper"),
+    useClientPackage("swiper/modules", { preferDefault: false }),
+  ])
+  await useClientPackage("swiper", {
+    css: ["swiper/css", "swiper/css/navigation", "swiper/css/pagination"],
+  })
+  const instance = new Swiper(target.querySelector(".swiper") as HTMLElement, {
+    modules: [Navigation, Pagination],
+  })
+  return () => instance.destroy?.(true, true)
+})
+```
+
+Resux injects runtime helper imports for support modules automatically, so `defineClientEnhancement` and `useClientPackage` are available without global assumptions. This pattern keeps package instances inside client-only closures and avoids resumability-unsafe captures in template handlers.
+
+In dev, enhancement and package lifecycles emit events you can observe in custom status UIs:
+- `resux:enhancement:found|triggered|loading|ready|error|cleanup-ready`
+- `resux:package:loading|loaded|error`
+- `resux:package-css:loaded`
 
 ## Component Syntax
 
@@ -569,6 +701,101 @@ const { data, pending, error } = useAsyncData("test", ({ signal }) => {
 ```
 
 On the server, `$fetch("/api/test")` uses the current request origin, then configured public origins such as `runtimeConfig.public.appOrigin`, and finally `http://localhost:3000`. In the browser it keeps `/api/test` relative. Use `apiURL("/api/test")` only when you call native `fetch()` yourself in code that can run during SSR.
+
+## Media Components
+
+### `ResuxVideo`
+
+`ResuxVideo` supports resumable click zones without hydration. By default, the surface is divided into horizontal thirds:
+
+- left third: skip backward
+- center third: single click play/pause
+- center third double click: fullscreen
+- right third: skip forward
+
+Controls remain interactive because zones exclude the controls hit area and control targets are ignored.
+
+```vue
+<ResuxVideo
+  src="/media-test/videos/sample-720.mp4"
+  poster="/media-test/images/sample-poster.jpg"
+  controls
+  skip-seconds="10"
+  side-click-skip
+  click-to-play
+  double-click-fullscreen
+/>
+```
+
+`ResuxVideo` props (media interaction subset):
+
+- `controls` default `true`
+- `nativeControls` optional
+- `customControls` optional
+- `speedControl`, `speeds`, `defaultSpeed`, `persistSpeed`
+- `qualityControl`, `qualities`, `defaultQuality`
+- `sources` supports `{ src, type, quality }`
+- `skipSeconds` default `10`
+- `sideClickSkip` default `true`
+- `clickToPlay` default `true`
+- `doubleClickFullscreen` default `true`
+- `lazy`, `priority`, `preload`, `poster`, `placeholder`
+- optional transforms: `format`, `formats`, `quality` (for resolution height)
+
+Video state attributes:
+
+- `data-resux-video="idle|loading|ready|playing|paused|error"`
+- `data-rx-video-controls-ready="true|false"`
+- `data-resux-video-control` on interactive control elements
+- `data-resux-video-zone="left|center|right"` on surface zones
+
+Optional video transforms can generate cacheable assets in `public/_resux/generated/videos/*` when enabled:
+
+```ts
+export default defineResuxConfig({
+  video: {
+    transforms: {
+      enabled: true,
+      formats: ["mp4", "webm"],
+      qualities: [480, 720, 1080],
+      cache: "1d"
+    }
+  }
+})
+```
+
+When transforms are requested (for example `format="webm"` or `:qualities="[480,720]"`), Resux emits deterministic URLs under `/_resux/generated/videos/*` and serves them through the built-in `__resux/video` runtime endpoint. If `ffmpeg` is unavailable, Resux falls back with a clear 501 error instead of breaking standard video rendering.
+
+### `ResuxImg` and `ResuxPicture`
+
+`ResuxImg` and `ResuxPicture` keep placeholders active until the real image load/decode completes.
+
+```vue
+<ResuxImg
+  src="/media-test/images/hero-large.jpg"
+  width="1600"
+  height="900"
+  priority
+  placeholder="blur"
+  sizes="(min-width: 1280px) 960px, 100vw"
+/>
+```
+
+Placeholder modes:
+
+- `placeholder="empty"`
+- `placeholder="blur"`
+- `placeholder="skeleton"`
+- `placeholder="spinner"`
+- `placeholder="/custom-placeholder.svg"`
+
+Image state attributes:
+
+- `data-resux-img="idle|loading|loaded|error"`
+- `data-rx-placeholder-active="true"` while placeholder is visible
+- `data-rx-lazy-image="true"` for deferred lazy sources
+
+Priority images emit preload links near the top of `<head>` with `fetchpriority="high"` and responsive `imagesrcset`/`imagesizes`.
 
 ## Supported Syntax
 

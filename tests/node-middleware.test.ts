@@ -86,7 +86,9 @@ describe("route middleware and server middleware integration", () => {
   it("returns safe responses for malformed paths, unknown routes, and missing image sources", async () => {
     const root = path.join(os.tmpdir(), `resux-node-safe-routes-${Date.now()}`);
     await mkdir(path.join(root, "pages"), { recursive: true });
+    await mkdir(path.join(root, "public", "media-test", "videos"), { recursive: true });
     await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Home</main></template>");
+    await writeFile(path.join(root, "public", "media-test", "videos", "sample-video.mp4"), Buffer.from("resux-video-fixture"));
 
     await buildProject(root);
     const nodeHandler = createResuxNodeHandler({ appRoot: root });
@@ -115,6 +117,25 @@ describe("route middleware and server middleware integration", () => {
     const placeholderResponse = await fetch(`${server.origin}/__resux/resux-placeholder.svg`);
     expect(placeholderResponse.status).toBe(200);
     expect(placeholderResponse.headers.get("content-type")).toContain("image/svg+xml");
+
+    const proxiedVideoResponse = await fetch(
+      `${server.origin}/__resux/video?src=%2Fmedia-test%2Fvideos%2Fsample-video.mp4`,
+      { redirect: "manual" },
+    );
+    expect(proxiedVideoResponse.status).toBe(200);
+    expect(await proxiedVideoResponse.text()).toBe("resux-video-fixture");
+
+    const missingVideoResponse = await fetch(
+      `${server.origin}/__resux/video?src=%2Fmedia-test%2Fvideos%2Fmissing-video.mp4`,
+      { redirect: "manual" },
+    );
+    expect(missingVideoResponse.status).toBe(404);
+
+    const invalidGeneratedVideoResponse = await fetch(
+      `${server.origin}/_resux/generated/videos/invalid.mp4?src=%2Fmedia-test%2Fvideos%2Fsample-video.mp4&format=mp4`,
+      { redirect: "manual" },
+    );
+    expect(invalidGeneratedVideoResponse.status).toBe(404);
   }, 30000);
 });
 

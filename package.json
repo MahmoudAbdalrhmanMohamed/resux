@@ -30,7 +30,8 @@
   "bin": {
     "resuxjs": "dist/bin.js",
     "resux": "dist/bin.js",
-    "create-resux": "dist/create-bin.js"
+    "create-resux": "dist/create-bin.js",
+    "create-resuxjs": "dist/create-bin.js"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -72,12 +73,34 @@
       "import": "./dist/create.js",
       "default": "./dist/create.js"
     },
+    "./i18n": {
+      "types": "./dist/i18n/index.d.ts",
+      "import": "./dist/i18n/index.js",
+      "default": "./dist/i18n/index.js"
+    },
+    "./kit": {
+      "types": "./dist/kit/index.d.ts",
+      "import": "./dist/kit/index.js",
+      "default": "./dist/kit/index.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js",
+      "default": "./dist/core/index.js"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
     "typecheck": "tsc -b",
     "build": "npm run typecheck",
     "test": "vitest run",
+    "test:types": "npm run typecheck",
+    "test:e2e": "vitest run tests/runtime.test.ts",
+    "test:fixtures": "node scripts/test-fixtures.mjs",
+    "test:templates": "node scripts/test-templates.mjs",
+    "test:build": "npm run build",
+    "test:deploy": "npm run verify:deploy-targets",
+    "test:bundle": "node scripts/test-bundle.mjs",
     "verify:vercel-output": "npm run build && node scripts/verify-vercel-output.mjs",
     "verify:deploy-targets": "npm run build && node scripts/verify-deploy-targets.mjs",
     "create:local": "npm run build && node dist/cli.js init",

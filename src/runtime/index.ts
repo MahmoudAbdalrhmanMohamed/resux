@@ -90,6 +90,7 @@ export interface RouteContext {
   params: Record<string, string>;
   query: Record<string, string | string[]>;
   origin?: string;
+  userAgent?: string;
 }
 
 export interface ResuxRouter {
@@ -247,6 +248,7 @@ export interface ResuxAppLike {
   provides: ResuxAppProvides;
   provide<Key extends keyof ResuxAppInjections & string>(key: Key, value: ResuxAppInjections[Key]): void;
   provide<Key extends string, Value>(key: Key, value: Value): void;
+  vueApp?: any;
 }
 
 export type ResuxPlugin = (resuxApp: ResuxAppLike) => unknown | Promise<unknown>;
@@ -512,7 +514,7 @@ export interface SetupContext {
   useResuxApp(): ResuxAppLike;
   apiURL(path: string): string;
   useResuxImage(): ResuxImageBuilder;
-  useFetch<T>(url: string, init?: RequestInit): Promise<Ref<T>>;
+  useFetch<T>(url: string, init?: RequestInit): AsyncDataResource<T>;
   $fetch<T>(url: string, init?: RequestInit): Promise<T>;
   useError(): Ref<ResuxError | null>;
   clearError(): void;
@@ -530,6 +532,11 @@ export interface SetupContext {
   useClientEnhancement(name: string, options?: UseClientEnhancementOptions): Promise<{ ready: boolean; activate: () => Promise<void>; dispose: () => Promise<void> }>;
   onMounted(callback: () => unknown | Promise<unknown>): void;
   definePageMeta(_meta: PageMeta): void;
+  useI18n(): any;
+  useLocalePath(): any;
+  useSwitchLocalePath(): any;
+  useDevice(): DeviceInfo;
+  $device: DeviceInfo;
 }
 
 export interface ComponentDefinition {
@@ -637,10 +644,13 @@ const activeResuxError = ref<ResuxError | null>(null);
 async function withActiveResuxApp<T>(resuxApp: ResuxAppLike, run: () => Promise<T> | T): Promise<T> {
   const previous = activeResuxApp;
   activeResuxApp = resuxApp;
+  const previousGlobal = (globalThis as { __RESUX_APP__?: ResuxAppLike }).__RESUX_APP__;
+  (globalThis as { __RESUX_APP__?: ResuxAppLike }).__RESUX_APP__ = resuxApp;
   try {
     return await run();
   } finally {
     activeResuxApp = previous;
+    (globalThis as { __RESUX_APP__?: ResuxAppLike }).__RESUX_APP__ = previousGlobal;
   }
 }
 
@@ -674,7 +684,42 @@ export function useResuxApp(): ResuxAppLike {
     return globalApp;
   }
 
+  console.error("useResuxApp error trace:");
+  console.trace();
+
   throw new Error("useResuxApp() is only available while executing a Resux setup or middleware context.");
+}
+
+export interface DeviceInfo {
+  isMobile: boolean;
+  isTablet: boolean;
+  isDesktop: boolean;
+  isIos: boolean;
+  isAndroid: boolean;
+  [key: string]: boolean;
+}
+
+export function parseUserAgent(ua?: string): DeviceInfo {
+  const userAgent = ua || "";
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
+  const isTablet = /iPad|PlayBook|Silk/i.test(userAgent) || (isMobile && /Tablet/i.test(userAgent));
+  const isIos = /iPhone|iPad|iPod/i.test(userAgent);
+  const isAndroid = /Android/i.test(userAgent);
+  const isDesktop = !isMobile && !isTablet;
+
+  return {
+    isMobile,
+    isTablet,
+    isDesktop,
+    isIos,
+    isAndroid
+  };
+}
+
+export function useDevice(): DeviceInfo {
+  const app = activeResuxApp || (globalThis as any).__RESUX_APP__;
+  const ua = app?.route?.userAgent || (typeof navigator !== "undefined" ? navigator.userAgent : "");
+  return parseUserAgent(ua);
 }
 
 function readGlobalClientRouter(): ResuxRouter | null {
@@ -1787,14 +1832,16 @@ export function defineServerMiddleware(middleware: ServerMiddleware): ServerMidd
 }
 
 export async function readBody<T = unknown>(event: EventHandlerEvent): Promise<T> {
-  try {
-    return await h3ReadBody(event as unknown as Parameters<typeof h3ReadBody>[0]) as T;
-  } catch {
-    // Fall through to the minimal reader for tests and custom Node-like events.
+  const req = event.node.req;
+  if (req && typeof (req as any).on === "function") {
+    try {
+      return await h3ReadBody(event as unknown as Parameters<typeof h3ReadBody>[0]) as T;
+    } catch {
+      // Fall through to the minimal reader for tests and custom Node-like events.
+    }
   }
 
-  const req = event.node.req as AsyncIterable<Uint8Array | string> | { on?: unknown } | undefined;
-  if (!req || typeof (req as AsyncIterable<Uint8Array | string>)[Symbol.asyncIterator] !== "function") {
+  if (!req || typeof (req as any)[Symbol.asyncIterator] !== "function") {
     return undefined as T;
   }
 
@@ -2358,8 +2405,17 @@ function createServerSetupContext(
       return createResuxImageBuilder(route, runtimeConfig, false);
     },
 
-    async useFetch<T>(url: string, init?: RequestInit): Promise<Ref<T>> {
-      return ref(await fetchJson<T>(url, init));
+    useFetch<T>(url: string, init?: RequestInit): AsyncDataResource<T> {
+      const key = `fetch:${url}`;
+      const existing = asyncDataRefs[key] as AsyncDataResource<unknown> | undefined;
+      if (existing) {
+        return existing as AsyncDataResource<T>;
+      }
+
+      const pending = createPendingAsyncDataResource<T>();
+      asyncDataRefs[key] = pending.resource as AsyncDataResource<unknown>;
+      pending.setCompletion(settleAsyncDataResource(pending.resource, () => fetchJson<T>(url, init), key));
+      return pending.resource;
     },
 
     $fetch<T>(url: string, init?: RequestInit): Promise<T> {
@@ -2431,7 +2487,30 @@ function createServerSetupContext(
 
     definePageMeta(): void {
       // Page meta is compiled statically in Resux.
-    }
+    },
+    useI18n(): any {
+      return (globalThis as any).__RESUX_USE_I18N__ ? (globalThis as any).__RESUX_USE_I18N__() : {
+        locale: ref("en"),
+        dir: ref("ltr"),
+        locales: [],
+        t: (k: string) => k,
+        tm: (k: string) => k,
+        resolveLocalized: (v: any) => v,
+        localePath: (to: string) => to,
+        switchLocalePath: (to: string) => to,
+        setLocale: () => {}
+      };
+    },
+    useLocalePath(): any {
+      return (globalThis as any).__RESUX_USE_LOCALE_PATH__ ? (globalThis as any).__RESUX_USE_LOCALE_PATH__() : (to: string) => to;
+    },
+    useSwitchLocalePath(): any {
+      return (globalThis as any).__RESUX_USE_SWITCH_LOCALE_PATH__ ? (globalThis as any).__RESUX_USE_SWITCH_LOCALE_PATH__() : (to: string) => to;
+    },
+    useDevice(): DeviceInfo {
+      return useDevice();
+    },
+    $device: useDevice()
   };
 }
 
@@ -5850,7 +5929,7 @@ export class AsyncResuxRenderer {
       asyncDataRefs
     };
 
-    return renderTemplateNodesAsync(
+    return withActiveResuxApp(this.resuxApp, () => renderTemplateNodesAsync(
       definition.template,
       {
         scope,
@@ -5868,7 +5947,7 @@ export class AsyncResuxRenderer {
         renderLayout: (name, slot) => this.renderLayout(name, slot)
       },
       (component, props, slot) => this.renderComponent(component, undefined, slot, props)
-    );
+    ));
   }
 
   private collectComponentStyles(definition: ComponentDefinition): void {
@@ -5981,6 +6060,26 @@ function createResuxApp(route: RouteContext, modules: Record<string, string>, ru
     provide(key: string, value: unknown): void {
       (provides as Record<string, unknown>)[key] = value;
       (this as unknown as Record<string, unknown>)[`$${key}`] = value;
+    },
+    vueApp: {
+      component(name: string, component?: any): any {
+        return component;
+      },
+      directive(name: string, directive?: any): any {
+        return directive;
+      },
+      use(plugin: any, ...options: any[]): any {
+        return this;
+      },
+      mixin(mixin: any): any {
+        return this;
+      },
+      provide(key: any, value: any): any {
+        return this;
+      },
+      config: {
+        globalProperties: {}
+      }
     }
   };
 }
@@ -6522,6 +6621,9 @@ export function evaluateExpression(
   scope: Record<string, unknown>,
   locals: Record<string, unknown> = {}
 ): unknown {
+  if (scope && scope.__rx_expressions && (scope.__rx_expressions as Record<string, Function>)[expression]) {
+    return (scope.__rx_expressions as Record<string, Function>)[expression](scope, locals);
+  }
   const fn = new Function(
     "scope",
     "locals",
@@ -6717,6 +6819,81 @@ function normalizeClientRuntimePackageRegistry(
   return { importers, css, declared };
 }
 
+function registerResuxGlobals() {
+  if (typeof globalThis !== "undefined") {
+    const defineProp = (name: string, getter: () => any) => {
+      if (!(name in globalThis)) {
+        let hasCustomVal = false;
+        let customVal: any;
+        Object.defineProperty(globalThis, name, {
+          get() {
+            return hasCustomVal ? customVal : getter();
+          },
+          set(v) {
+            hasCustomVal = true;
+            customVal = v;
+          },
+          configurable: true
+        });
+      }
+    };
+
+    defineProp("$device", () => {
+      try { return useDevice(); } catch { return { isMobile: false, isTablet: false, isDesktop: true, isIos: false, isAndroid: false }; }
+    });
+    defineProp("device", () => (globalThis as any).$device);
+
+    defineProp("$config", () => {
+      try { return useRuntimeConfig(); } catch { return { public: {} }; }
+    });
+    defineProp("config", () => (globalThis as any).$config);
+
+    defineProp("$route", () => {
+      try { return useRoute(); } catch { return { path: "/", params: {}, query: {} }; }
+    });
+    defineProp("route", () => (globalThis as any).$route);
+
+    defineProp("$router", () => {
+      try { return useRouter(); } catch { return null; }
+    });
+    defineProp("router", () => (globalThis as any).$router);
+
+    defineProp("$fetch", () => {
+      return (url: string, init?: RequestInit) => {
+        try {
+          const app = useResuxApp();
+          const apiURL = resolveServerApiURL(url, app.route, app.$config);
+          return fetch(apiURL, init).then(r => r.json());
+        } catch {
+          return fetch(url, init).then(r => r.json());
+        }
+      };
+    });
+
+    defineProp("$t", () => {
+      return (key: string, params?: any) => {
+        try { return (globalThis as any).__RESUX_USE_I18N__ ? (globalThis as any).__RESUX_USE_I18N__().t(key, params) : key; } catch { return key; }
+      };
+    });
+    defineProp("t", () => (globalThis as any).$t);
+
+    defineProp("$localePath", () => {
+      return (to: string, localeCode?: string) => {
+        try { return (globalThis as any).__RESUX_USE_LOCALE_PATH__ ? (globalThis as any).__RESUX_USE_LOCALE_PATH__()(to, localeCode) : to; } catch { return to; }
+      };
+    });
+    defineProp("localePath", () => (globalThis as any).$localePath);
+
+    defineProp("$switchLocalePath", () => {
+      return (localeCode: string, to?: string) => {
+        try { return (globalThis as any).__RESUX_USE_SWITCH_LOCALE_PATH__ ? (globalThis as any).__RESUX_USE_SWITCH_LOCALE_PATH__()(localeCode, to) : to; } catch { return to; }
+      };
+    });
+    defineProp("switchLocalePath", () => (globalThis as any).$switchLocalePath);
+  }
+}
+registerResuxGlobals();
+
 function createClientRuntimePackageRegistrySource(options: ClientRuntimeSourceOptions): string {
   const normalized = normalizeClientRuntimePackageRegistry(options.packageRegistry);
   const importerBody = normalized.importers
@@ -6733,6 +6910,125 @@ export function getClientRuntimeSource(options: ClientRuntimeSourceOptions = {})
   const packageRegistrySource = createClientRuntimePackageRegistrySource(options);
   return String.raw`
 const scopeCache = new Map();
+
+function parseUserAgent(ua) {
+  const userAgent = ua || "";
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
+  const isTablet = /iPad|PlayBook|Silk/i.test(userAgent) || (isMobile && /Tablet/i.test(userAgent));
+  const isIos = /iPhone|iPad|iPod/i.test(userAgent);
+  const isAndroid = /Android/i.test(userAgent);
+  const isDesktop = !isMobile && !isTablet;
+  return {
+    isMobile,
+    isTablet,
+    isDesktop,
+    isIos,
+    isAndroid
+  };
+}
+
+function useDevice() {
+  const app = globalThis.__RESUX_APP__;
+  const ua = app?.route?.userAgent || (typeof navigator !== "undefined" ? navigator.userAgent : "");
+  return parseUserAgent(ua);
+}
+
+if (typeof globalThis !== "undefined") {
+  const defineProp = (name, getter) => {
+    if (!(name in globalThis)) {
+      let hasCustomVal = false;
+      let customVal;
+      Object.defineProperty(globalThis, name, {
+        get() {
+          return hasCustomVal ? customVal : getter();
+        },
+        set(v) {
+          hasCustomVal = true;
+          customVal = v;
+        },
+        configurable: true
+      });
+    }
+  };
+
+  defineProp("$device", () => {
+    try {
+      const app = globalThis.__RESUX_APP__;
+      const ua = app?.route?.userAgent || (typeof navigator !== "undefined" ? navigator.userAgent : "");
+      return parseUserAgent(ua);
+    } catch (e) {
+      return { isMobile: false, isTablet: false, isDesktop: true, isIos: false, isAndroid: false };
+    }
+  });
+  defineProp("device", () => globalThis.$device);
+
+  defineProp("$config", () => {
+    try {
+      const app = globalThis.__RESUX_APP__;
+      return app ? app.$config : { public: {} };
+    } catch (e) {
+      return { public: {} };
+    }
+  });
+  defineProp("config", () => globalThis.$config);
+
+  defineProp("$route", () => {
+    try {
+      const app = globalThis.__RESUX_APP__;
+      return app ? app.route : { path: "/", params: {}, query: {} };
+    } catch (e) {
+      return { path: "/", params: {}, query: {} };
+    }
+  });
+  defineProp("route", () => globalThis.$route);
+
+  defineProp("$router", () => {
+    try {
+      return globalThis.__RESUX_ROUTER__;
+    } catch (e) {
+      return null;
+    }
+  });
+  defineProp("router", () => globalThis.$router);
+
+  defineProp("$fetch", () => {
+    return (url, init) => fetch(url, init).then(r => r.json());
+  });
+
+  defineProp("$t", () => {
+    return (key, params) => {
+      try {
+        return globalThis.__RESUX_USE_I18N__ ? globalThis.__RESUX_USE_I18N__().t(key, params) : key;
+      } catch (e) {
+        return key;
+      }
+    };
+  });
+  defineProp("t", () => globalThis.$t);
+
+  defineProp("$localePath", () => {
+    return (to, localeCode) => {
+      try {
+        return globalThis.__RESUX_USE_LOCALE_PATH__ ? globalThis.__RESUX_USE_LOCALE_PATH__()(to, localeCode) : to;
+      } catch (e) {
+        return to;
+      }
+    };
+  });
+  defineProp("localePath", () => globalThis.$localePath);
+
+  defineProp("$switchLocalePath", () => {
+    return (localeCode, to) => {
+      try {
+        return globalThis.__RESUX_USE_SWITCH_LOCALE_PATH__ ? globalThis.__RESUX_USE_SWITCH_LOCALE_PATH__()(localeCode, to) : to;
+      } catch (e) {
+        return to;
+      }
+    };
+  });
+  defineProp("switchLocalePath", () => globalThis.$switchLocalePath);
+}
+
 const routePayloadCache = new Map();
 const mountedVueIslands = new Map();
 const pendingAsyncDataControllers = globalThis.__RESUX_PENDING_ASYNC_DATA_CONTROLLERS__ ||= new Set();
@@ -8298,6 +8594,26 @@ function getClientResuxApp(routeOverride) {
       provide(key, value) {
         clientProvides[key] = value;
         this["$" + key] = value;
+      },
+      vueApp: {
+        component(name, component) {
+          return component;
+        },
+        directive(name, directive) {
+          return directive;
+        },
+        use(plugin, ...options) {
+          return this;
+        },
+        mixin(mixin) {
+          return this;
+        },
+        provide(key, value) {
+          return this;
+        },
+        config: {
+          globalProperties: {}
+        }
       }
     };
     for (const [key, value] of Object.entries(clientProvides)) {
@@ -8816,8 +9132,9 @@ export function createClientComponent(definition) {
         apiURL(url) {
           return url;
         },
-        async useFetch(url, init) {
-          return ref(await setupContext.$fetch(url, init));
+        useFetch(url, init) {
+          const key = "fetch:" + url;
+          return setupContext.useAsyncData(key, () => setupContext.$fetch(url, init));
         },
         async $fetch(url, init) {
           const response = await fetch(url, init);
@@ -8869,7 +9186,30 @@ export function createClientComponent(definition) {
         },
         definePageMeta() {
           // Page meta is compiled statically in Resux.
-        }
+        },
+        useI18n() {
+          return globalThis.__RESUX_USE_I18N__ ? globalThis.__RESUX_USE_I18N__() : {
+            locale: ref("en"),
+            dir: ref("ltr"),
+            locales: [],
+            t: (k) => k,
+            tm: (k) => k,
+            resolveLocalized: (v) => v,
+            localePath: (to) => to,
+            switchLocalePath: (to) => to,
+            setLocale: () => {}
+          };
+        },
+        useLocalePath() {
+          return globalThis.__RESUX_USE_LOCALE_PATH__ ? globalThis.__RESUX_USE_LOCALE_PATH__() : (to) => to;
+        },
+        useSwitchLocalePath() {
+          return globalThis.__RESUX_USE_SWITCH_LOCALE_PATH__ ? globalThis.__RESUX_USE_SWITCH_LOCALE_PATH__() : (to) => to;
+        },
+        useDevice() {
+          return useDevice();
+        },
+        $device: useDevice()
       };
       const scope = await definition.script(setupContext);
       await Promise.allSettled(mountedCallbacks.map((callback) => callback()));
@@ -14455,6 +14795,9 @@ function applyPatches(scopeId, patches) {
 }
 
 function evaluateExpression(expression, scope, locals) {
+  if (scope && scope.__rx_expressions && scope.__rx_expressions[expression]) {
+    return scope.__rx_expressions[expression](scope, locals);
+  }
   return Function("scope", "locals", "with (scope) { with (locals) { return (" + expression + "); } }")(scope, locals);
 }
 

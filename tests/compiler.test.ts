@@ -118,7 +118,7 @@ function increment() {
     expect(component.handlers).toEqual(["increment"]);
     expect(component.serverSource).toContain("defineComponent");
     expect(component.clientSource).toContain("createClientComponent");
-    expect(JSON.stringify(component.template)).toContain("count.value > 0");
+    expect(component.expressions?.some((e) => e.original === "count.value > 0")).toBe(true);
   });
 
   it("compiles v-if / v-else-if / v-else chains", () => {
@@ -142,9 +142,10 @@ const mode = useState("mode", () => "idle")
       .filter((node): node is Extract<(typeof component.template)[number], { type: "element" }> => node.type === "element");
 
     expect(branches).toHaveLength(3);
-    expect(branches[0].if?.expression).toContain("mode.value === 'idle'");
-    expect(branches[1].if?.expression).toContain("!(mode.value === 'idle') && (mode.value === 'loading')");
-    expect(branches[2].if?.expression).toContain("!(mode.value === 'idle') && !(mode.value === 'loading')");
+    const resolveExpr = (id?: string) => component.expressions?.find((e) => e.id === id)?.transformed;
+    expect(resolveExpr(branches[0].if?.expression)).toContain("mode.value === 'idle'");
+    expect(resolveExpr(branches[1].if?.expression)).toContain("!(mode.value === 'idle') && (mode.value === 'loading')");
+    expect(resolveExpr(branches[2].if?.expression)).toContain("!(mode.value === 'idle') && !(mode.value === 'loading')");
   });
 
   it("rejects orphaned v-else and v-else-if directives", () => {
@@ -169,6 +170,126 @@ const mode = useState("mode", () => "idle")
         }
       )
     ).toThrow(/must follow a sibling with v-if or v-else-if/);
+  });
+
+  it("compiles unrecognized/custom directives as attributes", () => {
+    const component = compileVueSource(
+      `<template><div v-auto-animate v-my-dir:arg="val">Animate</div></template>`,
+      {
+        file: "CustomDirectives.vue",
+        id: "m0",
+        name: "CustomDirectives"
+      }
+    );
+
+    const divNode = component.template[0];
+    expect(divNode.type).toBe("element");
+    if (divNode.type === "element") {
+      const vAutoAnimateAttr = divNode.attrs.find((p) => p.name === "v-auto-animate");
+      expect(vAutoAnimateAttr).toBeDefined();
+      expect(vAutoAnimateAttr?.kind).toBe("static");
+      expect(vAutoAnimateAttr?.value).toBe("");
+
+      const vMyDirAttr = divNode.attrs.find((p) => p.name === "v-my-dir:arg");
+      expect(vMyDirAttr).toBeDefined();
+      expect(vMyDirAttr?.kind).toBe("dynamic");
+      const resolveExpr = (id?: string) => component.expressions?.find((e) => e.id === id)?.transformed;
+      expect(resolveExpr(vMyDirAttr?.value)).toContain("val");
+    }
+  });
+
+  it("compiles event handlers capturing top-level helper functions and imports", () => {
+    const component = compileVueSource(
+      `<script setup>
+import { helper } from './utils.js';
+const active = ref('sa');
+const setActiveCountry = (key) => {
+  active.value = key;
+  helper(key);
+};
+</script>
+<template><div @click="setActiveCountry('sa')">Active</div></template>`,
+      {
+        file: "CaptureTest.vue",
+        id: "m0",
+        name: "CaptureTest"
+      }
+    );
+
+    expect(component.template).toBeDefined();
+  });
+
+  it("compiles template loop variable captures inside event handlers", () => {
+    const component = compileVueSource(
+      `<script setup>
+const active = ref('sa');
+const setActiveCountry = (key) => {
+  active.value = key;
+};
+const countries = { sa: 'Saudi' };
+</script>
+<template>
+  <ul>
+    <li v-for="(country, key) in countries" :key="key" @click="setActiveCountry(key)">
+      {{ country }}
+    </li>
+  </ul>
+</template>`,
+      {
+        file: "LoopCapture.vue",
+        id: "m0",
+        name: "LoopCapture"
+      }
+    );
+
+    expect(component.template).toBeDefined();
+  });
+
+  it("compiles event handlers capturing top-level primitive constants", () => {
+    const component = compileVueSource(
+      `<script setup>
+const count = ref(0);
+const maxRetries = 3;
+const isEnabled = true;
+const label = "click";
+const decrementBy = -1;
+const doSomething = () => {
+  if (isEnabled && count.value < maxRetries) {
+    count.value += decrementBy;
+    console.log(label);
+  }
+};
+</script>
+<template><button @click="doSomething">Action</button></template>`,
+      {
+        file: "ConstantsCapture.vue",
+        id: "m0",
+        name: "ConstantsCapture"
+      }
+    );
+
+    expect(component.template).toBeDefined();
+  });
+
+  it("compiles event handlers capturing destructured properties from resumable initializers", () => {
+    const component = compileVueSource(
+      `<script setup>
+const { data, refresh, error } = await useFetch('/api/clients');
+const triggerRefresh = () => {
+  if (!error.value) {
+    refresh();
+  }
+};
+</script>
+<template><button @click="triggerRefresh">Refresh</button></template>`,
+      {
+        file: "DestructureCapture.vue",
+        id: "m0",
+        name: "DestructureCapture"
+      }
+    );
+
+    expect(component.template).toBeDefined();
   });
 
   it("compiles plain and scoped style blocks from Resux SFCs", () => {
@@ -254,7 +375,7 @@ function save() {
     expect(component.handlers).toEqual(["save"]);
     expect(JSON.stringify(component.template)).toContain('"modifiers":["prevent","stop"]');
     expect(JSON.stringify(component.template)).toContain('"name":"hidden"');
-    expect(JSON.stringify(component.template)).toContain("!(visible.value)");
+    expect(component.expressions?.some((e) => e.transformed === "!(visible.value)")).toBe(true);
   });
 
   it("compiles v-text into a resumable text binding", () => {
@@ -272,7 +393,7 @@ const label = useState("label", () => "Save")
 
     const template = JSON.stringify(component.template);
     expect(template).toContain('"type":"interpolation"');
-    expect(template).toContain('"expression":"label.value"');
+    expect(component.expressions?.some((e) => e.transformed === "label.value")).toBe(true);
     expect(template).not.toContain("Ignored");
   });
 
@@ -295,14 +416,13 @@ const { data, pending, error } = useAsyncData("stats", async () => ({ label: "Re
       }
     );
 
-    const template = JSON.stringify(component.template);
-    expect(template).toContain("'count-' + count.value");
-    expect(template).toContain('"expression":"count.value"');
-    expect(template).toContain('"expression":"pending.value"');
-    expect(template).toContain('"expression":"!pending.value && !error.value"');
-    expect(template).toContain('"expression":"error.value"');
-    expect(template).toContain('"expression":"error.value.message"');
-    expect(template).toContain('"expression":"data.value.label"');
+    expect(component.expressions?.some((e) => e.transformed === "'count-' + count.value")).toBe(true);
+    expect(component.expressions?.some((e) => e.transformed === "count.value")).toBe(true);
+    expect(component.expressions?.some((e) => e.transformed === "pending.value")).toBe(true);
+    expect(component.expressions?.some((e) => e.transformed === "!pending.value && !error.value")).toBe(true);
+    expect(component.expressions?.some((e) => e.transformed === "error.value")).toBe(true);
+    expect(component.expressions?.some((e) => e.transformed === "error.value.message")).toBe(true);
+    expect(component.expressions?.some((e) => e.transformed === "data.value.label")).toBe(true);
   });
 
   it("auto-unwraps awaited useAsyncData refs in template expressions", () => {
@@ -322,12 +442,11 @@ const { data, pending, error } = await useAsyncData("stats", async () => ({ labe
       }
     );
 
-    const template = JSON.stringify(component.template);
-    expect(template).toContain('"expression":"pending.value"');
-    expect(template).toContain('"expression":"error.value"');
-    expect(template).toContain('"expression":"error.value.message"');
-    expect(template).toContain('"expression":"!pending.value && !error.value && data.value"');
-    expect(template).toContain('"expression":"data.value.label"');
+    expect(component.expressions?.some((e) => e.transformed === "pending.value")).toBe(true);
+    expect(component.expressions?.some((e) => e.transformed === "error.value")).toBe(true);
+    expect(component.expressions?.some((e) => e.transformed === "error.value.message")).toBe(true);
+    expect(component.expressions?.some((e) => e.transformed === "!pending.value && !error.value && data.value")).toBe(true);
+    expect(component.expressions?.some((e) => e.transformed === "data.value.label")).toBe(true);
   });
 
   it("compiles advanced event modifiers", () => {
@@ -364,8 +483,10 @@ const message = useState("message", () => "Hello")
     );
 
     const template = JSON.stringify(component.template);
-    expect(template).toContain('"html":{"expression":"body.value"');
-    expect(template).toContain('"name":"value","value":"message.value"');
+    expect(template).toContain('"html"');
+    expect(template).toContain('"name":"value"');
+    expect(component.expressions?.some((e) => e.transformed === "body.value")).toBe(true);
+    expect(component.expressions?.some((e) => e.transformed === "message.value")).toBe(true);
     expect(component.handlers).toEqual(["__rx_inline_0"]);
     expect(component.serverSource).toContain("message.value = $event.target ? $event.target.value : \"\"");
   });

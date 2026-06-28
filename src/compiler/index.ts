@@ -1,4 +1,5 @@
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -53,6 +54,7 @@ export interface CompiledComponent {
   styles: ComponentStyle[];
   styleScopeId?: string;
   meta?: PageMeta;
+  expressions?: { id: string; original: string; transformed: string; locals: string[] }[];
 }
 
 export interface RouteManifestRecord {
@@ -149,9 +151,12 @@ export interface BuildOptions {
 interface ScriptAnalysis {
   setupBody: string;
   imports: string;
+  importDeclarations: (ts.ImportDeclaration | ts.ImportEqualsDeclaration)[];
   bindings: string[];
   handlerNames: Set<string>;
   resumableBindings: Set<string>;
+  importedBindings: Set<string>;
+  inlineHandlerLocals: Map<string, string[]>;
   templateRefBindings: Set<string>;
   handlers: Map<string, ts.Node>;
   sourceFile: ts.SourceFile;
@@ -190,11 +195,15 @@ interface CompileTemplateState {
   inlineHandlerIndex: number;
   handlers: TemplateEvent[];
   inlineHandlers: GeneratedHandler[];
+  expressions: { id: string; original: string; transformed: string; locals: string[] }[];
+  activeLocals: string[];
+  allLocals: Set<string>;
 }
 
 interface GeneratedHandler {
   name: string;
   source: string;
+  locals?: string[];
 }
 
 interface CompileTemplateNodeOptions {
@@ -281,6 +290,10 @@ const RESUMABLE_HANDLER_ALLOWED_GLOBALS = new Set([
   "useResuxApp",
   "useResuxImage",
   "useI18n",
+  "useLocalePath",
+  "useSwitchLocalePath",
+  "useDevice",
+  "$device",
   "apiURL",
   "useFetch",
   "$fetch",
@@ -304,6 +317,11 @@ const RESUMABLE_HANDLER_ALLOWED_GLOBALS = new Set([
 const BUILTIN_AUTO_IMPORTS: Array<{ from: string; name: string; as?: string }> = [
   { from: "resuxjs", name: "useRoute" },
   { from: "resuxjs", name: "useRouter" },
+  { from: "resuxjs", name: "useLocalePath" },
+  { from: "resuxjs", name: "useSwitchLocalePath" },
+  { from: "resuxjs", name: "useI18n" },
+  { from: "resuxjs", name: "useResuxApp" },
+  { from: "resuxjs", name: "useDevice" },
   { from: "resuxjs", name: "navigateTo" },
   { from: "resuxjs", name: "abortNavigation" },
   { from: "resuxjs", name: "useHead" },
@@ -464,7 +482,7 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
     for (const file of allFiles) {
       const component = await compileVueFile(file, {
         id: idByFile.get(file)!,
-        name: inferComponentName(absoluteRoot, file)
+        name: inferComponentName(absoluteRoot, file, componentDirs)
       });
       compiledByFile.set(file, component);
       await writeFile(path.join(absoluteOut, "server", `${component.id}.mjs`), component.serverSource, "utf8");
@@ -750,7 +768,11 @@ async function buildServerBundle(root: string, outDir: string): Promise<void> {
         sourcemap: false,
         manifest: false,
         rollupOptions: {
-          external: ["resuxjs/runtime"],
+          external: (id: string) => {
+            if (id === "resuxjs" || id.startsWith("resuxjs/")) return true;
+            if (id.includes("node_modules") || (!id.startsWith(".") && !path.isAbsolute(id))) return true;
+            return false;
+          },
           output: {
             format: "es",
             entryFileNames: "index.mjs",
@@ -811,7 +833,9 @@ async function buildClientAssets(
       plugins: [vuePlugin(), ...(contributions?.vitePlugins ?? [])],
       resolve: {
         alias: {
-          vue: require.resolve("vue")
+          vue: require.resolve("vue"),
+          "@": normalizePath(root),
+          "~": normalizePath(root)
         }
       },
       build: {
@@ -833,7 +857,7 @@ async function buildClientAssets(
         }
       }
     };
-
+    console.log("resux build client viteConfig:", JSON.stringify(viteConfig, null, 2));
     for (const extender of contributions?.viteConfigExtenders ?? []) {
       await extender(viteConfig);
     }
@@ -914,7 +938,7 @@ export function compileVueSource(source: string, options: { file: string; id: st
     id: options.id,
     file: options.file
   });
-  validateTemplateHandlers(template.handlers, analysis, options.file, source);
+  validateTemplateHandlers(template.handlers, analysis, options.file, source, template.allLocals);
   const serverSource = createComponentModuleSource({
     id: options.id,
     name: options.name,
@@ -923,7 +947,8 @@ export function compileVueSource(source: string, options: { file: string; id: st
     analysis,
     styles: compiledStyles.styles,
     styleScopeId: compiledStyles.styleScopeId,
-    client: false
+    client: false,
+    expressions: template.expressions
   });
   const clientSource = createComponentModuleSource({
     id: options.id,
@@ -933,7 +958,8 @@ export function compileVueSource(source: string, options: { file: string; id: st
     analysis,
     styles: compiledStyles.styles,
     styleScopeId: compiledStyles.styleScopeId,
-    client: true
+    client: true,
+    expressions: template.expressions
   });
 
   return {
@@ -946,7 +972,8 @@ export function compileVueSource(source: string, options: { file: string; id: st
     handlers: [...new Set(template.handlers.map((event) => event.handler))],
     styles: compiledStyles.styles,
     styleScopeId: compiledStyles.styleScopeId,
-    meta: analysis.pageMeta
+    meta: analysis.pageMeta,
+    expressions: template.expressions
   };
 }
 
@@ -1138,7 +1165,13 @@ function compileTemplate(
   template: string,
   file: string,
   templateRefBindings: Set<string> = new Set()
-): { nodes: TemplateNode[]; handlers: TemplateEvent[]; inlineHandlers: GeneratedHandler[] } {
+): {
+  nodes: TemplateNode[];
+  handlers: TemplateEvent[];
+  inlineHandlers: GeneratedHandler[];
+  expressions: { id: string; original: string; transformed: string; locals: string[] }[];
+  allLocals: string[];
+} {
   const ast = parseTemplate(template, { comments: false });
   const state: CompileTemplateState = {
     file,
@@ -1146,13 +1179,19 @@ function compileTemplate(
     bindingIndex: 0,
     inlineHandlerIndex: 0,
     handlers: [],
-    inlineHandlers: []
+    inlineHandlers: [],
+    expressions: [],
+    activeLocals: [],
+    allLocals: new Set<string>()
   };
 
+  const nodes = compileTemplateChildren(ast.children, state);
   return {
-    nodes: compileTemplateChildren(ast.children, state),
+    nodes,
     handlers: state.handlers,
-    inlineHandlers: state.inlineHandlers
+    inlineHandlers: state.inlineHandlers,
+    expressions: state.expressions,
+    allLocals: Array.from(state.allLocals)
   };
 }
 
@@ -1173,14 +1212,14 @@ function compileTemplateChildren(children: TemplateChildNode[], state: CompileTe
       }
 
       if (conditionalDirective.kind === "if") {
-        const expression = transformTemplateExpression(
+        const expressionResult = transformTemplateExpressionCode(
           conditionalDirective.expression!,
           state.templateRefBindings,
           state.file,
           conditionalDirective.directive
         );
-        conditionalChainExpressions = [expression];
-        const compiledNode = compileTemplateNode(child, state, { ifExpressionOverride: expression });
+        conditionalChainExpressions = [expressionResult.transformed];
+        const compiledNode = compileTemplateNode(child, state, { ifExpressionOverride: expressionResult.transformed });
         if (compiledNode) {
           nodes.push(compiledNode);
         }
@@ -1195,14 +1234,14 @@ function compileTemplateChildren(children: TemplateChildNode[], state: CompileTe
       }
 
       if (conditionalDirective.kind === "else-if") {
-        const branchExpression = transformTemplateExpression(
+        const branchExpressionResult = transformTemplateExpressionCode(
           conditionalDirective.expression!,
           state.templateRefBindings,
           state.file,
           conditionalDirective.directive
         );
-        const expression = `${buildConditionalChainGuard(conditionalChainExpressions)} && (${branchExpression})`;
-        conditionalChainExpressions.push(branchExpression);
+        const expression = `${buildConditionalChainGuard(conditionalChainExpressions)} && (${branchExpressionResult.transformed})`;
+        conditionalChainExpressions.push(branchExpressionResult.transformed);
         const compiledNode = compileTemplateNode(child, state, { ifExpressionOverride: expression });
         if (compiledNode) {
           nodes.push(compiledNode);
@@ -1298,13 +1337,45 @@ function compileTemplateNode(
   if (node.type === NodeTypes.INTERPOLATION) {
     return {
       type: "interpolation",
-      expression: transformTemplateExpression(expressionContent(node.content), state.templateRefBindings, state.file, node),
+      expression: registerTemplateExpression(expressionContent(node.content), state.templateRefBindings, state.file, node, state),
       bindingId: nextBindingId(state)
     };
   }
 
   if (node.type !== NodeTypes.ELEMENT) {
     return null;
+  }
+
+  // Find v-for to track locals for children
+  const forProp = node.props.find((prop) => prop.type === NodeTypes.DIRECTIVE && prop.name === "for") as DirectiveNode | undefined;
+  let addedLocals = 0;
+  if (forProp) {
+    const expression = expressionContent(forProp.exp);
+    if (expression) {
+      const parsedFor = parseForExpression(expression, state.file, forProp, state);
+      state.activeLocals.push(parsedFor.value);
+      state.allLocals.add(parsedFor.value);
+      addedLocals++;
+      if (parsedFor.index) {
+        state.activeLocals.push(parsedFor.index);
+        state.allLocals.add(parsedFor.index);
+        addedLocals++;
+      }
+    }
+  }
+
+  // Find slot props to track locals for children
+  const slotProp = node.props.find((prop) => prop.type === NodeTypes.DIRECTIVE && prop.name === "slot") as DirectiveNode | undefined;
+  if (slotProp) {
+    const expression = expressionContent(slotProp.exp);
+    if (expression) {
+      const slotLocals = parseBindingNames(expression);
+      for (const local of slotLocals) {
+        state.activeLocals.push(local);
+        state.allLocals.add(local);
+        addedLocals++;
+      }
+    }
   }
 
   const attrs: TemplateAttribute[] = [];
@@ -1340,7 +1411,7 @@ function compileTemplateNode(
       attrs.push({
         kind: "dynamic",
         name: arg,
-        value: transformTemplateExpression(expression, state.templateRefBindings, state.file, prop),
+        value: registerTemplateExpression(expression, state.templateRefBindings, state.file, prop, state),
         bindingId: nextBindingId(state)
       });
       continue;
@@ -1353,9 +1424,10 @@ function compileTemplateNode(
       if (!arg || !expression) {
         throw new ResuxCompileError("Events need an argument and expression.", locationFromVueNode(state.file, prop));
       }
-      const handler = /^[A-Za-z_$][\w$]*$/.test(expression)
+      const isSimpleIdentifier = /^[A-Za-z_$][\w$]*$/.test(expression);
+      const handler = (isSimpleIdentifier && !state.activeLocals.includes(expression))
         ? expression
-        : createInlineEventHandler(expression, state);
+        : createInlineEventHandler(expression, state, prop);
       const event = {
         name: arg,
         handler,
@@ -1375,7 +1447,7 @@ function compileTemplateNode(
         throw new ResuxCompileError("v-if needs an expression.", locationFromVueNode(state.file, prop));
       }
       element.if = {
-        expression: transformTemplateExpression(expression, state.templateRefBindings, state.file, prop),
+        expression: registerTemplateExpression(expression, state.templateRefBindings, state.file, prop, state),
         blockId: nextBindingId(state)
       };
       continue;
@@ -1397,7 +1469,7 @@ function compileTemplateNode(
         throw new ResuxCompileError("v-for needs an expression.", locationFromVueNode(state.file, prop));
       }
       element.for = parseForExpression(expression, state.file, prop, state);
-      element.for.source = transformTemplateExpression(element.for.source, state.templateRefBindings, state.file, prop);
+      element.for.source = registerTemplateExpression(element.for.source, state.templateRefBindings, state.file, prop, state);
       continue;
     }
 
@@ -1409,7 +1481,7 @@ function compileTemplateNode(
       attrs.push({
         kind: "dynamic",
         name: "hidden",
-        value: `!(${transformTemplateExpression(expression, state.templateRefBindings, state.file, prop)})`,
+        value: registerRawTemplateExpression(`!(${transformTemplateExpressionCode(expression, state.templateRefBindings, state.file, prop).transformed})`, expression, transformTemplateExpressionCode(expression, state.templateRefBindings, state.file, prop).identifiers, state),
         bindingId: nextBindingId(state)
       });
       continue;
@@ -1422,7 +1494,7 @@ function compileTemplateNode(
       }
       element.children = [{
         type: "interpolation",
-        expression: transformTemplateExpression(expression, state.templateRefBindings, state.file, prop),
+        expression: registerTemplateExpression(expression, state.templateRefBindings, state.file, prop, state),
         bindingId: nextBindingId(state)
       }];
       continue;
@@ -1434,7 +1506,7 @@ function compileTemplateNode(
         throw new ResuxCompileError("v-html needs an expression.", locationFromVueNode(state.file, prop));
       }
       element.html = {
-        expression: transformTemplateExpression(expression, state.templateRefBindings, state.file, prop),
+        expression: registerTemplateExpression(expression, state.templateRefBindings, state.file, prop, state),
         bindingId: nextBindingId(state)
       };
       element.children = [];
@@ -1453,7 +1525,7 @@ function compileTemplateNode(
       attrs.push({
         kind: "dynamic",
         name: model.attribute,
-        value: transformTemplateExpression(model.value, state.templateRefBindings, state.file, prop),
+        value: registerTemplateExpression(model.value, state.templateRefBindings, state.file, prop, state),
         bindingId: nextBindingId(state)
       });
       const event = {
@@ -1466,24 +1538,47 @@ function compileTemplateNode(
       continue;
     }
 
-    throw new ResuxCompileError(`v-${prop.name} is not supported in the v1 compiler.`, locationFromVueNode(state.file, prop));
+    const argSuffix = prop.arg ? `:${expressionContent(prop.arg)}` : "";
+    const name = `v-${prop.name}${argSuffix}`;
+    const expression = expressionContent(prop.exp);
+    if (expression) {
+      attrs.push({
+        kind: "dynamic",
+        name,
+        value: registerTemplateExpression(expression, state.templateRefBindings, state.file, prop, state),
+        bindingId: nextBindingId(state)
+      });
+    } else {
+      attrs.push({
+        kind: "static",
+        name,
+        value: ""
+      });
+    }
+    continue;
   }
 
   if (options.ifExpressionOverride) {
     element.if = {
-      expression: options.ifExpressionOverride,
+      expression: registerRawTemplateExpression(options.ifExpressionOverride, options.ifExpressionOverride, [], state),
       blockId: nextBindingId(state),
     };
+  }
+
+  if (addedLocals > 0) {
+    state.activeLocals.splice(state.activeLocals.length - addedLocals, addedLocals);
   }
 
   return element;
 }
 
-function createInlineEventHandler(expression: string, state: CompileTemplateState): string {
+function createInlineEventHandler(expression: string, state: CompileTemplateState, node?: VueCompilerNode): string {
   const name = nextInlineHandlerName(state);
+  const transformed = transformTemplateExpressionCode(expression, state.templateRefBindings, state.file, node ?? ({} as any)).transformed;
   state.inlineHandlers.push({
     name,
-    source: `function ${name}($event) {\n${expression}\n}`
+    source: `function ${name}($event) {\n${transformed}\n}`,
+    locals: [...state.activeLocals]
   });
   return name;
 }
@@ -1506,7 +1601,8 @@ function createModelBinding(
 
   state.inlineHandlers.push({
     name: handler,
-    source: `function ${handler}($event) {\n${assignment}\n}`
+    source: `function ${handler}($event) {\n${assignment}\n}`,
+    locals: [...state.activeLocals]
   });
 
   return {
@@ -1522,14 +1618,41 @@ function staticAttributeValue(props: Array<AttributeNode | DirectiveNode>, name:
   return attr?.value?.content;
 }
 
-function transformTemplateExpression(
+function registerTemplateExpression(
+  expression: string,
+  templateRefBindings: Set<string>,
+  file: string,
+  node: VueCompilerNode,
+  state: CompileTemplateState
+): string {
+  const result = transformTemplateExpressionCode(expression, templateRefBindings, file, node);
+  return registerRawTemplateExpression(result.transformed, expression, result.identifiers, state);
+}
+
+function registerRawTemplateExpression(
+  transformed: string,
+  original: string,
+  identifiers: string[],
+  state: CompileTemplateState
+): string {
+  const id = `__rx_expr_${state.expressions.length}`;
+  state.expressions.push({
+    id,
+    original,
+    transformed,
+    locals: identifiers // repurposing locals to store the free identifiers needed for the closure
+  });
+  return id;
+}
+
+function transformTemplateExpressionCode(
   expression: string,
   templateRefBindings: Set<string>,
   file: string,
   node: VueCompilerNode
-): string {
-  if (templateRefBindings.size === 0) {
-    return expression;
+): { transformed: string; identifiers: string[] } {
+  if (expression.trim() === "") {
+    return { transformed: expression, identifiers: [] };
   }
 
   const wrapped = `(${expression})`;
@@ -1539,11 +1662,32 @@ function transformTemplateExpression(
   }
 
   const insertions: number[] = [];
+  const identifiers = new Set<string>();
+
   const visit = (current: ts.Node): void => {
-    if (ts.isIdentifier(current) && templateRefBindings.has(current.text) && shouldAutoUnwrapTemplateIdentifier(current)) {
-      const position = current.end - 1;
-      if (position >= 0 && position <= expression.length) {
-        insertions.push(position);
+    if (ts.isIdentifier(current)) {
+      if (shouldAutoUnwrapTemplateIdentifier(current)) {
+        if (templateRefBindings.has(current.text)) {
+          const position = current.end - 1;
+          if (position >= 0 && position <= expression.length) {
+            insertions.push(position);
+          }
+        }
+      }
+
+      let isPropertyName = false;
+      const parent = current.parent;
+      if (parent) {
+        if (ts.isPropertyAccessExpression(parent) && parent.name === current) {
+          isPropertyName = true;
+        }
+        if (ts.isPropertyAssignment(parent) && parent.name === current) {
+          isPropertyName = true;
+        }
+      }
+
+      if (!isPropertyName && !["undefined", "NaN", "Infinity", "arguments", "this"].includes(current.text)) {
+        identifiers.add(current.text);
       }
     }
 
@@ -1551,16 +1695,16 @@ function transformTemplateExpression(
   };
 
   visit(sourceFile);
-  if (insertions.length === 0) {
-    return expression;
-  }
-
-  const uniqueInsertions = [...new Set(insertions)].sort((a, b) => b - a);
+  
   let transformed = expression;
-  for (const position of uniqueInsertions) {
-    transformed = `${transformed.slice(0, position)}.value${transformed.slice(position)}`;
+  if (insertions.length > 0) {
+    const uniqueInsertions = [...new Set(insertions)].sort((a, b) => b - a);
+    for (const position of uniqueInsertions) {
+      transformed = `${transformed.slice(0, position)}.value${transformed.slice(position)}`;
+    }
   }
-  return transformed;
+  
+  return { transformed, identifiers: [...identifiers] };
 }
 
 function shouldAutoUnwrapTemplateIdentifier(node: ts.Identifier): boolean {
@@ -1648,21 +1792,436 @@ function parseForExpression(expression: string, file: string, node: VueCompilerN
   };
 }
 
+function parseBindingNames(expression: string): string[] {
+  const source = `const ${expression} = null;`;
+  const sf = ts.createSourceFile("temp.ts", source, ts.ScriptTarget.Latest, true);
+  const names: string[] = [];
+  if (sf.statements.length > 0) {
+    const stmt = sf.statements[0];
+    if (ts.isVariableStatement(stmt)) {
+      const decl = stmt.declarationList.declarations[0];
+      if (decl) {
+        names.push(...collectBindingNames(decl.name));
+      }
+    }
+  }
+  return names;
+}
+
+function rewriteImportStatementText(
+  statement: ts.ImportDeclaration | ts.ImportEqualsDeclaration,
+  sourceFile: ts.SourceFile,
+  file: string
+): string {
+  if (ts.isImportDeclaration(statement)) {
+    const specifier = statement.moduleSpecifier;
+    if (ts.isStringLiteral(specifier)) {
+      const importPath = specifier.text;
+      if (importPath.startsWith(".")) {
+        const absoluteImported = path.resolve(path.dirname(file), importPath);
+        const resolvedPath = resolveFileExtension(absoluteImported);
+        const normalized = fileUrl(resolvedPath);
+        const fullText = statement.getFullText(sourceFile);
+        const start = specifier.getStart(sourceFile) - statement.getFullStart();
+        const end = specifier.getEnd() - statement.getFullStart();
+        return fullText.slice(0, start) + JSON.stringify(normalized) + fullText.slice(end);
+      }
+    }
+  } else if (ts.isImportEqualsDeclaration(statement)) {
+    const moduleRef = statement.moduleReference;
+    if (ts.isExternalModuleReference(moduleRef) && ts.isStringLiteral(moduleRef.expression)) {
+      const specifier = moduleRef.expression;
+      const importPath = specifier.text;
+      if (importPath.startsWith(".")) {
+        const absoluteImported = path.resolve(path.dirname(file), importPath);
+        const resolvedPath = resolveFileExtension(absoluteImported);
+        const normalized = fileUrl(resolvedPath);
+        const fullText = statement.getFullText(sourceFile);
+        const start = specifier.getStart(sourceFile) - statement.getFullStart();
+        const end = specifier.getEnd() - statement.getFullStart();
+        return fullText.slice(0, start) + JSON.stringify(normalized) + fullText.slice(end);
+      }
+    }
+  }
+  return statement.getFullText(sourceFile);
+}
+
+function findProjectRoot(startFile: string): string {
+  let dir = path.dirname(startFile);
+  while (true) {
+    if (existsSync(path.join(dir, "resux.config.ts")) || 
+        existsSync(path.join(dir, "package.json")) ||
+        existsSync(path.join(dir, "nuxt.config.ts"))) {
+      return dir;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+  return path.dirname(startFile);
+}
+
+const IMAGE_VIDEO_FONT_EXTENSIONS = new Set([
+  ".webp", ".png", ".jpg", ".jpeg", ".svg", ".gif", ".ico", ".webm", ".mp4",
+  ".wav", ".mp3", ".ogg", ".woff", ".woff2", ".ttf", ".eot"
+]);
+
+const STYLESHEET_EXTENSIONS = new Set([
+  ".css", ".scss", ".sass", ".less", ".styl", ".stylus"
+]);
+
+function ensureCompiledUserModule(
+  resolvedFile: string,
+  projectRoot: string,
+  outDir: string,
+  compiledSet = new Set<string>()
+): string {
+  const relativePath = path.relative(projectRoot, resolvedFile);
+  const targetJsFile = path.join(outDir, "server", "imported", relativePath.replace(/\.[ct]sx?$/, ".mjs"));
+
+  if (compiledSet.has(resolvedFile)) {
+    return targetJsFile;
+  }
+  compiledSet.add(resolvedFile);
+
+  let sourceText = "";
+  try {
+    sourceText = ts.sys.readFile(resolvedFile) ?? "";
+  } catch {
+    return resolvedFile;
+  }
+
+  const sourceFile = ts.createSourceFile(resolvedFile, sourceText, ts.ScriptTarget.ES2022, true);
+  const replacements: Array<{ start: number; end: number; replacement: string }> = [];
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement) && statement.moduleSpecifier && ts.isStringLiteral(statement.moduleSpecifier)) {
+      const specifier = statement.moduleSpecifier;
+      const importPath = specifier.text;
+      if (importPath.startsWith(".") || importPath.startsWith("@/") || importPath.startsWith("~/")) {
+        let resolvedImported = "";
+        if (importPath.startsWith(".")) {
+          resolvedImported = path.resolve(path.dirname(resolvedFile), importPath);
+        } else {
+          resolvedImported = path.resolve(projectRoot, importPath.slice(2));
+        }
+        resolvedImported = resolveFileExtension(resolvedImported);
+        const ext = path.extname(resolvedImported).toLowerCase();
+        if (ext === ".ts" || ext === ".tsx" || ext === ".js" || ext === ".jsx") {
+          const compiledTarget = ensureCompiledUserModule(resolvedImported, projectRoot, outDir, compiledSet);
+          const relativeToCompiled = path.relative(path.dirname(targetJsFile), compiledTarget);
+          const relativeImportPath = relativeToCompiled.startsWith(".")
+            ? relativeToCompiled.replace(/\\/g, "/")
+            : "./" + relativeToCompiled.replace(/\\/g, "/");
+          replacements.push({
+            start: specifier.getStart(sourceFile),
+            end: specifier.getEnd(),
+            replacement: JSON.stringify(relativeImportPath)
+          });
+        }
+      }
+    }
+  }
+
+  replacements.sort((a, b) => b.start - a.start);
+  let rewrittenSource = sourceText;
+  for (const r of replacements) {
+    rewrittenSource = rewrittenSource.slice(0, r.start) + r.replacement + rewrittenSource.slice(r.end);
+  }
+
+  const transpiled = ts.transpileModule(rewrittenSource, {
+    compilerOptions: {
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.ES2022,
+      importsNotUsedAsValues: ts.ImportsNotUsedAsValues.Remove
+    }
+  }).outputText;
+
+  const targetDir = path.dirname(targetJsFile);
+  if (!existsSync(targetDir)) {
+    mkdirSync(targetDir, { recursive: true });
+  }
+  writeFileSync(targetJsFile, transpiled, "utf8");
+
+  return targetJsFile;
+}
+
+function processImportDeclaration(
+  statement: ts.ImportDeclaration | ts.ImportEqualsDeclaration,
+  sourceFile: ts.SourceFile,
+  file: string,
+  client: boolean
+): string {
+  if (ts.isImportDeclaration(statement)) {
+    const specifier = statement.moduleSpecifier;
+    if (!ts.isStringLiteral(specifier)) {
+      return statement.getFullText(sourceFile);
+    }
+    const importPath = specifier.text;
+    const isRelative = importPath.startsWith(".");
+    const isAlias = importPath.startsWith("@/") || importPath.startsWith("~/");
+    const ext = path.extname(importPath).toLowerCase();
+
+    if (IMAGE_VIDEO_FONT_EXTENSIONS.has(ext) || STYLESHEET_EXTENSIONS.has(ext)) {
+      if (client) {
+        if (isRelative) {
+          const absoluteImported = path.resolve(path.dirname(file), importPath);
+          const normalized = fileUrl(absoluteImported);
+          const fullText = statement.getFullText(sourceFile);
+          const start = specifier.getStart(sourceFile) - statement.getFullStart();
+          const end = specifier.getEnd() - statement.getFullStart();
+          return fullText.slice(0, start) + JSON.stringify(normalized) + fullText.slice(end);
+        }
+        if (isAlias) {
+          const projectRoot = findProjectRoot(file);
+          const absoluteImported = path.resolve(projectRoot, importPath.slice(2));
+          const normalized = fileUrl(absoluteImported);
+          const fullText = statement.getFullText(sourceFile);
+          const start = specifier.getStart(sourceFile) - statement.getFullStart();
+          const end = specifier.getEnd() - statement.getFullStart();
+          return fullText.slice(0, start) + JSON.stringify(normalized) + fullText.slice(end);
+        }
+        return statement.getFullText(sourceFile);
+      } else {
+        if (STYLESHEET_EXTENSIONS.has(ext)) {
+          return "";
+        }
+        const projectRoot = findProjectRoot(file);
+        let absolutePath = "";
+        if (isAlias) {
+          absolutePath = path.resolve(projectRoot, importPath.slice(2));
+        } else if (isRelative) {
+          absolutePath = path.resolve(path.dirname(file), importPath);
+        } else {
+          absolutePath = importPath;
+        }
+
+        let webPath = importPath;
+        if (absolutePath.startsWith(projectRoot)) {
+          const relativeToRoot = path.relative(projectRoot, absolutePath);
+          webPath = "/" + relativeToRoot.replace(/\\/g, "/");
+        }
+
+        const clause = statement.importClause;
+        if (!clause) {
+          return "";
+        }
+
+        const bindings: string[] = [];
+        if (clause.name) {
+          bindings.push(clause.name.text);
+        }
+        if (clause.namedBindings) {
+          if (ts.isNamespaceImport(clause.namedBindings)) {
+            bindings.push(clause.namedBindings.name.text);
+          } else {
+            for (const element of clause.namedBindings.elements) {
+              bindings.push(element.name.text);
+            }
+          }
+        }
+
+        if (bindings.length === 0) {
+          return "";
+        }
+
+        return bindings.map(name => `const ${name} = ${JSON.stringify(webPath)};`).join("\n");
+      }
+    }
+
+    if (isRelative) {
+      const absoluteImported = path.resolve(path.dirname(file), importPath);
+      const resolvedPath = resolveFileExtension(absoluteImported);
+      const resolvedExt = path.extname(resolvedPath).toLowerCase();
+      
+      let normalized = "";
+      if (!client && (resolvedExt === ".ts" || resolvedExt === ".tsx" || resolvedExt === ".js" || resolvedExt === ".jsx")) {
+        const projectRoot = findProjectRoot(file);
+        const outDir = path.join(projectRoot, ".resux");
+        const compiledTarget = ensureCompiledUserModule(resolvedPath, projectRoot, outDir);
+        normalized = fileUrl(compiledTarget);
+      } else {
+        normalized = fileUrl(resolvedPath);
+      }
+      
+      const fullText = statement.getFullText(sourceFile);
+      const start = specifier.getStart(sourceFile) - statement.getFullStart();
+      const end = specifier.getEnd() - statement.getFullStart();
+      return fullText.slice(0, start) + JSON.stringify(normalized) + fullText.slice(end);
+    }
+
+    if (!client && isAlias) {
+      const projectRoot = findProjectRoot(file);
+      const absoluteImported = path.resolve(projectRoot, importPath.slice(2));
+      const resolvedPath = resolveFileExtension(absoluteImported);
+      const resolvedExt = path.extname(resolvedPath).toLowerCase();
+      
+      let normalized = "";
+      if (resolvedExt === ".ts" || resolvedExt === ".tsx" || resolvedExt === ".js" || resolvedExt === ".jsx") {
+        const outDir = path.join(projectRoot, ".resux");
+        const compiledTarget = ensureCompiledUserModule(resolvedPath, projectRoot, outDir);
+        normalized = fileUrl(compiledTarget);
+      } else {
+        normalized = fileUrl(resolvedPath);
+      }
+      
+      const fullText = statement.getFullText(sourceFile);
+      const start = specifier.getStart(sourceFile) - statement.getFullStart();
+      const end = specifier.getEnd() - statement.getFullStart();
+      return fullText.slice(0, start) + JSON.stringify(normalized) + fullText.slice(end);
+    }
+  } else if (ts.isImportEqualsDeclaration(statement)) {
+    const moduleRef = statement.moduleReference;
+    if (ts.isExternalModuleReference(moduleRef) && ts.isStringLiteral(moduleRef.expression)) {
+      const specifier = moduleRef.expression;
+      const importPath = specifier.text;
+      const isRelative = importPath.startsWith(".");
+      const isAlias = importPath.startsWith("@/") || importPath.startsWith("~/");
+      const ext = path.extname(importPath).toLowerCase();
+
+      if (IMAGE_VIDEO_FONT_EXTENSIONS.has(ext) || STYLESHEET_EXTENSIONS.has(ext)) {
+        if (client) {
+          if (isRelative) {
+            const absoluteImported = path.resolve(path.dirname(file), importPath);
+            const normalized = fileUrl(absoluteImported);
+            const fullText = statement.getFullText(sourceFile);
+            const start = specifier.getStart(sourceFile) - statement.getFullStart();
+            const end = specifier.getEnd() - statement.getFullStart();
+            return fullText.slice(0, start) + JSON.stringify(normalized) + fullText.slice(end);
+          }
+          if (isAlias) {
+            const projectRoot = findProjectRoot(file);
+            const absoluteImported = path.resolve(projectRoot, importPath.slice(2));
+            const normalized = fileUrl(absoluteImported);
+            const fullText = statement.getFullText(sourceFile);
+            const start = specifier.getStart(sourceFile) - statement.getFullStart();
+            const end = specifier.getEnd() - statement.getFullStart();
+            return fullText.slice(0, start) + JSON.stringify(normalized) + fullText.slice(end);
+          }
+          return statement.getFullText(sourceFile);
+        } else {
+          if (STYLESHEET_EXTENSIONS.has(ext)) {
+            return "";
+          }
+          const projectRoot = findProjectRoot(file);
+          let absolutePath = "";
+          if (isAlias) {
+            absolutePath = path.resolve(projectRoot, importPath.slice(2));
+          } else if (isRelative) {
+            absolutePath = path.resolve(path.dirname(file), importPath);
+          } else {
+            absolutePath = importPath;
+          }
+
+          let webPath = importPath;
+          if (absolutePath.startsWith(projectRoot)) {
+            const relativeToRoot = path.relative(projectRoot, absolutePath);
+            webPath = "/" + relativeToRoot.replace(/\\/g, "/");
+          }
+
+          if (!statement.name) {
+            return "";
+          }
+          return `const ${statement.name.text} = ${JSON.stringify(webPath)};`;
+        }
+      }
+
+      if (isRelative) {
+        const absoluteImported = path.resolve(path.dirname(file), importPath);
+        const resolvedPath = resolveFileExtension(absoluteImported);
+        const resolvedExt = path.extname(resolvedPath).toLowerCase();
+        
+        let normalized = "";
+        if (!client && (resolvedExt === ".ts" || resolvedExt === ".tsx" || resolvedExt === ".js" || resolvedExt === ".jsx")) {
+          const projectRoot = findProjectRoot(file);
+          const outDir = path.join(projectRoot, ".resux");
+          const compiledTarget = ensureCompiledUserModule(resolvedPath, projectRoot, outDir);
+          normalized = fileUrl(compiledTarget);
+        } else {
+          normalized = fileUrl(resolvedPath);
+        }
+        
+        const fullText = statement.getFullText(sourceFile);
+        const start = specifier.getStart(sourceFile) - statement.getFullStart();
+        const end = specifier.getEnd() - statement.getFullStart();
+        return fullText.slice(0, start) + JSON.stringify(normalized) + fullText.slice(end);
+      }
+
+      if (!client && isAlias) {
+        const projectRoot = findProjectRoot(file);
+        const absoluteImported = path.resolve(projectRoot, importPath.slice(2));
+        const resolvedPath = resolveFileExtension(absoluteImported);
+        const resolvedExt = path.extname(resolvedPath).toLowerCase();
+        
+        let normalized = "";
+        if (resolvedExt === ".ts" || resolvedExt === ".tsx" || resolvedExt === ".js" || resolvedExt === ".jsx") {
+          const outDir = path.join(projectRoot, ".resux");
+          const compiledTarget = ensureCompiledUserModule(resolvedPath, projectRoot, outDir);
+          normalized = fileUrl(compiledTarget);
+        } else {
+          normalized = fileUrl(resolvedPath);
+        }
+        
+        const fullText = statement.getFullText(sourceFile);
+        const start = specifier.getStart(sourceFile) - statement.getFullStart();
+        const end = specifier.getEnd() - statement.getFullStart();
+        return fullText.slice(0, start) + JSON.stringify(normalized) + fullText.slice(end);
+      }
+    }
+  }
+  return statement.getFullText(sourceFile);
+}
+
 function analyzeScript(script: string, file: string, inlineHandlers: GeneratedHandler[] = []): ScriptAnalysis {
   const sourceFile = ts.createSourceFile(file, script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const imports: string[] = [];
+  const importDeclarations: (ts.ImportDeclaration | ts.ImportEqualsDeclaration)[] = [];
   const body: string[] = [];
   const bindings = new Set<string>();
   const handlerNames = new Set<string>();
   const resumableBindings = new Set<string>();
+  const importedBindings = new Set<string>();
+  const inlineHandlerLocals = new Map<string, string[]>();
   const templateRefBindings = inferTemplateRefBindings(script, file);
   const handlers = new Map<string, ts.Node>();
   let pageMeta: PageMeta | undefined;
 
+  for (const h of inlineHandlers) {
+    if (h.locals) {
+      inlineHandlerLocals.set(h.name, h.locals);
+    }
+  }
+
   for (const statement of sourceFile.statements) {
     const text = statement.getFullText(sourceFile);
     if (ts.isImportDeclaration(statement) || ts.isImportEqualsDeclaration(statement)) {
-      imports.push(text);
+      imports.push(rewriteImportStatementText(statement, sourceFile, file));
+      importDeclarations.push(statement);
+      if (ts.isImportDeclaration(statement)) {
+        const clause = statement.importClause;
+        if (clause) {
+          if (clause.name) {
+            bindings.add(clause.name.text);
+            importedBindings.add(clause.name.text);
+          }
+          if (clause.namedBindings) {
+            if (ts.isNamespaceImport(clause.namedBindings)) {
+              bindings.add(clause.namedBindings.name.text);
+              importedBindings.add(clause.namedBindings.name.text);
+            } else {
+              for (const element of clause.namedBindings.elements) {
+                bindings.add(element.name.text);
+                importedBindings.add(element.name.text);
+              }
+            }
+          }
+        }
+      } else if (ts.isImportEqualsDeclaration(statement) && statement.name) {
+        bindings.add(statement.name.text);
+        importedBindings.add(statement.name.text);
+      }
       continue;
     }
 
@@ -1691,8 +2250,10 @@ function analyzeScript(script: string, file: string, inlineHandlers: GeneratedHa
             handlerNames.add(declaration.name.text);
             handlers.set(declaration.name.text, declaration);
           }
-          if (isResumableInitializer(declaration.initializer)) {
-            resumableBindings.add(declaration.name.text);
+        }
+        if (isResumableInitializer(declaration.initializer)) {
+          for (const name of collectBindingNames(declaration.name)) {
+            resumableBindings.add(name);
           }
         }
       }
@@ -1715,10 +2276,13 @@ function analyzeScript(script: string, file: string, inlineHandlers: GeneratedHa
 
   return {
     imports: imports.join("\n"),
+    importDeclarations,
     setupBody: body.join("\n"),
     bindings: [...bindings],
     handlerNames,
     resumableBindings,
+    importedBindings,
+    inlineHandlerLocals,
     templateRefBindings,
     handlers,
     sourceFile,
@@ -1855,9 +2419,10 @@ function readPropertyName(name: ts.PropertyName, sourceFile: ts.SourceFile, file
   throw new ResuxCompileError("Only simple property names are supported here.", locationFromTsNode(file, sourceFile, name));
 }
 
-function validateTemplateHandlers(events: TemplateEvent[], analysis: ScriptAnalysis, file: string, fullSource: string): void {
+function validateTemplateHandlers(events: TemplateEvent[], analysis: ScriptAnalysis, file: string, fullSource: string, templateLocals: string[] = []): void {
+  const allowedHandlers = new Set([...analysis.handlerNames, ...templateLocals]);
   for (const event of events) {
-    if (!analysis.handlerNames.has(event.handler)) {
+    if (!allowedHandlers.has(event.handler)) {
       throw new ResuxCompileError(`Handler "${event.handler}" must be a top-level function or arrow function.`, locationFromOffset(file, fullSource, 0));
     }
 
@@ -1866,7 +2431,8 @@ function validateTemplateHandlers(events: TemplateEvent[], analysis: ScriptAnaly
       continue;
     }
 
-    const unsupportedCapture = findUnsupportedCapture(handlerNode, event.handler, analysis);
+    const locals = analysis.inlineHandlerLocals.get(event.handler) ?? [];
+    const unsupportedCapture = findUnsupportedCapture(handlerNode, event.handler, analysis, locals);
     if (unsupportedCapture) {
       throw new ResuxCompileError(
         `Handler "${event.handler}" captures "${unsupportedCapture}", which is not resumable in Resux.`,
@@ -1876,9 +2442,18 @@ function validateTemplateHandlers(events: TemplateEvent[], analysis: ScriptAnaly
   }
 }
 
-function findUnsupportedCapture(node: ts.Node, handlerName: string, analysis: ScriptAnalysis): string | null {
-  const locals = new Set<string>([handlerName, "event"]);
-  const allowedTopLevel = new Set([...analysis.resumableBindings]);
+function findUnsupportedCapture(
+  node: ts.Node,
+  handlerName: string,
+  analysis: ScriptAnalysis,
+  templateLocals: string[] = []
+): string | null {
+  const locals = new Set<string>([handlerName, "event", ...templateLocals]);
+  const allowedTopLevel = new Set([
+    ...analysis.resumableBindings,
+    ...analysis.handlerNames,
+    ...analysis.importedBindings
+  ]);
 
   function registerPattern(name: ts.BindingName): void {
     for (const binding of collectBindingNames(name)) {
@@ -1952,7 +2527,19 @@ function isResumableInitializer(node: ts.Expression | undefined): boolean {
   if (!node) {
     return false;
   }
+  if (ts.isNumericLiteral(node) || ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+    return true;
+  }
+  if (node.kind === ts.SyntaxKind.TrueKeyword || node.kind === ts.SyntaxKind.FalseKeyword || node.kind === ts.SyntaxKind.NullKeyword) {
+    return true;
+  }
+  if (ts.isPrefixUnaryExpression(node) && ts.isNumericLiteral(node.operand)) {
+    return true;
+  }
   if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+    if (node.expression.text.startsWith("use")) {
+      return true;
+    }
     return [
       "ref",
       "reactive",
@@ -1974,6 +2561,9 @@ function isResumableInitializer(node: ts.Expression | undefined): boolean {
     ].includes(node.expression.text);
   }
   if (ts.isAwaitExpression(node) && ts.isCallExpression(node.expression) && ts.isIdentifier(node.expression.expression)) {
+    if (node.expression.expression.text.startsWith("use")) {
+      return true;
+    }
     return ["useAsyncData", "useFetch"].includes(node.expression.expression.text);
   }
   return false;
@@ -2002,17 +2592,58 @@ function createComponentModuleSource(options: {
   styles: ComponentStyle[];
   styleScopeId?: string;
   client: boolean;
+  expressions?: { id: string; original: string; transformed: string; locals: string[] }[];
 }): string {
   const importPath = options.client ? "/__resux/runtime-client.mjs" : "resuxjs/runtime";
   const factory = options.client ? "createClientComponent" : "defineComponent";
+  
+  const expressionClosures = (options.expressions ?? []).map((expr) => {
+    const destructure = expr.locals.length > 0
+      ? expr.locals.map(id => `let ${id} = "${id}" in locals ? locals.${id} : "${id}" in scope ? scope.${id} : globalThis.${id};
+      if (typeof ${id} === "string" && ${id}.startsWith("__rx_callback:")) {
+        const parts = ${id}.split(":");
+        const cbScopeId = parts[2];
+        const cbHandler = parts[3];
+        ${id} = async (...args) => {
+          const payload = globalThis.__RESUX__;
+          if (payload && payload.scopes[cbScopeId]) {
+            const comp = await importComponent(payload.scopes[cbScopeId].moduleId, payload.modules, devImportRevision);
+            let sRec = scopeCache.get(cbScopeId);
+            if (!sRec) {
+              sRec = await comp.createScope(payload.scopes[cbScopeId], payload.route);
+              scopeCache.set(cbScopeId, sRec);
+            }
+            const patches = await comp.run(sRec, cbHandler, args[0]);
+            const serialized = comp.serialize(sRec);
+            payload.scopes[cbScopeId].props = serialized.props;
+            payload.scopes[cbScopeId].state = serialized.state;
+            payload.scopes[cbScopeId].asyncData = serialized.asyncData;
+            applyPatches(cbScopeId, patches);
+          }
+        };
+      }`).join("\n      ")
+      : "";
+    return `    ${JSON.stringify(expr.id)}: function(scope, locals) {
+      ${destructure}
+      return (${expr.transformed});
+    },`;
+  }).join("\n");
+
+  const importsText = (options.analysis.importDeclarations ?? []).map((decl) => {
+    return processImportDeclaration(decl, options.analysis.sourceFile, options.file, options.client);
+  }).filter(Boolean).join("\n");
+
   const source = [
     `import { ${factory} } from ${JSON.stringify(importPath)};`,
-    options.analysis.imports,
+    importsText,
     `const __template = ${JSON.stringify(options.template, null, 2)};`,
     `async function __rx_setup(__ctx) {`,
-    `const { ref, reactive, computed, watch, watchEffect, readonly, toRef, toRefs, unref, isRef, isReactive, isReadonly, nextTick, useState, useAsyncData, useRoute, useRouter, useHead, useSeoMeta, useRuntimeConfig, useResuxApp, useResuxImage, apiURL, useFetch, $fetch, useError, clearError, showError, createError, useLazyPackage, useClientPackage, usePackageReady, defineLazyPackage, defineClientOnlyPackage, definePackageAdapter, defineClientEnhancement, useClientEnhancement, onMounted, definePageMeta, defineProps } = __ctx;`,
+    `const { ref, reactive, computed, watch, watchEffect, readonly, toRef, toRefs, unref, isRef, isReactive, isReadonly, nextTick, useState, useAsyncData, useRoute, useRouter, useHead, useSeoMeta, useRuntimeConfig, useResuxApp, useResuxImage, apiURL, useFetch, $fetch, useError, clearError, showError, createError, useLazyPackage, useClientPackage, usePackageReady, defineLazyPackage, defineClientOnlyPackage, definePackageAdapter, defineClientEnhancement, useClientEnhancement, onMounted, definePageMeta, defineProps, defineEmits, useLocalePath, useSwitchLocalePath, useI18n, useDevice, $device, importComponent, scopeCache, devImportRevision, applyPatches } = __ctx;`,
     options.analysis.setupBody,
-    `return { ${options.analysis.bindings.join(", ")} };`,
+    `const __rx_expressions = {`,
+    expressionClosures,
+    `};`,
+    `return { ${options.analysis.bindings.join(", ")}, __rx_expressions };`,
     `}`,
     `export default ${factory}({`,
     `id: ${JSON.stringify(options.id)},`,
@@ -2259,6 +2890,49 @@ function createAppHead(runtimeConfig: Record<string, unknown>) {
   };
 }
 
+function scanRuntimeConfigForSecrets(config: Record<string, unknown>, halalConfig: any): void {
+  const publicConfig = config.public as Record<string, unknown> | undefined;
+  if (!publicConfig || typeof publicConfig !== "object") {
+    return;
+  }
+
+  const isStrict = halalConfig?.strict === true;
+  const unsafeKeys = ["SECRET", "TOKEN", "PASSWORD", "PRIVATE", "DATABASE", "KEY"];
+  const secretValuePatterns = [
+    /^[a-f0-9]{32,128}$/i,
+    /ey[a-zA-Z0-9_-]{15,}\.ey[a-zA-Z0-9_-]{15,}\.[a-zA-Z0-9_-]{15,}/,
+    /sk_live_[0-9a-zA-Z]{24}/,
+    /AIzaSy[0-9a-zA-Z_-]{33}/,
+    /amzn\.mws\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/i,
+    /https?:\/\/[^/]+:[^/]+@/
+  ];
+
+  for (const [key, value] of Object.entries(publicConfig)) {
+    const upperKey = key.toUpperCase();
+    const matchesUnsafeKey = unsafeKeys.some(unsafe => upperKey.includes(unsafe));
+    if (matchesUnsafeKey) {
+      const msg = `[resux-safety] Unsafe key name "${key}" found in public runtimeConfig. Do not expose secrets to the client.`;
+      if (isStrict) {
+        throw new Error(msg);
+      } else {
+        console.warn(`\x1b[33m${msg}\x1b[0m`);
+      }
+    }
+
+    if (typeof value === "string") {
+      const looksLikeSecret = secretValuePatterns.some(pattern => pattern.test(value));
+      if (looksLikeSecret) {
+        const msg = `[resux-safety] Value of public runtimeConfig key "${key}" looks like a private credential or API secret. Do not expose secrets to the client.`;
+        if (isStrict) {
+          throw new Error(msg);
+        } else {
+          console.warn(`\x1b[33m${msg}\x1b[0m`);
+        }
+      }
+    }
+  }
+}
+
 function createRuntimeConfig(config: Record<string, unknown>): Record<string, unknown> {
   const runtimeConfig = (config as ResuxConfig).runtimeConfig;
   const packagesConfig = isPlainObject((config as ResuxConfig).packages)
@@ -2270,7 +2944,7 @@ function createRuntimeConfig(config: Record<string, unknown>): Record<string, un
   const publicConfig = (runtimeConfig?.public && typeof runtimeConfig.public === "object" && !Array.isArray(runtimeConfig.public))
     ? runtimeConfig.public as Record<string, unknown>
     : {};
-  return {
+  const appRuntimeConfig = {
     ...(runtimeConfig ?? {}),
     public: {
       ...publicConfig,
@@ -2278,6 +2952,11 @@ function createRuntimeConfig(config: Record<string, unknown>): Record<string, un
       ...(videoConfig ? { video: videoConfig } : {}),
     }
   };
+
+  const halalConfig = (config as any).halalAI;
+  scanRuntimeConfigForSecrets(appRuntimeConfig, halalConfig);
+
+  return appRuntimeConfig;
 }
 
 function createRouteRules(config: Record<string, unknown>): Record<string, RouteRuleConfig> {
@@ -2400,14 +3079,14 @@ function compilePluginFile(file: string, index: number): CompiledPlugin {
     file,
     mode,
     serverSource: transpileSupportModule(file, {
-      prefix: `import { defineResuxPlugin } from "resuxjs/runtime";\n`,
+      prefix: `import { defineResuxPlugin } from "resuxjs/runtime";\nconst defineNuxtPlugin = defineResuxPlugin;\n`,
       autoImports: [{
         from: "resuxjs/runtime",
         names: SUPPORT_CLIENT_RUNTIME_HELPERS,
       }],
     }),
     clientSource: transpileSupportModule(file, {
-      prefix: `import { defineResuxPlugin } from "/__resux/runtime-client.mjs";\n`,
+      prefix: `import { defineResuxPlugin } from "/__resux/runtime-client.mjs";\nconst defineNuxtPlugin = defineResuxPlugin;\n`,
       autoImports: [{
         from: "/__resux/runtime-client.mjs",
         names: SUPPORT_CLIENT_RUNTIME_HELPERS,
@@ -3776,13 +4455,34 @@ async function existsFile(file: string): Promise<boolean> {
   }
 }
 
-function inferComponentName(root: string, file: string): string {
+function inferComponentName(root: string, file: string, componentDirs: string[] = []): string {
   const relative = normalizePath(path.relative(root, file));
   if (relative === "app.vue") {
     return "App";
   }
+  const normalizedFile = normalizePath(path.resolve(file));
+  for (const dir of componentDirs) {
+    const normalizedDir = normalizePath(path.resolve(dir)) + "/";
+    if (normalizedFile.startsWith(normalizedDir)) {
+      const relToDir = normalizedFile.slice(normalizedDir.length).replace(/\.vue$/, "");
+      const segments = relToDir.split("/").filter(Boolean);
+      const parts: string[] = [];
+      for (let i = 0; i < segments.length; i++) {
+        const current = pascalCase(segments[i]);
+        if (i < segments.length - 1) {
+          const next = pascalCase(segments[i + 1]);
+          if (next.toLowerCase().startsWith(current.toLowerCase())) {
+            continue;
+          }
+        }
+        parts.push(current);
+      }
+      return parts.join("");
+    }
+  }
   return pascalCase(path.basename(file, ".vue"));
 }
+
 
 function pascalCase(value: string): string {
   return value
@@ -3851,6 +4551,29 @@ function locationFromOffset(file: string, source: string, offset: number): Compi
     line: lines.length,
     column: lines[lines.length - 1].length + 1
   };
+}
+
+export function resolveFileExtension(filePath: string): string {
+  const ext = path.extname(filePath);
+  if (ext) {
+    return filePath;
+  }
+  const extensions = [".ts", ".js", ".vue", ".tsx", ".jsx", ".mjs", ".cjs"];
+  for (const ext of extensions) {
+    const candidate = filePath + ext;
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  if (existsSync(filePath) && statSync(filePath).isDirectory()) {
+    for (const ext of extensions) {
+      const candidate = path.join(filePath, "index" + ext);
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return filePath;
 }
 
 export function fileUrl(file: string): string {

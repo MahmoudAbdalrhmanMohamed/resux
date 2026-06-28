@@ -294,6 +294,16 @@ export function useI18n(): UseI18nResult {
   };
 }
 
+export function useLocalePath(): (to: string, localeCode?: string) => string {
+  const { localePath } = useI18n();
+  return localePath;
+}
+
+export function useSwitchLocalePath(): (localeCode: string, to?: string) => string {
+  const { switchLocalePath } = useI18n();
+  return switchLocalePath;
+}
+
 export function defineI18nConfig<T extends ResuxI18nConfigInput>(config: T): T {
   return config;
 }
@@ -337,3 +347,10 @@ export default defineResuxModule<ResuxI18nModuleOptions>({
     });
   }
 });
+
+if (typeof globalThis !== "undefined") {
+  (globalThis as any).__RESUX_USE_I18N__ = useI18n;
+  (globalThis as any).__RESUX_USE_LOCALE_PATH__ = useLocalePath;
+  (globalThis as any).__RESUX_USE_SWITCH_LOCALE_PATH__ = useSwitchLocalePath;
+}
+

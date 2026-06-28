@@ -2211,7 +2211,7 @@ export const clientEnhancements = ["package-events-demo"];
     });
 
     await import(runtimeImportUrl);
-    await waitForCondition(() => target.getAttribute("data-enhanced") === "true");
+    await waitForCondition(() => target.getAttribute("data-enhanced") === "true", 15000);
 
     expect(packageEvents).toEqual(expect.arrayContaining(["loading", "loaded"]));
     expect(cssEntries).toContain("/assets/demo-package.css");

@@ -37,6 +37,23 @@ import {
 } from "./runtime/index.js";
 export * from "./runtime/index.js";
 
+import {
+  enforceDevGuard,
+  enforceBuildGuard,
+  enforcePreviewGuard,
+  enforceProductionServerGuard,
+  enforceDeploymentGuard,
+  loadProjectPolicy,
+  scanProject,
+  evaluateRules,
+  formatBrowserOverlayScript,
+  runHalalCheck,
+  runHalalReport,
+  runHalalExplain,
+  runHalalSubmitReview,
+  runHalalVerifyReview
+} from "./halal-core/index.js";
+
 const require = createRequire(import.meta.url);
 const version =
   (require("../package.json") as { version?: string }).version ?? "0.0.0";
@@ -46,6 +63,7 @@ let devBuildRevision = 0;
 let devReloadRevision = 0;
 let devLastBuildSourceMtime = 0;
 const devReloadClients = new Set<ServerResponse>();
+let devHalalOverlayScript = "";
 const RESUX_PLACEHOLDER_SVG = `<svg width="96" height="96" viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">Resux mark</title>
   <desc id="desc">A compact Resux monogram shaped like a resumable route.</desc>
@@ -222,6 +240,9 @@ export function createResuxNodeHandler(options: ResuxNodeHandlerOptions = {}) {
   const outDir = path.resolve(options.outDir ?? path.join(appRoot, ".resux"));
   const buildOptions: BuildOptions = {};
 
+  // Run framework-level safety and compliance checks
+  enforceProductionServerGuard(outDir);
+
   return (request: IncomingMessage, response: ServerResponse): void => {
     void handleRequest(request, response, {
       appRoot,
@@ -254,6 +275,39 @@ export async function runResuxCli(args: string[]): Promise<void> {
   if (command === "init" || command === "create") {
     await runCreateResux(commandArgs);
     return;
+  }
+
+  if (command === "halal") {
+    const subcommand = commandArgs[0];
+    const cliOptions = readCliOptions(commandArgs.slice(1), subcommand);
+    const appRoot = path.resolve(cliOptions.appRoot);
+    const resolvedBuildDir = await resolveConfiguredBuildDir(appRoot);
+    const outDir = path.resolve(appRoot, resolvedBuildDir);
+
+    if (subcommand === "check") {
+      const ok = await runHalalCheck(appRoot, outDir);
+      if (!ok) process.exit(1);
+      return;
+    }
+    if (subcommand === "report") {
+      await runHalalReport(appRoot, outDir);
+      return;
+    }
+    if (subcommand === "explain") {
+      await runHalalExplain(appRoot);
+      return;
+    }
+    if (subcommand === "submit-review") {
+      await runHalalSubmitReview(appRoot, outDir);
+      return;
+    }
+    if (subcommand === "verify-review") {
+      const ok = await runHalalVerifyReview(appRoot);
+      if (!ok) process.exit(1);
+      return;
+    }
+    console.error(`Unknown halal subcommand "${subcommand}". Allowed: check, report, explain, submit-review, verify-review`);
+    process.exit(1);
   }
 
   const cliOptions = readCliOptions(commandArgs, command);
@@ -311,6 +365,7 @@ export async function runResuxCli(args: string[]): Promise<void> {
     }
 
     if (command === "build") {
+      await enforceBuildGuard(appRoot, outDir);
       await runTailwindBuild(appRoot, tailwind, true);
       const result = await runCompilerBuild(appRoot, outDir, {
         ...buildOptions,
@@ -324,6 +379,7 @@ export async function runResuxCli(args: string[]): Promise<void> {
       await ensureNitroBuildFiles(appRoot);
       await runNitroBuild(appRoot, outDir, buildOptions);
     } else if (command === "compile") {
+      await enforceBuildGuard(appRoot, outDir);
       await runTailwindBuild(appRoot, tailwind, true);
       const result = await runCompilerBuild(appRoot, outDir, {
         ...buildOptions,
@@ -335,6 +391,7 @@ export async function runResuxCli(args: string[]): Promise<void> {
         `Compiled ${result.routes.length} route(s) into ${path.relative(process.cwd(), outDir)}`,
       );
     } else if (command === "deploy") {
+      enforceDeploymentGuard(outDir);
       await generateDeploymentFiles(
         appRoot,
         cliOptions.deployPreset,
@@ -409,6 +466,13 @@ export async function runResuxCli(args: string[]): Promise<void> {
       }
       console.log(`Prepared Resux project at ${path.relative(process.cwd(), appRoot) || "."}.`);
     } else if (command === "dev") {
+      await enforceDevGuard(appRoot, outDir);
+      const policy = await loadProjectPolicy(appRoot);
+      const scanned = scanProject(appRoot);
+      const report = evaluateRules(scanned, policy);
+      if (report.status !== "allowed") {
+        devHalalOverlayScript = formatBrowserOverlayScript(report);
+      }
       await runTailwindBuild(appRoot, tailwind, false);
       startTailwindWatch(appRoot, tailwind);
       await runCompilerBuild(appRoot, outDir, { ...buildOptions, vite: "dev" });
@@ -430,6 +494,7 @@ export async function runResuxCli(args: string[]): Promise<void> {
         securityHeaders,
       });
     } else if (command === "preview" || command === "start") {
+      enforcePreviewGuard(outDir);
       if (await previewNeedsBuild(outDir, buildOptions)) {
         await runTailwindBuild(appRoot, tailwind, true);
         await runCompilerBuild(appRoot, outDir, { ...buildOptions, vite: "build" });
@@ -2190,6 +2255,7 @@ async function startViteDevServer(
   buildOptions: BuildOptions,
   cliOptions: CliOptions,
 ): Promise<ViteDevServer> {
+  const appRoot = path.dirname(outDir);
   const [{ createServer: createViteServer }, { default: vuePlugin }] =
     await Promise.all([import("vite"), import("@vitejs/plugin-vue")]);
   const hmrPort = 30000 + Math.floor(Math.random() * 20000);
@@ -2209,6 +2275,8 @@ async function startViteDevServer(
           "runtime-client.mjs",
         ),
         vue: require.resolve("vue"),
+        "@": normalizePath(appRoot),
+        "~": normalizePath(appRoot)
       },
     },
     server: {
@@ -2606,7 +2674,7 @@ async function handleRequest(
         }
       }
       requestUrl.searchParams.set("path", routePath);
-      await serveRoutePayload(response, requestUrl, options, requestOrigin);
+      await serveRoutePayload(request, response, requestUrl, options, requestOrigin);
       return;
     }
 
@@ -2717,6 +2785,7 @@ async function handleRequest(
       options,
       manifest,
       requestOrigin,
+      request.headers["user-agent"],
     );
 
     if (!rendered) {
@@ -2745,17 +2814,22 @@ async function handleRequest(
     }
 
     const normalizedRendered = withPrioritizedHeadImagePreloads(rendered);
-    const html = promoteDocumentImagePreloads(
+    let html = promoteDocumentImagePreloads(
       renderDocument(normalizedRendered, "Resux App", {
         devReload: options.dev,
       }),
     );
+
+    if (options.dev && devHalalOverlayScript) {
+      html = html.replace("</body>", `<script>${devHalalOverlayScript}</script></body>`);
+    }
 
     response.writeHead(routeRule?.statusCode ?? 200, {
       "content-type": "text/html; charset=utf-8",
     });
     response.end(html);
   } catch (error) {
+    console.error("Request failed:", error);
     if (response.writableEnded) {
       return;
     }
@@ -2963,6 +3037,7 @@ function createPlainErrorBody(
 }
 
 async function serveRoutePayload(
+  request: IncomingMessage,
   response: ServerResponse,
   requestUrl: URL,
   options: {
@@ -3020,6 +3095,7 @@ async function serveRoutePayload(
     options,
     manifest,
     requestOrigin,
+    request.headers["user-agent"],
   );
 
   if (!rendered) {
@@ -4649,6 +4725,7 @@ async function renderRoute(
   },
   loadedManifest?: LoadedManifest,
   requestOrigin?: string,
+  userAgent?: string,
 ): Promise<RenderRouteOutcome> {
   if (options.dev && !loadedManifest) {
     await ensureDevBuild(
@@ -4672,6 +4749,7 @@ async function renderRoute(
     params: matched.params,
     query: readQuery(requestUrl),
     origin: requestOrigin ?? requestUrl.origin,
+    userAgent,
   };
   const middlewareResult = await runRouteMiddleware(
     manifest,

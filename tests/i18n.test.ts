@@ -71,15 +71,16 @@ describe("i18n runtime integration", () => {
       file: "I18nDemo.vue",
       handlers: [],
       async script() {
-        const { useI18n } = await import("resuxjs/i18n");
+        const { useI18n, useLocalePath } = await import("resuxjs/i18n");
         const i18n = useI18n();
+        const localePath = useLocalePath();
         return {
           welcome: i18n.t("demo.welcome", { name: "Ada" }),
           fallback: i18n.t("demo.onlyEn"),
           locale: i18n.locale.value,
           dir: i18n.dir.value,
-          toEn: i18n.switchLocalePath("en", "/ar/about"),
-          toAr: i18n.switchLocalePath("ar", "/about"),
+          toEn: localePath("/about", "en"),
+          toAr: localePath("/about", "ar"),
         };
       },
       template: [

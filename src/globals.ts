@@ -66,7 +66,7 @@ declare global {
   const useResuxApp: () => ResuxAppLike;
   const useResuxImage: () => ResuxImageBuilder;
   const apiURL: (path: string) => string;
-  const useFetch: <T = unknown>(url: string, init?: RequestInit) => Promise<Ref<T>>;
+  const useFetch: <T = unknown>(url: string, init?: RequestInit) => AsyncDataResource<T>;
   const $fetch: <T = unknown>(url: string, init?: RequestInit) => Promise<T>;
   const useError: () => Ref<ResuxError | null>;
   const clearError: () => void;

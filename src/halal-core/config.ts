@@ -148,6 +148,9 @@ export async function loadProjectPolicy(appRoot: string): Promise<ResuxHalalPoli
     if (mainConfig.halalAI) {
       policy.halalAI = mainConfig.halalAI;
     }
+    if (mainConfig.projectType) {
+      policy.projectType = mainConfig.projectType;
+    }
   } catch (err: any) {
     if (err.message.includes("not permitted to disable")) {
       throw err;

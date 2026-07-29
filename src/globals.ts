@@ -83,6 +83,8 @@ declare global {
   const defineClientEnhancement: (name: string, setup: ClientEnhancementSetup) => { name: string; setup: ClientEnhancementSetup };
   const useClientEnhancement: (name: string, options?: UseClientEnhancementOptions) => Promise<{ ready: boolean; activate: () => Promise<void>; dispose: () => Promise<void> }>;
   const onMounted: (callback: () => unknown | Promise<unknown>) => void;
+  const onBeforeUnmount: (callback: () => unknown | Promise<unknown>) => void;
+  const onUnmounted: (callback: () => unknown | Promise<unknown>) => void;
   const definePageMeta: (_meta: PageMeta) => void;
   const defineResuxConfig: <T extends ResuxConfigInput>(config: T) => T;
   const defineResuxPlugin: (plugin: ResuxPlugin) => ResuxPlugin;

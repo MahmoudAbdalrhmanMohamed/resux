@@ -5,11 +5,13 @@ import { pathToFileURL } from "node:url";
 import { Window } from "happy-dom";
 import { describe, expect, it, vi } from "vitest";
 import {
+  createServerSetupContext,
   defineComponent,
   getClientRuntimeSource,
   readBody,
   renderApp,
   renderDocument,
+  renderTemplateNodesAsync,
   setHeader,
   type ComponentDefinition
 } from "resuxjs/runtime";
@@ -4473,6 +4475,134 @@ export default createClientComponent({ id: "m0", name: "Counter", file: "Counter
 
     expect(window.document.getElementById("__resux")).toBeTruthy();
     expect((globalThis as any).__RESUX__.scopes.s0.state.count).toBe(1);
+  });
+
+  it("safely handles head style entries with undefined css content without throwing TypeError", () => {
+    const result = {
+      html: "<div>test</div>",
+      payload: { route: { path: "/", params: {}, query: {} }, scopes: {}, modules: {}, config: {} },
+      head: {
+        style: [
+          { id: "s1", css: undefined },
+          { id: "s2", content: ".test { color: red; }" },
+          "body { background: black; }",
+          null as any
+        ] as any
+      }
+    };
+    const doc = renderDocument(result as any, "Test Title");
+    expect(doc).toContain('<style data-rx-head="true" data-rx-style="s1"></style>');
+    expect(doc).toContain('<style data-rx-head="true" data-rx-style="s2">.test { color: red; }</style>');
+    expect(doc).toContain('<style data-rx-head="true">body { background: black; }</style>');
+  });
+
+  it("renders built-in <Icon>, <ResuxIcon>, and <NuxtIcon> tags without throwing Unknown component error", async () => {
+    const template: TemplateNode[] = [
+      {
+        type: "element",
+        tag: "Icon",
+        attrs: [{ name: "name", value: "solar:leaf-outline", kind: "static" }, { name: "size", value: "24px", kind: "static" }],
+        children: [],
+        events: []
+      },
+      {
+        type: "element",
+        tag: "ResuxIcon",
+        attrs: [{ name: "name", value: "ph:check-circle-thin", kind: "static" }],
+        children: [],
+        events: []
+      },
+      {
+        type: "element",
+        tag: "NuxtIcon",
+        attrs: [{ name: "name", value: "material-symbols:mail", kind: "static" }],
+        children: [],
+        events: []
+      }
+    ];
+
+    const context: any = {
+      scopeId: "s0",
+      moduleId: "m0",
+      scope: {},
+      components: {},
+      pageMeta: {}
+    };
+
+    const rendered = await renderTemplateNodesAsync(template, context, async () => "");
+    expect(rendered).toContain('data-icon-name="solar:leaf-outline"');
+    expect(rendered).toContain('data-icon-name="ph:check-circle-thin"');
+    expect(rendered).toContain('data-icon-name="material-symbols:mail"');
+    expect(rendered).toContain('<svg');
+  });
+
+  it("resolves short component names like <GarySetion> to subfolder-prefixed components like PublicGarySetion", async () => {
+    const template: TemplateNode[] = [
+      {
+        type: "element",
+        tag: "GarySetion",
+        attrs: [],
+        children: [],
+        events: []
+      }
+    ];
+
+    const targetComponent: ComponentDefinition = {
+      id: "c1",
+      name: "PublicGarySetion",
+      file: "components/public/GarySetion.vue",
+      template: [{ type: "text", value: "hello from public gary section" }],
+      handlers: [],
+      styles: []
+    };
+
+    const context: any = {
+      scopeId: "s0",
+      moduleId: "m0",
+      scope: {},
+      components: {
+        PublicGarySetion: targetComponent
+      },
+      pageMeta: {}
+    };
+
+    const rendered = await renderTemplateNodesAsync(template, context, async (comp) => {
+      return comp.name;
+    });
+    expect(rendered).toBe("PublicGarySetion");
+  });
+
+  it("provides defineEmits, emit, defineExpose, defineSlots, defineOptions, and defineModel in setup context", async () => {
+    const route: any = { path: "/", query: {}, params: {} };
+    const props = { modelValue: "initial" };
+    const stateRefs = {};
+    const asyncDataRefs = {};
+    const headEntries: any[] = [];
+    const resuxApp: any = { route, payload: { route, scopes: {}, modules: [], config: {} }, $config: { public: {} }, provides: {}, provide: () => {} };
+    const runtimeConfig: any = { public: {} };
+
+    const ctx = createServerSetupContext(route, props, stateRefs, asyncDataRefs, headEntries, resuxApp, runtimeConfig);
+
+    expect(typeof ctx.defineEmits).toBe("function");
+    const emit = ctx.defineEmits(["update:modelValue"]);
+    expect(typeof emit).toBe("function");
+    expect(() => emit("update:modelValue", "val")).not.toThrow();
+
+    expect(typeof ctx.emit).toBe("function");
+    expect(() => ctx.emit("change")).not.toThrow();
+
+    expect(typeof ctx.defineExpose).toBe("function");
+    expect(() => ctx.defineExpose({ someMethod: () => {} })).not.toThrow();
+
+    expect(typeof ctx.defineSlots).toBe("function");
+    expect(ctx.defineSlots()).toEqual({});
+
+    expect(typeof ctx.defineOptions).toBe("function");
+    expect(() => ctx.defineOptions({ inheritAttrs: false })).not.toThrow();
+
+    expect(typeof ctx.defineModel).toBe("function");
+    const model = ctx.defineModel();
+    expect(model.value).toBe("initial");
   });
 });
 

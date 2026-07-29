@@ -5,7 +5,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -1987,6 +1987,16 @@ async function runNitroBuild(
     nitroPreset: deployment.nitroPreset,
     target: deployment.target,
   });
+  // Resux references app static files under /assets/* (from `@/assets/*` imports
+  // and the `css` config), so mirror the app's assets/ dir into the built public
+  // dir alongside public/ for production serving.
+  const builtPublicDir = path.join(appRoot, ".output", "public");
+  const appAssetsDir = path.join(appRoot, "assets");
+  if ((await exists(appAssetsDir)) && (await exists(builtPublicDir))) {
+    await cp(appAssetsDir, path.join(builtPublicDir, "assets"), {
+      recursive: true,
+    });
+  }
   await buildOptions.hooks?.callHook("nitro:build:public-assets", {
     appRoot,
     publicDir: path.join(appRoot, ".output", "public"),
@@ -2101,19 +2111,20 @@ function createNitroConfig(): string {
   return `import { defineNitroConfig } from "nitropack/config";
 
 export default defineNitroConfig({
+  srcDir: ".resux-nitro",
   compatibilityDate: "2026-05-02",
   // Resux uses top-level /plugins, /modules, and /middleware for app features.
   // Nitro auto-scans these folders too, so exclude them from Nitro scanning.
-  ignore: ["plugins/**", "modules/**", "middleware/**"],
+  ignore: ["plugins/**", "modules/**", "middleware/**", "assets/**"],
   // Keep Nitro discovery scoped to the generated adapter directory.
-  scanDirs: [".resux-nitro"],
+  scanDirs: ["."],
   publicAssets: [
     {
-      dir: "public",
+      dir: "../public",
       baseURL: "/"
     },
     {
-      dir: ".resux/client",
+      dir: "../.resux/client",
       baseURL: "/__resux",
       fallthrough: true
     }
@@ -2121,7 +2132,7 @@ export default defineNitroConfig({
   serverAssets: [
     {
       baseName: "resux",
-      dir: ".resux/server"
+      dir: "../.resux/server"
     }
   ],
   handlers: [
@@ -5243,29 +5254,39 @@ async function servePublicFile(
   pathname: string,
 ): Promise<boolean> {
   const publicRoot = path.resolve(appRoot, "public");
-  const resolved = path.resolve(publicRoot, `.${decodeURIComponent(pathname)}`);
-
-  if (!resolved.startsWith(publicRoot)) {
-    return false;
+  const candidates: Array<{ base: string; boundary: string }> = [
+    { base: publicRoot, boundary: publicRoot },
+  ];
+  // Resux compiles `@/assets/*` imports (and the `css` config) to `/assets/*`
+  // URLs, so also serve the app's assets/ directory as a static root. The
+  // boundary check keeps this scoped to assets/ and blocks path traversal.
+  if (pathname === "/assets" || pathname.startsWith("/assets/")) {
+    candidates.push({ base: appRoot, boundary: path.resolve(appRoot, "assets") });
   }
 
-  if (!(await exists(resolved))) {
-    return false;
-  }
+  for (const { base, boundary } of candidates) {
+    const resolved = path.resolve(base, `.${decodeURIComponent(pathname)}`);
+    if (!resolved.startsWith(boundary)) {
+      continue;
+    }
+    if (!(await exists(resolved))) {
+      continue;
+    }
+    const fileStats = await stat(resolved);
+    if (!fileStats.isFile()) {
+      continue;
+    }
 
-  const fileStats = await stat(resolved);
-  if (!fileStats.isFile()) {
-    return false;
+    response.writeHead(200, {
+      "content-type": mimeType(resolved),
+      ...(!response.hasHeader("cache-control")
+        ? { "cache-control": "no-store" }
+        : {}),
+    });
+    response.end(await readFile(resolved));
+    return true;
   }
-
-  response.writeHead(200, {
-    "content-type": mimeType(resolved),
-    ...(!response.hasHeader("cache-control")
-      ? { "cache-control": "no-store" }
-      : {}),
-  });
-  response.end(await readFile(resolved));
-  return true;
+  return false;
 }
 
 function mimeType(file: string): string {

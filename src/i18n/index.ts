@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   computed,
   defineResuxModule,
@@ -122,16 +123,27 @@ function normalizeMessageModule(value: unknown): MessageRecord {
 }
 
 async function loadMessageFromPath(rootDir: string, filePath: string): Promise<MessageRecord> {
-  const absolute = path.isAbsolute(filePath) ? filePath : path.resolve(rootDir, filePath);
-  if (absolute.toLowerCase().endsWith(".json")) {
+  let absolute = filePath;
+  if (filePath.startsWith("file://")) {
     try {
-      return JSON.parse(await readFile(absolute, "utf8")) as MessageRecord;
+      absolute = fileURLToPath(filePath);
+    } catch {
+      absolute = filePath;
+    }
+  } else if (!path.isAbsolute(filePath)) {
+    absolute = path.resolve(rootDir, filePath);
+  }
+
+  const cleanPath = absolute.split("?")[0].split("#")[0];
+  if (cleanPath.toLowerCase().endsWith(".json")) {
+    try {
+      return JSON.parse(await readFile(cleanPath, "utf8")) as MessageRecord;
     } catch {
       return {};
     }
   }
   try {
-    const imported = await import(absolute);
+    const imported = await import(filePath.startsWith("file://") ? filePath : pathToFileURL(absolute).href);
     return normalizeMessageModule(imported.default ?? imported);
   } catch {
     return {};
@@ -149,13 +161,19 @@ async function resolveMessageSource(rootDir: string, source: ResuxI18nMessageSou
 
   if (typeof source === "function") {
     const dynamicPath = extractDynamicImportPath(source);
-    if (dynamicPath && dynamicPath.toLowerCase().endsWith(".json")) {
-      return loadMessageFromPath(rootDir, dynamicPath);
+    if (dynamicPath) {
+      const absolute = path.isAbsolute(dynamicPath) ? dynamicPath : path.resolve(rootDir, dynamicPath);
+      if (absolute.toLowerCase().endsWith(".json")) {
+        return loadMessageFromPath(rootDir, absolute);
+      }
     }
     try {
       const loaded = await source();
       return normalizeMessageModule(loaded);
     } catch {
+      if (dynamicPath) {
+        return loadMessageFromPath(rootDir, dynamicPath);
+      }
       return {};
     }
   }
@@ -345,6 +363,15 @@ export default defineResuxModule<ResuxI18nModuleOptions>({
         }
       }
     });
+
+    // Under the "prefix" strategy every locale is prefixed, so the bare root
+    // path has no matching page. Redirect it to the default locale instead of
+    // 404ing.
+    if (runtimeI18n.strategy === "prefix") {
+      context.addRouteRule("/", {
+        redirect: { to: `/${runtimeI18n.defaultLocale}`, statusCode: 302 }
+      });
+    }
   }
 });
 

@@ -1,6 +1,6 @@
 {
   "name": "resuxjs",
-  "version": "0.2.43",
+  "version": "0.3.0",
   "private": false,
   "description": "Experimental resumable web framework with Vue-like SFC routing and a custom SSR/runtime pipeline.",
   "type": "module",
@@ -77,6 +77,21 @@
       "types": "./dist/i18n/index.d.ts",
       "import": "./dist/i18n/index.js",
       "default": "./dist/i18n/index.js"
+    },
+    "./ui": {
+      "types": "./dist/ui/index.d.ts",
+      "import": "./dist/ui/index.js",
+      "default": "./dist/ui/index.js"
+    },
+    "./icons": {
+      "types": "./dist/icons/index.d.ts",
+      "import": "./dist/icons/index.js",
+      "default": "./dist/icons/index.js"
+    },
+    "./fonts": {
+      "types": "./dist/fonts/index.d.ts",
+      "import": "./dist/fonts/index.js",
+      "default": "./dist/fonts/index.js"
     },
     "./kit": {
       "types": "./dist/kit/index.d.ts",

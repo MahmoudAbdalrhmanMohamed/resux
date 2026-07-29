@@ -1,5 +1,11 @@
 import { getQuery as h3GetQuery, readBody as h3ReadBody, setHeader as h3SetHeader } from "h3";
 import {
+  normalizeI18nRuntimeConfig,
+  resolveI18nRoute,
+  translateRaw,
+  translateText
+} from "../i18n/shared.js";
+import {
   computed,
   isReactive,
   isReadonly,
@@ -506,6 +512,12 @@ export interface SetupContext {
   useState<T>(key: string, factory?: () => T): Ref<T>;
   useAsyncData<T>(key: string, handler?: (context: AsyncDataHandlerContext) => T | Promise<T>): AsyncDataResource<T>;
   defineProps<T extends Record<string, unknown> = Record<string, unknown>>(): T;
+  defineEmits<T = (...args: any[]) => void>(emits?: unknown): (...args: any[]) => void;
+  emit(...args: any[]): void;
+  defineExpose(exposed?: Record<string, any>): void;
+  defineSlots<T = Record<string, any>>(): T;
+  defineOptions(options?: Record<string, any>): void;
+  defineModel<T>(name?: string, options?: unknown): Ref<T>;
   useRoute(): RouteContext;
   useRouter(): ResuxRouter;
   useHead(input: HeadEntry): void;
@@ -537,6 +549,8 @@ export interface SetupContext {
   useSwitchLocalePath(): any;
   useDevice(): DeviceInfo;
   $device: DeviceInfo;
+  $t(key: string, params?: Record<string, unknown>): string;
+  $tm(key: string): unknown;
 }
 
 export interface ComponentDefinition {
@@ -2312,7 +2326,7 @@ class ResuxRenderer {
   }
 }
 
-function createServerSetupContext(
+export function createServerSetupContext(
   route: RouteContext,
   props: ComponentProps,
   stateRefs: Record<string, Ref<unknown>>,
@@ -2331,7 +2345,7 @@ function createServerSetupContext(
     return response.json() as Promise<T>;
   };
 
-  return {
+  const ctx: SetupContext = {
     props,
     ref,
     reactive,
@@ -2373,6 +2387,25 @@ function createServerSetupContext(
 
     defineProps<T extends Record<string, unknown> = Record<string, unknown>>(): T {
       return props as T;
+    },
+
+    defineEmits<T = (...args: any[]) => void>(_emits?: unknown): (...args: any[]) => void {
+      return (..._args: any[]) => {};
+    },
+
+    emit(..._args: any[]): void {},
+
+    defineExpose(_exposed?: Record<string, any>): void {},
+
+    defineSlots<T = Record<string, any>>(): T {
+      return {} as T;
+    },
+
+    defineOptions(_options?: Record<string, any>): void {},
+
+    defineModel<T>(name?: string, _options?: unknown): Ref<T> {
+      const modelName = name ?? "modelValue";
+      return ref(props[modelName]) as Ref<T>;
     },
 
     useRoute(): RouteContext {
@@ -2510,8 +2543,31 @@ function createServerSetupContext(
     useDevice(): DeviceInfo {
       return useDevice();
     },
-    $device: useDevice()
+    $device: useDevice(),
+    $t(key: string, params?: Record<string, unknown>): string {
+      const i18nCandidate = runtimeConfig.public?.i18n;
+      const normalizedI18n = normalizeI18nRuntimeConfig(i18nCandidate);
+      if (normalizedI18n) {
+        const currentLocaleCode = resolveI18nRoute(route.path, normalizedI18n).locale.code;
+        return translateText(normalizedI18n, currentLocaleCode, key, params as any);
+      }
+      return (globalThis as any).__RESUX_USE_I18N__ ? (globalThis as any).__RESUX_USE_I18N__().t(key, params) : key;
+    },
+    $tm(key: string): unknown {
+      const i18nCandidate = runtimeConfig.public?.i18n;
+      const normalizedI18n = normalizeI18nRuntimeConfig(i18nCandidate);
+      if (normalizedI18n) {
+        const currentLocaleCode = resolveI18nRoute(route.path, normalizedI18n).locale.code;
+        return translateRaw(normalizedI18n, currentLocaleCode, key);
+      }
+      return (globalThis as any).__RESUX_USE_I18N__ ? (globalThis as any).__RESUX_USE_I18N__().tm(key) : key;
+    }
   };
+
+  (globalThis as any).$t = ctx.$t;
+  (globalThis as any).$tm = ctx.$tm;
+
+  return ctx;
 }
 
 function createPendingAsyncDataResource<T>(): {
@@ -3201,6 +3257,36 @@ function renderTemplateNode(node: TemplateNode, context: RenderTemplateContext, 
   return renderElement(node, context, locals);
 }
 
+function resolveComponentDefinition(
+  tag: string,
+  components: Record<string, ComponentDefinition>
+): ComponentDefinition | undefined {
+  if (!components) {
+    return undefined;
+  }
+  if (components[tag]) {
+    return components[tag];
+  }
+
+  if (tag.startsWith("Lazy") && tag.length > 4) {
+    const unlazyTag = tag.slice(4);
+    const unlazyComponent = resolveComponentDefinition(unlazyTag, components);
+    if (unlazyComponent) {
+      return unlazyComponent;
+    }
+  }
+
+  const lowerTag = tag.toLowerCase();
+  for (const [name, component] of Object.entries(components)) {
+    const lowerName = name.toLowerCase();
+    if (lowerName === lowerTag || lowerName.endsWith(lowerTag)) {
+      return component;
+    }
+  }
+
+  return undefined;
+}
+
 function renderElement(node: ElementTemplateNode, context: RenderTemplateContext, locals: Record<string, unknown>): string {
   if (node.tag === "ResuxPage") {
     if (!context.renderPage) {
@@ -3218,19 +3304,42 @@ function renderElement(node: ElementTemplateNode, context: RenderTemplateContext
     throw new Error("<slot> must be rendered by renderTemplateNodesAsync.");
   }
 
-  if (node.tag === "ResuxLink") {
+  if (node.tag === "ResuxLink" || node.tag === "NuxtLink" || node.tag === "RouterLink") {
+    const component = resolveComponentDefinition(node.tag, context.components);
+    if (component) {
+      throw new Error(`Component <${node.tag}> must be rendered by renderTemplateNodesAsync.`);
+    }
     return renderNativeElement(node, context, locals);
   }
 
-  if (node.tag === "ResuxImg") {
+  if (node.tag === "ResuxImg" || node.tag === "NuxtImg" || node.tag === "NuxtImage") {
+    const component = resolveComponentDefinition(node.tag, context.components);
+    if (component) {
+      throw new Error(`Component <${node.tag}> must be rendered by renderTemplateNodesAsync.`);
+    }
     return renderResuxImg(node, context, locals);
   }
 
-  if (node.tag === "ResuxPicture") {
+  if (node.tag === "ResuxPicture" || node.tag === "NuxtPicture") {
+    const component = resolveComponentDefinition(node.tag, context.components);
+    if (component) {
+      throw new Error(`Component <${node.tag}> must be rendered by renderTemplateNodesAsync.`);
+    }
     return renderResuxPicture(node, context, locals);
   }
   if (node.tag === "ResuxVideo") {
+    const component = resolveComponentDefinition(node.tag, context.components);
+    if (component) {
+      throw new Error(`Component <${node.tag}> must be rendered by renderTemplateNodesAsync.`);
+    }
     return renderResuxVideo(node, context, locals);
+  }
+  if (node.tag === "ResuxIcon" || node.tag === "Icon" || node.tag === "NuxtIcon") {
+    const component = resolveComponentDefinition(node.tag, context.components);
+    if (component) {
+      throw new Error(`Component <${node.tag}> must be rendered by renderTemplateNodesAsync.`);
+    }
+    return renderResuxIcon(node, context, locals);
   }
   if (node.tag === "ClientEnhance" || node.tag === "ResuxClientEnhance") {
     return renderResuxClientEnhance(node, context, locals);
@@ -3250,7 +3359,7 @@ function renderElement(node: ElementTemplateNode, context: RenderTemplateContext
   }
 
   if (isComponentTag(node.tag)) {
-    const component = context.components[node.tag];
+    const component = resolveComponentDefinition(node.tag, context.components);
     if (!component) {
       throw new Error(`Unknown component <${node.tag}>.`);
     }
@@ -3382,20 +3491,54 @@ async function renderElementAsync(
     return context.renderSlot ? context.renderSlot() : "";
   }
 
-  if (node.tag === "ResuxLink") {
+  if (node.tag === "ResuxLink" || node.tag === "NuxtLink" || node.tag === "RouterLink") {
+    const component = resolveComponentDefinition(node.tag, context.components);
+    if (component) {
+      const props = collectComponentProps(node, context.scope, locals);
+      const renderChildren = () => renderTemplateNodesAsync(node.children, context, renderComponent, locals);
+      return renderComponent(component, props, renderChildren);
+    }
     return renderNativeElementAsync(node, context, renderComponent, locals);
   }
 
-  if (node.tag === "ResuxImg") {
+  if (node.tag === "ResuxImg" || node.tag === "NuxtImg" || node.tag === "NuxtImage") {
+    const component = resolveComponentDefinition(node.tag, context.components);
+    if (component) {
+      const props = collectComponentProps(node, context.scope, locals);
+      const renderChildren = () => renderTemplateNodesAsync(node.children, context, renderComponent, locals);
+      return renderComponent(component, props, renderChildren);
+    }
     return renderResuxImg(node, context, locals);
   }
 
-  if (node.tag === "ResuxPicture") {
+  if (node.tag === "ResuxPicture" || node.tag === "NuxtPicture") {
+    const component = resolveComponentDefinition(node.tag, context.components);
+    if (component) {
+      const props = collectComponentProps(node, context.scope, locals);
+      const renderChildren = () => renderTemplateNodesAsync(node.children, context, renderComponent, locals);
+      return renderComponent(component, props, renderChildren);
+    }
     return renderResuxPicture(node, context, locals);
   }
   if (node.tag === "ResuxVideo") {
+    const component = resolveComponentDefinition(node.tag, context.components);
+    if (component) {
+      const props = collectComponentProps(node, context.scope, locals);
+      const renderChildren = () => renderTemplateNodesAsync(node.children, context, renderComponent, locals);
+      return renderComponent(component, props, renderChildren);
+    }
     return renderResuxVideo(node, context, locals);
   }
+  if (node.tag === "ResuxIcon" || node.tag === "Icon" || node.tag === "NuxtIcon") {
+    const component = resolveComponentDefinition(node.tag, context.components);
+    if (component) {
+      const props = collectComponentProps(node, context.scope, locals);
+      const renderChildren = () => renderTemplateNodesAsync(node.children, context, renderComponent, locals);
+      return renderComponent(component, props, renderChildren);
+    }
+    return renderResuxIcon(node, context, locals);
+  }
+
   if (node.tag === "ClientEnhance" || node.tag === "ResuxClientEnhance") {
     return renderResuxClientEnhanceAsync(node, context, renderComponent, locals);
   }
@@ -3414,7 +3557,7 @@ async function renderElementAsync(
   }
 
   if (isComponentTag(node.tag)) {
-    const component = context.components[node.tag];
+    const component = resolveComponentDefinition(node.tag, context.components);
     if (!component) {
       throw new Error(`Unknown component <${node.tag}>.`);
     }
@@ -4551,6 +4694,31 @@ function renderResuxVideo(
         + `</div>`
       : "";
   return `<div ${shellAttrs.join(" ")}><div class="resux-video__stage" data-rx-video-stage data-rx-video-custom-controls="${customControls ? "true" : "false"}">${videoMarkup}${interactionZonesMarkup}${feedbackMarkup}${controlsMarkup}</div></div>`;
+}
+
+function renderResuxIcon(node: ElementTemplateNode, context: RenderTemplateContext, locals: Record<string, unknown>): string {
+  const nameAttr = node.attrs.find(a => a.name === "name" || a.name === "icon");
+  const iconName = nameAttr
+    ? (nameAttr.kind === "static" ? nameAttr.value : String(evaluateExpression(nameAttr.value, context.scope, locals) ?? ""))
+    : "";
+  const sizeAttr = node.attrs.find(a => a.name === "size");
+  const iconSize = sizeAttr
+    ? (sizeAttr.kind === "static" ? sizeAttr.value : String(evaluateExpression(sizeAttr.value, context.scope, locals) ?? ""))
+    : "";
+
+  const attrs: string[] = [
+    'class="resux-icon"',
+    `data-icon-name="${escapeAttribute(iconName)}"`
+  ];
+
+  if (iconSize) {
+    attrs.push(`style="font-size: ${escapeAttribute(iconSize)}; width: ${escapeAttribute(iconSize)}; height: ${escapeAttribute(iconSize)};"`);
+  }
+
+  appendStyleScopeAttribute(attrs, context.styleScopeId);
+
+  const svgInside = `<svg data-icon-name="${escapeAttribute(iconName)}" viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M12 2L2 22h20L12 2z"/></svg>`;
+  return `<span ${attrs.join(" ")}>${svgInside}</span>`;
 }
 
 function renderResuxPicture(
@@ -6365,7 +6533,13 @@ function renderHead(head: HeadEntry): string {
   }
 
   for (const style of head.style ?? []) {
-    tags.push(`<style data-rx-head="true" data-rx-style="${escapeAttribute(style.id)}">${escapeStyleContent(style.css)}</style>`);
+    if (!style) {
+      continue;
+    }
+    const styleId = typeof style === "object" && (style as any).id ? String((style as any).id) : "";
+    const styleIdAttr = styleId ? ` data-rx-style="${escapeAttribute(styleId)}"` : "";
+    const cssContent = escapeStyleContent(style);
+    tags.push(`<style data-rx-head="true"${styleIdAttr}>${cssContent}</style>`);
   }
 
   return tags.join("");
@@ -6579,8 +6753,29 @@ function insertHeadEntryWithPriority(entries: HeadEntry[], entry: HeadEntry): vo
   entries.splice(insertionIndex, 0, entry);
 }
 
-function escapeStyleContent(css: string): string {
-  return css.replace(/<\/style/gi, "<\\/style");
+function escapeStyleContent(css: unknown): string {
+  if (css === null || css === undefined) {
+    return "";
+  }
+  let str = "";
+  if (typeof css === "string") {
+    str = css;
+  } else if (typeof css === "object") {
+    if ("css" in (css as any)) {
+      str = (css as any).css ?? "";
+    } else if ("content" in (css as any)) {
+      str = (css as any).content ?? "";
+    } else if ("children" in (css as any)) {
+      str = (css as any).children ?? "";
+    } else if ("innerHTML" in (css as any)) {
+      str = (css as any).innerHTML ?? "";
+    } else {
+      str = String(css);
+    }
+  } else {
+    str = String(css);
+  }
+  return str.replace(/<\/style/gi, "<\\/style");
 }
 
 function renderAttributes(attributes: Record<string, string>): string {
@@ -15301,10 +15496,17 @@ function escapeJsonForHtml(value: string): string {
   return value.replaceAll("<", "\\u003c").replaceAll(">", "\\u003e").replaceAll("&", "\\u0026");
 }
 
-function escapeHtml(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+function escapeHtml(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  const str = typeof value === "string" ? value : String(value);
+  return str.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-function escapeAttribute(value: string): string {
+function escapeAttribute(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
   return escapeHtml(value).replaceAll('"', "&quot;");
 }

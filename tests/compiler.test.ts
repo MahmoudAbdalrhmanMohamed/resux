@@ -1043,6 +1043,31 @@ defineClientEnhancement("imported-helper", async (target) => {
     expect(manifestJson.routeRules["/__resux/runtime-client.mjs"].cache).toEqual({ maxAge: 120 });
   }, 20000);
 
+  it("runs tree-shakable UI, icon, and font module subpaths", async () => {
+    const root = path.join(os.tmpdir(), `resux-ui-modules-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Design modules</main></template>");
+    await writeFile(
+      path.join(root, "resux.config.ts"),
+      `export default defineResuxConfig({
+  modules: [
+    ["resuxjs/fonts", { google: [{ name: "Inter", weights: [400, 700] }] }],
+    ["resuxjs/icons", { component: "Icon", collections: ["material-symbols"] }],
+    ["resuxjs/ui", { tokens: { accent: "#03C8BF" } }]
+  ]
+})`,
+    );
+
+    await buildProject(root);
+    const manifest = await import(`${pathToFileURL(path.join(root, ".resux", "server", "manifest.mjs")).href}?t=${Date.now()}`);
+
+    expect(manifest.appHead.link).toEqual(expect.arrayContaining([
+      expect.objectContaining({ rel: "stylesheet", href: expect.stringContaining("fonts.googleapis.com") })
+    ]));
+    expect(manifest.runtimeConfig.public.icons.collections).toEqual(["material-symbols"]);
+    expect(manifest.runtimeConfig.public.ui.tokens.accent).toBe("#03C8BF");
+  }, 20000);
+
   it("can emit Vite dev client inputs without production bundling", async () => {
     const root = path.join(os.tmpdir(), `resux-vite-dev-${Date.now()}`);
     await mkdir(path.join(root, "pages"), { recursive: true });

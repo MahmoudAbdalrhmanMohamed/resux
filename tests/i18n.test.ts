@@ -64,6 +64,37 @@ describe("i18n shared helpers", () => {
 });
 
 describe("i18n runtime integration", () => {
+  it("exposes Nuxt-compatible $t and $tm helpers to template expressions", async () => {
+    const page: ComponentDefinition = defineComponent({
+      id: "m-i18n-template-globals",
+      name: "I18nTemplateGlobals",
+      file: "I18nTemplateGlobals.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [
+        {
+          type: "element",
+          tag: "main",
+          attrs: [],
+          events: [],
+          children: [
+            { type: "interpolation", expression: "$t('demo.welcome', { name: 'Ada' })", bindingId: "b0" },
+          ],
+        },
+      ],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/ar/about", params: {}, query: {} },
+      runtimeConfig: createRuntimeConfig(),
+    });
+
+    expect(result.html).toContain("مرحبا Ada");
+  });
+
   it("exposes locale helpers and translations through useI18n", async () => {
     const page: ComponentDefinition = defineComponent({
       id: "m-i18n-demo",

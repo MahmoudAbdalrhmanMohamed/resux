@@ -2557,7 +2557,8 @@ function isResumableInitializer(node: ts.Expression | undefined): boolean {
       "useResuxApp",
       "useResuxImage",
       "usePackageReady",
-      "defineProps"
+      "defineProps",
+      "defineEmits"
     ].includes(node.expression.text);
   }
   if (ts.isAwaitExpression(node) && ts.isCallExpression(node.expression) && ts.isIdentifier(node.expression.expression)) {
@@ -2599,7 +2600,7 @@ function createComponentModuleSource(options: {
   
   const expressionClosures = (options.expressions ?? []).map((expr) => {
     const destructure = expr.locals.length > 0
-      ? expr.locals.map(id => `let ${id} = "${id}" in locals ? locals.${id} : "${id}" in scope ? scope.${id} : globalThis.${id};
+      ? expr.locals.map(id => `let ${id} = (locals && "${id}" in locals) ? locals.${id} : (scope && "${id}" in scope) ? scope.${id} : (typeof globalThis !== "undefined" && "${id}" in globalThis) ? globalThis.${id} : undefined;
       if (typeof ${id} === "string" && ${id}.startsWith("__rx_callback:")) {
         const parts = ${id}.split(":");
         const cbScopeId = parts[2];
@@ -3786,7 +3787,15 @@ function buildRuntimeArtifacts(input: RuntimeArtifactsInput): RuntimeArtifacts {
     packages: input.packages
   };
 
-  const componentNames = unique(input.components.map((component) => component.name).filter(Boolean)).sort();
+  const componentMap = new Map<string, typeof input.components[0]>();
+  for (const component of input.components) {
+    componentMap.set(component.name, component);
+    const basename = pascalCase(path.basename(component.file, ".vue"));
+    if (!componentMap.has(basename)) {
+      componentMap.set(basename, component);
+    }
+  }
+  const componentNames = unique([...componentMap.keys()].filter(Boolean)).sort();
   const imports = dedupeImports([...BUILTIN_AUTO_IMPORTS, ...input.contributions.imports]);
   const importsSignatures = imports
     .map((entry) => `${entry.name}${entry.as ? ` as ${entry.as}` : ""} from ${entry.from}`)
@@ -3795,7 +3804,7 @@ function buildRuntimeArtifacts(input: RuntimeArtifactsInput): RuntimeArtifacts {
   const routesSource = `export default ${JSON.stringify(input.routes.map((route) => ({ id: route.id, path: route.path, file: route.file, params: route.params, componentId: route.componentId, meta: route.meta })), null, 2)};\n`;
   const pluginsSource = `export default ${JSON.stringify(input.plugins.map((plugin) => ({ id: plugin.id, file: plugin.file, mode: plugin.mode })), null, 2)};\n`;
   const middlewareSource = `export default ${JSON.stringify(input.middleware.map((entry) => ({ id: entry.id, name: entry.name, file: entry.file, global: entry.global, mode: entry.mode })), null, 2)};\n`;
-  const componentsSource = `export default ${JSON.stringify(input.components.map((component) => ({ id: component.id, name: component.name, file: component.file })), null, 2)};\n`;
+  const componentsSource = `export default ${JSON.stringify([...componentMap.entries()].map(([name, comp]) => ({ id: comp.id, name, file: comp.file })), null, 2)};\n`;
   const importsSource = `export default ${JSON.stringify(imports, null, 2)};\n`;
   const appSource = [
     `import routes from "./routes.mjs";`,

@@ -2,6 +2,8 @@ name: Publish to npm
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*.*.*"
   release:
@@ -110,18 +112,7 @@ jobs:
           fi
 
           if [ -z "${RELEASE_TAG}" ]; then
-            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-              echo "Could not resolve a semver release tag. Provide workflow_dispatch input 'release_tag' (for example v1.2.3)."
-              exit 1
-            fi
-            if [ "${GITHUB_EVENT_NAME}" = "workflow_run" ]; then
-              echo "No semver release tag found on ${TARGET_SHA}; skipping publish for non-tag CI run."
-              echo "should-publish=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-
-            echo "Could not resolve release tag from event ${GITHUB_EVENT_NAME}."
-            exit 1
+            RELEASE_TAG="v${PACKAGE_VERSION}"
           fi
 
           if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then

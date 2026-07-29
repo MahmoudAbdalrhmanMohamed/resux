@@ -131,6 +131,92 @@ const title = i18n.t("demo.title")
 const toArabic = i18n.switchLocalePath("ar")
 ```
 
+## Icons (`resuxjs/icons`)
+
+The `resuxjs/icons` module enables dynamic Iconify SVG fetching, pre-populated collections, and viewport visibility lazy loading.
+
+```ts
+export default defineResuxConfig({
+  modules: [
+    ["resuxjs/icons", {
+      component: "Icon",
+      mode: "svg",
+      collections: ["material-symbols", "mdi", "mingcute", "cib", "uil", "line-md", "solar", "ph"],
+      lazy: true
+    }]
+  ]
+})
+```
+
+Use `<Icon>` or `<ResuxIcon>` natively in templates without manual imports:
+
+```vue
+<template>
+  <!-- Eager / Pre-registered Icon -->
+  <Icon name="material-symbols:call" size="1.5rem" />
+
+  <!-- Dynamic Iconify Icon -->
+  <Icon name="ph:check-circle-thin" size="2rem" />
+
+  <!-- Viewport IntersectionObserver Lazy Loaded Icon -->
+  <Icon name="solar:leaf-outline" size="2rem" lazy />
+</template>
+```
+
+## Fonts (`resuxjs/fonts`)
+
+The `resuxjs/fonts` module manages preconnect optimizations, Google Fonts URL building, font loading priority strategies (`lazy`, `preload`, `eager`), and post-onload deferral.
+
+```ts
+export default defineResuxConfig({
+  modules: [
+    ["resuxjs/fonts", {
+      preconnect: true,
+      strategy: "lazy",
+      deferUntilPageLoad: true,
+      google: [
+        { name: "Inter", weights: [400, 500, 600, 700, 800], display: "swap" },
+        { name: "Alexandria", weights: [300, 400, 500, 600, 700], display: "swap" }
+      ]
+    }]
+  ]
+})
+```
+
+## UI & Animations (`resuxjs/ui`)
+
+The `resuxjs/ui` module provides design tokens, Web Animations API (WAAPI) helpers (`useAnimate()`), scroll-reveal directives (`v-anime`), and animation presets.
+
+```ts
+export default defineResuxConfig({
+  modules: [
+    ["resuxjs/ui", {
+      tokens: {
+        accent: "#03C8BF"
+      },
+      animations: {
+        enabled: true,
+        defaultPreset: "fade-up"
+      }
+    }]
+  ]
+})
+```
+
+Use the `v-anime` directive or `useAnimate` composable in components:
+
+```vue
+<template>
+  <div v-anime="'fade-up'">
+    <h2>Title</h2>
+  </div>
+
+  <button v-anime="{ type: 'scale-in', duration: 400, delay: 100 }">
+    Animate Me
+  </button>
+</template>
+```
+
 ## Development
 
 ```sh

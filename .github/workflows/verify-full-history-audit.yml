@@ -35,6 +35,7 @@ jobs:
           set -o pipefail
           {
             echo '## Apply generated browser reactivity fixes'
+            node scripts/prepare-generated-reactivity-array-fix.mjs
             node scripts/apply-generated-reactivity-fixes.mjs
             echo '## Apply icon runtime fixes'
             node scripts/prepare-icon-runtime-fix.mjs
@@ -54,6 +55,7 @@ jobs:
         run: |
           set -euo pipefail
           rm full-history-audit-final.log
+          rm scripts/prepare-generated-reactivity-array-fix.mjs
           rm scripts/apply-generated-reactivity-fixes.mjs
           rm scripts/prepare-icon-runtime-fix.mjs
           rm scripts/apply-icon-runtime-fixes.mjs

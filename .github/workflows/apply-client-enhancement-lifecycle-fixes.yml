@@ -31,10 +31,10 @@ jobs:
         run: |
           set -o pipefail
           {
-            echo '## Synchronize lockfile metadata for verification'
-            node -e "const fs=require('node:fs');const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));const lock=JSON.parse(fs.readFileSync('package-lock.json','utf8'));lock.name=pkg.name;lock.version=pkg.version;lock.packages[''].name=pkg.name;lock.packages[''].version=pkg.version;fs.writeFileSync('package-lock.json',JSON.stringify(lock,null,2)+'\\n');"
+            echo '## Refresh lockfile for verification'
+            npm install --package-lock-only --ignore-scripts --no-audit --no-fund
             echo '## Install dependencies'
-            npm ci
+            npm ci --no-audit --no-fund
             echo '## Verify Rolldown Linux native binding'
             node -e "require.resolve('@rolldown/binding-linux-x64-gnu')"
             echo '## Apply framework patch'

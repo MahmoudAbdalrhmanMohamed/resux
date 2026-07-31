@@ -47,6 +47,8 @@ jobs:
             node scripts/fix-icon-attribute-parser.mjs
             echo '## Apply module head merge fix'
             node scripts/apply-head-merge-fix.mjs
+            echo '## Apply README updates'
+            node scripts/apply-readme-audit-updates.mjs
             echo '## Typecheck'
             npm run typecheck
             echo '## Full test suite'
@@ -65,6 +67,7 @@ jobs:
           rm scripts/apply-icon-runtime-fixes.mjs
           rm scripts/fix-icon-attribute-parser.mjs
           rm scripts/apply-head-merge-fix.mjs
+          rm scripts/apply-readme-audit-updates.mjs
           rm .github/workflows/verify-full-history-audit.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

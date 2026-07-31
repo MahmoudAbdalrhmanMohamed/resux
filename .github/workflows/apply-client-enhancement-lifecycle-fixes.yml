@@ -25,31 +25,27 @@ jobs:
           node-version: 24
           package-manager-cache: false
 
-      - name: Synchronize lockfile metadata for verification
-        run: |
-          node <<'NODE'
-          const fs = require('node:fs');
-          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
-          lock.name = pkg.name;
-          lock.version = pkg.version;
-          lock.packages[''].name = pkg.name;
-          lock.packages[''].version = pkg.version;
-          fs.writeFileSync('package-lock.json', `${JSON.stringify(lock, null, 2)}\n`);
-          NODE
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Verify Rolldown Linux native binding
-        run: node -e "require.resolve('@rolldown/binding-linux-x64-gnu')"
-
       - name: Apply and verify framework fixes
         id: verify
         shell: bash
         run: |
           set -o pipefail
           {
+            echo '## Synchronize lockfile metadata for verification'
+            node <<'NODE'
+            const fs = require('node:fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+            lock.name = pkg.name;
+            lock.version = pkg.version;
+            lock.packages[''].name = pkg.name;
+            lock.packages[''].version = pkg.version;
+            fs.writeFileSync('package-lock.json', `${JSON.stringify(lock, null, 2)}\n`);
+            NODE
+            echo '## Install dependencies'
+            npm ci
+            echo '## Verify Rolldown Linux native binding'
+            node -e "require.resolve('@rolldown/binding-linux-x64-gnu')"
             echo '## Apply framework patch'
             node scripts/apply-client-enhancement-lifecycle-fixes.mjs
             echo '## Typecheck'
@@ -74,10 +70,11 @@ jobs:
           git push origin HEAD:perf/client-enhancement-lifecycle
 
       - name: Commit verification diagnostics
-        if: failure() && steps.verify.outcome == 'failure'
+        if: failure()
         shell: bash
         run: |
           set -euo pipefail
+          test -f framework-patch-verification.log
           cp framework-patch-verification.log /tmp/framework-patch-verification.log
           git reset --hard HEAD
           cp /tmp/framework-patch-verification.log framework-patch-verification.log

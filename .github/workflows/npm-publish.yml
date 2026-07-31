@@ -60,22 +60,9 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 22.14.0
+          node-version: 24
           registry-url: "https://registry.npmjs.org/"
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Upgrade npm for trusted publishing
-        run: npm install --global npm@latest
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Ensure rolldown Linux native binding
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          node -e "require.resolve('@rolldown/binding-linux-x64-gnu')" || npm install --no-save @rolldown/binding-linux-x64-gnu
+          package-manager-cache: false
 
       - name: Validate release metadata
         shell: bash
@@ -85,6 +72,10 @@ jobs:
           set -euo pipefail
           PACKAGE_NAME="$(node -p "require('./package.json').name")"
           PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          LOCKFILE_NAME="$(node -p "require('./package-lock.json').name")"
+          LOCKFILE_VERSION="$(node -p "require('./package-lock.json').version")"
+          LOCKFILE_ROOT_NAME="$(node -p "require('./package-lock.json').packages[''].name")"
+          LOCKFILE_ROOT_VERSION="$(node -p "require('./package-lock.json').packages[''].version")"
 
           test "${PACKAGE_NAME}" = "resuxjs" || {
             echo "Expected package name resuxjs, got ${PACKAGE_NAME}."
@@ -96,10 +87,37 @@ jobs:
             exit 1
           }
 
+          test "${LOCKFILE_NAME}" = "${PACKAGE_NAME}" || {
+            echo "package-lock.json name ${LOCKFILE_NAME} does not match ${PACKAGE_NAME}."
+            exit 1
+          }
+
+          test "${LOCKFILE_ROOT_NAME}" = "${PACKAGE_NAME}" || {
+            echo "package-lock.json root name ${LOCKFILE_ROOT_NAME} does not match ${PACKAGE_NAME}."
+            exit 1
+          }
+
+          test "${LOCKFILE_VERSION}" = "${PACKAGE_VERSION}" || {
+            echo "package-lock.json version ${LOCKFILE_VERSION} does not match ${PACKAGE_VERSION}."
+            exit 1
+          }
+
+          test "${LOCKFILE_ROOT_VERSION}" = "${PACKAGE_VERSION}" || {
+            echo "package-lock.json root version ${LOCKFILE_ROOT_VERSION} does not match ${PACKAGE_VERSION}."
+            exit 1
+          }
+
           node -e "const pkg=require('./package.json'); if (pkg.private) throw new Error('private:true packages cannot be published')"
 
           echo "PACKAGE_NAME=${PACKAGE_NAME}" >> "$GITHUB_ENV"
           echo "PACKAGE_VERSION=${PACKAGE_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify Rolldown Linux native binding
+        if: runner.os == 'Linux'
+        run: node -e "require.resolve('@rolldown/binding-linux-x64-gnu')"
 
       - name: Typecheck
         run: npm run typecheck --if-present
@@ -124,6 +142,18 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Resolve npm dist-tag
+        id: dist
+        if: steps.published.outputs.exists == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${PACKAGE_VERSION}" == *-* ]]; then
+            echo "tag=next" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish package
         if: steps.published.outputs.exists == 'false'
-        run: npm publish --access public --provenance
+        run: npm publish --access public --tag "${{ steps.dist.outputs.tag }}"

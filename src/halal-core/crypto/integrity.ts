@@ -46,7 +46,7 @@ export function verifyIntegritySignature(
     if (algorithm === "hmac-sha256") {
       expected = createIntegritySignature(value, { ...options, requireSecret: true });
     } else {
-      expected = createIntegritySignature(value, { ...options, secret: undefined, requireSecret: false });
+      expected = createIntegritySignature(value, { ...options, secret: "", requireSecret: false });
     }
   } catch {
     return false;

@@ -37,6 +37,7 @@ jobs:
             echo '## Apply generated browser reactivity fixes'
             node scripts/apply-generated-reactivity-fixes.mjs
             echo '## Apply icon runtime fixes'
+            node scripts/prepare-icon-runtime-fix.mjs
             node scripts/apply-icon-runtime-fixes.mjs
             node scripts/fix-icon-attribute-parser.mjs
             echo '## Apply module head merge fix'
@@ -54,6 +55,7 @@ jobs:
           set -euo pipefail
           rm full-history-audit-final.log
           rm scripts/apply-generated-reactivity-fixes.mjs
+          rm scripts/prepare-icon-runtime-fix.mjs
           rm scripts/apply-icon-runtime-fixes.mjs
           rm scripts/fix-icon-attribute-parser.mjs
           rm scripts/apply-head-merge-fix.mjs

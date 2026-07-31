@@ -86,6 +86,8 @@ function resolveLocaleByCode(locales: ResuxI18nLocale[], code: string): ResuxI18
   return locales.find((locale) => locale.code === code) ?? null;
 }
 
+const FORBIDDEN_MESSAGE_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+
 function readNestedValue(source: Record<string, unknown>, key: string): unknown {
   if (!key) {
     return source;
@@ -93,7 +95,11 @@ function readNestedValue(source: Record<string, unknown>, key: string): unknown 
   const parts = key.split(".");
   let cursor: unknown = source;
   for (const part of parts) {
-    if (!isRecord(cursor) || !(part in cursor)) {
+    if (
+      FORBIDDEN_MESSAGE_KEYS.has(part)
+      || !isRecord(cursor)
+      || !Object.prototype.hasOwnProperty.call(cursor, part)
+    ) {
       return undefined;
     }
     cursor = cursor[part];

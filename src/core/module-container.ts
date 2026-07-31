@@ -256,10 +256,17 @@ function isObject(value: unknown): value is Record<string, any> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
+const FORBIDDEN_OBJECT_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+
 function deepMergeObjects(base: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
   const output: Record<string, unknown> = { ...base };
   for (const [key, value] of Object.entries(next)) {
-    const current = output[key];
+    if (FORBIDDEN_OBJECT_KEYS.has(key)) {
+      throw new Error(`Runtime config contains unsafe key "${key}".`);
+    }
+    const current = Object.prototype.hasOwnProperty.call(output, key)
+      ? output[key]
+      : undefined;
     output[key] = isObject(current) && isObject(value)
       ? deepMergeObjects(current, value)
       : value;

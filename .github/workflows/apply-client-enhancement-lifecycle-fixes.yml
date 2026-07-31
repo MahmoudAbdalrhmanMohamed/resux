@@ -44,24 +44,45 @@ jobs:
       - name: Verify Rolldown Linux native binding
         run: node -e "require.resolve('@rolldown/binding-linux-x64-gnu')"
 
-      - name: Apply framework fixes
-        run: node scripts/apply-client-enhancement-lifecycle-fixes.mjs
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Run all tests
-        run: npm test
+      - name: Apply and verify framework fixes
+        id: verify
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            echo '## Apply framework patch'
+            node scripts/apply-client-enhancement-lifecycle-fixes.mjs
+            echo '## Typecheck'
+            npm run typecheck
+            echo '## Tests'
+            npm test
+          } 2>&1 | tee framework-patch-verification.log
 
       - name: Commit verified source changes
+        if: success()
         shell: bash
         run: |
           set -euo pipefail
           git checkout -- package-lock.json
+          rm framework-patch-verification.log
           rm scripts/apply-client-enhancement-lifecycle-fixes.mjs
           rm .github/workflows/apply-client-enhancement-lifecycle-fixes.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "perf(runtime): share enhancement scheduling and cleanup"
+          git push origin HEAD:perf/client-enhancement-lifecycle
+
+      - name: Commit verification diagnostics
+        if: failure() && steps.verify.outcome == 'failure'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp framework-patch-verification.log /tmp/framework-patch-verification.log
+          git reset --hard HEAD
+          cp /tmp/framework-patch-verification.log framework-patch-verification.log
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add framework-patch-verification.log
+          git commit -m "test(runtime): record lifecycle patch verification failure"
           git push origin HEAD:perf/client-enhancement-lifecycle

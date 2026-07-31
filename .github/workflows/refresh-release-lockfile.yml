@@ -1,0 +1,42 @@
+name: Refresh complete release lockfile
+
+on:
+  push:
+    branches:
+      - fix/npm-publish-oidc
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/npm-publish-oidc
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Regenerate lockfile without lifecycle scripts
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+      - name: Verify clean installation
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Commit refreshed lockfile
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/refresh-release-lockfile.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "chore(release): refresh complete npm lockfile"
+          git push origin HEAD:fix/npm-publish-oidc

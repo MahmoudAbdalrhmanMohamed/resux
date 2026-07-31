@@ -846,7 +846,7 @@ const resuxClientEnhancements = new Map<string, ClientEnhancementSetup>();
 const resuxActiveEnhancementDisposers = new Set<() => void | Promise<void>>();
 const resuxScheduledEnhancementDisposers = new Set<() => void | Promise<void>>();
 const resuxBoundEnhancementTargets = new WeakSet<Element>();
-const resuxVisibleEnhancementCallbacks = new Map<Element, () => void>();
+const resuxVisibleEnhancementCallbacks = new Map<Element, Set<() => void>>();
 let resuxVisibleEnhancementObserver: IntersectionObserver | null = null;
 let resuxVisibleEnhancementPollTimer = 0;
 
@@ -1352,7 +1352,16 @@ function releaseVisibleEnhancementResourcesIfIdle(): void {
 }
 
 function unobserveVisibleEnhancement(target: Element, callback?: () => void): void {
-  if (callback && resuxVisibleEnhancementCallbacks.get(target) !== callback) {
+  const callbacks = resuxVisibleEnhancementCallbacks.get(target);
+  if (!callbacks) {
+    return;
+  }
+  if (callback) {
+    callbacks.delete(callback);
+  } else {
+    callbacks.clear();
+  }
+  if (callbacks.size > 0) {
     return;
   }
   resuxVisibleEnhancementCallbacks.delete(target);
@@ -1367,19 +1376,27 @@ function ensureVisibleEnhancementResources(): void {
         if (!entry.isIntersecting && entry.intersectionRatio <= 0) {
           continue;
         }
-        resuxVisibleEnhancementCallbacks.get(entry.target)?.();
+        const callbacks = resuxVisibleEnhancementCallbacks.get(entry.target);
+        if (!callbacks) {
+          continue;
+        }
+        for (const activate of [...callbacks]) {
+          activate();
+        }
       }
     }, { rootMargin: "200px 0px" });
   }
   if (!resuxVisibleEnhancementPollTimer) {
     resuxVisibleEnhancementPollTimer = window.setInterval(() => {
-      for (const [target, activate] of [...resuxVisibleEnhancementCallbacks]) {
+      for (const [target, callbacks] of [...resuxVisibleEnhancementCallbacks]) {
         if (!target.isConnected) {
-          unobserveVisibleEnhancement(target, activate);
+          unobserveVisibleEnhancement(target);
           continue;
         }
         if (isElementProbablyVisible(target)) {
-          activate();
+          for (const activate of [...callbacks]) {
+            activate();
+          }
         }
       }
     }, 200);
@@ -1398,9 +1415,14 @@ function observeVisibleEnhancement(target: Element, activate: () => void): () =>
       activate();
     }
   };
-  resuxVisibleEnhancementCallbacks.set(target, run);
-  ensureVisibleEnhancementResources();
-  resuxVisibleEnhancementObserver!.observe(target);
+  let callbacks = resuxVisibleEnhancementCallbacks.get(target);
+  if (!callbacks) {
+    callbacks = new Set<() => void>();
+    resuxVisibleEnhancementCallbacks.set(target, callbacks);
+    ensureVisibleEnhancementResources();
+    resuxVisibleEnhancementObserver!.observe(target);
+  }
+  callbacks.add(run);
   return () => {
     if (settled) {
       return;
@@ -7581,7 +7603,16 @@ function releaseVisibleEnhancementResourcesIfIdle() {
 }
 
 function unobserveVisibleEnhancement(target, callback) {
-  if (callback && resuxVisibleEnhancementCallbacks.get(target) !== callback) {
+  const callbacks = resuxVisibleEnhancementCallbacks.get(target);
+  if (!callbacks) {
+    return;
+  }
+  if (callback) {
+    callbacks.delete(callback);
+  } else {
+    callbacks.clear();
+  }
+  if (callbacks.size > 0) {
     return;
   }
   resuxVisibleEnhancementCallbacks.delete(target);
@@ -7598,8 +7629,11 @@ function ensureVisibleEnhancementResources() {
         if (!entry.isIntersecting && entry.intersectionRatio <= 0) {
           continue;
         }
-        const activate = resuxVisibleEnhancementCallbacks.get(entry.target);
-        if (activate) {
+        const callbacks = resuxVisibleEnhancementCallbacks.get(entry.target);
+        if (!callbacks) {
+          continue;
+        }
+        for (const activate of [...callbacks]) {
           activate();
         }
       }
@@ -7607,13 +7641,15 @@ function ensureVisibleEnhancementResources() {
   }
   if (!resuxVisibleEnhancementPollTimer) {
     resuxVisibleEnhancementPollTimer = window.setInterval(() => {
-      for (const [target, activate] of [...resuxVisibleEnhancementCallbacks]) {
+      for (const [target, callbacks] of [...resuxVisibleEnhancementCallbacks]) {
         if (!target.isConnected) {
-          unobserveVisibleEnhancement(target, activate);
+          unobserveVisibleEnhancement(target);
           continue;
         }
         if (isElementProbablyVisible(target)) {
-          activate();
+          for (const activate of [...callbacks]) {
+            activate();
+          }
         }
       }
     }, 200);
@@ -7632,9 +7668,14 @@ function observeVisibleEnhancement(target, activate) {
       activate();
     }
   };
-  resuxVisibleEnhancementCallbacks.set(target, run);
-  ensureVisibleEnhancementResources();
-  resuxVisibleEnhancementObserver.observe(target);
+  let callbacks = resuxVisibleEnhancementCallbacks.get(target);
+  if (!callbacks) {
+    callbacks = new Set();
+    resuxVisibleEnhancementCallbacks.set(target, callbacks);
+    ensureVisibleEnhancementResources();
+    resuxVisibleEnhancementObserver.observe(target);
+  }
+  callbacks.add(run);
   return () => {
     if (settled) {
       return;

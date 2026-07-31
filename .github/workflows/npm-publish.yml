@@ -98,8 +98,8 @@ jobs:
 
           node -e "const pkg=require('./package.json'); if (pkg.private) throw new Error('private:true packages cannot be published')"
 
-          echo "package-name=${PACKAGE_NAME}" >> "$GITHUB_ENV"
-          echo "package-version=${PACKAGE_VERSION}" >> "$GITHUB_ENV"
+          echo "PACKAGE_NAME=${PACKAGE_NAME}" >> "$GITHUB_ENV"
+          echo "PACKAGE_VERSION=${PACKAGE_VERSION}" >> "$GITHUB_ENV"
 
       - name: Typecheck
         run: npm run typecheck --if-present
@@ -117,9 +117,9 @@ jobs:
         id: published
         shell: bash
         run: |
-          if npm view "${package-name}@${package-version}" version >/dev/null 2>&1; then
+          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "${package-name}@${package-version} is already published; skipping."
+            echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is already published; skipping."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi

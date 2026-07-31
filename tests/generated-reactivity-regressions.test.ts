@@ -109,7 +109,11 @@ async function importGeneratedRuntime(): Promise<{
   tempRoots.push(root);
   await mkdir(root, { recursive: true });
   const runtimeFile = path.join(root, "runtime-client.mjs");
-  await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+  await writeFile(
+    runtimeFile,
+    `${getClientRuntimeSource()}\nexport { effect, reactive, ref, watch };\n`,
+    "utf8",
+  );
 
   const window = new Window({ url: "http://localhost/" });
   Object.assign(globalThis, {

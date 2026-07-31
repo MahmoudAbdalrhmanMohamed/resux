@@ -24,7 +24,9 @@ export async function enforceDevGuard(appRoot: string, outDir: string): Promise<
   const isStrict = policy.halalAI?.strict === true;
 
   if (report.status === "review_required") {
-    const checkReview = verifyReviewApproval(appRoot, report.status);
+    const checkReview = verifyReviewApproval(appRoot, report.status, {
+      projectName: policy.projectName,
+    });
     if (!checkReview.approved) {
       console.error(formatTerminalReport(report));
       console.error(`\x1b[31m[resux-halal-core] Cannot start dev server: ${checkReview.reason}\x1b[0m`);
@@ -61,7 +63,9 @@ export async function enforceBuildGuard(appRoot: string, outDir: string): Promis
   const isStrict = policy.halalAI?.strict === true;
 
   if (report.status === "review_required") {
-    const checkReview = verifyReviewApproval(appRoot, report.status);
+    const checkReview = verifyReviewApproval(appRoot, report.status, {
+      projectName: policy.projectName,
+    });
     if (!checkReview.approved) {
       console.error(formatTerminalReport(report));
       console.error(`\x1b[31m[resux-halal-core] Build failed: ${checkReview.reason}\x1b[0m`);

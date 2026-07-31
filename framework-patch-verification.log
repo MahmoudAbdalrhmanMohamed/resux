@@ -1,0 +1,188 @@
+## Synchronize lockfile metadata for verification
+## Install dependencies
+npm error code EUSAGE
+npm error
+npm error `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync. Please update your lock file with `npm install` before continuing.
+npm error
+npm error Missing: @parcel/watcher-android-arm64@2.5.6 from lock file
+npm error Missing: @parcel/watcher-darwin-arm64@2.5.6 from lock file
+npm error Missing: @parcel/watcher-darwin-x64@2.5.6 from lock file
+npm error Missing: @parcel/watcher-freebsd-x64@2.5.6 from lock file
+npm error Missing: @parcel/watcher-linux-arm-glibc@2.5.6 from lock file
+npm error Missing: @parcel/watcher-linux-arm-musl@2.5.6 from lock file
+npm error Missing: @parcel/watcher-linux-arm64-glibc@2.5.6 from lock file
+npm error Missing: @parcel/watcher-linux-arm64-musl@2.5.6 from lock file
+npm error Missing: @parcel/watcher-linux-x64-glibc@2.5.6 from lock file
+npm error Missing: @parcel/watcher-linux-x64-musl@2.5.6 from lock file
+npm error Missing: @parcel/watcher-win32-arm64@2.5.6 from lock file
+npm error Missing: @parcel/watcher-win32-ia32@2.5.6 from lock file
+npm error Missing: @esbuild/aix-ppc64@0.28.0 from lock file
+npm error Missing: @esbuild/android-arm@0.28.0 from lock file
+npm error Missing: @esbuild/android-arm64@0.28.0 from lock file
+npm error Missing: @esbuild/android-x64@0.28.0 from lock file
+npm error Missing: @esbuild/darwin-arm64@0.28.0 from lock file
+npm error Missing: @esbuild/darwin-x64@0.28.0 from lock file
+npm error Missing: @esbuild/freebsd-arm64@0.28.0 from lock file
+npm error Missing: @esbuild/freebsd-x64@0.28.0 from lock file
+npm error Missing: @esbuild/linux-arm@0.28.0 from lock file
+npm error Missing: @esbuild/linux-arm64@0.28.0 from lock file
+npm error Missing: @esbuild/linux-ia32@0.28.0 from lock file
+npm error Missing: @esbuild/linux-loong64@0.28.0 from lock file
+npm error Missing: @esbuild/linux-mips64el@0.28.0 from lock file
+npm error Missing: @esbuild/linux-ppc64@0.28.0 from lock file
+npm error Missing: @esbuild/linux-riscv64@0.28.0 from lock file
+npm error Missing: @esbuild/linux-s390x@0.28.0 from lock file
+npm error Missing: @esbuild/linux-x64@0.28.0 from lock file
+npm error Missing: @esbuild/netbsd-arm64@0.28.0 from lock file
+npm error Missing: @esbuild/netbsd-x64@0.28.0 from lock file
+npm error Missing: @esbuild/openbsd-arm64@0.28.0 from lock file
+npm error Missing: @esbuild/openbsd-x64@0.28.0 from lock file
+npm error Missing: @esbuild/openharmony-arm64@0.28.0 from lock file
+npm error Missing: @esbuild/sunos-x64@0.28.0 from lock file
+npm error Missing: @esbuild/win32-arm64@0.28.0 from lock file
+npm error Missing: @esbuild/win32-ia32@0.28.0 from lock file
+npm error Missing: lightningcss-android-arm64@1.32.0 from lock file
+npm error Missing: lightningcss-darwin-arm64@1.32.0 from lock file
+npm error Missing: lightningcss-darwin-x64@1.32.0 from lock file
+npm error Missing: lightningcss-freebsd-x64@1.32.0 from lock file
+npm error Missing: lightningcss-linux-arm-gnueabihf@1.32.0 from lock file
+npm error Missing: lightningcss-linux-arm64-gnu@1.32.0 from lock file
+npm error Missing: lightningcss-linux-arm64-musl@1.32.0 from lock file
+npm error Missing: lightningcss-linux-x64-gnu@1.32.0 from lock file
+npm error Missing: lightningcss-linux-x64-musl@1.32.0 from lock file
+npm error Missing: lightningcss-win32-arm64-msvc@1.32.0 from lock file
+npm error Missing: @rolldown/binding-android-arm64@1.0.0-rc.17 from lock file
+npm error Missing: @rolldown/binding-darwin-arm64@1.0.0-rc.17 from lock file
+npm error Missing: @rolldown/binding-darwin-x64@1.0.0-rc.17 from lock file
+npm error Missing: @rolldown/binding-freebsd-x64@1.0.0-rc.17 from lock file
+npm error Missing: @rolldown/binding-linux-arm-gnueabihf@1.0.0-rc.17 from lock file
+npm error Missing: @rolldown/binding-linux-arm64-gnu@1.0.0-rc.17 from lock file
+npm error Missing: @rolldown/binding-linux-arm64-musl@1.0.0-rc.17 from lock file
+npm error Missing: @rolldown/binding-linux-ppc64-gnu@1.0.0-rc.17 from lock file
+npm error Missing: @rolldown/binding-linux-s390x-gnu@1.0.0-rc.17 from lock file
+npm error Missing: @rolldown/binding-linux-x64-gnu@1.0.0-rc.17 from lock file
+npm error Missing: @rolldown/binding-linux-x64-musl@1.0.0-rc.17 from lock file
+npm error Missing: @rolldown/binding-openharmony-arm64@1.0.0-rc.17 from lock file
+npm error Missing: @rolldown/binding-wasm32-wasi@1.0.0-rc.17 from lock file
+npm error Missing: @rolldown/binding-win32-arm64-msvc@1.0.0-rc.17 from lock file
+npm error Missing: @emnapi/core@1.10.0 from lock file
+npm error Missing: @napi-rs/wasm-runtime@1.2.2 from lock file
+npm error Missing: @emnapi/wasi-threads@1.2.1 from lock file
+npm error Missing: @tybys/wasm-util@0.10.3 from lock file
+npm error Missing: @rollup/rollup-android-arm-eabi@4.60.2 from lock file
+npm error Missing: @rollup/rollup-android-arm64@4.60.2 from lock file
+npm error Missing: @rollup/rollup-darwin-arm64@4.60.2 from lock file
+npm error Missing: @rollup/rollup-darwin-x64@4.60.2 from lock file
+npm error Missing: @rollup/rollup-freebsd-arm64@4.60.2 from lock file
+npm error Missing: @rollup/rollup-freebsd-x64@4.60.2 from lock file
+npm error Missing: @rollup/rollup-linux-arm-gnueabihf@4.60.2 from lock file
+npm error Missing: @rollup/rollup-linux-arm-musleabihf@4.60.2 from lock file
+npm error Missing: @rollup/rollup-linux-arm64-gnu@4.60.2 from lock file
+npm error Missing: @rollup/rollup-linux-arm64-musl@4.60.2 from lock file
+npm error Missing: @rollup/rollup-linux-loong64-gnu@4.60.2 from lock file
+npm error Missing: @rollup/rollup-linux-loong64-musl@4.60.2 from lock file
+npm error Missing: @rollup/rollup-linux-ppc64-gnu@4.60.2 from lock file
+npm error Missing: @rollup/rollup-linux-ppc64-musl@4.60.2 from lock file
+npm error Missing: @rollup/rollup-linux-riscv64-gnu@4.60.2 from lock file
+npm error Missing: @rollup/rollup-linux-riscv64-musl@4.60.2 from lock file
+npm error Missing: @rollup/rollup-linux-s390x-gnu@4.60.2 from lock file
+npm error Missing: @rollup/rollup-linux-x64-gnu@4.60.2 from lock file
+npm error Missing: @rollup/rollup-linux-x64-musl@4.60.2 from lock file
+npm error Missing: @rollup/rollup-openbsd-x64@4.60.2 from lock file
+npm error Missing: @rollup/rollup-openharmony-arm64@4.60.2 from lock file
+npm error Missing: @rollup/rollup-win32-arm64-msvc@4.60.2 from lock file
+npm error Missing: @rollup/rollup-win32-ia32-msvc@4.60.2 from lock file
+npm error Missing: fsevents@2.3.3 from lock file
+npm error
+npm error Clean install a project
+npm error
+npm error Usage:
+npm error npm ci
+npm error
+npm error Options:
+npm error [--install-strategy <hoisted|nested|shallow|linked>] [--legacy-bundling]
+npm error [--global-style] [--omit <dev|optional|peer> [--omit <dev|optional|peer> ...]]
+npm error [--include <prod|dev|optional|peer> [--include <prod|dev|optional|peer> ...]]
+npm error [--strict-peer-deps] [--foreground-scripts] [--ignore-scripts]
+npm error [--allow-directory <all|none|root>] [--allow-file <all|none|root>]
+npm error [--allow-git <all|none|root>] [--allow-remote <all|none|root>]
+npm error [--allow-scripts <package-list> [--allow-scripts <package-list> ...]]
+npm error [--strict-allow-scripts] [--dangerously-allow-all-scripts] [--no-audit]
+npm error [--no-bin-links] [--no-fund] [--dry-run]
+npm error [-w|--workspace <workspace-name> [-w|--workspace <workspace-name> ...]]
+npm error [--workspaces] [--include-workspace-root] [--install-links]
+npm error
+npm error   --install-strategy
+npm error     Sets the strategy for installing packages in node_modules.
+npm error
+npm error   --legacy-bundling
+npm error     Instead of hoisting package installs in `node_modules`, install packages
+npm error
+npm error   --global-style
+npm error     Only install direct dependencies in the top level `node_modules`,
+npm error
+npm error   --omit
+npm error     Dependency types to omit from the installation tree on disk.
+npm error
+npm error   --include
+npm error     Option that allows for defining which types of dependencies to install.
+npm error
+npm error   --strict-peer-deps
+npm error     If set to `true`, and `--legacy-peer-deps` is not set, then _any_
+npm error
+npm error   --foreground-scripts
+npm error     Run all build scripts (ie, `preinstall`, `install`, and
+npm error
+npm error   --ignore-scripts
+npm error     If true, npm does not run scripts specified in package.json files.
+npm error
+npm error   --allow-directory
+npm error     Limits the ability for npm to install dependencies from directories.
+npm error
+npm error   --allow-file
+npm error     Limits the ability for npm to install dependencies from tarball files.
+npm error
+npm error   --allow-git
+npm error     Limits the ability for npm to fetch dependencies from git references.
+npm error
+npm error   --allow-remote
+npm error     Limits the ability for npm to fetch dependencies from urls.
+npm error
+npm error   --allow-scripts
+npm error     Comma-separated list of packages whose install-time lifecycle scripts
+npm error
+npm error   --strict-allow-scripts
+npm error     If `true`, turn the install-script policy from a warning into a hard
+npm error
+npm error   --dangerously-allow-all-scripts
+npm error     If `true`, bypass the `allowScripts` policy entirely and run every
+npm error
+npm error   --audit
+npm error     When "true" submit audit reports alongside the current npm command to the
+npm error
+npm error   --bin-links
+npm error     Tells npm to create symlinks (or `.cmd` shims on Windows) for package
+npm error
+npm error   --fund
+npm error     When "true" displays the message at the end of each `npm install`
+npm error
+npm error   --dry-run
+npm error     Indicates that you don't want npm to make any changes and that it should
+npm error
+npm error   -w|--workspace
+npm error     Enable running a command in the context of the configured workspaces of the
+npm error
+npm error   --workspaces
+npm error     Set to true to run the command in the context of **all** configured
+npm error
+npm error   --include-workspace-root
+npm error     Include the workspace root when workspaces are enabled for a command.
+npm error
+npm error   --install-links
+npm error     When set file: protocol dependencies will be packed and installed as
+npm error
+npm error
+npm error aliases: clean-install, ic, install-clean, isntall-clean
+npm error
+npm error Run "npm help ci" for more info
+npm error A complete log of this run can be found in: /home/runner/.npm/_logs/2026-07-31T19_40_39_755Z-debug-0.log

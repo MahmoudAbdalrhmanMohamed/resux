@@ -1,0 +1,15 @@
+## Apply generated browser reactivity fixes
+Applied generated runtime reactivity fixes.
+## Apply icon runtime fixes
+Applied icon runtime fixes.
+Normalized icon attribute parser.
+## Apply module head merge fix
+Applied module head composition fix.
+## Typecheck
+
+> resuxjs@0.3.0 typecheck
+> tsc -b
+
+src/icons/index.ts(146,35): error TS2677: A type predicate's type must be assignable to its parameter's type.
+  Type 'IconPathData' is not assignable to type '{ d: string; opacity: string | undefined; }'.
+    Property 'opacity' is optional in type 'IconPathData' but required in type '{ d: string; opacity: string | undefined; }'.

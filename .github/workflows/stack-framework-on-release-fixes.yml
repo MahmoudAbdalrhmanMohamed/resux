@@ -1,0 +1,31 @@
+name: Stack framework work on release fixes
+
+on:
+  push:
+    branches:
+      - perf/client-enhancement-lifecycle
+
+permissions:
+  contents: write
+
+jobs:
+  stack:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout framework branch
+        uses: actions/checkout@v4
+        with:
+          ref: perf/client-enhancement-lifecycle
+          fetch-depth: 0
+
+      - name: Merge release and lockfile fixes
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin fix/npm-publish-oidc
+          git merge --no-edit origin/fix/npm-publish-oidc
+          git rm .github/workflows/stack-framework-on-release-fixes.yml
+          git commit -m "chore: remove temporary stacking workflow"
+          git push origin HEAD:perf/client-enhancement-lifecycle

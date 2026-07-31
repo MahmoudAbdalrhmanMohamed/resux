@@ -29,7 +29,9 @@ function doWatch<T = unknown>(
   callback: WatchCallback<T> | null,
   options: WatchOptions
 ): WatchStopHandle {
-  const { deep = false, immediate = false, flush = "post" } = options;
+  const { immediate = false, flush = "post" } = options;
+  const shouldDeepTraverse = options.deep === true
+    || (callback !== null && containsReactiveSource(source));
 
   let cleanup: (() => void) | undefined;
   const onCleanup: CleanupRegistrar = (fn) => {
@@ -47,7 +49,7 @@ function doWatch<T = unknown>(
     getter = normalizeWatchSource(source as WatchSource<T> | WatchSource<T>[]);
   }
 
-  if (deep) {
+  if (shouldDeepTraverse) {
     const baseGetter = getter;
     getter = () => traverse(baseGetter());
   }
@@ -61,7 +63,7 @@ function doWatch<T = unknown>(
     }
 
     const newValue = runner();
-    if (deep || oldValue === INITIAL_WATCH_VALUE || hasChanged(newValue, oldValue)) {
+    if (shouldDeepTraverse || oldValue === INITIAL_WATCH_VALUE || hasChanged(newValue, oldValue)) {
       cleanup?.();
       cleanup = undefined;
       callback(
@@ -95,6 +97,13 @@ function doWatch<T = unknown>(
     cleanup = undefined;
     stop(runner);
   };
+}
+
+function containsReactiveSource(source: unknown): boolean {
+  if (isReactive(source)) {
+    return true;
+  }
+  return isArray(source) && source.some((entry) => isReactive(entry));
 }
 
 function normalizeWatchSource<T>(source: WatchSource<T> | WatchSource<T>[]): () => unknown {

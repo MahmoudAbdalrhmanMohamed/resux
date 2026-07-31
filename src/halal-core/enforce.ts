@@ -104,7 +104,7 @@ export function enforceProductionServerGuard(outDir: string): void {
     return;
   }
 
-  const check = checkOnDiskReportSignature(outDir);
+  const check = checkOnDiskReportSignature(outDir, { requireAuthenticated: true });
   if (!check.valid) {
     console.error(`\x1b[31m[resux-halal-core] Production server startup rejected: ${check.reason}\x1b[0m`);
     process.exit(1);
@@ -116,7 +116,7 @@ export function enforceDeploymentGuard(outDir: string): void {
     return;
   }
 
-  const check = checkOnDiskReportSignature(outDir);
+  const check = checkOnDiskReportSignature(outDir, { requireAuthenticated: true });
   if (!check.valid) {
     console.error(`\x1b[31m[resux-halal-core] Deployment rejected: ${check.reason}\x1b[0m`);
     process.exit(1);

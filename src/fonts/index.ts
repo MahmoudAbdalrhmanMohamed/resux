@@ -15,19 +15,49 @@ export interface ResuxFontsModuleOptions {
   deferUntilPageLoad?: boolean;
 }
 
+const VALID_DISPLAYS = new Set(["auto", "block", "swap", "fallback", "optional"]);
+
 function normalizeFamily(input: ResuxFontFamilyInput): string | null {
-  const name = String(input.name || "").trim();
+  const name = String(input.name || "").trim().replace(/[\u0000-\u001f\u007f]/g, "");
   if (!name) {
     return null;
   }
-  const family = name.replace(/\s+/g, "+");
   const weights = Array.isArray(input.weights)
-    ? input.weights.map((weight) => String(weight).trim()).filter(Boolean)
+    ? input.weights
+      .map(normalizeWeight)
+      .filter((weight): weight is string => Boolean(weight))
     : [];
   if (!weights.length) {
-    return `family=${family}`;
+    return name;
   }
-  return `family=${family}:wght@${[...new Set(weights)].join(";")}`;
+  return `${name}:wght@${[...new Set(weights)].join(";")}`;
+}
+
+function normalizeWeight(value: number | string): string | null {
+  const normalized = String(value).trim();
+  const match = /^(\d{1,4})(?:\.\.(\d{1,4}))?$/.exec(normalized);
+  if (!match) {
+    return null;
+  }
+  const start = Number(match[1]);
+  const end = match[2] ? Number(match[2]) : undefined;
+  if (start < 1 || start > 1000 || (end !== undefined && (end < start || end > 1000))) {
+    return null;
+  }
+  return end === undefined ? String(start) : `${start}..${end}`;
+}
+
+function normalizeDisplay(value: unknown): string {
+  return typeof value === "string" && VALID_DISPLAYS.has(value) ? value : "swap";
+}
+
+function buildGoogleFontsHref(families: string[], display: unknown): string {
+  const params = new URLSearchParams();
+  for (const family of families) {
+    params.append("family", family);
+  }
+  params.set("display", normalizeDisplay(display));
+  return `https://fonts.googleapis.com/css2?${params.toString()}`;
 }
 
 export function googleFont(input: ResuxFontFamilyInput): ResuxFontFamilyInput {
@@ -52,7 +82,7 @@ export default defineResuxModule<ResuxFontsModuleOptions>({
     google: [],
     preconnect: true,
     strategy: "eager",
-    deferUntilPageLoad: false
+    deferUntilPageLoad: false,
   },
   setup(options, resux) {
     const googleFamilies = Array.isArray(options.google) ? options.google : [];
@@ -78,18 +108,21 @@ export default defineResuxModule<ResuxFontsModuleOptions>({
     if (options.preconnect !== false && hasAnyFonts) {
       headLinks.push(
         { rel: "preconnect", href: "https://fonts.googleapis.com" },
-        { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" }
+        { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" },
       );
     }
 
     if (eagerGroup.length > 0) {
       const eagerNormalized = eagerGroup
-        .map((f) => normalizeFamily(f))
-        .filter((f): f is string => Boolean(f));
+        .map((family) => normalizeFamily(family))
+        .filter((family): family is string => Boolean(family));
       if (eagerNormalized.length > 0) {
-        const display = eagerGroup.find((f) => f.display)?.display ?? "swap";
-        const href = `https://fonts.googleapis.com/css2?${eagerNormalized.join("&")}&display=${display}`;
-        const isPreload = eagerGroup.some((f) => f.strategy === "preload") || options.strategy === "preload";
+        const href = buildGoogleFontsHref(
+          eagerNormalized,
+          eagerGroup.find((family) => family.display)?.display,
+        );
+        const isPreload = eagerGroup.some((family) => family.strategy === "preload")
+          || options.strategy === "preload";
         if (isPreload) {
           headLinks.push({ rel: "preload", as: "style", href });
         }
@@ -99,14 +132,16 @@ export default defineResuxModule<ResuxFontsModuleOptions>({
 
     if (lazyGroup.length > 0) {
       const lazyNormalized = lazyGroup
-        .map((f) => normalizeFamily(f))
-        .filter((f): f is string => Boolean(f));
+        .map((family) => normalizeFamily(family))
+        .filter((family): family is string => Boolean(family));
       if (lazyNormalized.length > 0) {
-        const display = lazyGroup.find((f) => f.display)?.display ?? "swap";
-        const href = `https://fonts.googleapis.com/css2?${lazyNormalized.join("&")}&display=${display}`;
+        const href = buildGoogleFontsHref(
+          lazyNormalized,
+          lazyGroup.find((family) => family.display)?.display,
+        );
         headLinks.push({ rel: "preload", as: "style", href });
         headScripts.push({
-          innerHTML: `(function(){function loadFonts(){var l=document.createElement('link');l.rel='stylesheet';l.href='${href}';document.head.appendChild(l);}if(document.readyState==='complete'){loadFonts();}else{window.addEventListener('load',loadFonts);}})();`
+          innerHTML: `(function(){function loadFonts(){var l=document.createElement('link');l.rel='stylesheet';l.href=${JSON.stringify(href)};document.head.appendChild(l);}if(document.readyState==='complete'){loadFonts();}else{window.addEventListener('load',loadFonts,{once:true});}})();`,
         });
       }
     }
@@ -114,7 +149,7 @@ export default defineResuxModule<ResuxFontsModuleOptions>({
     if (headLinks.length > 0 || headScripts.length > 0) {
       resux.addHead({
         link: headLinks,
-        ...(headScripts.length > 0 ? { script: headScripts } : {})
+        ...(headScripts.length > 0 ? { script: headScripts } : {}),
       });
     }
 
@@ -126,13 +161,12 @@ export default defineResuxModule<ResuxFontsModuleOptions>({
           familyConfigs: googleFamilies.map((family) => ({
             name: family.name,
             strategy: family.strategy || options.strategy || "eager",
-            deferUntilPageLoad: isLazyFamily(family, options)
+            deferUntilPageLoad: isLazyFamily(family, options),
           })),
           strategy: options.strategy || "eager",
-          deferUntilPageLoad: options.deferUntilPageLoad ?? false
-        }
-      }
+          deferUntilPageLoad: options.deferUntilPageLoad ?? false,
+        },
+      },
     });
-  }
+  },
 });
-

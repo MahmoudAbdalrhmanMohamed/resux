@@ -1,0 +1,55 @@
+name: Apply client enhancement lifecycle fixes
+
+on:
+  push:
+    branches:
+      - perf/client-enhancement-lifecycle
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: perf/client-enhancement-lifecycle
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.14.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Ensure rolldown Linux native binding
+        shell: bash
+        run: node -e "require.resolve('@rolldown/binding-linux-x64-gnu')" || npm install --no-save @rolldown/binding-linux-x64-gnu
+
+      - name: Apply framework fixes
+        run: node scripts/apply-client-enhancement-lifecycle-fixes.mjs
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run all tests
+        run: npm test
+
+      - name: Commit verified source changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm scripts/apply-client-enhancement-lifecycle-fixes.mjs
+          rm .github/workflows/apply-client-enhancement-lifecycle-fixes.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "perf(runtime): share enhancement scheduling and cleanup"
+          git push origin HEAD:perf/client-enhancement-lifecycle

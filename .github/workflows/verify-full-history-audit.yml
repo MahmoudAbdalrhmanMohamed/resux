@@ -47,6 +47,8 @@ jobs:
             node scripts/fix-icon-attribute-parser.mjs
             echo '## Apply module head merge fix'
             node scripts/apply-head-merge-fix.mjs
+            echo '## Preserve font loader compatibility'
+            node scripts/apply-font-loader-compat.mjs
             echo '## Apply README updates'
             node scripts/apply-readme-audit-updates.mjs
             echo '## Typecheck'
@@ -67,6 +69,7 @@ jobs:
           rm scripts/apply-icon-runtime-fixes.mjs
           rm scripts/fix-icon-attribute-parser.mjs
           rm scripts/apply-head-merge-fix.mjs
+          rm scripts/apply-font-loader-compat.mjs
           rm scripts/apply-readme-audit-updates.mjs
           rm .github/workflows/verify-full-history-audit.yml
           git config user.name "github-actions[bot]"

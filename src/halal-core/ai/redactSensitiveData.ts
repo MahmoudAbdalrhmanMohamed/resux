@@ -7,11 +7,6 @@ export function redactSensitiveData(text: string): string {
   );
 
   redacted = redacted.replace(
-    /(pass(?:word)?|pwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|auth(?:orization)?)\s*[:=]\s*(?:["'][^"'\r\n]+["']|[^\s,;#]+)/gi,
-    "$1=[REDACTED]",
-  );
-
-  redacted = redacted.replace(
     /-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----[\s\S]*?-----END \1-----/g,
     "[PRIVATE_KEY_REDACTED]",
   );
@@ -24,6 +19,11 @@ export function redactSensitiveData(text: string): string {
   redacted = redacted.replace(
     /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
     "[JWT_REDACTED]",
+  );
+
+  redacted = redacted.replace(
+    /(pass(?:word)?|pwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|auth(?:orization)?)\s*[:=]\s*(?:["'][^"'\r\n]+["']|[^\s,;#]+)/gi,
+    "$1=[REDACTED]",
   );
 
   redacted = redacted.replace(

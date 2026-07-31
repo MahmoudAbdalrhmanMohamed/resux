@@ -37,6 +37,8 @@ jobs:
             npm ci --no-audit --no-fund
             echo '## Verify Rolldown Linux native binding'
             node -e "require.resolve('@rolldown/binding-linux-x64-gnu')"
+            echo '## Correct generated-runtime transform boundary'
+            sed -i 's/"\\nfunction uniqueArray(items) {"/"\\nfunction __rxIsObject(value) {"/' scripts/apply-client-enhancement-lifecycle-fixes.mjs
             echo '## Apply framework patch'
             node scripts/apply-client-enhancement-lifecycle-fixes.mjs
             echo '## Typecheck'

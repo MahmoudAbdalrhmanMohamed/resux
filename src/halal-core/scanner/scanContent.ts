@@ -1,7 +1,15 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  lstatSync,
+  openSync,
+  readSync,
+  readdirSync,
+  realpathSync,
+} from "node:fs";
 import path from "node:path";
 
-const IGNORE_DIRS = [
+const IGNORE_DIRS = new Set([
   "node_modules",
   ".resux",
   ".nitro",
@@ -11,10 +19,10 @@ const IGNORE_DIRS = [
   ".git",
   ".github",
   "public",
-  "assets"
-];
+  "assets",
+]);
 
-const SCAN_EXTENSIONS = [
+const SCAN_EXTENSIONS = new Set([
   ".ts",
   ".js",
   ".mjs",
@@ -23,63 +31,142 @@ const SCAN_EXTENSIONS = [
   ".html",
   ".json",
   ".md",
-  ".txt"
-];
+  ".txt",
+]);
+
+const MAX_SCANNED_FILE_BYTES = 100_000;
 
 export function scanContentFiles(
   dir: string,
   appRoot: string,
-  ignoredPaths: Set<string> = new Set()
+  ignoredPaths: Set<string> = new Set(),
 ): Array<{ file: string; text: string }> {
   const results: Array<{ file: string; text: string }> = [];
 
-  if (!existsSync(dir)) {
+  if (!existsSync(dir) || !existsSync(appRoot)) {
     return results;
   }
 
-  function traverse(currentDir: string) {
-    let files: string[] = [];
+  let realRoot: string;
+  let realStart: string;
+  try {
+    realRoot = realpathSync(appRoot);
+    realStart = realpathSync(dir);
+  } catch {
+    return results;
+  }
+
+  if (!isPathInside(realRoot, realStart)) {
+    return results;
+  }
+
+  const normalizedIgnoredPaths = [...ignoredPaths]
+    .map(normalizeRelativePath)
+    .filter((entry) => entry && !hasGlobSyntax(entry));
+  const visitedDirectories = new Set<string>();
+
+  function traverse(currentDir: string): void {
+    let realDirectory: string;
     try {
-      files = readdirSync(currentDir);
+      realDirectory = realpathSync(currentDir);
+    } catch {
+      return;
+    }
+    if (!isPathInside(realRoot, realDirectory) || visitedDirectories.has(realDirectory)) {
+      return;
+    }
+    visitedDirectories.add(realDirectory);
+
+    let files: string[];
+    try {
+      files = readdirSync(realDirectory);
     } catch {
       return;
     }
 
     for (const file of files) {
-      const fullPath = path.join(currentDir, file);
-      const relativePath = path.relative(appRoot, fullPath);
+      const fullPath = path.join(realDirectory, file);
+      const relativePath = normalizeRelativePath(path.relative(realRoot, fullPath));
 
-      if (ignoredPaths.has(relativePath) || IGNORE_DIRS.includes(file)) {
+      if (
+        IGNORE_DIRS.has(file)
+        || isIgnoredPath(relativePath, normalizedIgnoredPaths)
+      ) {
         continue;
       }
 
       let stats;
       try {
-        stats = statSync(fullPath);
+        stats = lstatSync(fullPath);
       } catch {
         continue;
       }
 
+      // Never follow links during safety scanning. This prevents escaping the app
+      // root and avoids recursive link cycles.
+      if (stats.isSymbolicLink()) {
+        continue;
+      }
       if (stats.isDirectory()) {
         traverse(fullPath);
-      } else if (stats.isFile()) {
-        const ext = path.extname(file).toLowerCase();
-        if (SCAN_EXTENSIONS.includes(ext) && file !== "package-lock.json") {
-          try {
-            // Read first 100KB of files to prevent memory blowups on huge files
-            const content = readFileSync(fullPath, "utf8").slice(0, 100000);
-            results.push({
-              file: relativePath.replace(/\\/g, "/"),
-              text: content
-            });
-          } catch {
-            // Ignore unreadable files
-          }
-        }
+        continue;
+      }
+      if (!stats.isFile()) {
+        continue;
+      }
+
+      const extension = path.extname(file).toLowerCase();
+      if (!SCAN_EXTENSIONS.has(extension) || file === "package-lock.json") {
+        continue;
+      }
+
+      const text = readFilePrefix(fullPath, MAX_SCANNED_FILE_BYTES);
+      if (text !== null) {
+        results.push({ file: relativePath, text });
       }
     }
   }
 
-  traverse(dir);
+  traverse(realStart);
   return results;
+}
+
+function readFilePrefix(file: string, maxBytes: number): string | null {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(file, "r");
+    const buffer = Buffer.allocUnsafe(maxBytes);
+    const bytesRead = readSync(descriptor, buffer, 0, maxBytes, 0);
+    return buffer.toString("utf8", 0, bytesRead);
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== undefined) {
+      try {
+        closeSync(descriptor);
+      } catch {
+        // Ignore close failures after an unreadable file.
+      }
+    }
+  }
+}
+
+function isPathInside(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === ""
+    || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function normalizeRelativePath(value: string): string {
+  return value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, "");
+}
+
+function isIgnoredPath(relativePath: string, ignoredPaths: string[]): boolean {
+  return ignoredPaths.some((ignored) =>
+    relativePath === ignored || relativePath.startsWith(`${ignored}/`)
+  );
+}
+
+function hasGlobSyntax(value: string): boolean {
+  return /[*?\[\]{}!]/.test(value);
 }

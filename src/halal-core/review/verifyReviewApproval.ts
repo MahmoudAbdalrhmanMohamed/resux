@@ -1,17 +1,26 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { generateReviewSignature, type SignedReviewApproval } from "./signedReviewFile.js";
+import {
+  verifyReviewSignature,
+  type SignedReviewApproval,
+} from "./signedReviewFile.js";
+
+export interface ReviewApprovalVerificationOptions {
+  secret?: string;
+  projectName?: string;
+  evidenceHash?: string;
+  now?: number;
+}
 
 export function verifyReviewApproval(
   appRoot: string,
-  currentStatus: string
+  currentStatus: string,
+  options: ReviewApprovalVerificationOptions = {},
 ): { approved: boolean; reason?: string } {
-  // If the status is already allowed/warning, we don't need a review approval
   if (currentStatus === "allowed" || currentStatus === "warning") {
     return { approved: true };
   }
 
-  // A review approval CANNOT approve a clearly blocked project!
   if (currentStatus === "blocked") {
     return { approved: false, reason: "Review approvals cannot override clearly blocked projects." };
   }
@@ -23,22 +32,50 @@ export function verifyReviewApproval(
 
   try {
     const raw = readFileSync(approvalPath, "utf8");
-    const approval: SignedReviewApproval = JSON.parse(raw);
+    const approval = JSON.parse(raw) as SignedReviewApproval;
 
-    const { signature, ...rest } = approval;
-    const recalculated = generateReviewSignature(rest);
-
-    if (recalculated !== signature) {
-      return { approved: false, reason: "Review approval file signature is invalid or tampered." };
+    if (!isValidApprovalShape(approval)) {
+      return { approved: false, reason: "Review approval file has an invalid structure." };
+    }
+    if (approval.status !== "allowed") {
+      return { approved: false, reason: "Review approval must explicitly grant allowed status." };
+    }
+    if (!verifyReviewSignature(approval, options.secret)) {
+      return { approved: false, reason: "Review approval signature is invalid or cannot be authenticated." };
     }
 
-    const expiryDate = new Date(approval.expires);
-    if (expiryDate.getTime() < Date.now()) {
+    if (options.projectName && approval.projectName !== options.projectName) {
+      return { approved: false, reason: "Review approval belongs to a different project." };
+    }
+    if (options.evidenceHash && approval.evidenceHash !== options.evidenceHash) {
+      return { approved: false, reason: "Review approval evidence does not match the current project scan." };
+    }
+
+    const expiryTime = Date.parse(approval.expires);
+    if (!Number.isFinite(expiryTime)) {
+      return { approved: false, reason: "Review approval expiry date is invalid." };
+    }
+    if (expiryTime <= (options.now ?? Date.now())) {
       return { approved: false, reason: `Review approval has expired on ${approval.expires}.` };
     }
 
     return { approved: true };
-  } catch (err: any) {
-    return { approved: false, reason: `Failed to read or parse review approval: ${err.message}` };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { approved: false, reason: `Failed to read or parse review approval: ${message}` };
   }
+}
+
+function isValidApprovalShape(value: unknown): value is SignedReviewApproval {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const approval = value as Record<string, unknown>;
+  return typeof approval.projectName === "string"
+    && (approval.status === "allowed" || approval.status === "review_required")
+    && typeof approval.reasons === "string"
+    && typeof approval.reviewerId === "string"
+    && typeof approval.signature === "string"
+    && typeof approval.expires === "string"
+    && typeof approval.evidenceHash === "string";
 }

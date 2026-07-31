@@ -1,25 +1,40 @@
 export function redactSensitiveData(text: string): string {
-  let redacted = text;
+  let redacted = String(text || "");
 
-  // Redact emails
-  const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-  redacted = redacted.replace(emailRegex, "[EMAIL_REDACTED]");
+  redacted = redacted.replace(
+    /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+    "[EMAIL_REDACTED]",
+  );
 
-  // Redact password assignments
-  const passwordRegex = /(pass|password|pwd|secret|key|token|auth)\s*[:=]\s*["'][^"']+["']/gi;
-  redacted = redacted.replace(passwordRegex, "$1: [REDACTED]");
+  redacted = redacted.replace(
+    /(pass(?:word)?|pwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|auth(?:orization)?)\s*[:=]\s*(?:["'][^"'\r\n]+["']|[^\s,;#]+)/gi,
+    "$1=[REDACTED]",
+  );
 
-  // Redact private key blocks
-  const privateKeyRegex = /-----BEGIN[A-Z ]+PRIVATE KEY-----[^-]+-----END[A-Z ]+PRIVATE KEY-----/g;
-  redacted = redacted.replace(privateKeyRegex, "[PRIVATE_KEY_REDACTED]");
+  redacted = redacted.replace(
+    /-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----[\s\S]*?-----END \1-----/g,
+    "[PRIVATE_KEY_REDACTED]",
+  );
 
-  // Redact Bearer / JWT tokens
-  const bearerRegex = /bearer\s+[a-zA-Z0-9-_=]+\.[a-zA-Z0-9-_=]+\.?[a-zA-Z0-9-_=]*/gi;
-  redacted = redacted.replace(bearerRegex, "Bearer [JWT_REDACTED]");
+  redacted = redacted.replace(
+    /\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi,
+    "Bearer [TOKEN_REDACTED]",
+  );
 
-  // Redact typical API keys (hex/base64 strings longer than 16 chars)
-  const apiKeyRegex = /(sk|pk|api|key)_[a-zA-Z0-9]{16,64}/gi;
-  redacted = redacted.replace(apiKeyRegex, "[API_KEY_REDACTED]");
+  redacted = redacted.replace(
+    /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
+    "[JWT_REDACTED]",
+  );
+
+  redacted = redacted.replace(
+    /\b(?:sk|pk|api|key|token)_[a-zA-Z0-9_-]{16,128}\b/gi,
+    "[API_KEY_REDACTED]",
+  );
+
+  redacted = redacted.replace(
+    /([a-z][a-z0-9+.-]*:\/\/[^\s:/?#]+:)[^\s@/]+@/gi,
+    "$1[REDACTED]@",
+  );
 
   return redacted;
 }

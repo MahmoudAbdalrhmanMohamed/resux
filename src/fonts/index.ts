@@ -22,15 +22,18 @@ function normalizeFamily(input: ResuxFontFamilyInput): string | null {
   if (!name) {
     return null;
   }
+  const encodedName = encodeURIComponent(name)
+    .replace(/%20/g, "+")
+    .replace(/'/g, "%27");
   const weights = Array.isArray(input.weights)
     ? input.weights
       .map(normalizeWeight)
       .filter((weight): weight is string => Boolean(weight))
     : [];
   if (!weights.length) {
-    return name;
+    return encodedName;
   }
-  return `${name}:wght@${[...new Set(weights)].join(";")}`;
+  return `${encodedName}:wght@${[...new Set(weights)].join(";")}`;
 }
 
 function normalizeWeight(value: number | string): string | null {
@@ -52,12 +55,8 @@ function normalizeDisplay(value: unknown): string {
 }
 
 function buildGoogleFontsHref(families: string[], display: unknown): string {
-  const params = new URLSearchParams();
-  for (const family of families) {
-    params.append("family", family);
-  }
-  params.set("display", normalizeDisplay(display));
-  return `https://fonts.googleapis.com/css2?${params.toString()}`;
+  const familyQuery = families.map((family) => `family=${family}`).join("&");
+  return `https://fonts.googleapis.com/css2?${familyQuery}&display=${normalizeDisplay(display)}`;
 }
 
 export function googleFont(input: ResuxFontFamilyInput): ResuxFontFamilyInput {

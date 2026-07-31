@@ -1,3 +1,8 @@
+import {
+  createIntegritySignature,
+  verifyIntegritySignature,
+} from "../crypto/integrity.js";
+
 export interface SignedReviewApproval {
   projectName: string;
   status: "allowed" | "review_required";
@@ -8,21 +13,30 @@ export interface SignedReviewApproval {
   evidenceHash: string;
 }
 
-const REVIEW_SIGNING_SECRET = "resuxjs-halal-core-review-secret-key-2026";
+const REVIEW_SIGNING_ENV = "RESUX_HALAL_REVIEW_SIGNING_SECRET";
 
-import { createHmac } from "node:crypto";
+export function generateReviewSignature(
+  approval: Omit<SignedReviewApproval, "signature">,
+  secret?: string,
+): string {
+  return createIntegritySignature(approval, {
+    envName: REVIEW_SIGNING_ENV,
+    secret,
+    requireSecret: true,
+  });
+}
 
-export function generateReviewSignature(approval: Omit<SignedReviewApproval, "signature">): string {
-  const content = [
-    approval.projectName,
-    approval.status,
-    approval.reasons,
-    approval.reviewerId,
-    approval.expires,
-    approval.evidenceHash
-  ].join("::");
-
-  return createHmac("sha256", REVIEW_SIGNING_SECRET)
-    .update(content)
-    .digest("hex");
+export function verifyReviewSignature(
+  approval: SignedReviewApproval,
+  secret?: string,
+): boolean {
+  if (!approval || typeof approval !== "object" || !approval.signature) {
+    return false;
+  }
+  const { signature, ...rest } = approval;
+  return verifyIntegritySignature(rest, signature, {
+    envName: REVIEW_SIGNING_ENV,
+    secret,
+    requireSecret: true,
+  });
 }

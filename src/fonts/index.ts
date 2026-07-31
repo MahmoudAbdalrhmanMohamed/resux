@@ -140,7 +140,7 @@ export default defineResuxModule<ResuxFontsModuleOptions>({
         );
         headLinks.push({ rel: "preload", as: "style", href });
         headScripts.push({
-          innerHTML: `(function(){function loadFonts(){var l=document.createElement('link');l.rel='stylesheet';l.href=${JSON.stringify(href)};document.head.appendChild(l);}if(document.readyState==='complete'){loadFonts();}else{window.addEventListener('load',loadFonts,{once:true});}})();`,
+          innerHTML: `(function(){function loadFonts(){var l=document.createElement('link');l.rel='stylesheet';l.href=${JSON.stringify(href)};document.head.appendChild(l);}if(document.readyState==='complete'){loadFonts();}else{window.addEventListener('load',loadFonts);}})();`,
         });
       }
     }

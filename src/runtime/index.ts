@@ -8530,6 +8530,26 @@ function nextTick(fn) {
   return fn ? promise.then(fn) : promise;
 }
 
+function __rxCleanupEffect(reactiveEffect) {
+  for (const dep of reactiveEffect.deps) {
+    dep.delete(reactiveEffect);
+  }
+  reactiveEffect.deps.length = 0;
+}
+
+function __rxTriggerEffects(dep) {
+  for (const reactiveEffect of [...dep]) {
+    if (reactiveEffect === __rxActiveEffect) {
+      continue;
+    }
+    if (reactiveEffect.scheduler) {
+      reactiveEffect.scheduler();
+    } else {
+      reactiveEffect.run();
+    }
+  }
+}
+
 class __rxReactiveEffect {
   constructor(fn, scheduler, onStop) {
     this.fn = fn;
@@ -8537,13 +8557,22 @@ class __rxReactiveEffect {
     this.onStop = onStop;
     this.active = true;
     this.deps = [];
+    this.parent = undefined;
   }
 
   run() {
     if (!this.active) {
       return this.fn();
     }
-    const previous = __rxActiveEffect;
+    let parent = __rxActiveEffect;
+    while (parent) {
+      if (parent === this) {
+        return undefined;
+      }
+      parent = parent.parent;
+    }
+    __rxCleanupEffect(this);
+    this.parent = __rxActiveEffect;
     __rxActiveEffect = this;
     __rxTrackStack.push(__rxShouldTrack);
     __rxShouldTrack = true;
@@ -8551,7 +8580,8 @@ class __rxReactiveEffect {
       return this.fn();
     } finally {
       __rxShouldTrack = __rxTrackStack.pop() ?? true;
-      __rxActiveEffect = previous;
+      __rxActiveEffect = this.parent;
+      this.parent = undefined;
     }
   }
 
@@ -8559,10 +8589,7 @@ class __rxReactiveEffect {
     if (!this.active) {
       return;
     }
-    for (const dep of this.deps) {
-      dep.delete(this);
-    }
-    this.deps.length = 0;
+    __rxCleanupEffect(this);
     if (typeof this.onStop === "function") {
       this.onStop();
     }
@@ -8610,13 +8637,7 @@ function __rxTrigger(target, key) {
   if (!dep) {
     return;
   }
-  for (const reactiveEffect of [...dep]) {
-    if (reactiveEffect.scheduler) {
-      reactiveEffect.scheduler();
-    } else {
-      reactiveEffect.run();
-    }
-  }
+  __rxTriggerEffects(dep);
 }
 
 function reactive(target) {
@@ -8660,9 +8681,19 @@ function __rxCreateReactiveObject(target, isReadonlyValue, proxyMap, isShallow) 
         return true;
       }
       const oldValue = Reflect.get(rawTarget, key, receiver);
+      const oldLength = Array.isArray(rawTarget) ? rawTarget.length : 0;
       const success = Reflect.set(rawTarget, key, value, receiver);
       if (success && __rxHasChanged(value, oldValue)) {
         __rxTrigger(rawTarget, key);
+        if (
+          Array.isArray(rawTarget)
+          && key !== "length"
+          && /^(?:0|[1-9]\d*)$/.test(String(key))
+          && Number(key) >= oldLength
+          && Number(key) < 4294967295
+        ) {
+          __rxTrigger(rawTarget, "length");
+        }
       }
       return success;
     },
@@ -8714,13 +8745,7 @@ class __rxRefImpl {
     }
     this._rawValue = newValue;
     this._value = __rxIsObject(newValue) ? reactive(newValue) : newValue;
-    for (const reactiveEffect of [...this.dep]) {
-      if (reactiveEffect.scheduler) {
-        reactiveEffect.scheduler();
-      } else {
-        reactiveEffect.run();
-      }
-    }
+    __rxTriggerEffects(this.dep);
   }
 }
 
@@ -8782,13 +8807,7 @@ function computed(getterOrOptions) {
     scheduler: () => {
       if (!dirty) {
         dirty = true;
-        for (const reactiveEffect of [...dep]) {
-          if (reactiveEffect.scheduler) {
-            reactiveEffect.scheduler();
-          } else {
-            reactiveEffect.run();
-          }
-        }
+        __rxTriggerEffects(dep);
       }
     }
   });
@@ -8826,7 +8845,8 @@ function watchEffect(effectFn, options = {}) {
 }
 
 function __rxDoWatch(source, callback, options) {
-  const deep = options.deep === true;
+  const deep = options.deep === true
+    || (callback !== null && __rxContainsReactiveSource(source));
   const immediate = options.immediate === true;
   const flush = options.flush ?? "post";
   let cleanup;
@@ -8914,6 +8934,13 @@ function __rxResolveWatchEntry(source) {
     return source();
   }
   return source;
+}
+
+function __rxContainsReactiveSource(source) {
+  if (isReactive(source)) {
+    return true;
+  }
+  return Array.isArray(source) && source.some((entry) => isReactive(entry));
 }
 
 function __rxTraverse(value, seen = new Set()) {

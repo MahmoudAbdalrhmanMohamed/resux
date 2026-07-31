@@ -22,16 +22,27 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 22.14.0
-          cache: npm
-          cache-dependency-path: package-lock.json
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Synchronize lockfile metadata for verification
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          lock.name = pkg.name;
+          lock.version = pkg.version;
+          lock.packages[''].name = pkg.name;
+          lock.packages[''].version = pkg.version;
+          fs.writeFileSync('package-lock.json', `${JSON.stringify(lock, null, 2)}\n`);
+          NODE
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Ensure rolldown Linux native binding
-        shell: bash
-        run: node -e "require.resolve('@rolldown/binding-linux-x64-gnu')" || npm install --no-save @rolldown/binding-linux-x64-gnu
+      - name: Verify Rolldown Linux native binding
+        run: node -e "require.resolve('@rolldown/binding-linux-x64-gnu')"
 
       - name: Apply framework fixes
         run: node scripts/apply-client-enhancement-lifecycle-fixes.mjs
@@ -46,6 +57,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git checkout -- package-lock.json
           rm scripts/apply-client-enhancement-lifecycle-fixes.mjs
           rm .github/workflows/apply-client-enhancement-lifecycle-fixes.yml
           git config user.name "github-actions[bot]"

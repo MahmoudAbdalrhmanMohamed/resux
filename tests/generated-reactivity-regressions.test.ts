@@ -72,6 +72,26 @@ describe("generated browser reactivity regressions", () => {
 
     expect(runs).toBe(1);
   });
+
+  it("updates array length effects when an index grows the array", async () => {
+    const runtime = await importGeneratedRuntime();
+    const list = runtime.reactive<number[]>([]);
+    let length = -1;
+    let runs = 0;
+
+    runtime.effect(() => {
+      runs += 1;
+      length = list.length;
+    });
+
+    list.push(1);
+    expect(length).toBe(1);
+    expect(runs).toBe(2);
+
+    list[3] = 4;
+    expect(length).toBe(4);
+    expect(runs).toBe(3);
+  });
 });
 
 async function importGeneratedRuntime(): Promise<{

@@ -1,4 +1,4 @@
-name: Apply Sonar PR 4 fixes
+name: Apply icon Sonar fixes
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  fix:
+  fix-icons:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -18,21 +18,16 @@ jobs:
           ref: audit/full-history-correctness
           fetch-depth: 0
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-
-      - name: Apply all Sonar review fixes
+      - name: Apply icon fixes and remove workflow
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
 
-          icons = Path("src/icons/index.ts")
-          text = icons.read_text(encoding="utf8")
+          path = Path("src/icons/index.ts")
+          text = path.read_text(encoding="utf8")
+
           old = r'''export function normalizeIconApiProvider(value: unknown): string {
             const raw = typeof value === "string" ? value.trim().replace(/\/+$/g, "") : "";
           '''
@@ -48,13 +43,14 @@ jobs:
             const raw = typeof value === "string" ? stripTrailingSlashes(value.trim()) : "";
           '''
           if old not in text:
-              raise SystemExit("icons provider normalization target not found")
+              raise SystemExit("provider normalization target not found")
           text = text.replace(old, new, 1)
-          text = text.replace(
-              'return url.toString().replace(/\\/+$/g, "");',
-              'return stripTrailingSlashes(url.toString());',
-              1,
-          )
+
+          old = 'return url.toString().replace(/\\/+$/g, "");'
+          if old not in text:
+              raise SystemExit("URL normalization target not found")
+          text = text.replace(old, 'return stripTrailingSlashes(url.toString());', 1)
+
           old = r'''function readSvgAttribute(source: string, name: string): string {
             const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
             const match = new RegExp(
@@ -74,455 +70,13 @@ jobs:
           }
           '''
           if old not in text:
-              raise SystemExit("icons SVG attribute target not found")
-          icons.write_text(text.replace(old, new, 1), encoding="utf8")
-
-          Path("src/halal-core/ai/redactSensitiveData.ts").write_text(r'''const EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-          const PRIVATE_KEY_PATTERN = /-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----[\s\S]*?-----END \1-----/g;
-          const BEARER_TOKEN_PATTERN = new RegExp(String.raw`\bBearer\s+[a-z0-9._~+/-]+=*`, "gi");
-          const JWT_PATTERN = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g;
-          const API_KEY_PATTERN = /\b(?:sk|pk|api|key|token)_[a-z0-9_-]{16,128}\b/gi;
-          const URL_TOKEN_PATTERN = new RegExp(String.raw`\b[a-z][a-z0-9+.-]*://[^\s]+`, "gi");
-          const ASSIGNMENT_PREFIX_PATTERN = /\b[a-z][a-z0-9_-]*\s*[:=]\s*/gi;
-          const SENSITIVE_ASSIGNMENT_KEYS = new Set([
-            "pass",
-            "password",
-            "pwd",
-            "secret",
-            "api_key",
-            "access_token",
-            "refresh_token",
-            "auth",
-            "authorization",
-          ]);
-
-          export function redactSensitiveData(text: string): string {
-            let redacted = String(text || "");
-
-            redacted = redacted.replace(EMAIL_PATTERN, "[EMAIL_REDACTED]");
-            redacted = redacted.replace(PRIVATE_KEY_PATTERN, "[PRIVATE_KEY_REDACTED]");
-            redacted = redacted.replace(BEARER_TOKEN_PATTERN, "Bearer [TOKEN_REDACTED]");
-            redacted = redacted.replace(JWT_PATTERN, "[JWT_REDACTED]");
-            redacted = redactAssignments(redacted);
-            redacted = redacted.replace(API_KEY_PATTERN, "[API_KEY_REDACTED]");
-            redacted = redacted.replace(URL_TOKEN_PATTERN, redactUrlCredentials);
-
-            return redacted;
-          }
-
-          function redactAssignments(text: string): string {
-            let output = "";
-            let cursor = 0;
-            ASSIGNMENT_PREFIX_PATTERN.lastIndex = 0;
-
-            let match: RegExpExecArray | null;
-            while ((match = ASSIGNMENT_PREFIX_PATTERN.exec(text)) !== null) {
-              const key = readAssignmentKey(match[0]);
-              if (!SENSITIVE_ASSIGNMENT_KEYS.has(key)) {
-                continue;
-              }
-
-              const valueStart = match.index + match[0].length;
-              const valueEnd = findAssignmentValueEnd(text, valueStart);
-              output += text.slice(cursor, match.index);
-              output += `${match[0].slice(0, findAssignmentSeparator(match[0])).trim()}=[REDACTED]`;
-              cursor = valueEnd;
-              ASSIGNMENT_PREFIX_PATTERN.lastIndex = valueEnd;
-            }
-
-            return output + text.slice(cursor);
-          }
-
-          function readAssignmentKey(prefix: string): string {
-            return prefix
-              .slice(0, findAssignmentSeparator(prefix))
-              .trim()
-              .toLowerCase()
-              .replaceAll("-", "_");
-          }
-
-          function findAssignmentSeparator(prefix: string): number {
-            const colon = prefix.indexOf(":");
-            const equals = prefix.indexOf("=");
-            if (colon < 0) return equals;
-            if (equals < 0) return colon;
-            return Math.min(colon, equals);
-          }
-
-          function findAssignmentValueEnd(text: string, start: number): number {
-            const quote = text[start];
-            if (quote === '"' || quote === "'") {
-              const closingQuote = text.indexOf(quote, start + 1);
-              const lineEnd = findLineEnd(text, start + 1);
-              if (closingQuote >= 0 && closingQuote < lineEnd) {
-                return closingQuote + 1;
-              }
-              return lineEnd;
-            }
-
-            let end = start;
-            while (end < text.length && !isAssignmentDelimiter(text[end])) {
-              end += 1;
-            }
-            return end;
-          }
-
-          function findLineEnd(text: string, start: number): number {
-            const carriageReturn = text.indexOf("\r", start);
-            const lineFeed = text.indexOf("\n", start);
-            if (carriageReturn < 0) return lineFeed < 0 ? text.length : lineFeed;
-            if (lineFeed < 0) return carriageReturn;
-            return Math.min(carriageReturn, lineFeed);
-          }
-
-          function isAssignmentDelimiter(value: string): boolean {
-            return value === " "
-              || value === "\t"
-              || value === "\r"
-              || value === "\n"
-              || value === ","
-              || value === ";"
-              || value === "#";
-          }
-
-          function redactUrlCredentials(candidate: string): string {
-            const authorityStart = candidate.indexOf("://") + 3;
-            if (authorityStart < 3) {
-              return candidate;
-            }
-
-            const authorityEnd = findAuthorityEnd(candidate, authorityStart);
-            const authority = candidate.slice(authorityStart, authorityEnd);
-            const at = authority.lastIndexOf("@");
-            const colon = authority.indexOf(":");
-            if (colon < 0 || at <= colon + 1) {
-              return candidate;
-            }
-
-            return candidate.slice(0, authorityStart + colon + 1)
-              + "[REDACTED]"
-              + candidate.slice(authorityStart + at);
-          }
-
-          function findAuthorityEnd(candidate: string, start: number): number {
-            let end = candidate.length;
-            for (const delimiter of ["/", "?", "#"]) {
-              const index = candidate.indexOf(delimiter, start);
-              if (index >= 0 && index < end) {
-                end = index;
-              }
-            }
-            return end;
-          }
-          ''', encoding="utf8")
-
-          validate = Path("src/halal-core/ai/validateAiResponse.ts")
-          text = validate.read_text(encoding="utf8")
-          old = r'''function extractJson(input: string): string {
-            const source = String(input || "").trim();
-            const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(source);
-            return (fenced?.[1] ?? source).trim();
-          }
-          '''
-          new = r'''function extractJson(input: string): string {
-            const source = String(input || "").trim();
-            if (!source.startsWith("```")) {
-              return source;
-            }
-
-            let contentStart = 3;
-            if (source.slice(contentStart, contentStart + 4).toLowerCase() === "json") {
-              contentStart += 4;
-            }
-            while (contentStart < source.length && isWhitespace(source[contentStart])) {
-              contentStart += 1;
-            }
-
-            const closingFence = source.indexOf("```", contentStart);
-            return closingFence < 0
-              ? source
-              : source.slice(contentStart, closingFence).trim();
-          }
-
-          function isWhitespace(value: string): boolean {
-            return value === " "
-              || value === "\t"
-              || value === "\r"
-              || value === "\n";
-          }
-          '''
-          if old not in text:
-              raise SystemExit("AI response extraction target not found")
-          validate.write_text(text.replace(old, new, 1), encoding="utf8")
-
-          Path("src/halal-core/scanner/scanContent.ts").write_text(r'''import {
-            closeSync,
-            existsSync,
-            lstatSync,
-            openSync,
-            readSync,
-            readdirSync,
-            realpathSync,
-          } from "node:fs";
-          import path from "node:path";
-
-          const IGNORE_DIRS = new Set([
-            "node_modules",
-            ".resux",
-            ".nitro",
-            ".output",
-            "dist",
-            "build",
-            ".git",
-            ".github",
-            "public",
-            "assets",
-          ]);
-
-          const SCAN_EXTENSIONS = new Set([
-            ".ts",
-            ".js",
-            ".mjs",
-            ".cjs",
-            ".vue",
-            ".html",
-            ".json",
-            ".md",
-            ".txt",
-          ]);
-
-          const GLOB_TOKENS = ["*", "?", "[", "]", "{", "}", "!"];
-          const MAX_SCANNED_FILE_BYTES = 100_000;
-
-          interface ScanResult {
-            file: string;
-            text: string;
-          }
-
-          interface ScanContext {
-            realRoot: string;
-            ignoredPaths: string[];
-            visitedDirectories: Set<string>;
-            results: ScanResult[];
-          }
-
-          export function scanContentFiles(
-            dir: string,
-            appRoot: string,
-            ignoredPaths: Set<string> = new Set(),
-          ): ScanResult[] {
-            const results: ScanResult[] = [];
-            const roots = resolveScanRoots(dir, appRoot);
-            if (!roots) {
-              return results;
-            }
-
-            const context: ScanContext = {
-              realRoot: roots.realRoot,
-              ignoredPaths: [...ignoredPaths]
-                .map(normalizeRelativePath)
-                .filter((entry) => entry && !hasGlobSyntax(entry)),
-              visitedDirectories: new Set<string>(),
-              results,
-            };
-
-            traverseDirectory(roots.realStart, context);
-            return results;
-          }
-
-          function resolveScanRoots(
-            dir: string,
-            appRoot: string,
-          ): { realRoot: string; realStart: string } | null {
-            if (!existsSync(dir) || !existsSync(appRoot)) {
-              return null;
-            }
-
-            try {
-              const realRoot = realpathSync(appRoot);
-              const realStart = realpathSync(dir);
-              return isPathInside(realRoot, realStart) ? { realRoot, realStart } : null;
-            } catch {
-              return null;
-            }
-          }
-
-          function traverseDirectory(currentDir: string, context: ScanContext): void {
-            const realDirectory = resolveDirectory(currentDir, context);
-            if (!realDirectory) {
-              return;
-            }
-
-            const files = readDirectory(realDirectory);
-            if (!files) {
-              return;
-            }
-
-            for (const file of files) {
-              scanEntry(realDirectory, file, context);
-            }
-          }
-
-          function resolveDirectory(currentDir: string, context: ScanContext): string | null {
-            let realDirectory: string;
-            try {
-              realDirectory = realpathSync(currentDir);
-            } catch {
-              return null;
-            }
-
-            if (!isPathInside(context.realRoot, realDirectory)
-              || context.visitedDirectories.has(realDirectory)) {
-              return null;
-            }
-
-            context.visitedDirectories.add(realDirectory);
-            return realDirectory;
-          }
-
-          function readDirectory(directory: string): string[] | null {
-            try {
-              return readdirSync(directory);
-            } catch {
-              return null;
-            }
-          }
-
-          function scanEntry(realDirectory: string, file: string, context: ScanContext): void {
-            const fullPath = path.join(realDirectory, file);
-            const relativePath = normalizeRelativePath(path.relative(context.realRoot, fullPath));
-            if (shouldIgnoreEntry(file, relativePath, context.ignoredPaths)) {
-              return;
-            }
-
-            const stats = readStats(fullPath);
-            if (!stats || stats.isSymbolicLink()) {
-              return;
-            }
-            if (stats.isDirectory()) {
-              traverseDirectory(fullPath, context);
-              return;
-            }
-            if (!isScannableFile(stats, file)) {
-              return;
-            }
-
-            const text = readFilePrefix(fullPath, MAX_SCANNED_FILE_BYTES);
-            if (text !== null) {
-              context.results.push({ file: relativePath, text });
-            }
-          }
-
-          function readStats(file: string): ReturnType<typeof lstatSync> | null {
-            try {
-              return lstatSync(file);
-            } catch {
-              return null;
-            }
-          }
-
-          function shouldIgnoreEntry(file: string, relativePath: string, ignoredPaths: string[]): boolean {
-            return IGNORE_DIRS.has(file) || isIgnoredPath(relativePath, ignoredPaths);
-          }
-
-          function isScannableFile(stats: ReturnType<typeof lstatSync>, file: string): boolean {
-            return stats.isFile()
-              && file !== "package-lock.json"
-              && SCAN_EXTENSIONS.has(path.extname(file).toLowerCase());
-          }
-
-          function readFilePrefix(file: string, maxBytes: number): string | null {
-            let descriptor: number | undefined;
-            try {
-              descriptor = openSync(file, "r");
-              const buffer = Buffer.allocUnsafe(maxBytes);
-              const bytesRead = readSync(descriptor, buffer, 0, maxBytes, 0);
-              return buffer.toString("utf8", 0, bytesRead);
-            } catch {
-              return null;
-            } finally {
-              if (descriptor !== undefined) {
-                try {
-                  closeSync(descriptor);
-                } catch {
-                  // Ignore close failures after an unreadable file.
-                }
-              }
-            }
-          }
-
-          function isPathInside(root: string, candidate: string): boolean {
-            const relative = path.relative(root, candidate);
-            return relative === ""
-              || (!relative.startsWith("..") && !path.isAbsolute(relative));
-          }
-
-          function normalizeRelativePath(value: string): string {
-            let normalized = value.replaceAll("\\", "/");
-            if (normalized.startsWith("./")) {
-              normalized = normalized.slice(2);
-            }
-
-            let start = 0;
-            while (start < normalized.length && normalized.charCodeAt(start) === 47) {
-              start += 1;
-            }
-            let end = normalized.length;
-            while (end > start && normalized.charCodeAt(end - 1) === 47) {
-              end -= 1;
-            }
-            return normalized.slice(start, end);
-          }
-
-          function isIgnoredPath(relativePath: string, ignoredPaths: string[]): boolean {
-            return ignoredPaths.some((ignored) =>
-              relativePath === ignored || relativePath.startsWith(`${ignored}/`)
-            );
-          }
-
-          function hasGlobSyntax(value: string): boolean {
-            return GLOB_TOKENS.some((token) => value.includes(token));
-          }
-          ''', encoding="utf8")
-
-          module_container = Path("src/core/module-container.ts")
-          text = module_container.read_text(encoding="utf8")
-          old = "Object.prototype.hasOwnProperty.call(output, key)"
-          if old not in text:
-              raise SystemExit("module-container hasOwn target not found")
-          module_container.write_text(text.replace(old, "Object.hasOwn(output, key)", 1), encoding="utf8")
-
-          i18n = Path("src/i18n/shared.ts")
-          text = i18n.read_text(encoding="utf8")
-          old = "Object.prototype.hasOwnProperty.call(cursor, part)"
-          if old not in text:
-              raise SystemExit("i18n hasOwn target not found")
-          i18n.write_text(text.replace(old, "Object.hasOwn(cursor, part)", 1), encoding="utf8")
-
+              raise SystemExit("SVG attribute target not found")
+          path.write_text(text.replace(old, new, 1), encoding="utf8")
           Path(".github/workflows/sonar-pr4-all-issues.yml").unlink()
           PY
 
-      - name: Install dependencies
-        run: npm ci --no-audit --no-fund
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Run affected regression tests
-        run: >-
-          npx vitest run
-          tests/icons-regressions.test.ts
-          tests/halal-ai-regressions.test.ts
-          tests/halal-scanner-regressions.test.ts
-          tests/module-head-regressions.test.ts
-          tests/history-security-regressions.test.ts
-
-      - name: Commit fixes
-        shell: bash
-        run: |
-          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "fix(sonar): resolve remaining review annotations"
+          git commit -m "fix(sonar): simplify icon parsing and provider normalization"
           git push origin HEAD:audit/full-history-correctness

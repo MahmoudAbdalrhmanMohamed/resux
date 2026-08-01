@@ -25,6 +25,15 @@ export function verifyReviewApproval(
     return { approved: false, reason: "Review approvals cannot override clearly blocked projects." };
   }
 
+  const expectedProjectName = options.projectName?.trim();
+  if (!expectedProjectName) {
+    return { approved: false, reason: "Review approval verification requires the current project name." };
+  }
+  const expectedEvidenceHash = options.evidenceHash?.trim();
+  if (!expectedEvidenceHash) {
+    return { approved: false, reason: "Review approval verification requires the current project evidence hash." };
+  }
+
   const approvalPath = path.join(appRoot, "halal-review-approval.json");
   if (!existsSync(approvalPath)) {
     return { approved: false, reason: "No review approval file found (halal-review-approval.json)." };
@@ -43,11 +52,10 @@ export function verifyReviewApproval(
     if (!verifyReviewSignature(approval, options.secret)) {
       return { approved: false, reason: "Review approval signature is invalid or cannot be authenticated." };
     }
-
-    if (options.projectName && approval.projectName !== options.projectName) {
+    if (approval.projectName !== expectedProjectName) {
       return { approved: false, reason: "Review approval belongs to a different project." };
     }
-    if (options.evidenceHash && approval.evidenceHash !== options.evidenceHash) {
+    if (approval.evidenceHash !== expectedEvidenceHash) {
       return { approved: false, reason: "Review approval evidence does not match the current project scan." };
     }
 

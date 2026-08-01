@@ -5,19 +5,17 @@ const JWT_PATTERN = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g;
 const API_KEY_PATTERN = /\b(?:sk|pk|api|key|token)_[a-z0-9_-]{16,128}\b/gi;
 const URL_TOKEN_PATTERN = new RegExp(String.raw`\b[a-z][a-z0-9+.-]*://[^\s]+`, "gi");
 const ASSIGNMENT_PREFIX_PATTERN = /\b[a-z][a-z0-9_-]*\s*[:=]\s*/gi;
-const SENSITIVE_ASSIGNMENT_KEYS = new Set([
+const SENSITIVE_ASSIGNMENT_FRAGMENTS = [
   "pass",
-  "password",
   "pwd",
   "secret",
-  "key",
   "token",
   "api_key",
-  "access_token",
-  "refresh_token",
+  "apikey",
   "auth",
-  "authorization",
-]);
+  "credential",
+  "private_key",
+];
 
 export function redactSensitiveData(text: string): string {
   let redacted = String(text || "");
@@ -41,7 +39,7 @@ function redactAssignments(text: string): string {
   let match: RegExpExecArray | null;
   while ((match = ASSIGNMENT_PREFIX_PATTERN.exec(text)) !== null) {
     const key = readAssignmentKey(match[0]);
-    if (!SENSITIVE_ASSIGNMENT_KEYS.has(key)) {
+    if (!SENSITIVE_ASSIGNMENT_FRAGMENTS.some((fragment) => key.includes(fragment))) {
       continue;
     }
 

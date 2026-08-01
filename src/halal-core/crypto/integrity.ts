@@ -86,7 +86,7 @@ function normalizeJsonValue(value: unknown): unknown {
   }
   if (typeof value === "number") {
     if (!Number.isFinite(value)) {
-      throw new Error("Integrity payloads cannot contain non-finite numbers.");
+      throw new TypeError("Integrity payloads cannot contain non-finite numbers.");
     }
     return value;
   }
@@ -105,7 +105,7 @@ function normalizeJsonValue(value: unknown): unknown {
     }
     return output;
   }
-  throw new Error(`Integrity payloads must be JSON-serializable; received ${typeof value}.`);
+  throw new TypeError(`Integrity payloads must be JSON-serializable; received ${typeof value}.`);
 }
 
 function constantTimeEqual(left: string, right: string): boolean {

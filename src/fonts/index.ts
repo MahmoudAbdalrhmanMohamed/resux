@@ -23,8 +23,8 @@ function normalizeFamily(input: ResuxFontFamilyInput): string | null {
     return null;
   }
   const encodedName = encodeURIComponent(name)
-    .replace(/%20/g, "+")
-    .replace(/'/g, "%27");
+    .replaceAll("%20", "+")
+    .replaceAll("'", "%27");
   const weights = Array.isArray(input.weights)
     ? input.weights
       .map(normalizeWeight)

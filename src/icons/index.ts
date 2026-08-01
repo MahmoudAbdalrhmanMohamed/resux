@@ -84,8 +84,16 @@ const DEFAULT_ICON_API_PROVIDER = "https://api.iconify.design";
 const pendingFetches = new Map<string, Promise<IconData | null>>();
 const fetchedIconCache = new Map<string, IconData>();
 
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 export function normalizeIconApiProvider(value: unknown): string {
-  const raw = typeof value === "string" ? value.trim().replace(/\/+$/g, "") : "";
+  const raw = typeof value === "string" ? stripTrailingSlashes(value.trim()) : "";
   if (!raw) {
     return DEFAULT_ICON_API_PROVIDER;
   }
@@ -95,7 +103,7 @@ export function normalizeIconApiProvider(value: unknown): string {
   try {
     const url = new URL(raw);
     if (url.protocol === "https:" || url.protocol === "http:") {
-      return url.toString().replace(/\/+$/g, "");
+      return stripTrailingSlashes(url.toString());
     }
   } catch {
     // Fall back to the public provider for malformed values.
@@ -165,9 +173,9 @@ export function fetchIconifyIcon(
 }
 
 function readSvgAttribute(source: string, name: string): string {
-  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
   const match = new RegExp(
-    "\\b" + escapedName + "\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')",
+    String.raw`\b${escapedName}\s*=\s*(?:"([^"]*)"|'([^']*)')`,
     "i",
   ).exec(source);
   return (match?.[1] ?? match?.[2] ?? "").trim();

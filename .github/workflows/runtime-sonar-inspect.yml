@@ -43,3 +43,5 @@ jobs:
                       for line_no in range(start, end):
                           print(f'{line_no + 1:6}: {lines[line_no]}')
           PY
+
+# Trigger inspection after workflow registration.

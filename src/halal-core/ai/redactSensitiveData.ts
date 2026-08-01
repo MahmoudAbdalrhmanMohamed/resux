@@ -10,6 +10,8 @@ const SENSITIVE_ASSIGNMENT_KEYS = new Set([
   "password",
   "pwd",
   "secret",
+  "key",
+  "token",
   "api_key",
   "access_token",
   "refresh_token",

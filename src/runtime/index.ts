@@ -844,7 +844,11 @@ const resuxLoadedPackages = new Set<string>();
 const resuxInjectedPackageCss = new Set<string>();
 const resuxClientEnhancements = new Map<string, ClientEnhancementSetup>();
 const resuxActiveEnhancementDisposers = new Set<() => void | Promise<void>>();
+const resuxScheduledEnhancementDisposers = new Set<() => void | Promise<void>>();
 const resuxBoundEnhancementTargets = new WeakSet<Element>();
+const resuxVisibleEnhancementCallbacks = new Map<Element, Set<() => void>>();
+let resuxVisibleEnhancementObserver: IntersectionObserver | null = null;
+let resuxVisibleEnhancementPollTimer = 0;
 
 function isClientRuntime(): boolean {
   return typeof window !== "undefined" && typeof document !== "undefined";
@@ -1333,6 +1337,101 @@ function isElementProbablyVisible(target: Element): boolean {
     && rect.top <= window.innerHeight;
 }
 
+function releaseVisibleEnhancementResourcesIfIdle(): void {
+  if (resuxVisibleEnhancementCallbacks.size > 0) {
+    return;
+  }
+  if (resuxVisibleEnhancementObserver) {
+    resuxVisibleEnhancementObserver.disconnect();
+    resuxVisibleEnhancementObserver = null;
+  }
+  if (resuxVisibleEnhancementPollTimer) {
+    window.clearInterval(resuxVisibleEnhancementPollTimer);
+    resuxVisibleEnhancementPollTimer = 0;
+  }
+}
+
+function unobserveVisibleEnhancement(target: Element, callback?: () => void): void {
+  const callbacks = resuxVisibleEnhancementCallbacks.get(target);
+  if (!callbacks) {
+    return;
+  }
+  if (callback) {
+    callbacks.delete(callback);
+  } else {
+    callbacks.clear();
+  }
+  if (callbacks.size > 0) {
+    return;
+  }
+  resuxVisibleEnhancementCallbacks.delete(target);
+  resuxVisibleEnhancementObserver?.unobserve(target);
+  releaseVisibleEnhancementResourcesIfIdle();
+}
+
+function ensureVisibleEnhancementResources(): void {
+  if (!resuxVisibleEnhancementObserver) {
+    resuxVisibleEnhancementObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting && entry.intersectionRatio <= 0) {
+          continue;
+        }
+        const callbacks = resuxVisibleEnhancementCallbacks.get(entry.target);
+        if (!callbacks) {
+          continue;
+        }
+        for (const activate of [...callbacks]) {
+          activate();
+        }
+      }
+    }, { rootMargin: "200px 0px" });
+  }
+  if (!resuxVisibleEnhancementPollTimer) {
+    resuxVisibleEnhancementPollTimer = window.setInterval(() => {
+      for (const [target, callbacks] of [...resuxVisibleEnhancementCallbacks]) {
+        if (!target.isConnected) {
+          unobserveVisibleEnhancement(target);
+          continue;
+        }
+        if (isElementProbablyVisible(target)) {
+          for (const activate of [...callbacks]) {
+            activate();
+          }
+        }
+      }
+    }, 200);
+  }
+}
+
+function observeVisibleEnhancement(target: Element, activate: () => void): () => void {
+  let settled = false;
+  const run = () => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    unobserveVisibleEnhancement(target, run);
+    if (target.isConnected) {
+      activate();
+    }
+  };
+  let callbacks = resuxVisibleEnhancementCallbacks.get(target);
+  if (!callbacks) {
+    callbacks = new Set<() => void>();
+    resuxVisibleEnhancementCallbacks.set(target, callbacks);
+    ensureVisibleEnhancementResources();
+    resuxVisibleEnhancementObserver!.observe(target);
+  }
+  callbacks.add(run);
+  return () => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    unobserveVisibleEnhancement(target, run);
+  };
+}
+
 async function ensureClientEnhancementManifestLoaded(): Promise<void> {
   if (!isClientRuntime()) {
     return;
@@ -1438,53 +1537,9 @@ function scheduleEnhancementTrigger(
       fire();
       return () => {};
     }
-    let settled = false;
-    let visibilityPollId = 0;
-    let visibilityPollStopId = 0;
-    const settleAndRun = (observer?: IntersectionObserver) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      if (visibilityPollId) {
-        window.clearInterval(visibilityPollId);
-        visibilityPollId = 0;
-      }
-      if (visibilityPollStopId) {
-        window.clearTimeout(visibilityPollStopId);
-        visibilityPollStopId = 0;
-      }
-      observer?.disconnect();
-      fire();
-    };
-    const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting || entry.intersectionRatio > 0)) {
-        settleAndRun(observer);
-      }
-    }, { rootMargin: "200px 0px" });
-    observer.observe(target);
-    visibilityPollId = window.setInterval(() => {
-      if (isElementProbablyVisible(target)) {
-        settleAndRun(observer);
-      }
-    }, 200);
-    visibilityPollStopId = window.setTimeout(() => {
-      if (visibilityPollId) {
-        window.clearInterval(visibilityPollId);
-        visibilityPollId = 0;
-      }
-    }, RESUX_ENHANCEMENT_IDLE_TIMEOUT_MS);
+    const cancel = observeVisibleEnhancement(target, fire);
     logEnhancementDebug(`observing visible trigger ${name}`);
-    return () => {
-      settled = true;
-      if (visibilityPollId) {
-        window.clearInterval(visibilityPollId);
-      }
-      if (visibilityPollStopId) {
-        window.clearTimeout(visibilityPollStopId);
-      }
-      observer.disconnect();
-    };
+    return cancel;
   }
   fire();
   return () => {};
@@ -1576,7 +1631,8 @@ export async function useClientEnhancement(
   let teardown: void | (() => void | Promise<void>);
   const trigger = options.trigger ?? "manual";
   let idleWarningTimer = 0;
-  if (trigger !== "manual") {
+  const shouldWarnIfIdle = trigger === "immediate" || trigger === "idle";
+  if (shouldWarnIfIdle) {
     idleWarningTimer = window.setTimeout(() => {
       if (activated || disposed) {
         return;
@@ -1619,6 +1675,13 @@ export async function useClientEnhancement(
     try {
       const setupPayload = createEnhancementSetupPayload(trigger, normalizedEnhancementOptions);
       teardown = await setup(target, setupPayload);
+      if (disposed) {
+        if (typeof teardown === "function") {
+          await teardown();
+        }
+        teardown = undefined;
+        return;
+      }
       setEnhancementStatus(target, "active");
       dispatchEnhancementEvent("ready", {
         name: normalized,
@@ -1652,6 +1715,9 @@ export async function useClientEnhancement(
       return;
     }
     disposed = true;
+    resuxScheduledEnhancementDisposers.delete(dispose);
+    resuxBoundEnhancementTargets.delete(target);
+    target.removeAttribute("data-rx-enhancement-bound");
     if (idleWarningTimer) {
       window.clearTimeout(idleWarningTimer);
       idleWarningTimer = 0;
@@ -1663,6 +1729,8 @@ export async function useClientEnhancement(
     }
   };
 
+  resuxScheduledEnhancementDisposers.add(dispose);
+
   return {
     ready: activated,
     activate,
@@ -1671,6 +1739,16 @@ export async function useClientEnhancement(
 }
 
 export async function disposeClientEnhancements(): Promise<void> {
+  const scheduledDisposers = [...resuxScheduledEnhancementDisposers];
+  resuxScheduledEnhancementDisposers.clear();
+  for (const dispose of scheduledDisposers) {
+    try {
+      await dispose();
+    } catch {
+      // Suppress cleanup errors during navigation.
+    }
+  }
+
   const disposers = [...resuxActiveEnhancementDisposers];
   resuxActiveEnhancementDisposers.clear();
   for (const dispose of disposers) {
@@ -1679,6 +1757,16 @@ export async function disposeClientEnhancements(): Promise<void> {
     } catch {
       // Suppress cleanup errors during navigation.
     }
+  }
+
+  resuxVisibleEnhancementCallbacks.clear();
+  if (resuxVisibleEnhancementObserver) {
+    resuxVisibleEnhancementObserver.disconnect();
+    resuxVisibleEnhancementObserver = null;
+  }
+  if (resuxVisibleEnhancementPollTimer) {
+    window.clearInterval(resuxVisibleEnhancementPollTimer);
+    resuxVisibleEnhancementPollTimer = 0;
   }
 }
 
@@ -1750,7 +1838,13 @@ async function activateDeclaredClientEnhancements(root: ParentNode = document): 
     return;
   }
   logEnhancementDebug("scanning DOM");
-  const elements = root.querySelectorAll("[data-resux-enhancement], [use-client-enhancement]");
+  const selector = "[data-resux-enhancement], [use-client-enhancement]";
+  const elements: Element[] = [];
+  const rootElement = root as Element;
+  if (typeof rootElement.matches === "function" && rootElement.matches(selector)) {
+    elements.push(rootElement);
+  }
+  elements.push(...Array.from(root.querySelectorAll(selector)));
   for (const element of elements) {
     if (!element || typeof (element as Element).getAttribute !== "function") {
       continue;
@@ -1815,6 +1909,8 @@ async function activateDeclaredClientEnhancements(root: ParentNode = document): 
       element.setAttribute("data-rx-enhancement-bound", "true");
       element.removeAttribute("data-rx-enhancement-error");
     } catch (error) {
+      resuxBoundEnhancementTargets.delete(element);
+      element.removeAttribute("data-rx-enhancement-bound");
       const message = getEnhancementErrorMessage(error);
       setEnhancementStatus(element, "error");
       element.setAttribute(
@@ -7261,7 +7357,11 @@ const resuxLoadedPackages = new Set();
 const resuxInjectedPackageCss = new Set();
 const resuxClientEnhancements = new Map();
 const resuxActiveEnhancementDisposers = new Set();
+const resuxScheduledEnhancementDisposers = new Set();
 const resuxBoundEnhancementTargets = new WeakSet();
+const resuxVisibleEnhancementCallbacks = new Map();
+let resuxVisibleEnhancementObserver = null;
+let resuxVisibleEnhancementPollTimer = 0;
 const RESUX_ENHANCEMENT_IDLE_TIMEOUT_MS = 5000;
 let resuxClientEnhancementManifestPromise = null;
 ${packageRegistrySource}
@@ -7486,6 +7586,103 @@ function isElementProbablyVisible(target) {
     && rect.height > 0
     && rect.bottom >= 0
     && rect.top <= window.innerHeight;
+}
+
+function releaseVisibleEnhancementResourcesIfIdle() {
+  if (resuxVisibleEnhancementCallbacks.size > 0) {
+    return;
+  }
+  if (resuxVisibleEnhancementObserver) {
+    resuxVisibleEnhancementObserver.disconnect();
+    resuxVisibleEnhancementObserver = null;
+  }
+  if (resuxVisibleEnhancementPollTimer) {
+    window.clearInterval(resuxVisibleEnhancementPollTimer);
+    resuxVisibleEnhancementPollTimer = 0;
+  }
+}
+
+function unobserveVisibleEnhancement(target, callback) {
+  const callbacks = resuxVisibleEnhancementCallbacks.get(target);
+  if (!callbacks) {
+    return;
+  }
+  if (callback) {
+    callbacks.delete(callback);
+  } else {
+    callbacks.clear();
+  }
+  if (callbacks.size > 0) {
+    return;
+  }
+  resuxVisibleEnhancementCallbacks.delete(target);
+  if (resuxVisibleEnhancementObserver) {
+    resuxVisibleEnhancementObserver.unobserve(target);
+  }
+  releaseVisibleEnhancementResourcesIfIdle();
+}
+
+function ensureVisibleEnhancementResources() {
+  if (!resuxVisibleEnhancementObserver) {
+    resuxVisibleEnhancementObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting && entry.intersectionRatio <= 0) {
+          continue;
+        }
+        const callbacks = resuxVisibleEnhancementCallbacks.get(entry.target);
+        if (!callbacks) {
+          continue;
+        }
+        for (const activate of [...callbacks]) {
+          activate();
+        }
+      }
+    }, { rootMargin: "200px 0px" });
+  }
+  if (!resuxVisibleEnhancementPollTimer) {
+    resuxVisibleEnhancementPollTimer = window.setInterval(() => {
+      for (const [target, callbacks] of [...resuxVisibleEnhancementCallbacks]) {
+        if (!target.isConnected) {
+          unobserveVisibleEnhancement(target);
+          continue;
+        }
+        if (isElementProbablyVisible(target)) {
+          for (const activate of [...callbacks]) {
+            activate();
+          }
+        }
+      }
+    }, 200);
+  }
+}
+
+function observeVisibleEnhancement(target, activate) {
+  let settled = false;
+  const run = () => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    unobserveVisibleEnhancement(target, run);
+    if (target.isConnected) {
+      activate();
+    }
+  };
+  let callbacks = resuxVisibleEnhancementCallbacks.get(target);
+  if (!callbacks) {
+    callbacks = new Set();
+    resuxVisibleEnhancementCallbacks.set(target, callbacks);
+    ensureVisibleEnhancementResources();
+    resuxVisibleEnhancementObserver.observe(target);
+  }
+  callbacks.add(run);
+  return () => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    unobserveVisibleEnhancement(target, run);
+  };
 }
 
 async function ensureClientEnhancementManifestLoaded() {
@@ -7916,55 +8113,9 @@ function scheduleEnhancementTrigger(name, trigger, target, activate) {
       fire();
       return () => {};
     }
-    let settled = false;
-    let visibilityPollId = 0;
-    let visibilityPollStopId = 0;
-    const settleAndRun = (observer) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      if (visibilityPollId) {
-        window.clearInterval(visibilityPollId);
-        visibilityPollId = 0;
-      }
-      if (visibilityPollStopId) {
-        window.clearTimeout(visibilityPollStopId);
-        visibilityPollStopId = 0;
-      }
-      if (observer) {
-        observer.disconnect();
-      }
-      fire();
-    };
-    const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting || entry.intersectionRatio > 0)) {
-        settleAndRun(observer);
-      }
-    }, { rootMargin: "200px 0px" });
-    observer.observe(target);
-    visibilityPollId = window.setInterval(() => {
-      if (isElementProbablyVisible(target)) {
-        settleAndRun(observer);
-      }
-    }, 200);
-    visibilityPollStopId = window.setTimeout(() => {
-      if (visibilityPollId) {
-        window.clearInterval(visibilityPollId);
-        visibilityPollId = 0;
-      }
-    }, RESUX_ENHANCEMENT_IDLE_TIMEOUT_MS);
+    const cancel = observeVisibleEnhancement(target, fire);
     logEnhancementDebug("observing visible trigger " + name);
-    return () => {
-      settled = true;
-      if (visibilityPollId) {
-        window.clearInterval(visibilityPollId);
-      }
-      if (visibilityPollStopId) {
-        window.clearTimeout(visibilityPollStopId);
-      }
-      observer.disconnect();
-    };
+    return cancel;
   }
   fire();
   return () => {};
@@ -8049,8 +8200,9 @@ async function useClientEnhancement(name, options = {}) {
   let teardown;
   const trigger = options.trigger || "manual";
   let idleWarningTimer = 0;
+  const shouldWarnIfIdle = trigger === "immediate" || trigger === "idle";
 
-  if (trigger !== "manual") {
+  if (shouldWarnIfIdle) {
     idleWarningTimer = window.setTimeout(() => {
       if (activated || disposed) {
         return;
@@ -8093,6 +8245,13 @@ async function useClientEnhancement(name, options = {}) {
     try {
       const setupPayload = createEnhancementSetupPayload(trigger, normalizedEnhancementOptions);
       teardown = await setup(target, setupPayload);
+      if (disposed) {
+        if (typeof teardown === "function") {
+          await teardown();
+        }
+        teardown = undefined;
+        return;
+      }
       setEnhancementStatus(target, "active");
       dispatchEnhancementEvent("ready", {
         name: normalized,
@@ -8126,6 +8285,9 @@ async function useClientEnhancement(name, options = {}) {
       return;
     }
     disposed = true;
+    resuxScheduledEnhancementDisposers.delete(dispose);
+    resuxBoundEnhancementTargets.delete(target);
+    target.removeAttribute("data-rx-enhancement-bound");
     if (idleWarningTimer) {
       window.clearTimeout(idleWarningTimer);
       idleWarningTimer = 0;
@@ -8136,6 +8298,8 @@ async function useClientEnhancement(name, options = {}) {
       await teardown();
     }
   };
+
+  resuxScheduledEnhancementDisposers.add(dispose);
 
   return {
     ready: activated,
@@ -8160,6 +8324,16 @@ export {
 };
 
 async function disposeClientEnhancements() {
+  const scheduledDisposers = [...resuxScheduledEnhancementDisposers];
+  resuxScheduledEnhancementDisposers.clear();
+  for (const dispose of scheduledDisposers) {
+    try {
+      await dispose();
+    } catch {
+      // Suppress cleanup errors during navigation.
+    }
+  }
+
   const disposers = [...resuxActiveEnhancementDisposers];
   resuxActiveEnhancementDisposers.clear();
   for (const dispose of disposers) {
@@ -8168,6 +8342,16 @@ async function disposeClientEnhancements() {
     } catch {
       // Suppress cleanup errors during navigation.
     }
+  }
+
+  resuxVisibleEnhancementCallbacks.clear();
+  if (resuxVisibleEnhancementObserver) {
+    resuxVisibleEnhancementObserver.disconnect();
+    resuxVisibleEnhancementObserver = null;
+  }
+  if (resuxVisibleEnhancementPollTimer) {
+    window.clearInterval(resuxVisibleEnhancementPollTimer);
+    resuxVisibleEnhancementPollTimer = 0;
   }
 }
 
@@ -8226,7 +8410,12 @@ async function activateDeclaredClientEnhancements(root = document) {
     return;
   }
   logEnhancementDebug("scanning DOM");
-  const elements = root.querySelectorAll("[data-resux-enhancement], [use-client-enhancement]");
+  const selector = "[data-resux-enhancement], [use-client-enhancement]";
+  const elements = [];
+  if (typeof root.matches === "function" && root.matches(selector)) {
+    elements.push(root);
+  }
+  elements.push(...Array.from(root.querySelectorAll(selector)));
   for (const element of elements) {
     if (!element || typeof element.getAttribute !== "function") {
       continue;
@@ -8291,6 +8480,8 @@ async function activateDeclaredClientEnhancements(root = document) {
       element.setAttribute("data-rx-enhancement-bound", "true");
       element.removeAttribute("data-rx-enhancement-error");
     } catch (error) {
+      resuxBoundEnhancementTargets.delete(element);
+      element.removeAttribute("data-rx-enhancement-bound");
       const message = getEnhancementErrorMessage(error);
       setEnhancementStatus(element, "error");
       element.setAttribute(

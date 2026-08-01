@@ -1,9 +1,9 @@
 name: Sonar PR 4 diagnostics
 
 on:
-  push:
+  pull_request:
     branches:
-      - audit/full-history-correctness
+      - main
 
 permissions:
   contents: read

@@ -47,7 +47,7 @@ jobs:
 
   apply-icon-provider-fix:
     name: Apply Icon Provider Fix
-    if: github.event_name == 'push' && github.ref == 'refs/heads/audit/full-history-correctness'
+    if: github.event_name == 'pull_request' && github.head_ref == 'audit/full-history-correctness'
     runs-on: ubuntu-latest
     permissions:
       contents: write

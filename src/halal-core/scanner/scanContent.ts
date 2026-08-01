@@ -34,101 +34,144 @@ const SCAN_EXTENSIONS = new Set([
   ".txt",
 ]);
 
+const GLOB_TOKENS = ["*", "?", "[", "]", "{", "}", "!"];
 const MAX_SCANNED_FILE_BYTES = 100_000;
+
+interface ScanResult {
+  file: string;
+  text: string;
+}
+
+interface ScanContext {
+  realRoot: string;
+  ignoredPaths: string[];
+  visitedDirectories: Set<string>;
+  results: ScanResult[];
+}
 
 export function scanContentFiles(
   dir: string,
   appRoot: string,
   ignoredPaths: Set<string> = new Set(),
-): Array<{ file: string; text: string }> {
-  const results: Array<{ file: string; text: string }> = [];
-
-  if (!existsSync(dir) || !existsSync(appRoot)) {
+): ScanResult[] {
+  const results: ScanResult[] = [];
+  const roots = resolveScanRoots(dir, appRoot);
+  if (!roots) {
     return results;
   }
 
-  let realRoot: string;
-  let realStart: string;
-  try {
-    realRoot = realpathSync(appRoot);
-    realStart = realpathSync(dir);
-  } catch {
-    return results;
-  }
+  const context: ScanContext = {
+    realRoot: roots.realRoot,
+    ignoredPaths: [...ignoredPaths]
+      .map(normalizeRelativePath)
+      .filter((entry) => entry && !hasGlobSyntax(entry)),
+    visitedDirectories: new Set<string>(),
+    results,
+  };
 
-  if (!isPathInside(realRoot, realStart)) {
-    return results;
-  }
-
-  const normalizedIgnoredPaths = [...ignoredPaths]
-    .map(normalizeRelativePath)
-    .filter((entry) => entry && !hasGlobSyntax(entry));
-  const visitedDirectories = new Set<string>();
-
-  function traverse(currentDir: string): void {
-    let realDirectory: string;
-    try {
-      realDirectory = realpathSync(currentDir);
-    } catch {
-      return;
-    }
-    if (!isPathInside(realRoot, realDirectory) || visitedDirectories.has(realDirectory)) {
-      return;
-    }
-    visitedDirectories.add(realDirectory);
-
-    let files: string[];
-    try {
-      files = readdirSync(realDirectory);
-    } catch {
-      return;
-    }
-
-    for (const file of files) {
-      const fullPath = path.join(realDirectory, file);
-      const relativePath = normalizeRelativePath(path.relative(realRoot, fullPath));
-
-      if (
-        IGNORE_DIRS.has(file)
-        || isIgnoredPath(relativePath, normalizedIgnoredPaths)
-      ) {
-        continue;
-      }
-
-      let stats;
-      try {
-        stats = lstatSync(fullPath);
-      } catch {
-        continue;
-      }
-
-      // Never follow links during safety scanning. This prevents escaping the app
-      // root and avoids recursive link cycles.
-      if (stats.isSymbolicLink()) {
-        continue;
-      }
-      if (stats.isDirectory()) {
-        traverse(fullPath);
-        continue;
-      }
-      if (!stats.isFile()) {
-        continue;
-      }
-
-      const extension = path.extname(file).toLowerCase();
-      if (!SCAN_EXTENSIONS.has(extension) || file === "package-lock.json") {
-        continue;
-      }
-
-      const text = readFilePrefix(fullPath, MAX_SCANNED_FILE_BYTES);
-      if (text !== null) {
-        results.push({ file: relativePath, text });
-      }
-    }
-  }
-
-  traverse(realStart);
+  traverseDirectory(roots.realStart, context);
   return results;
+}
+
+function resolveScanRoots(
+  dir: string,
+  appRoot: string,
+): { realRoot: string; realStart: string } | null {
+  if (!existsSync(dir) || !existsSync(appRoot)) {
+    return null;
+  }
+
+  try {
+    const realRoot = realpathSync(appRoot);
+    const realStart = realpathSync(dir);
+    return isPathInside(realRoot, realStart) ? { realRoot, realStart } : null;
+  } catch {
+    return null;
+  }
+}
+
+function traverseDirectory(currentDir: string, context: ScanContext): void {
+  const realDirectory = resolveDirectory(currentDir, context);
+  if (!realDirectory) {
+    return;
+  }
+
+  const files = readDirectory(realDirectory);
+  if (!files) {
+    return;
+  }
+
+  for (const file of files) {
+    scanEntry(realDirectory, file, context);
+  }
+}
+
+function resolveDirectory(currentDir: string, context: ScanContext): string | null {
+  let realDirectory: string;
+  try {
+    realDirectory = realpathSync(currentDir);
+  } catch {
+    return null;
+  }
+
+  if (!isPathInside(context.realRoot, realDirectory)
+    || context.visitedDirectories.has(realDirectory)) {
+    return null;
+  }
+
+  context.visitedDirectories.add(realDirectory);
+  return realDirectory;
+}
+
+function readDirectory(directory: string): string[] | null {
+  try {
+    return readdirSync(directory);
+  } catch {
+    return null;
+  }
+}
+
+function scanEntry(realDirectory: string, file: string, context: ScanContext): void {
+  const fullPath = path.join(realDirectory, file);
+  const relativePath = normalizeRelativePath(path.relative(context.realRoot, fullPath));
+  if (shouldIgnoreEntry(file, relativePath, context.ignoredPaths)) {
+    return;
+  }
+
+  const stats = readStats(fullPath);
+  if (!stats || stats.isSymbolicLink()) {
+    return;
+  }
+  if (stats.isDirectory()) {
+    traverseDirectory(fullPath, context);
+    return;
+  }
+  if (!isScannableFile(stats, file)) {
+    return;
+  }
+
+  const text = readFilePrefix(fullPath, MAX_SCANNED_FILE_BYTES);
+  if (text !== null) {
+    context.results.push({ file: relativePath, text });
+  }
+}
+
+function readStats(file: string): ReturnType<typeof lstatSync> | null {
+  try {
+    return lstatSync(file);
+  } catch {
+    return null;
+  }
+}
+
+function shouldIgnoreEntry(file: string, relativePath: string, ignoredPaths: string[]): boolean {
+  return IGNORE_DIRS.has(file) || isIgnoredPath(relativePath, ignoredPaths);
+}
+
+function isScannableFile(stats: ReturnType<typeof lstatSync>, file: string): boolean {
+  return stats.isFile()
+    && file !== "package-lock.json"
+    && SCAN_EXTENSIONS.has(path.extname(file).toLowerCase());
 }
 
 function readFilePrefix(file: string, maxBytes: number): string | null {
@@ -158,7 +201,20 @@ function isPathInside(root: string, candidate: string): boolean {
 }
 
 function normalizeRelativePath(value: string): string {
-  return value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, "");
+  let normalized = value.replaceAll("\\", "/");
+  if (normalized.startsWith("./")) {
+    normalized = normalized.slice(2);
+  }
+
+  let start = 0;
+  while (start < normalized.length && normalized.charCodeAt(start) === 47) {
+    start += 1;
+  }
+  let end = normalized.length;
+  while (end > start && normalized.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return normalized.slice(start, end);
 }
 
 function isIgnoredPath(relativePath: string, ignoredPaths: string[]): boolean {
@@ -168,5 +224,5 @@ function isIgnoredPath(relativePath: string, ignoredPaths: string[]): boolean {
 }
 
 function hasGlobSyntax(value: string): boolean {
-  return /[*?\[\]{}!]/.test(value);
+  return GLOB_TOKENS.some((token) => value.includes(token));
 }

@@ -98,7 +98,7 @@ function readNestedValue(source: Record<string, unknown>, key: string): unknown 
     if (
       FORBIDDEN_MESSAGE_KEYS.has(part)
       || !isRecord(cursor)
-      || !Object.prototype.hasOwnProperty.call(cursor, part)
+      || !Object.hasOwn(cursor, part)
     ) {
       return undefined;
     }

@@ -10,5 +10,16 @@ export function generateReportSignature(
   return createIntegritySignature(report, {
     envName: REPORT_SIGNING_ENV,
     secret,
+    requireSecret: true,
+  });
+}
+
+export function generateReportChecksum(
+  report: Omit<HalalCheckResult, "signature">,
+): string {
+  return createIntegritySignature(report, {
+    envName: REPORT_SIGNING_ENV,
+    secret: "",
+    requireSecret: false,
   });
 }

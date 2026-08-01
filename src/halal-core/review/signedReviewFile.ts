@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
+import type { HalalCheckResult } from "../status.js";
 import {
   createIntegritySignature,
+  stableSerialize,
   verifyIntegritySignature,
 } from "../crypto/integrity.js";
 
@@ -39,4 +42,13 @@ export function verifyReviewSignature(
     secret,
     requireSecret: true,
   });
+}
+
+export function createReviewEvidenceHash(
+  report: HalalCheckResult | Omit<HalalCheckResult, "signature">,
+): string {
+  const evidence = { ...report } as Record<string, unknown>;
+  delete evidence.signature;
+  delete evidence.createdDate;
+  return `sha256:${createHash("sha256").update(stableSerialize(evidence)).digest("hex")}`;
 }

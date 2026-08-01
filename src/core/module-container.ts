@@ -276,7 +276,7 @@ function deepMergeObjects(base: Record<string, unknown>, next: Record<string, un
     if (FORBIDDEN_OBJECT_KEYS.has(key)) {
       throw new Error(`Runtime config contains unsafe key "${key}".`);
     }
-    const current = Object.prototype.hasOwnProperty.call(output, key)
+    const current = Object.hasOwn(output, key)
       ? output[key]
       : undefined;
     output[key] = isObject(current) && isObject(value)

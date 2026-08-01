@@ -74,19 +74,17 @@ jobs:
 
           path = Path("src/icons/index.ts")
           text = path.read_text(encoding="utf8")
-          old = '''  if (raw.startsWith("/")) {
-            return raw;
-          }'''
-          new = '''  if (raw.startsWith("//")) {
-            return DEFAULT_ICON_API_PROVIDER;
-          }
-          if (raw.startsWith("/")) {
-            return raw;
-          }'''
-          count = text.count(old)
+          marker = '  if (raw.startsWith("/")) {'
+          replacement = (
+              '  if (raw.startsWith("//")) {\n'
+              '    return DEFAULT_ICON_API_PROVIDER;\n'
+              '  }\n'
+              + marker
+          )
+          count = text.count(marker)
           if count != 1:
               raise SystemExit(f"expected one provider path branch, found {count}")
-          path.write_text(text.replace(old, new, 1), encoding="utf8")
+          path.write_text(text.replace(marker, replacement, 1), encoding="utf8")
           PY
 
       - name: Install dependencies
@@ -101,7 +99,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git show HEAD^:.github/workflows/ci.yml > .github/workflows/ci.yml
+          git show HEAD^^:.github/workflows/ci.yml > .github/workflows/ci.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/icons/index.ts .github/workflows/ci.yml

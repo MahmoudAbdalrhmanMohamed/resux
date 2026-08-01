@@ -1,31 +1,40 @@
 import { existsSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { evaluateRules } from "../rules/defaultBlockedRules.js";
-import { generateReportSignature } from "./signReport.js";
+import {
+  generateReportChecksum,
+  generateReportSignature,
+} from "./signReport.js";
 import type { HalalCheckResult } from "../status.js";
 import type { ResuxHalalPolicy } from "../config.js";
+
+export interface GenerateHalalReportOptions {
+  requireAuthenticated?: boolean;
+  signingSecret?: string;
+}
 
 export function generateHalalReport(
   scannedData: any,
   policy: ResuxHalalPolicy,
-  outDir: string
+  outDir: string,
+  options: GenerateHalalReportOptions = {},
 ): HalalCheckResult {
   const baseReport = evaluateRules(scannedData, policy);
-  
-  // Attach date and signature
+
   const createdDate = new Date().toISOString();
   const reportToSign: Omit<HalalCheckResult, "signature"> = {
     ...baseReport,
-    createdDate
+    createdDate,
   };
 
-  const signature = generateReportSignature(reportToSign);
+  const signature = options.requireAuthenticated === true
+    ? generateReportSignature(reportToSign, options.signingSecret)
+    : generateReportChecksum(reportToSign);
   const finalReport: HalalCheckResult = {
     ...reportToSign,
-    signature
+    signature,
   };
 
-  // Write JSON report
   if (!existsSync(outDir)) {
     mkdirSync(outDir, { recursive: true });
   }
@@ -33,7 +42,6 @@ export function generateHalalReport(
   const reportPath = path.join(outDir, "halal-report.json");
   writeFileSync(reportPath, JSON.stringify(finalReport, null, 2), "utf8");
 
-  // Write Markdown summary report for humans
   const mdPath = path.join(outDir, "halal-report.md");
   const mdContent = `
 # ResuxJS Halal Core Security Report
@@ -45,10 +53,10 @@ export function generateHalalReport(
 - **Signature**: \`${signature}\`
 
 ## Categories Detected
-${finalReport.categories.map(c => `- ${c}`).join("\n") || "No policy categories violated."}
+${finalReport.categories.map((category) => `- ${category}`).join("\n") || "No policy categories violated."}
 
 ## Reasons
-${finalReport.reasons.map(r => `- ${r}`).join("\n") || "No warning elements flagged."}
+${finalReport.reasons.map((reason) => `- ${reason}`).join("\n") || "No warning elements flagged."}
 
 ## Action Required
 ${finalReport.recommendedAction}

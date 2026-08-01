@@ -44,3 +44,49 @@ jobs:
 
       - name: Package check
         run: npm run pack:check --if-present
+
+  apply-runtime-sonar-fixes:
+    name: Apply Remaining Runtime Sonar Fixes
+    if: github.event_name == 'pull_request' && github.head_ref == 'audit/full-history-correctness'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: audit/full-history-correctness
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Apply runtime fixes
+        run: python3 scripts/apply-runtime-sonar-fixes.py
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run lifecycle regression tests
+        run: >-
+          npx vitest run
+          tests/client-enhancement-lifecycle.test.ts
+          tests/client-enhancement-shared-target.test.ts
+          tests/runtime.test.ts
+
+      - name: Commit validated source-only fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(sonar): resolve remaining runtime annotations"
+          git push origin HEAD:audit/full-history-correctness

@@ -1,0 +1,45 @@
+name: Runtime Sonar inspection
+
+on:
+  push:
+    branches:
+      - audit/full-history-correctness
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit/full-history-correctness
+          persist-credentials: false
+      - name: Print runtime annotation sites
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          text = Path('src/runtime/index.ts').read_text(encoding='utf8')
+          needles = [
+              'for (const activate of [...callbacks])',
+              'for (const [target, callbacks] of [...resuxVisibleEnhancementCallbacks])',
+              'target.removeAttribute("data-rx-enhancement-bound")',
+              'element.removeAttribute("data-rx-enhancement-bound")',
+              'function activateDeclaredClientEnhancements',
+              'async function activateDeclaredClientEnhancements',
+              'let callbacks = resuxVisibleEnhancementCallbacks.get(target);',
+          ]
+          lines = text.splitlines()
+          for needle in needles:
+              print(f'=== {needle!r}: count={text.count(needle)} ===')
+              for index, line in enumerate(lines):
+                  if needle in line:
+                      start = max(0, index - 4)
+                      end = min(len(lines), index + 9)
+                      print(f'--- lines {start + 1}-{end} ---')
+                      for line_no in range(start, end):
+                          print(f'{line_no + 1:6}: {lines[line_no]}')
+          PY

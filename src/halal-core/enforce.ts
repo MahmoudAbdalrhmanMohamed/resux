@@ -3,6 +3,7 @@ import { evaluateRules } from "./rules/defaultBlockedRules.js";
 import { loadProjectPolicy } from "./config.js";
 import { formatTerminalReport } from "./report/formatTerminalReport.js";
 import { generateHalalReport } from "./report/generateHalalReport.js";
+import { createReviewEvidenceHash } from "./review/signedReviewFile.js";
 import { verifyReviewApproval } from "./review/verifyReviewApproval.js";
 import { checkOnDiskReportSignature } from "./tamper/verifyReportSignature.js";
 import { verifyCoreIntegrity } from "./tamper/verifyCoreIntegrity.js";
@@ -26,6 +27,7 @@ export async function enforceDevGuard(appRoot: string, outDir: string): Promise<
   if (report.status === "review_required") {
     const checkReview = verifyReviewApproval(appRoot, report.status, {
       projectName: policy.projectName,
+      evidenceHash: createReviewEvidenceHash(report),
     });
     if (!checkReview.approved) {
       console.error(formatTerminalReport(report));
@@ -65,6 +67,7 @@ export async function enforceBuildGuard(appRoot: string, outDir: string): Promis
   if (report.status === "review_required") {
     const checkReview = verifyReviewApproval(appRoot, report.status, {
       projectName: policy.projectName,
+      evidenceHash: createReviewEvidenceHash(report),
     });
     if (!checkReview.approved) {
       console.error(formatTerminalReport(report));

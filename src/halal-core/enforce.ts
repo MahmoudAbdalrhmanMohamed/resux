@@ -3,6 +3,7 @@ import { evaluateRules } from "./rules/defaultBlockedRules.js";
 import { loadProjectPolicy } from "./config.js";
 import { formatTerminalReport } from "./report/formatTerminalReport.js";
 import { generateHalalReport } from "./report/generateHalalReport.js";
+import { createReviewEvidenceHash } from "./review/signedReviewFile.js";
 import { verifyReviewApproval } from "./review/verifyReviewApproval.js";
 import { checkOnDiskReportSignature } from "./tamper/verifyReportSignature.js";
 import { verifyCoreIntegrity } from "./tamper/verifyCoreIntegrity.js";
@@ -24,7 +25,10 @@ export async function enforceDevGuard(appRoot: string, outDir: string): Promise<
   const isStrict = policy.halalAI?.strict === true;
 
   if (report.status === "review_required") {
-    const checkReview = verifyReviewApproval(appRoot, report.status);
+    const checkReview = verifyReviewApproval(appRoot, report.status, {
+      projectName: policy.projectName,
+      evidenceHash: createReviewEvidenceHash(report),
+    });
     if (!checkReview.approved) {
       console.error(formatTerminalReport(report));
       console.error(`\x1b[31m[resux-halal-core] Cannot start dev server: ${checkReview.reason}\x1b[0m`);
@@ -55,13 +59,18 @@ export async function enforceBuildGuard(appRoot: string, outDir: string): Promis
 
   const policy = await loadProjectPolicy(appRoot);
   const scanned = scanProject(appRoot);
-  const report = generateHalalReport(scanned, policy, outDir);
+  const report = generateHalalReport(scanned, policy, outDir, {
+    requireAuthenticated: true,
+  });
 
   const blockProductionBuild = policy.halalAI?.blockProductionBuild !== false;
   const isStrict = policy.halalAI?.strict === true;
 
   if (report.status === "review_required") {
-    const checkReview = verifyReviewApproval(appRoot, report.status);
+    const checkReview = verifyReviewApproval(appRoot, report.status, {
+      projectName: policy.projectName,
+      evidenceHash: createReviewEvidenceHash(report),
+    });
     if (!checkReview.approved) {
       console.error(formatTerminalReport(report));
       console.error(`\x1b[31m[resux-halal-core] Build failed: ${checkReview.reason}\x1b[0m`);
@@ -100,7 +109,7 @@ export function enforceProductionServerGuard(outDir: string): void {
     return;
   }
 
-  const check = checkOnDiskReportSignature(outDir);
+  const check = checkOnDiskReportSignature(outDir, { requireAuthenticated: true });
   if (!check.valid) {
     console.error(`\x1b[31m[resux-halal-core] Production server startup rejected: ${check.reason}\x1b[0m`);
     process.exit(1);
@@ -112,7 +121,7 @@ export function enforceDeploymentGuard(outDir: string): void {
     return;
   }
 
-  const check = checkOnDiskReportSignature(outDir);
+  const check = checkOnDiskReportSignature(outDir, { requireAuthenticated: true });
   if (!check.valid) {
     console.error(`\x1b[31m[resux-halal-core] Deployment rejected: ${check.reason}\x1b[0m`);
     process.exit(1);

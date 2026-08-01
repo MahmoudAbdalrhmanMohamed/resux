@@ -141,6 +141,7 @@ export default defineResuxConfig({
     ["resuxjs/icons", {
       component: "Icon",
       mode: "svg",
+      apiProvider: "https://api.iconify.design",
       collections: ["material-symbols", "mdi", "mingcute", "cib", "uil", "line-md", "solar", "ph"],
       lazy: true
     }]
@@ -217,6 +218,17 @@ Use the `v-anime` directive or `useAnimate` composable in components:
 </template>
 ```
 
+## Halal Core integrity keys
+
+Local reports use a deterministic `sha256:` checksum when no key is configured. Production server and deployment guards require authenticated HMAC reports. Configure private keys with at least 32 characters before building production artifacts:
+
+```sh
+export RESUX_HALAL_REPORT_SIGNING_SECRET="replace-with-a-private-random-secret"
+export RESUX_HALAL_REVIEW_SIGNING_SECRET="replace-with-a-different-private-random-secret"
+```
+
+Do not commit these values. The report key signs the complete generated report; the review key authenticates human review approval files. Optional remote AI classification also requires an HTTPS endpoint (localhost HTTP is allowed for development) and supports `RESUX_AI_TIMEOUT_MS`.
+
 ## Development
 
 ```sh
@@ -248,7 +260,7 @@ To release:
 3. Push the version tag with `git push origin v1.0.0`.
 4. The GitHub Action publishes `resuxjs@1.0.0` to npm.
 
-The npm publish workflow validates that the tag matches `package.json`, runs `npm ci` and `npm run pack:check`, skips publishing if the package version already exists, then publishes with `NPM_TOKEN` and npm provenance.
+The npm publish workflow validates that the tag matches `package.json`, installs only the locked dependency graph, runs typecheck, build, tests, and package checks, skips versions that already exist, then publishes through npm Trusted Publishing (GitHub OIDC) with provenance. Configure the npm Trusted Publisher for repository `MahmoudAbdalrhmanMohamed/resux` and workflow `npm-publish.yml`; no long-lived `NPM_TOKEN` is used.
 
 ## CLI
 

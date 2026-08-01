@@ -24,9 +24,17 @@ const mutableHandlers: ProxyHandler<object> = {
 
   set(target, key, value, receiver) {
     const oldValue = Reflect.get(target, key, receiver);
+    const oldLength = Array.isArray(target) ? target.length : 0;
     const success = Reflect.set(target, key, value, receiver);
     if (success && !Object.is(value, oldValue)) {
       trigger(target, key);
+      if (
+        Array.isArray(target)
+        && isArrayIndex(key)
+        && Number(key) >= oldLength
+      ) {
+        trigger(target, "length");
+      }
     }
     return success;
   },
@@ -115,4 +123,13 @@ export function toRaw<T>(value: T): T {
     return (value as Record<PropertyKey, unknown>)[ReactiveFlags.RAW] as T;
   }
   return value;
+}
+
+function isArrayIndex(key: PropertyKey): boolean {
+  if (typeof key === "symbol" || key === "length") {
+    return false;
+  }
+  const value = String(key);
+  return /^(?:0|[1-9]\d*)$/.test(value)
+    && Number(value) < 4_294_967_295;
 }

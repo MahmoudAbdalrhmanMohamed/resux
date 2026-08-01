@@ -22,6 +22,7 @@ class ReactiveEffectImpl implements ReactiveEffectLike {
   deps: Dep[] = [];
   readonly scheduler?: () => void;
   readonly onStop?: () => void;
+  private parent?: ReactiveEffectImpl;
 
   constructor(
     private readonly fn: () => unknown,
@@ -36,7 +37,16 @@ class ReactiveEffectImpl implements ReactiveEffectLike {
       return this.fn();
     }
 
-    const previous = activeEffect;
+    let parent = activeEffect;
+    while (parent) {
+      if (parent === this) {
+        return undefined;
+      }
+      parent = parent.parent;
+    }
+
+    cleanupEffect(this);
+    this.parent = activeEffect;
     activeEffect = this;
     trackStack.push(shouldTrack);
     shouldTrack = true;
@@ -45,7 +55,8 @@ class ReactiveEffectImpl implements ReactiveEffectLike {
       return this.fn();
     } finally {
       shouldTrack = trackStack.pop() ?? true;
-      activeEffect = previous;
+      activeEffect = this.parent;
+      this.parent = undefined;
     }
   }
 
@@ -126,6 +137,9 @@ export function trigger(target: object, key: PropertyKey): void {
 
 export function triggerEffects(dep: Dep): void {
   for (const effect of [...dep]) {
+    if (effect === activeEffect) {
+      continue;
+    }
     if (effect.scheduler) {
       effect.scheduler();
     } else {

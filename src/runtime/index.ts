@@ -1231,6 +1231,15 @@ function setEnhancementStatus(target: Element, status: string): void {
   target.setAttribute("data-rx-enhancement-status", status);
 }
 
+function setEnhancementBound(target: Element, bound: boolean): void {
+  const dataset = (target as HTMLElement | SVGElement).dataset;
+  if (bound) {
+    dataset.rxEnhancementBound = "true";
+  } else {
+    delete dataset.rxEnhancementBound;
+  }
+}
+
 function getEnhancementErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -1380,7 +1389,7 @@ function ensureVisibleEnhancementResources(): void {
         if (!callbacks) {
           continue;
         }
-        for (const activate of [...callbacks]) {
+        for (const activate of callbacks) {
           activate();
         }
       }
@@ -1388,13 +1397,13 @@ function ensureVisibleEnhancementResources(): void {
   }
   if (!resuxVisibleEnhancementPollTimer) {
     resuxVisibleEnhancementPollTimer = window.setInterval(() => {
-      for (const [target, callbacks] of [...resuxVisibleEnhancementCallbacks]) {
+      for (const [target, callbacks] of resuxVisibleEnhancementCallbacks) {
         if (!target.isConnected) {
           unobserveVisibleEnhancement(target);
           continue;
         }
         if (isElementProbablyVisible(target)) {
-          for (const activate of [...callbacks]) {
+          for (const activate of callbacks) {
             activate();
           }
         }
@@ -1416,8 +1425,9 @@ function observeVisibleEnhancement(target: Element, activate: () => void): () =>
     }
   };
   let callbacks = resuxVisibleEnhancementCallbacks.get(target);
-  if (!callbacks) {
-    callbacks = new Set<() => void>();
+  const isNewTarget = callbacks === undefined;
+  callbacks ??= new Set<() => void>();
+  if (isNewTarget) {
     resuxVisibleEnhancementCallbacks.set(target, callbacks);
     ensureVisibleEnhancementResources();
     resuxVisibleEnhancementObserver!.observe(target);
@@ -1717,7 +1727,7 @@ export async function useClientEnhancement(
     disposed = true;
     resuxScheduledEnhancementDisposers.delete(dispose);
     resuxBoundEnhancementTargets.delete(target);
-    target.removeAttribute("data-rx-enhancement-bound");
+    setEnhancementBound(target, false);
     if (idleWarningTimer) {
       window.clearTimeout(idleWarningTimer);
       idleWarningTimer = 0;
@@ -1833,99 +1843,133 @@ function parseEnhancementOptions(
   }
 }
 
+interface DeclaredClientEnhancement {
+  name: string;
+  trigger: ClientEnhancementTrigger;
+  options?: Record<string, unknown>;
+  error?: string;
+}
+
+function collectDeclaredClientEnhancementElements(root: ParentNode): Element[] {
+  const selector = "[data-resux-enhancement], [use-client-enhancement]";
+  const elements = [...root.querySelectorAll(selector)];
+  const rootElement = root as Element;
+  if (typeof rootElement.matches === "function" && rootElement.matches(selector)) {
+    elements.unshift(rootElement);
+  }
+  return elements;
+}
+
+function readDeclaredClientEnhancement(element: Element): DeclaredClientEnhancement | null {
+  const name = (
+    element.getAttribute("data-resux-enhancement")
+    ?? element.getAttribute("use-client-enhancement")
+    ?? ""
+  ).trim();
+  if (!name) {
+    return null;
+  }
+
+  const trigger = normalizeEnhancementTrigger(
+    element.getAttribute("data-resux-trigger")
+    ?? element.getAttribute("data-trigger")
+    ?? element.getAttribute("trigger"),
+    "visible",
+  );
+  const optionsAttributeValue = (
+    element.getAttribute("data-resux-options")
+    ?? element.getAttribute("data-resux-enhancement-options")
+    ?? element.getAttribute("data-enhancement-options")
+    ?? element.getAttribute("data-options")
+  );
+  const parsedOptions = parseEnhancementOptions(optionsAttributeValue, name);
+  if (optionsAttributeValue !== null) {
+    element.setAttribute("data-resux-options", optionsAttributeValue);
+  }
+  return {
+    name,
+    trigger,
+    options: parsedOptions.options,
+    error: parsedOptions.error,
+  };
+}
+
+function reportDeclaredClientEnhancementError(
+  element: Element,
+  declaration: DeclaredClientEnhancement,
+  error: string,
+): void {
+  setEnhancementStatus(element, "error");
+  element.setAttribute("data-rx-enhancement-error", error);
+  dispatchEnhancementEvent("error", {
+    name: declaration.name,
+    trigger: declaration.trigger,
+    elementId: readEnhancementElementId(element),
+    error,
+  });
+}
+
+function prepareDeclaredClientEnhancement(
+  element: Element,
+  declaration: DeclaredClientEnhancement,
+): void {
+  resuxBoundEnhancementTargets.add(element);
+  element.setAttribute("data-resux-enhancement", declaration.name);
+  element.setAttribute("data-resux-trigger", declaration.trigger);
+  element.setAttribute("data-rx-enhancement", declaration.name);
+  element.setAttribute("data-rx-enhancement-trigger", declaration.trigger);
+  setEnhancementStatus(element, "found");
+  dispatchEnhancementEvent("found", {
+    name: declaration.name,
+    trigger: declaration.trigger,
+    elementId: readEnhancementElementId(element),
+  });
+  logEnhancementDebug(`found element ${declaration.name} trigger=${declaration.trigger}`);
+}
+
+async function activateDeclaredClientEnhancement(element: Element): Promise<void> {
+  if (resuxBoundEnhancementTargets.has(element)) {
+    return;
+  }
+  const declaration = readDeclaredClientEnhancement(element);
+  if (!declaration) {
+    return;
+  }
+  if (declaration.error) {
+    reportDeclaredClientEnhancementError(element, declaration, declaration.error);
+    return;
+  }
+
+  prepareDeclaredClientEnhancement(element, declaration);
+  try {
+    await useClientEnhancement(declaration.name, {
+      target: element,
+      trigger: declaration.trigger,
+      options: declaration.options,
+    });
+    setEnhancementBound(element, true);
+    element.removeAttribute("data-rx-enhancement-error");
+  } catch (error) {
+    resuxBoundEnhancementTargets.delete(element);
+    setEnhancementBound(element, false);
+    reportDeclaredClientEnhancementError(
+      element,
+      declaration,
+      getEnhancementErrorMessage(error),
+    );
+  }
+}
+
 async function activateDeclaredClientEnhancements(root: ParentNode = document): Promise<void> {
   if (!isClientRuntime() || !root?.querySelectorAll) {
     return;
   }
   logEnhancementDebug("scanning DOM");
-  const selector = "[data-resux-enhancement], [use-client-enhancement]";
-  const elements: Element[] = [];
-  const rootElement = root as Element;
-  if (typeof rootElement.matches === "function" && rootElement.matches(selector)) {
-    elements.push(rootElement);
-  }
-  elements.push(...Array.from(root.querySelectorAll(selector)));
-  for (const element of elements) {
-    if (!element || typeof (element as Element).getAttribute !== "function") {
-      continue;
-    }
-    if (resuxBoundEnhancementTargets.has(element as Element)) {
-      continue;
-    }
-    const enhancementName = (
-      element.getAttribute("data-resux-enhancement")
-      ?? element.getAttribute("use-client-enhancement")
-      ?? ""
-    ).trim();
-    if (!enhancementName) {
-      continue;
-    }
-    const trigger = normalizeEnhancementTrigger(
-      element.getAttribute("data-resux-trigger")
-      ?? element.getAttribute("data-trigger")
-      ?? element.getAttribute("trigger"),
-      "visible",
-    );
-    const optionsAttributeValue = (
-      element.getAttribute("data-resux-options")
-      ?? element.getAttribute("data-resux-enhancement-options")
-      ?? element.getAttribute("data-enhancement-options")
-      ?? element.getAttribute("data-options")
-    );
-    const parsedOptions = parseEnhancementOptions(optionsAttributeValue, enhancementName);
-    if (optionsAttributeValue !== null) {
-      element.setAttribute("data-resux-options", optionsAttributeValue);
-    }
-    if (parsedOptions.error) {
-      setEnhancementStatus(element, "error");
-      element.setAttribute("data-rx-enhancement-error", parsedOptions.error);
-      dispatchEnhancementEvent("error", {
-        name: enhancementName,
-        trigger,
-        elementId: readEnhancementElementId(element),
-        error: parsedOptions.error,
-      });
-      continue;
-    }
-    const options = parsedOptions.options;
-    resuxBoundEnhancementTargets.add(element);
-    element.setAttribute("data-resux-enhancement", enhancementName);
-    element.setAttribute("data-resux-trigger", trigger);
-    element.setAttribute("data-rx-enhancement", enhancementName);
-    element.setAttribute("data-rx-enhancement-trigger", trigger);
-    setEnhancementStatus(element, "found");
-    dispatchEnhancementEvent("found", {
-      name: enhancementName,
-      trigger,
-      elementId: readEnhancementElementId(element),
-    });
-    logEnhancementDebug(`found element ${enhancementName} trigger=${trigger}`);
-    try {
-      await useClientEnhancement(enhancementName, {
-        target: element,
-        trigger,
-        options,
-      });
-      element.setAttribute("data-rx-enhancement-bound", "true");
-      element.removeAttribute("data-rx-enhancement-error");
-    } catch (error) {
-      resuxBoundEnhancementTargets.delete(element);
-      element.removeAttribute("data-rx-enhancement-bound");
-      const message = getEnhancementErrorMessage(error);
-      setEnhancementStatus(element, "error");
-      element.setAttribute(
-        "data-rx-enhancement-error",
-        message,
-      );
-      dispatchEnhancementEvent("error", {
-        name: enhancementName,
-        trigger,
-        elementId: readEnhancementElementId(element),
-        error: message,
-      });
-    }
+  for (const element of collectDeclaredClientEnhancementElements(root)) {
+    await activateDeclaredClientEnhancement(element);
   }
 }
+
 
 function uniqueArray<T>(items: T[]): T[] {
   return [...new Set(items)];
@@ -7498,6 +7542,14 @@ function setEnhancementStatus(target, status) {
   target.setAttribute("data-rx-enhancement-status", status);
 }
 
+function setEnhancementBound(target, bound) {
+  if (bound) {
+    target.dataset.rxEnhancementBound = "true";
+  } else {
+    delete target.dataset.rxEnhancementBound;
+  }
+}
+
 function getEnhancementErrorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -7633,7 +7685,7 @@ function ensureVisibleEnhancementResources() {
         if (!callbacks) {
           continue;
         }
-        for (const activate of [...callbacks]) {
+        for (const activate of callbacks) {
           activate();
         }
       }
@@ -7641,13 +7693,13 @@ function ensureVisibleEnhancementResources() {
   }
   if (!resuxVisibleEnhancementPollTimer) {
     resuxVisibleEnhancementPollTimer = window.setInterval(() => {
-      for (const [target, callbacks] of [...resuxVisibleEnhancementCallbacks]) {
+      for (const [target, callbacks] of resuxVisibleEnhancementCallbacks) {
         if (!target.isConnected) {
           unobserveVisibleEnhancement(target);
           continue;
         }
         if (isElementProbablyVisible(target)) {
-          for (const activate of [...callbacks]) {
+          for (const activate of callbacks) {
             activate();
           }
         }
@@ -7669,8 +7721,9 @@ function observeVisibleEnhancement(target, activate) {
     }
   };
   let callbacks = resuxVisibleEnhancementCallbacks.get(target);
-  if (!callbacks) {
-    callbacks = new Set();
+  const isNewTarget = callbacks === undefined;
+  callbacks ??= new Set();
+  if (isNewTarget) {
     resuxVisibleEnhancementCallbacks.set(target, callbacks);
     ensureVisibleEnhancementResources();
     resuxVisibleEnhancementObserver.observe(target);
@@ -8287,7 +8340,7 @@ async function useClientEnhancement(name, options = {}) {
     disposed = true;
     resuxScheduledEnhancementDisposers.delete(dispose);
     resuxBoundEnhancementTargets.delete(target);
-    target.removeAttribute("data-rx-enhancement-bound");
+    setEnhancementBound(target, false);
     if (idleWarningTimer) {
       window.clearTimeout(idleWarningTimer);
       idleWarningTimer = 0;
@@ -8405,98 +8458,118 @@ function parseEnhancementOptions(value, name) {
   }
 }
 
+function collectDeclaredClientEnhancementElements(root) {
+  const selector = "[data-resux-enhancement], [use-client-enhancement]";
+  const elements = [...root.querySelectorAll(selector)];
+  if (typeof root.matches === "function" && root.matches(selector)) {
+    elements.unshift(root);
+  }
+  return elements;
+}
+
+function readDeclaredClientEnhancement(element) {
+  const name = (
+    element.getAttribute("data-resux-enhancement")
+    ?? element.getAttribute("use-client-enhancement")
+    ?? ""
+  ).trim();
+  if (!name) {
+    return null;
+  }
+
+  const trigger = normalizeEnhancementTrigger(
+    element.getAttribute("data-resux-trigger")
+    ?? element.getAttribute("data-trigger")
+    ?? element.getAttribute("trigger"),
+    "visible",
+  );
+  const optionsAttributeValue = (
+    element.getAttribute("data-resux-options")
+    ?? element.getAttribute("data-resux-enhancement-options")
+    ?? element.getAttribute("data-enhancement-options")
+    ?? element.getAttribute("data-options")
+  );
+  const parsedOptions = parseEnhancementOptions(optionsAttributeValue, name);
+  if (optionsAttributeValue !== null) {
+    element.setAttribute("data-resux-options", optionsAttributeValue);
+  }
+  return {
+    name,
+    trigger,
+    options: parsedOptions.options,
+    error: parsedOptions.error,
+  };
+}
+
+function reportDeclaredClientEnhancementError(element, declaration, error) {
+  setEnhancementStatus(element, "error");
+  element.setAttribute("data-rx-enhancement-error", error);
+  dispatchEnhancementEvent("error", {
+    name: declaration.name,
+    trigger: declaration.trigger,
+    elementId: readEnhancementElementId(element),
+    error,
+  });
+}
+
+function prepareDeclaredClientEnhancement(element, declaration) {
+  resuxBoundEnhancementTargets.add(element);
+  element.setAttribute("data-resux-enhancement", declaration.name);
+  element.setAttribute("data-resux-trigger", declaration.trigger);
+  element.setAttribute("data-rx-enhancement", declaration.name);
+  element.setAttribute("data-rx-enhancement-trigger", declaration.trigger);
+  setEnhancementStatus(element, "found");
+  dispatchEnhancementEvent("found", {
+    name: declaration.name,
+    trigger: declaration.trigger,
+    elementId: readEnhancementElementId(element),
+  });
+  logEnhancementDebug("found element " + declaration.name + " trigger=" + declaration.trigger);
+}
+
+async function activateDeclaredClientEnhancement(element) {
+  if (resuxBoundEnhancementTargets.has(element)) {
+    return;
+  }
+  const declaration = readDeclaredClientEnhancement(element);
+  if (!declaration) {
+    return;
+  }
+  if (declaration.error) {
+    reportDeclaredClientEnhancementError(element, declaration, declaration.error);
+    return;
+  }
+
+  prepareDeclaredClientEnhancement(element, declaration);
+  try {
+    await useClientEnhancement(declaration.name, {
+      target: element,
+      trigger: declaration.trigger,
+      options: declaration.options,
+    });
+    setEnhancementBound(element, true);
+    element.removeAttribute("data-rx-enhancement-error");
+  } catch (error) {
+    resuxBoundEnhancementTargets.delete(element);
+    setEnhancementBound(element, false);
+    reportDeclaredClientEnhancementError(
+      element,
+      declaration,
+      getEnhancementErrorMessage(error),
+    );
+  }
+}
+
 async function activateDeclaredClientEnhancements(root = document) {
   if (!isClientRuntime() || !root || typeof root.querySelectorAll !== "function") {
     return;
   }
   logEnhancementDebug("scanning DOM");
-  const selector = "[data-resux-enhancement], [use-client-enhancement]";
-  const elements = [];
-  if (typeof root.matches === "function" && root.matches(selector)) {
-    elements.push(root);
-  }
-  elements.push(...Array.from(root.querySelectorAll(selector)));
-  for (const element of elements) {
-    if (!element || typeof element.getAttribute !== "function") {
-      continue;
-    }
-    if (resuxBoundEnhancementTargets.has(element)) {
-      continue;
-    }
-    const enhancementName = String(
-      element.getAttribute("data-resux-enhancement")
-      || element.getAttribute("use-client-enhancement")
-      || "",
-    ).trim();
-    if (!enhancementName) {
-      continue;
-    }
-    const trigger = normalizeEnhancementTrigger(
-      element.getAttribute("data-resux-trigger")
-      || element.getAttribute("data-trigger")
-      || element.getAttribute("trigger"),
-      "visible",
-    );
-    const optionsAttributeValue = (
-      element.getAttribute("data-resux-options")
-      || element.getAttribute("data-resux-enhancement-options")
-      || element.getAttribute("data-enhancement-options")
-      || element.getAttribute("data-options")
-    );
-    const parsedOptions = parseEnhancementOptions(optionsAttributeValue, enhancementName);
-    if (optionsAttributeValue !== null) {
-      element.setAttribute("data-resux-options", optionsAttributeValue);
-    }
-    if (parsedOptions.error) {
-      setEnhancementStatus(element, "error");
-      element.setAttribute("data-rx-enhancement-error", parsedOptions.error);
-      dispatchEnhancementEvent("error", {
-        name: enhancementName,
-        trigger,
-        elementId: readEnhancementElementId(element),
-        error: parsedOptions.error,
-      });
-      continue;
-    }
-    const options = parsedOptions.options;
-    resuxBoundEnhancementTargets.add(element);
-    element.setAttribute("data-resux-enhancement", enhancementName);
-    element.setAttribute("data-resux-trigger", trigger);
-    element.setAttribute("data-rx-enhancement", enhancementName);
-    element.setAttribute("data-rx-enhancement-trigger", trigger);
-    setEnhancementStatus(element, "found");
-    dispatchEnhancementEvent("found", {
-      name: enhancementName,
-      trigger,
-      elementId: readEnhancementElementId(element),
-    });
-    logEnhancementDebug("found element " + enhancementName + " trigger=" + trigger);
-    try {
-      await useClientEnhancement(enhancementName, {
-        target: element,
-        trigger,
-        options,
-      });
-      element.setAttribute("data-rx-enhancement-bound", "true");
-      element.removeAttribute("data-rx-enhancement-error");
-    } catch (error) {
-      resuxBoundEnhancementTargets.delete(element);
-      element.removeAttribute("data-rx-enhancement-bound");
-      const message = getEnhancementErrorMessage(error);
-      setEnhancementStatus(element, "error");
-      element.setAttribute(
-        "data-rx-enhancement-error",
-        message,
-      );
-      dispatchEnhancementEvent("error", {
-        name: enhancementName,
-        trigger,
-        elementId: readEnhancementElementId(element),
-        error: message,
-      });
-    }
+  for (const element of collectDeclaredClientEnhancementElements(root)) {
+    await activateDeclaredClientEnhancement(element);
   }
 }
+
 
 function __rxIsObject(value) {
   return value !== null && typeof value === "object";
@@ -8530,6 +8603,26 @@ function nextTick(fn) {
   return fn ? promise.then(fn) : promise;
 }
 
+function __rxCleanupEffect(reactiveEffect) {
+  for (const dep of reactiveEffect.deps) {
+    dep.delete(reactiveEffect);
+  }
+  reactiveEffect.deps.length = 0;
+}
+
+function __rxTriggerEffects(dep) {
+  for (const reactiveEffect of [...dep]) {
+    if (reactiveEffect === __rxActiveEffect) {
+      continue;
+    }
+    if (reactiveEffect.scheduler) {
+      reactiveEffect.scheduler();
+    } else {
+      reactiveEffect.run();
+    }
+  }
+}
+
 class __rxReactiveEffect {
   constructor(fn, scheduler, onStop) {
     this.fn = fn;
@@ -8537,13 +8630,22 @@ class __rxReactiveEffect {
     this.onStop = onStop;
     this.active = true;
     this.deps = [];
+    this.parent = undefined;
   }
 
   run() {
     if (!this.active) {
       return this.fn();
     }
-    const previous = __rxActiveEffect;
+    let parent = __rxActiveEffect;
+    while (parent) {
+      if (parent === this) {
+        return undefined;
+      }
+      parent = parent.parent;
+    }
+    __rxCleanupEffect(this);
+    this.parent = __rxActiveEffect;
     __rxActiveEffect = this;
     __rxTrackStack.push(__rxShouldTrack);
     __rxShouldTrack = true;
@@ -8551,7 +8653,8 @@ class __rxReactiveEffect {
       return this.fn();
     } finally {
       __rxShouldTrack = __rxTrackStack.pop() ?? true;
-      __rxActiveEffect = previous;
+      __rxActiveEffect = this.parent;
+      this.parent = undefined;
     }
   }
 
@@ -8559,10 +8662,7 @@ class __rxReactiveEffect {
     if (!this.active) {
       return;
     }
-    for (const dep of this.deps) {
-      dep.delete(this);
-    }
-    this.deps.length = 0;
+    __rxCleanupEffect(this);
     if (typeof this.onStop === "function") {
       this.onStop();
     }
@@ -8610,13 +8710,7 @@ function __rxTrigger(target, key) {
   if (!dep) {
     return;
   }
-  for (const reactiveEffect of [...dep]) {
-    if (reactiveEffect.scheduler) {
-      reactiveEffect.scheduler();
-    } else {
-      reactiveEffect.run();
-    }
-  }
+  __rxTriggerEffects(dep);
 }
 
 function reactive(target) {
@@ -8660,9 +8754,19 @@ function __rxCreateReactiveObject(target, isReadonlyValue, proxyMap, isShallow) 
         return true;
       }
       const oldValue = Reflect.get(rawTarget, key, receiver);
+      const oldLength = Array.isArray(rawTarget) ? rawTarget.length : 0;
       const success = Reflect.set(rawTarget, key, value, receiver);
       if (success && __rxHasChanged(value, oldValue)) {
         __rxTrigger(rawTarget, key);
+        if (
+          Array.isArray(rawTarget)
+          && key !== "length"
+          && /^(?:0|[1-9]\d*)$/.test(String(key))
+          && Number(key) >= oldLength
+          && Number(key) < 4294967295
+        ) {
+          __rxTrigger(rawTarget, "length");
+        }
       }
       return success;
     },
@@ -8714,13 +8818,7 @@ class __rxRefImpl {
     }
     this._rawValue = newValue;
     this._value = __rxIsObject(newValue) ? reactive(newValue) : newValue;
-    for (const reactiveEffect of [...this.dep]) {
-      if (reactiveEffect.scheduler) {
-        reactiveEffect.scheduler();
-      } else {
-        reactiveEffect.run();
-      }
-    }
+    __rxTriggerEffects(this.dep);
   }
 }
 
@@ -8782,13 +8880,7 @@ function computed(getterOrOptions) {
     scheduler: () => {
       if (!dirty) {
         dirty = true;
-        for (const reactiveEffect of [...dep]) {
-          if (reactiveEffect.scheduler) {
-            reactiveEffect.scheduler();
-          } else {
-            reactiveEffect.run();
-          }
-        }
+        __rxTriggerEffects(dep);
       }
     }
   });
@@ -8826,7 +8918,8 @@ function watchEffect(effectFn, options = {}) {
 }
 
 function __rxDoWatch(source, callback, options) {
-  const deep = options.deep === true;
+  const deep = options.deep === true
+    || (callback !== null && __rxContainsReactiveSource(source));
   const immediate = options.immediate === true;
   const flush = options.flush ?? "post";
   let cleanup;
@@ -8914,6 +9007,13 @@ function __rxResolveWatchEntry(source) {
     return source();
   }
   return source;
+}
+
+function __rxContainsReactiveSource(source) {
+  if (isReactive(source)) {
+    return true;
+  }
+  return Array.isArray(source) && source.some((entry) => isReactive(entry));
 }
 
 function __rxTraverse(value, seen = new Set()) {

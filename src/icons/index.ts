@@ -1,5 +1,6 @@
 import { defineComponent, h, computed, ref, onMounted, onUnmounted, watch } from "vue";
 import { defineResuxModule } from "../kit/index.js";
+import { useRuntimeConfig } from "../runtime/index.js";
 
 export interface ResuxIconsModuleOptions {
   collections?: string[];
@@ -13,8 +14,14 @@ export function defineIconCollections(collections: string[]): ResuxIconsModuleOp
   return { collections };
 }
 
+export interface IconPathData {
+  d: string;
+  opacity?: string;
+}
+
 export interface IconData {
   path?: string;
+  paths?: IconPathData[];
   opacity?: string;
   viewBox?: string;
 }
@@ -73,51 +80,108 @@ if (typeof globalThis !== "undefined") {
   (globalThis as any).__RESUX_ICON_REGISTRY__ = iconRegistry;
 }
 
+const DEFAULT_ICON_API_PROVIDER = "https://api.iconify.design";
 const pendingFetches = new Map<string, Promise<IconData | null>>();
+const fetchedIconCache = new Map<string, IconData>();
 
-export function fetchIconifyIcon(name: string): Promise<IconData | null> {
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
+export function normalizeIconApiProvider(value: unknown): string {
+  const raw = typeof value === "string" ? stripTrailingSlashes(value.trim()) : "";
+  if (!raw) {
+    return DEFAULT_ICON_API_PROVIDER;
+  }
+  if (raw.startsWith("//")) {
+    return DEFAULT_ICON_API_PROVIDER;
+  }
+  if (raw.startsWith("/")) {
+    return raw;
+  }
+  try {
+    const url = new URL(raw);
+    if (url.protocol === "https:" || url.protocol === "http:") {
+      return stripTrailingSlashes(url.toString());
+    }
+  } catch {
+    // Fall back to the public provider for malformed values.
+  }
+  return DEFAULT_ICON_API_PROVIDER;
+}
+
+export function fetchIconifyIcon(
+  name: string,
+  apiProvider: string = DEFAULT_ICON_API_PROVIDER,
+): Promise<IconData | null> {
   const normalized = String(name || "").trim().toLowerCase();
   if (!normalized) return Promise.resolve(null);
   if (iconRegistry[normalized]) {
     return Promise.resolve(iconRegistry[normalized]);
   }
-  if (pendingFetches.has(normalized)) {
-    return pendingFetches.get(normalized)!;
-  }
 
   const parts = normalized.split(":");
-  if (parts.length !== 2) return Promise.resolve(null);
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    return Promise.resolve(null);
+  }
+
+  const provider = normalizeIconApiProvider(apiProvider);
+  const cacheKey = provider + "::" + normalized;
+  const cached = fetchedIconCache.get(cacheKey);
+  if (cached) {
+    return Promise.resolve(cached);
+  }
+  const pending = pendingFetches.get(cacheKey);
+  if (pending) {
+    return pending;
+  }
 
   const prefix = parts[0];
   const iconName = parts[1];
-  const url = `https://api.iconify.design/${encodeURIComponent(prefix)}/${encodeURIComponent(iconName)}.svg`;
+  const url = provider + "/" + encodeURIComponent(prefix) + "/" + encodeURIComponent(iconName) + ".svg";
 
   const fetchPromise = fetch(url)
-    .then((res) => {
-      if (!res.ok) return null;
-      return res.text();
-    })
+    .then((response) => response.ok ? response.text() : null)
     .then((svgText) => {
       if (!svgText) return null;
-      const pathMatch = /d="([^"]+)"/.exec(svgText);
-      const viewBoxMatch = /viewBox="([^"]+)"/.exec(svgText);
-      const iconData: IconData = {
-        path: pathMatch ? pathMatch[1] : "",
-        viewBox: viewBoxMatch ? viewBoxMatch[1] : "0 0 24 24"
-      };
-      if (iconData.path) {
-        iconRegistry[normalized] = iconData;
-        return iconData;
+      const viewBox = readSvgAttribute(svgText, "viewBox") || "0 0 24 24";
+      const paths = [...svgText.matchAll(/<path\b[^>]*>/gi)]
+        .map((match) => ({
+          d: readSvgAttribute(match[0], "d"),
+          opacity: readSvgAttribute(match[0], "opacity") || undefined,
+        }))
+        .filter((entry) => Boolean(entry.d));
+      if (!paths.length) {
+        return null;
       }
-      return null;
+      const data: IconData = {
+        path: paths[0].d,
+        paths,
+        viewBox,
+      };
+      fetchedIconCache.set(cacheKey, data);
+      return data;
     })
     .catch(() => null)
     .finally(() => {
-      pendingFetches.delete(normalized);
+      pendingFetches.delete(cacheKey);
     });
 
-  pendingFetches.set(normalized, fetchPromise);
+  pendingFetches.set(cacheKey, fetchPromise);
   return fetchPromise;
+}
+
+function readSvgAttribute(source: string, name: string): string {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  const match = new RegExp(
+    String.raw`\b${escapedName}\s*=\s*(?:"([^"]*)"|'([^']*)')`,
+    "i",
+  ).exec(source);
+  return (match?.[1] ?? match?.[2] ?? "").trim();
 }
 
 export const Icon = defineComponent({
@@ -128,12 +192,16 @@ export const Icon = defineComponent({
     mode: { type: String, default: "svg" },
     lazy: { type: Boolean, default: false },
     loading: { type: String, default: "eager" },
+    apiProvider: { type: String, default: "" },
     class: { type: String, default: "" }
   },
   setup(props, { attrs }) {
     const iconRef = ref<HTMLElement | null>(null);
     const isVisible = ref(false);
     const iconName = computed(() => String(props.name || "").trim().toLowerCase());
+    const runtimeConfig = useRuntimeConfig();
+    const configuredProvider = (runtimeConfig.public?.icons as { apiProvider?: unknown } | undefined)?.apiProvider;
+    const apiProvider = computed(() => normalizeIconApiProvider(props.apiProvider || configuredProvider));
     const dynamicData = ref<IconData | null>(null);
 
     const isLazy = computed(() => props.lazy || props.loading === "lazy");
@@ -152,12 +220,24 @@ export const Icon = defineComponent({
       };
     });
 
+    let requestRevision = 0;
     const loadDynamicIcon = () => {
-      if (!iconRegistry[iconName.value]) {
-        fetchIconifyIcon(iconName.value).then((res) => {
-          if (res) dynamicData.value = res;
-        });
+      const requestedName = iconName.value;
+      const requestedProvider = apiProvider.value;
+      const revision = ++requestRevision;
+      if (iconRegistry[requestedName]) {
+        return;
       }
+      fetchIconifyIcon(requestedName, requestedProvider).then((result) => {
+        if (
+          result
+          && revision === requestRevision
+          && requestedName === iconName.value
+          && requestedProvider === apiProvider.value
+        ) {
+          dynamicData.value = result;
+        }
+      });
     };
 
     let observer: IntersectionObserver | null = null;
@@ -186,12 +266,13 @@ export const Icon = defineComponent({
     });
 
     onUnmounted(() => {
+      requestRevision += 1;
       if (observer) {
         observer.disconnect();
       }
     });
 
-    watch(iconName, () => {
+    watch([iconName, apiProvider], () => {
       dynamicData.value = null;
       if (!isLazy.value || isVisible.value) {
         loadDynamicIcon();
@@ -220,14 +301,14 @@ export const Icon = defineComponent({
           "data-icon-lazy": isLazy.value ? "true" : "false",
           ...attrs
         },
-        [
-          h("path", {
-            d: data.path || "",
+        (data.paths?.length ? data.paths : [{ d: data.path || "", opacity: data.opacity }])
+          .map((entry, index) => h("path", {
+            key: index,
+            d: entry.d,
             fillRule: "evenodd",
             clipRule: "evenodd",
-            opacity: data.opacity || "1"
-          })
-        ]
+            opacity: entry.opacity || "1"
+          }))
       );
     };
   }
@@ -240,6 +321,7 @@ export default defineResuxModule<ResuxIconsModuleOptions>({
     collections: [],
     component: "Icon",
     mode: "svg",
+    apiProvider: DEFAULT_ICON_API_PROVIDER,
     lazy: false
   },
   setup(options, resux) {
@@ -252,6 +334,7 @@ export default defineResuxModule<ResuxIconsModuleOptions>({
           component: typeof options.component === "string" ? options.component : "Icon",
           collections,
           mode: options.mode || "svg",
+          apiProvider: normalizeIconApiProvider(options.apiProvider),
           lazy: options.lazy === true
         }
       }

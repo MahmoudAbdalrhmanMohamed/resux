@@ -170,6 +170,8 @@ describe("client enhancement lifecycle performance", () => {
     await waitForCondition(() => root.getAttribute("data-enhanced") === "root");
 
     expect(root.getAttribute("data-enhanced")).toBe("root");
+    expect(root.dataset.rxEnhancementBound).toBe("true");
     await runtimeModule.disposeClientEnhancements();
+    expect(root.dataset.rxEnhancementBound).toBeUndefined();
   });
 });

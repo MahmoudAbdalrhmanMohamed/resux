@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import type { Dirent } from "node:fs";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { stdin, stdout } from "node:process";
 import { createInterface, type Interface } from "node:readline/promises";
@@ -94,6 +95,7 @@ export async function runCreateResux(args: string[] = process.argv.slice(2)): Pr
     const install = options.install ?? await promptConfirm(prompts, "Install dependencies?", canPrompt(), options.yes);
     const packageManager = options.packageManager ?? detectPackageManager();
 
+    assertSafeCreateTarget(root, process.cwd(), options.force);
     await prepareTarget(root, options.force);
     await copyTemplate(path.resolve(fileURLToPath(new URL("../templates/default", import.meta.url))), root, {
       "%PROJECT_NAME%": projectName,
@@ -343,6 +345,26 @@ async function promptConfirm(prompts: Interface, label: string, defaultValue: bo
   }
 
   return answer === "y" || answer === "yes";
+}
+
+export function assertSafeCreateTarget(root: string, cwd: string, force: boolean): void {
+  if (!force) {
+    return;
+  }
+
+  const target = path.resolve(root);
+  const workingDirectory = path.resolve(cwd);
+  const filesystemRoot = path.parse(target).root;
+  const homeDirectory = path.resolve(homedir());
+  const relativeWorkingDirectory = path.relative(target, workingDirectory);
+  const containsWorkingDirectory = relativeWorkingDirectory === ""
+    || (!relativeWorkingDirectory.startsWith("..") && !path.isAbsolute(relativeWorkingDirectory));
+
+  if (target === filesystemRoot || target === homeDirectory || containsWorkingDirectory) {
+    throw new Error(
+      `Refusing to use --force on protected directory "${target}". Choose a new child directory instead.`,
+    );
+  }
 }
 
 async function prepareTarget(root: string, force: boolean): Promise<void> {

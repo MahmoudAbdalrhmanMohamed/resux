@@ -1,19 +1,25 @@
-import { createHmac } from "node:crypto";
 import type { HalalCheckResult } from "../status.js";
+import { createIntegritySignature } from "../crypto/integrity.js";
 
-const SIGNING_SECRET = "resuxjs-halal-core-secret-signature-salt-2026";
+const REPORT_SIGNING_ENV = "RESUX_HALAL_REPORT_SIGNING_SECRET";
 
-export function generateReportSignature(report: Omit<HalalCheckResult, "signature">): string {
-  const contentToSign = [
-    report.status,
-    report.riskLevel,
-    report.categories.join(","),
-    report.confidence.toString(),
-    report.reasons.join("|"),
-    report.matchedFiles.join(",")
-  ].join("::");
+export function generateReportSignature(
+  report: Omit<HalalCheckResult, "signature">,
+  secret?: string,
+): string {
+  return createIntegritySignature(report, {
+    envName: REPORT_SIGNING_ENV,
+    secret,
+    requireSecret: true,
+  });
+}
 
-  return createHmac("sha256", SIGNING_SECRET)
-    .update(contentToSign)
-    .digest("hex");
+export function generateReportChecksum(
+  report: Omit<HalalCheckResult, "signature">,
+): string {
+  return createIntegritySignature(report, {
+    envName: REPORT_SIGNING_ENV,
+    secret: "",
+    requireSecret: false,
+  });
 }

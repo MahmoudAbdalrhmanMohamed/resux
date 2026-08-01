@@ -59,7 +59,9 @@ export async function enforceBuildGuard(appRoot: string, outDir: string): Promis
 
   const policy = await loadProjectPolicy(appRoot);
   const scanned = scanProject(appRoot);
-  const report = generateHalalReport(scanned, policy, outDir);
+  const report = generateHalalReport(scanned, policy, outDir, {
+    requireAuthenticated: true,
+  });
 
   const blockProductionBuild = policy.halalAI?.blockProductionBuild !== false;
   const isStrict = policy.halalAI?.strict === true;

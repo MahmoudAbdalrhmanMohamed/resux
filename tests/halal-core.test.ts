@@ -8,6 +8,9 @@ import { generateReviewSignature, type SignedReviewApproval } from "../src/halal
 import { writeFileSync, unlinkSync, existsSync } from "node:fs";
 import path from "node:path";
 
+const REPORT_SECRET = "resux-halal-core-report-secret-at-least-32-characters";
+const REVIEW_SECRET = "resux-halal-core-review-secret-at-least-32-characters";
+
 describe("resux-halal-core Unit & System Tests", () => {
   
   describe("Rule Engine Matches", () => {
@@ -181,17 +184,18 @@ describe("resux-halal-core Unit & System Tests", () => {
         createdDate: new Date().toISOString()
       };
 
-      const signature = generateReportSignature(report);
+      const signature = generateReportSignature(report, REPORT_SECRET);
       const signedReport = { ...report, signature };
+      const verificationOptions = { secret: REPORT_SECRET, requireAuthenticated: true };
 
-      expect(verifyReportSignature(signedReport)).toBe(true);
-      expect(isReportValid(signedReport).valid).toBe(true);
+      expect(verifyReportSignature(signedReport, verificationOptions)).toBe(true);
+      expect(isReportValid(signedReport, verificationOptions).valid).toBe(true);
 
       // Modify the status field (tamper attempt)
       const tamperedReport = { ...signedReport, status: "allowed" as any };
       tamperedReport.status = "blocked" as any;
-      expect(verifyReportSignature(tamperedReport)).toBe(false);
-      expect(isReportValid(tamperedReport).valid).toBe(false);
+      expect(verifyReportSignature(tamperedReport, verificationOptions)).toBe(false);
+      expect(isReportValid(tamperedReport, verificationOptions).valid).toBe(false);
     });
 
     it("should mark reports that are more than 30 days old as expired", () => {
@@ -208,10 +212,13 @@ describe("resux-halal-core Unit & System Tests", () => {
         createdDate: oldDate
       };
 
-      const signature = generateReportSignature(report);
+      const signature = generateReportSignature(report, REPORT_SECRET);
       const signedReport = { ...report, signature };
 
-      const check = isReportValid(signedReport);
+      const check = isReportValid(signedReport, {
+        secret: REPORT_SECRET,
+        requireAuthenticated: true,
+      });
       expect(check.valid).toBe(false);
       expect(check.reason).toContain("expired");
     });
@@ -231,14 +238,18 @@ describe("resux-halal-core Unit & System Tests", () => {
         evidenceHash: "hash-evidence"
       };
 
-      const signature = generateReviewSignature(approvalPayload);
+      const signature = generateReviewSignature(approvalPayload, REVIEW_SECRET);
       const signed = { ...approvalPayload, signature };
 
       // Write mock approval file to disk
       writeFileSync(approvalFile, JSON.stringify(signed, null, 2), "utf8");
 
       try {
-        const check = verifyReviewApproval(appRoot, "review_required");
+        const check = verifyReviewApproval(appRoot, "review_required", {
+          secret: REVIEW_SECRET,
+          projectName: approvalPayload.projectName,
+          evidenceHash: approvalPayload.evidenceHash,
+        });
         expect(check.approved).toBe(true);
       } finally {
         if (existsSync(approvalFile)) {

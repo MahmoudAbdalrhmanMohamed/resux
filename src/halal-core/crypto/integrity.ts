@@ -95,8 +95,7 @@ function normalizeJsonValue(value: unknown): unknown {
   }
   if (typeof value === "object") {
     const output: Record<string, unknown> = {};
-    const keys = Object.keys(value as Record<string, unknown>)
-      .sort((left, right) => left.localeCompare(right));
+    const keys = Object.keys(value as Record<string, unknown>).sort(compareCanonicalKeys);
     for (const key of keys) {
       const entry = (value as Record<string, unknown>)[key];
       if (entry !== undefined) {
@@ -106,6 +105,12 @@ function normalizeJsonValue(value: unknown): unknown {
     return output;
   }
   throw new TypeError(`Integrity payloads must be JSON-serializable; received ${typeof value}.`);
+}
+
+function compareCanonicalKeys(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }
 
 function constantTimeEqual(left: string, right: string): boolean {

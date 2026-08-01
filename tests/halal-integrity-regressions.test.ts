@@ -53,22 +53,40 @@ describe("halal integrity regressions", () => {
     const invalidDateReport = createReport({ createdDate: "not-a-date" });
     const invalidSigned = {
       ...invalidDateReport,
-      signature: generateReportSignature(invalidDateReport),
+      signature: generateReportSignature(invalidDateReport, REPORT_SECRET),
     };
-    expect(isReportValid(invalidSigned).reason).toContain("invalid");
+    expect(isReportValid(invalidSigned, { secret: REPORT_SECRET }).reason).toContain("invalid");
 
     const futureReport = createReport({
       createdDate: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
     });
     const futureSigned = {
       ...futureReport,
-      signature: generateReportSignature(futureReport),
+      signature: generateReportSignature(futureReport, REPORT_SECRET),
     };
-    expect(isReportValid(futureSigned).reason).toContain("future");
+    expect(isReportValid(futureSigned, { secret: REPORT_SECRET }).reason).toContain("future");
   });
 
   it("requires a private key for review approval signatures", () => {
     expect(() => generateReviewSignature(createApproval(), "")).toThrow(/must be configured/);
+  });
+
+  it("requires project and evidence binding for review approvals", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "resux-review-binding-"));
+    tempRoots.push(root);
+
+    const approval = createApproval();
+    await writeApproval(root, approval);
+
+    expect(verifyReviewApproval(root, "review_required", {
+      secret: REVIEW_SECRET,
+      evidenceHash: approval.evidenceHash,
+    }).reason).toContain("project name");
+
+    expect(verifyReviewApproval(root, "review_required", {
+      secret: REVIEW_SECRET,
+      projectName: approval.projectName,
+    }).reason).toContain("evidence hash");
   });
 
   it("rejects approvals for another project or with invalid expiry", async () => {
@@ -76,34 +94,21 @@ describe("halal integrity regressions", () => {
     tempRoots.push(root);
 
     const approval = createApproval();
-    const signed: SignedReviewApproval = {
-      ...approval,
-      signature: generateReviewSignature(approval, REVIEW_SECRET),
-    };
-    await writeFile(
-      path.join(root, "halal-review-approval.json"),
-      JSON.stringify(signed),
-      "utf8",
-    );
+    await writeApproval(root, approval);
 
     expect(verifyReviewApproval(root, "review_required", {
       secret: REVIEW_SECRET,
       projectName: "Different project",
+      evidenceHash: approval.evidenceHash,
     }).approved).toBe(false);
 
     const invalidExpiry = { ...approval, expires: "not-a-date" };
-    await writeFile(
-      path.join(root, "halal-review-approval.json"),
-      JSON.stringify({
-        ...invalidExpiry,
-        signature: generateReviewSignature(invalidExpiry, REVIEW_SECRET),
-      }),
-      "utf8",
-    );
+    await writeApproval(root, invalidExpiry);
 
     expect(verifyReviewApproval(root, "review_required", {
       secret: REVIEW_SECRET,
       projectName: approval.projectName,
+      evidenceHash: approval.evidenceHash,
     }).reason).toContain("invalid");
   });
 });
@@ -133,4 +138,18 @@ function createApproval(): Omit<SignedReviewApproval, "signature"> {
     expires: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     evidenceHash: "evidence-hash",
   };
+}
+
+async function writeApproval(
+  root: string,
+  approval: Omit<SignedReviewApproval, "signature">,
+): Promise<void> {
+  await writeFile(
+    path.join(root, "halal-review-approval.json"),
+    JSON.stringify({
+      ...approval,
+      signature: generateReviewSignature(approval, REVIEW_SECRET),
+    }),
+    "utf8",
+  );
 }

@@ -97,6 +97,9 @@ export function normalizeIconApiProvider(value: unknown): string {
   if (!raw) {
     return DEFAULT_ICON_API_PROVIDER;
   }
+  if (raw.startsWith("//")) {
+    return DEFAULT_ICON_API_PROVIDER;
+  }
   if (raw.startsWith("/")) {
     return raw;
   }

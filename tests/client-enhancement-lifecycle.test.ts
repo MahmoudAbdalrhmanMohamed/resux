@@ -3,10 +3,17 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Window } from "happy-dom";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { getClientRuntimeSource } from "resuxjs/runtime";
+import { installTestWindow } from "./helpers/install-test-window";
 
 let runtimeImportCounter = 0;
+let restoreGlobals: (() => void) | undefined;
+
+afterEach(() => {
+  restoreGlobals?.();
+  restoreGlobals = undefined;
+});
 
 function nextRuntimeImportQuery(): string {
   runtimeImportCounter += 1;
@@ -37,23 +44,6 @@ async function createEnhancementRuntime(name: string, setupBody: string) {
     runtimeImportUrl,
     manifestUrl: pathToFileURL(manifestFile).href,
   };
-}
-
-function installWindow(window: Window, manifestUrl: string, extras: Record<string, unknown> = {}): void {
-  (window as unknown as { __RESUX_CLIENT_ENHANCEMENTS_SRC__?: string }).__RESUX_CLIENT_ENHANCEMENTS_SRC__ = manifestUrl;
-  Object.assign(globalThis, {
-    document: window.document,
-    window,
-    location: window.location,
-    history: window.history,
-    __RESUX__: {
-      route: { path: "/", params: {}, query: {} },
-      scopes: {},
-      modules: {},
-    },
-    __RESUX_INSTALLED__: false,
-    ...extras,
-  });
 }
 
 async function waitForCondition(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
@@ -119,7 +109,7 @@ describe("client enhancement lifecycle performance", () => {
       }
     }
 
-    installWindow(window, runtime.manifestUrl, { IntersectionObserver: MockIntersectionObserver });
+    restoreGlobals = installTestWindow(window, runtime.manifestUrl, { IntersectionObserver: MockIntersectionObserver });
     const runtimeModule = await import(runtime.runtimeImportUrl);
 
     await waitForCondition(() => observed.size === 2);
@@ -147,7 +137,7 @@ describe("client enhancement lifecycle performance", () => {
     `;
     const target = window.document.getElementById("pending") as HTMLButtonElement;
 
-    installWindow(window, runtime.manifestUrl);
+    restoreGlobals = installTestWindow(window, runtime.manifestUrl);
     const runtimeModule = await import(runtime.runtimeImportUrl);
     await waitForCondition(() => target.getAttribute("data-rx-enhancement-bound") === "true");
 
@@ -167,7 +157,7 @@ describe("client enhancement lifecycle performance", () => {
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML = "<main id=\"app\"></main>";
 
-    installWindow(window, runtime.manifestUrl);
+    restoreGlobals = installTestWindow(window, runtime.manifestUrl);
     const runtimeModule = await import(runtime.runtimeImportUrl);
 
     const root = window.document.createElement("section");

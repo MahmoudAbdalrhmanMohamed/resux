@@ -62,6 +62,8 @@ describe("icon runtime regressions", () => {
 
   it("normalizes provider configuration into runtime config", () => {
     expect(normalizeIconApiProvider("javascript:alert(1)")).toBe("https://api.iconify.design");
+    expect(normalizeIconApiProvider("//icons.attacker.example/base"))
+      .toBe("https://api.iconify.design");
     expect(normalizeIconApiProvider("/internal/icons/")).toBe("/internal/icons");
     expect(normalizeIconApiProvider("https://icons.example.test/base////"))
       .toBe("https://icons.example.test/base");

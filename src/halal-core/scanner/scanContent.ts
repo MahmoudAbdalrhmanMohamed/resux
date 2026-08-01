@@ -7,6 +7,7 @@ import {
   readdirSync,
   realpathSync,
 } from "node:fs";
+import type { Stats } from "node:fs";
 import path from "node:path";
 
 const IGNORE_DIRS = new Set([
@@ -37,7 +38,7 @@ const SCAN_EXTENSIONS = new Set([
 const GLOB_TOKENS = ["*", "?", "[", "]", "{", "}", "!"];
 const MAX_SCANNED_FILE_BYTES = 100_000;
 
-interface ScanResult {
+export interface ScanResult {
   file: string;
   text: string;
 }
@@ -156,7 +157,7 @@ function scanEntry(realDirectory: string, file: string, context: ScanContext): v
   }
 }
 
-function readStats(file: string): ReturnType<typeof lstatSync> | null {
+function readStats(file: string): Stats | null {
   try {
     return lstatSync(file);
   } catch {
@@ -168,7 +169,7 @@ function shouldIgnoreEntry(file: string, relativePath: string, ignoredPaths: str
   return IGNORE_DIRS.has(file) || isIgnoredPath(relativePath, ignoredPaths);
 }
 
-function isScannableFile(stats: ReturnType<typeof lstatSync>, file: string): boolean {
+function isScannableFile(stats: Stats, file: string): boolean {
   return stats.isFile()
     && file !== "package-lock.json"
     && SCAN_EXTENSIONS.has(path.extname(file).toLowerCase());

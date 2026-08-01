@@ -56,6 +56,10 @@ describe("halal AI regressions", () => {
   it("redacts private keys, tokens, assignments, and URL credentials", () => {
     const source = [
       "password='super-secret'",
+      "DB_PASSWORD=database-secret",
+      "STRIPE_SECRET_KEY=stripe-secret-value",
+      "SESSION_TOKEN=session-token-value",
+      "AWS_ACCESS_TOKEN: aws-token-value",
       "Authorization: Bearer abc.def.ghi",
       "postgres://admin:database-password@example.com/app",
       "-----BEGIN PRIVATE KEY-----\nabc-123\n-----END PRIVATE KEY-----",
@@ -64,11 +68,21 @@ describe("halal AI regressions", () => {
 
     const redacted = redactSensitiveData(source);
 
-    expect(redacted).not.toContain("super-secret");
-    expect(redacted).not.toContain("abc.def.ghi");
-    expect(redacted).not.toContain("database-password");
-    expect(redacted).not.toContain("abc-123");
-    expect(redacted).not.toContain("sk_abcdefghijklmnopqrstuvwxyz123456");
+    for (const secret of [
+      "super-secret",
+      "database-secret",
+      "stripe-secret-value",
+      "session-token-value",
+      "aws-token-value",
+      "abc.def.ghi",
+      "database-password",
+      "abc-123",
+      "sk_abcdefghijklmnopqrstuvwxyz123456",
+    ]) {
+      expect(redacted).not.toContain(secret);
+    }
+    expect(redacted).toContain("DB_PASSWORD=[REDACTED]");
+    expect(redacted).toContain("SESSION_TOKEN=[REDACTED]");
     expect(redacted).toContain("[PRIVATE_KEY_REDACTED]");
   });
 });

@@ -52,6 +52,23 @@ describe("halal scanner regressions", () => {
     expect(results.map((entry) => entry.file)).toEqual(["included.ts"]);
   });
 
+  it("honors supported glob ignore patterns", async () => {
+    const projectRoot = await createTempRoot("resux-scan-glob-ignore-");
+    await mkdir(path.join(projectRoot, "docs", "nested"), { recursive: true });
+    await mkdir(path.join(projectRoot, "src"), { recursive: true });
+    await writeFile(path.join(projectRoot, "docs", "nested", "ignored.md"), "ignored\n", "utf8");
+    await writeFile(path.join(projectRoot, "src", "ignored.generated.ts"), "ignored\n", "utf8");
+    await writeFile(path.join(projectRoot, "src", "included.ts"), "included\n", "utf8");
+
+    const results = scanContentFiles(
+      projectRoot,
+      projectRoot,
+      new Set(["docs/**", "*.generated.ts"]),
+    );
+
+    expect(results.map((entry) => entry.file)).toEqual(["src/included.ts"]);
+  });
+
   it("reads only the bounded prefix of large source files", async () => {
     const projectRoot = await createTempRoot("resux-scan-large-");
     await writeFile(path.join(projectRoot, "large.ts"), "a".repeat(150_000), "utf8");

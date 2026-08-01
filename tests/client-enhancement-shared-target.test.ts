@@ -3,10 +3,17 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Window } from "happy-dom";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { getClientRuntimeSource } from "resuxjs/runtime";
+import { installTestWindow } from "./helpers/install-test-window";
 
 let importCounter = 0;
+let restoreGlobals: (() => void) | undefined;
+
+afterEach(() => {
+  restoreGlobals?.();
+  restoreGlobals = undefined;
+});
 
 function nextImportQuery(): string {
   importCounter += 1;
@@ -43,23 +50,6 @@ async function createRuntimeWithEnhancements() {
     runtimeImportUrl,
     manifestUrl: pathToFileURL(manifestFile).href,
   };
-}
-
-function installWindow(window: Window, manifestUrl: string, observer: unknown): void {
-  (window as unknown as { __RESUX_CLIENT_ENHANCEMENTS_SRC__?: string }).__RESUX_CLIENT_ENHANCEMENTS_SRC__ = manifestUrl;
-  Object.assign(globalThis, {
-    document: window.document,
-    window,
-    location: window.location,
-    history: window.history,
-    IntersectionObserver: observer,
-    __RESUX__: {
-      route: { path: "/", params: {}, query: {} },
-      scopes: {},
-      modules: {},
-    },
-    __RESUX_INSTALLED__: false,
-  });
 }
 
 async function waitForCondition(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
@@ -114,7 +104,7 @@ describe("shared visible enhancement targets", () => {
       }
     }
 
-    installWindow(window, runtime.manifestUrl, MockIntersectionObserver);
+    restoreGlobals = installTestWindow(window, runtime.manifestUrl, { IntersectionObserver: MockIntersectionObserver });
     const runtimeModule = await import(runtime.runtimeImportUrl);
 
     await runtimeModule.useClientEnhancement("first-visible", { target, trigger: "visible" });

@@ -1,0 +1,43 @@
+name: Sonar PR 4 diagnostics
+
+on:
+  push:
+    branches:
+      - audit/full-history-correctness
+
+permissions:
+  contents: read
+
+jobs:
+  issues:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch unresolved Sonar issues for PR 4
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(curl --fail --silent --show-error --get \
+            'https://sonarcloud.io/api/issues/search' \
+            --data-urlencode 'componentKeys=MahmoudAbdalrhmanMohamed_resux' \
+            --data-urlencode 'pullRequest=4' \
+            --data-urlencode 'resolved=false' \
+            --data-urlencode 'ps=500')"
+          RESPONSE="$response" python3 - <<'PY'
+          import json
+          import os
+
+          payload = json.loads(os.environ['RESPONSE'])
+          print(f"total={payload.get('total')}")
+          for issue in payload.get('issues', []):
+              print(json.dumps({
+                  'key': issue.get('key'),
+                  'rule': issue.get('rule'),
+                  'type': issue.get('type'),
+                  'severity': issue.get('severity'),
+                  'impacts': issue.get('impacts'),
+                  'component': issue.get('component'),
+                  'line': issue.get('line'),
+                  'message': issue.get('message'),
+                  'status': issue.get('status'),
+              }, sort_keys=True))
+          PY

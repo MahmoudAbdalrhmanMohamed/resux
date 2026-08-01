@@ -2,7 +2,10 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { generateReportSignature } from "../src/halal-core/report/signReport.js";
+import {
+  generateReportChecksum,
+  generateReportSignature,
+} from "../src/halal-core/report/signReport.js";
 import { checkOnDiskReportSignature } from "../src/halal-core/tamper/verifyReportSignature.js";
 
 const tempRoots: string[] = [];
@@ -20,11 +23,15 @@ describe("production report authentication", () => {
     const report = createReport();
     await writeReport(root, {
       ...report,
-      signature: generateReportSignature(report, ""),
+      signature: generateReportChecksum(report),
     });
 
     expect(checkOnDiskReportSignature(root).valid).toBe(true);
     expect(checkOnDiskReportSignature(root, { requireAuthenticated: true }).valid).toBe(false);
+  });
+
+  it("requires a private key for report signatures", () => {
+    expect(() => generateReportSignature(createReport(), "")).toThrow(/must be configured/);
   });
 
   it("accepts a report authenticated with the configured private key", async () => {

@@ -64,6 +64,14 @@ jobs:
           registry-url: "https://registry.npmjs.org/"
           package-manager-cache: false
 
+      - name: Setup modern npm for trusted publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global npm@11
+          node --version
+          npm --version
+
       - name: Validate release metadata
         shell: bash
         env:

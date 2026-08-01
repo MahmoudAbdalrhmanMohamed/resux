@@ -66,8 +66,29 @@ export function validateAiResponse(responseStr: string): HalalCheckResult {
 
 function extractJson(input: string): string {
   const source = String(input || "").trim();
-  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(source);
-  return (fenced?.[1] ?? source).trim();
+  if (!source.startsWith("```")) {
+    return source;
+  }
+
+  let contentStart = 3;
+  if (source.slice(contentStart, contentStart + 4).toLowerCase() === "json") {
+    contentStart += 4;
+  }
+  while (contentStart < source.length && isWhitespace(source[contentStart])) {
+    contentStart += 1;
+  }
+
+  const closingFence = source.indexOf("```", contentStart);
+  return closingFence < 0
+    ? source
+    : source.slice(contentStart, closingFence).trim();
+}
+
+function isWhitespace(value: string): boolean {
+  return value === " "
+    || value === "\t"
+    || value === "\r"
+    || value === "\n";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

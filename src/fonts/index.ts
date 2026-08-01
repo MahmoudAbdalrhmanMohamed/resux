@@ -33,7 +33,8 @@ function normalizeFamily(input: ResuxFontFamilyInput): string | null {
   if (!weights.length) {
     return encodedName;
   }
-  return `${encodedName}:wght@${[...new Set(weights)].join(";")}`;
+  const normalizedWeights = [...new Set(weights)].sort(compareNormalizedWeights);
+  return `${encodedName}:wght@${normalizedWeights.join(";")}`;
 }
 
 function normalizeWeight(value: number | string): string | null {
@@ -48,6 +49,27 @@ function normalizeWeight(value: number | string): string | null {
     return null;
   }
   return end === undefined ? String(start) : `${start}..${end}`;
+}
+
+function compareNormalizedWeights(left: string, right: string): number {
+  const leftRange = readWeightRange(left);
+  const rightRange = readWeightRange(right);
+  return leftRange.start - rightRange.start
+    || leftRange.end - rightRange.end
+    || compareCodeUnits(left, right);
+}
+
+function readWeightRange(value: string): { start: number; end: number } {
+  const separator = value.indexOf("..");
+  const start = Number(separator < 0 ? value : value.slice(0, separator));
+  const end = separator < 0 ? start : Number(value.slice(separator + 2));
+  return { start, end };
+}
+
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }
 
 function normalizeDisplay(value: unknown): string {

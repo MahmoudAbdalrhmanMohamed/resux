@@ -35,8 +35,9 @@ export async function classifyProject(
     return classificationFailure(error, "ai_configuration_error");
   }
 
+  const timeoutMs = resolveAiTimeoutMs();
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), resolveAiTimeoutMs());
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(endpointUrl, {
@@ -71,7 +72,7 @@ export async function classifyProject(
   } catch (error) {
     if (controller.signal.aborted) {
       return classificationFailure(
-        new Error(`AI request exceeded ${resolveAiTimeoutMs()}ms.`),
+        new Error(`AI request exceeded ${timeoutMs}ms.`),
         "ai_timeout",
       );
     }

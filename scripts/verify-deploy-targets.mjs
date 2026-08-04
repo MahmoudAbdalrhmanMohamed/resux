@@ -8,6 +8,7 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const cliPath = path.join(rootDir, "dist", "cli.js");
 const fixtureSigningSecret = "resux-deploy-verification-secret-not-for-production-use";
 const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
+const frameworkPackage = JSON.parse(await readFile(path.join(rootDir, "package.json"), "utf8"));
 
 const targetAssertions = new Map([
   ["node", assertNodeOutput],
@@ -75,6 +76,7 @@ async function createFixtureApp(appRoot, deployTarget) {
       private: true,
       type: "module",
       dependencies: {
+        ...frameworkPackage.dependencies,
         resuxjs: `file:${rootDir.replaceAll("\\", "/")}`,
       },
     }, null, 2)}\n`,

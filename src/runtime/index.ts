@@ -571,6 +571,7 @@ export interface SerializedScope {
   moduleId: string;
   props?: Record<string, JsonValue>;
   state: Record<string, JsonValue>;
+  globalStateKeys?: string[];
   asyncData: Record<string, SerializedAsyncData>;
 }
 
@@ -634,6 +635,7 @@ interface ScopeRecord {
   moduleId: string;
   props: Record<string, unknown>;
   stateRefs: Record<string, Ref<unknown>>;
+  globalStateKeys: Set<string>;
   asyncDataRefs: Record<string, AsyncDataResource<unknown>>;
 }
 
@@ -2411,6 +2413,7 @@ class ResuxRenderer {
     this.collectComponentStyles(definition);
     const scopeId = `s${this.nextScopeId++}`;
     const stateRefs: Record<string, Ref<unknown>> = {};
+    const globalStateKeys = new Set<string>();
     const asyncDataRefs: Record<string, AsyncDataResource<unknown>> = {};
     const setupContext = createServerSetupContext(
       this.route,
@@ -2420,7 +2423,8 @@ class ResuxRenderer {
       this.headEntries,
       this.resuxApp,
       this.runtimeConfig,
-      this.globalStateRefs
+      this.globalStateRefs,
+      globalStateKeys
     );
     const scope = await withActiveResuxApp(this.resuxApp, () => definition.script(setupContext));
 
@@ -2429,6 +2433,7 @@ class ResuxRenderer {
       moduleId: definition.id,
       props,
       stateRefs,
+      globalStateKeys,
       asyncDataRefs
     };
 
@@ -2467,6 +2472,7 @@ class ResuxRenderer {
         moduleId: scope.moduleId,
         props: serializeProps(scope.props),
         state: serializeRefs(scope.stateRefs),
+        globalStateKeys: [...scope.globalStateKeys],
         asyncData: serializeAsyncData(scope.asyncDataRefs)
       };
     }
@@ -2489,7 +2495,8 @@ export function createServerSetupContext(
   headEntries: HeadEntry[],
   resuxApp: ResuxAppLike,
   runtimeConfig: RuntimeConfig,
-  globalStateRefs: Record<string, Ref<unknown>> = {}
+  globalStateRefs: Record<string, Ref<unknown>> = {},
+  globalStateKeys: Set<string> = new Set()
 ): SetupContext {
   const apiURL = (url: string): string => resolveServerApiURL(url, route, runtimeConfig);
   const fetchJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
@@ -2534,6 +2541,7 @@ export function createServerSetupContext(
       if (!normalizedKey) {
         throw new Error("useGlobalState(key) requires a non-empty key.");
       }
+      globalStateKeys.add(normalizedKey);
       if (globalStateRefs[normalizedKey]) {
         return globalStateRefs[normalizedKey] as Ref<T>;
       }
@@ -6250,6 +6258,7 @@ export class AsyncResuxRenderer {
     this.collectComponentStyles(definition);
     const scopeId = `s${this.nextScopeId++}`;
     const stateRefs: Record<string, Ref<unknown>> = {};
+    const globalStateKeys = new Set<string>();
     const asyncDataRefs: Record<string, AsyncDataResource<unknown>> = {};
     const setupContext = createServerSetupContext(
       this.route,
@@ -6259,7 +6268,8 @@ export class AsyncResuxRenderer {
       this.headEntries,
       this.resuxApp,
       this.runtimeConfig,
-      this.globalStateRefs
+      this.globalStateRefs,
+      globalStateKeys
     );
     const scope = await withActiveResuxApp(this.resuxApp, () => definition.script(setupContext));
 
@@ -6268,6 +6278,7 @@ export class AsyncResuxRenderer {
       moduleId: definition.id,
       props,
       stateRefs,
+      globalStateKeys,
       asyncDataRefs
     };
 
@@ -6329,6 +6340,7 @@ export class AsyncResuxRenderer {
         moduleId: scope.moduleId,
         props: serializeProps(scope.props),
         state: serializeRefs(scope.stateRefs),
+        globalStateKeys: [...scope.globalStateKeys],
         asyncData: serializeAsyncData(scope.asyncDataRefs)
       };
     }
@@ -7417,6 +7429,7 @@ const clientPluginIds = new Set();
 const clientMiddlewareById = new Map();
 const clientProvides = globalThis.__RESUX_PROVIDES__ ||= {};
 const globalStateRefs = globalThis.__RESUX_GLOBAL_STATE_REFS__ ||= new Map();
+const dirtyGlobalStateKeys = new Set();
 let globalStateRefreshQueued = false;
 const RESUX_LAZY_PLACEHOLDER_SRC = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 const RESUX_DEFAULT_PLACEHOLDER_SRC = "/__resux/resux-placeholder.svg";
@@ -9594,8 +9607,8 @@ function useClientGlobalState(key, factory) {
         currentPayload.globalState ||= {};
         currentPayload.globalState[normalizedKey] = stateRef.value;
       }
-      queueGlobalStateRefresh();
-    }, { flush: "post" });
+      queueGlobalStateRefresh(normalizedKey);
+    }, { flush: "post", deep: true });
 
     globalStateRefs.set(normalizedKey, stateRef);
   }
@@ -9623,24 +9636,32 @@ function mergeClientGlobalState(payload) {
   return payload;
 }
 
-function queueGlobalStateRefresh() {
+function queueGlobalStateRefresh(key) {
+  dirtyGlobalStateKeys.add(key);
   if (globalStateRefreshQueued) {
     return;
   }
   globalStateRefreshQueued = true;
   queueMicrotask(() => {
     globalStateRefreshQueued = false;
-    void refreshAllScopesForGlobalState();
+    const changedKeys = new Set(dirtyGlobalStateKeys);
+    dirtyGlobalStateKeys.clear();
+    void refreshScopesForGlobalState(changedKeys);
   });
 }
 
-async function refreshAllScopesForGlobalState() {
+async function refreshScopesForGlobalState(changedKeys) {
   const payload = globalThis.__RESUX__;
-  if (!payload || !payload.scopes || !payload.modules) {
+  if (!payload || !payload.scopes || !payload.modules || changedKeys.size === 0) {
     return;
   }
 
-  await Promise.all(Object.entries(payload.scopes).map(async ([scopeId, serializedScope]) => {
+  const affectedScopes = Object.entries(payload.scopes).filter(([, serializedScope]) => {
+    const keys = Array.isArray(serializedScope.globalStateKeys) ? serializedScope.globalStateKeys : [];
+    return keys.some((key) => changedKeys.has(key));
+  });
+
+  await Promise.all(affectedScopes.map(async ([scopeId, serializedScope]) => {
     const component = await importComponent(serializedScope.moduleId, payload.modules, devImportRevision).catch(() => null);
     if (!component) {
       return;
@@ -9665,6 +9686,7 @@ export function createClientComponent(definition) {
   return {
     async createScope(serializedScope, route) {
       const stateRefs = {};
+      const globalStateKeys = new Set(Array.isArray(serializedScope.globalStateKeys) ? serializedScope.globalStateKeys : []);
       const asyncDataRefs = {};
       const pendingCompletions = [];
       const mountedCallbacks = [];
@@ -9692,6 +9714,10 @@ export function createClientComponent(definition) {
           return stateRefs[key];
         },
         useGlobalState(key, factory) {
+          const normalizedKey = String(key || "").trim();
+          if (normalizedKey) {
+            globalStateKeys.add(normalizedKey);
+          }
           return useClientGlobalState(key, factory);
         },
         useAsyncData(key, handler) {
@@ -9829,8 +9855,9 @@ export function createClientComponent(definition) {
         $device: useDevice()
       };
       const scope = await definition.script(setupContext);
+      serializedScope.globalStateKeys = [...globalStateKeys];
       await Promise.allSettled(mountedCallbacks.map((callback) => callback()));
-      return { scope, props, stateRefs, asyncDataRefs, pendingCompletions };
+      return { scope, props, stateRefs, globalStateKeys, asyncDataRefs, pendingCompletions };
     },
     async run(scopeRecord, handlerName, event) {
       const handler = scopeRecord.scope[handlerName];

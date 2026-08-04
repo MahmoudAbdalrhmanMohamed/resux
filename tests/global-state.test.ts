@@ -63,6 +63,7 @@ describe("global state", () => {
 
     expect(result.payload.globalState).toEqual({ session: { visits: 1 } });
     expect(result.html.match(/>1<\/span>/g)?.length).toBe(2);
+    expect(Object.values(result.payload.scopes).filter((scope) => scope.globalStateKeys?.includes("session"))).toHaveLength(2);
     expect(Object.values(result.payload.scopes).every((scope) => Object.keys(scope.state).length === 0)).toBe(true);
   });
 
@@ -71,7 +72,10 @@ describe("global state", () => {
 
     expect(source).toContain("__RESUX_GLOBAL_STATE_REFS__");
     expect(source).toContain("function useClientGlobalState");
-    expect(source).toContain("async function refreshAllScopesForGlobalState");
+    expect(source).toContain("const dirtyGlobalStateKeys = new Set()");
+    expect(source).toContain("async function refreshScopesForGlobalState");
+    expect(source).toContain('deep: true');
+    expect(source).toContain("serializedScope.globalStateKeys");
     expect(source).toContain("useGlobalState(key, factory)");
     expect(source).toContain("mergeClientGlobalState");
   });

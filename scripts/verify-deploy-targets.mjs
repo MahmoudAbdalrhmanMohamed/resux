@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = path.join(rootDir, "dist", "cli.js");
 const fixtureSigningSecret = "resux-deploy-verification-secret-not-for-production-use";
+const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
 
 const targetAssertions = new Map([
   ["node", assertNodeOutput],
@@ -28,17 +29,13 @@ async function exists(file) {
   }
 }
 
-async function runBuild(appRoot, deployTarget) {
-  console.log(`[verify:deploy-targets] building ${deployTarget}`);
-  await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cliPath, "build", "."], {
-      cwd: appRoot,
+function runProcess(command, args, options) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
       stdio: "inherit",
-      env: {
-        ...process.env,
-        NITRO_PRESET: "",
-        RESUX_HALAL_REPORT_SIGNING_SECRET: fixtureSigningSecret,
-      },
+      env: options.env ?? process.env,
+      shell: process.platform === "win32",
     });
 
     child.on("error", reject);
@@ -47,7 +44,7 @@ async function runBuild(appRoot, deployTarget) {
         resolve();
       } else {
         reject(new Error(
-          `${deployTarget} build exited with code ${code ?? "unknown"}`
+          `${options.label} exited with code ${code ?? "unknown"}`
           + (signal ? ` and signal ${signal}` : ""),
         ));
       }
@@ -55,9 +52,34 @@ async function runBuild(appRoot, deployTarget) {
   });
 }
 
+async function runBuild(appRoot, deployTarget) {
+  console.log(`[verify:deploy-targets] building ${deployTarget}`);
+  await runProcess(process.execPath, [cliPath, "build", "."], {
+    cwd: appRoot,
+    label: `${deployTarget} build`,
+    env: {
+      ...process.env,
+      NITRO_PRESET: "",
+      RESUX_HALAL_REPORT_SIGNING_SECRET: fixtureSigningSecret,
+    },
+  });
+}
+
 async function createFixtureApp(appRoot, deployTarget) {
   await mkdir(path.join(appRoot, "pages", "docs"), { recursive: true });
 
+  await writeFile(
+    path.join(appRoot, "package.json"),
+    `${JSON.stringify({
+      name: `resux-deploy-${deployTarget}`,
+      private: true,
+      type: "module",
+      dependencies: {
+        resuxjs: `file:${rootDir.replaceAll("\\", "/")}`,
+      },
+    }, null, 2)}\n`,
+    "utf8",
+  );
   await writeFile(
     path.join(appRoot, "pages", "index.vue"),
     "<template><main>Home</main></template>",
@@ -119,7 +141,12 @@ export default fromNodeMiddleware((req, res, next) => {
 `,
     "utf8",
   );
-  await symlink(path.join(rootDir, "node_modules"), path.join(appRoot, "node_modules"), "junction");
+
+  await runProcess(
+    npmExecutable,
+    ["install", "--no-audit", "--no-fund", "--package-lock=false"],
+    { cwd: appRoot, label: `${deployTarget} fixture install` },
+  );
 }
 
 async function assertNodeOutput(appRoot) {

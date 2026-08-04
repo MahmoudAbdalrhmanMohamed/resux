@@ -1,19 +1,18 @@
 {
   "name": "resuxjs",
   "version": "0.3.0",
-  "private": false,
-  "description": "Experimental resumable web framework with Vue-like SFC routing and a custom SSR/runtime pipeline.",
-  "type": "module",
-  "license": "MIT",
+  "description": "An experimental full-stack Vue framework with a custom server-rendered resumable runtime, file-based routing, server APIs, composables, modules, and deployment presets.",
   "keywords": [
     "resux",
-    "resumable",
+    "vue",
     "framework",
     "ssr",
-    "vite",
-    "vue",
-    "routing"
+    "resumability",
+    "full-stack",
+    "nitro",
+    "vite"
   ],
+  "homepage": "https://resuxjs.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/MahmoudAbdalrhmanMohamed/resux.git"
@@ -21,22 +20,26 @@
   "bugs": {
     "url": "https://github.com/MahmoudAbdalrhmanMohamed/resux/issues"
   },
-  "homepage": "https://github.com/MahmoudAbdalrhmanMohamed/resux#readme",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
   "files": [
     "dist",
     "templates",
-    "README.md"
+    "LICENSE",
+    "README.md",
+    "SECURITY.md",
+    "CHANGELOG.md"
   ],
   "bin": {
-    "resuxjs": "dist/bin.js",
     "resux": "dist/bin.js",
+    "resuxjs": "dist/bin.js",
     "create-resux": "dist/create-bin.js",
     "create-resuxjs": "dist/create-bin.js"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -48,10 +51,10 @@
       "import": "./dist/node.js",
       "default": "./dist/node.js"
     },
-    "./globals": {
-      "types": "./dist/globals.d.ts",
-      "import": "./dist/globals.js",
-      "default": "./dist/globals.js"
+    "./create": {
+      "types": "./dist/create.d.ts",
+      "import": "./dist/create.js",
+      "default": "./dist/create.js"
     },
     "./runtime": {
       "types": "./dist/runtime/index.d.ts",
@@ -68,35 +71,35 @@
       "import": "./dist/compiler/index.js",
       "default": "./dist/compiler/index.js"
     },
-    "./create": {
-      "types": "./dist/create.d.ts",
-      "import": "./dist/create.js",
-      "default": "./dist/create.js"
+    "./deploy": {
+      "types": "./dist/deploy/index.d.ts",
+      "import": "./dist/deploy/index.js",
+      "default": "./dist/deploy/index.js"
     },
     "./i18n": {
-      "types": "./dist/i18n/index.d.ts",
-      "import": "./dist/i18n/index.js",
-      "default": "./dist/i18n/index.js"
+      "types": "./dist/i18n.d.ts",
+      "import": "./dist/i18n.js",
+      "default": "./dist/i18n.js"
     },
-    "./ui": {
-      "types": "./dist/ui/index.d.ts",
-      "import": "./dist/ui/index.js",
-      "default": "./dist/ui/index.js"
+    "./media": {
+      "types": "./dist/media.d.ts",
+      "import": "./dist/media.js",
+      "default": "./dist/media.js"
     },
-    "./icons": {
-      "types": "./dist/icons/index.d.ts",
-      "import": "./dist/icons/index.js",
-      "default": "./dist/icons/index.js"
+    "./seo": {
+      "types": "./dist/seo.d.ts",
+      "import": "./dist/seo.js",
+      "default": "./dist/seo.js"
     },
-    "./fonts": {
-      "types": "./dist/fonts/index.d.ts",
-      "import": "./dist/fonts/index.js",
-      "default": "./dist/fonts/index.js"
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.js",
+      "default": "./dist/config.js"
     },
-    "./kit": {
-      "types": "./dist/kit/index.d.ts",
-      "import": "./dist/kit/index.js",
-      "default": "./dist/kit/index.js"
+    "./module": {
+      "types": "./dist/module.d.ts",
+      "import": "./dist/module.js",
+      "default": "./dist/module.js"
     },
     "./core": {
       "types": "./dist/core/index.d.ts",
@@ -107,7 +110,7 @@
   },
   "scripts": {
     "typecheck": "tsc -b",
-    "build": "npm run typecheck",
+    "build": "npm run typecheck && node scripts/finalize-build.mjs",
     "test": "vitest run",
     "test:types": "npm run typecheck",
     "test:e2e": "vitest run tests/runtime.test.ts",

@@ -20,13 +20,15 @@ const SENSITIVE_ASSIGNMENT_FRAGMENTS = [
 export function redactSensitiveData(text: string): string {
   let redacted = String(text || "");
 
+  // Redact URL user information before email matching can consume the
+  // password-and-host portion and leave a username or token behind.
+  redacted = redacted.replace(URL_TOKEN_PATTERN, redactUrlCredentials);
   redacted = redacted.replace(EMAIL_PATTERN, "[EMAIL_REDACTED]");
   redacted = redacted.replace(PRIVATE_KEY_PATTERN, "[PRIVATE_KEY_REDACTED]");
   redacted = redacted.replace(BEARER_TOKEN_PATTERN, "Bearer [TOKEN_REDACTED]");
   redacted = redacted.replace(JWT_PATTERN, "[JWT_REDACTED]");
   redacted = redactAssignments(redacted);
   redacted = redacted.replace(API_KEY_PATTERN, "[API_KEY_REDACTED]");
-  redacted = redacted.replace(URL_TOKEN_PATTERN, redactUrlCredentials);
 
   return redacted;
 }
@@ -74,12 +76,9 @@ function findAssignmentSeparator(prefix: string): number {
 function findAssignmentValueEnd(text: string, start: number): number {
   const quote = text[start];
   if (quote === '"' || quote === "'") {
-    const closingQuote = text.indexOf(quote, start + 1);
     const lineEnd = findLineEnd(text, start + 1);
-    if (closingQuote >= 0 && closingQuote < lineEnd) {
-      return closingQuote + 1;
-    }
-    return lineEnd;
+    const closingQuote = findClosingQuote(text, start, quote, lineEnd);
+    return closingQuote >= 0 ? closingQuote + 1 : lineEnd;
   }
 
   let end = start;
@@ -87,6 +86,23 @@ function findAssignmentValueEnd(text: string, start: number): number {
     end += 1;
   }
   return end;
+}
+
+function findClosingQuote(text: string, start: number, quote: string, lineEnd: number): number {
+  for (let index = start + 1; index < lineEnd; index += 1) {
+    if (text[index] === quote && !isEscaped(text, index)) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function isEscaped(text: string, index: number): boolean {
+  let slashCount = 0;
+  for (let cursor = index - 1; cursor >= 0 && text[cursor] === "\\"; cursor -= 1) {
+    slashCount += 1;
+  }
+  return slashCount % 2 === 1;
 }
 
 function findLineEnd(text: string, start: number): number {
@@ -116,12 +132,11 @@ function redactUrlCredentials(candidate: string): string {
   const authorityEnd = findAuthorityEnd(candidate, authorityStart);
   const authority = candidate.slice(authorityStart, authorityEnd);
   const at = authority.lastIndexOf("@");
-  const colon = authority.indexOf(":");
-  if (colon < 0 || at <= colon + 1) {
+  if (at <= 0) {
     return candidate;
   }
 
-  return candidate.slice(0, authorityStart + colon + 1)
+  return candidate.slice(0, authorityStart)
     + "[REDACTED]"
     + candidate.slice(authorityStart + at);
 }

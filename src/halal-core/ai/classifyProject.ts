@@ -102,7 +102,7 @@ export function resolveAiTimeoutMs(value = process.env.RESUX_AI_TIMEOUT_MS): num
   if (!Number.isFinite(parsed) || parsed <= 0) {
     return DEFAULT_AI_TIMEOUT_MS;
   }
-  return Math.min(Math.floor(parsed), MAX_AI_TIMEOUT_MS);
+  return Math.min(Math.max(1, Math.floor(parsed)), MAX_AI_TIMEOUT_MS);
 }
 
 function classificationFailure(error: unknown, category: string): HalalCheckResult {

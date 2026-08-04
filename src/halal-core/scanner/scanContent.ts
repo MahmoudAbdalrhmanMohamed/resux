@@ -46,6 +46,7 @@ export interface ScanResult {
 interface IgnoreRule {
   pattern: string;
   negated: boolean;
+  anchored: boolean;
   hasSlash: boolean;
   hasGlob: boolean;
 }
@@ -140,12 +141,11 @@ function readDirectory(directory: string): string[] | null {
 function scanEntry(realDirectory: string, file: string, context: ScanContext): void {
   const fullPath = path.join(realDirectory, file);
   const relativePath = normalizeRelativePath(path.relative(context.realRoot, fullPath));
-  if (shouldIgnoreEntry(file, relativePath, context.ignoreRules)) {
-    return;
-  }
-
   const stats = readStats(fullPath);
   if (!stats || stats.isSymbolicLink()) {
+    return;
+  }
+  if (shouldIgnoreEntry(file, relativePath, context.ignoreRules, stats.isDirectory())) {
     return;
   }
   if (stats.isDirectory()) {
@@ -170,8 +170,23 @@ function readStats(file: string): Stats | null {
   }
 }
 
-function shouldIgnoreEntry(file: string, relativePath: string, ignoreRules: IgnoreRule[]): boolean {
-  return IGNORE_DIRS.has(file) || isIgnoredPath(relativePath, ignoreRules);
+function shouldIgnoreEntry(
+  file: string,
+  relativePath: string,
+  ignoreRules: IgnoreRule[],
+  isDirectory: boolean,
+): boolean {
+  if (IGNORE_DIRS.has(file)) {
+    return true;
+  }
+
+  if (!isIgnoredPath(relativePath, ignoreRules)) {
+    return false;
+  }
+
+  // A later negated rule may re-include a descendant. Continue traversing
+  // ignored user directories in that case, while still filtering each entry.
+  return !isDirectory || !ignoreRules.some((rule) => rule.negated);
 }
 
 function isScannableFile(stats: Stats, file: string): boolean {
@@ -215,7 +230,9 @@ function createIgnoreRules(ignoredPaths: Iterable<string>): IgnoreRule[] {
     }
 
     const negated = trimmed.startsWith("!");
-    const normalized = normalizeRelativePath(negated ? trimmed.slice(1) : trimmed);
+    const rawPattern = negated ? trimmed.slice(1) : trimmed;
+    const anchored = rawPattern.startsWith("/");
+    const normalized = normalizeRelativePath(rawPattern);
     if (!normalized) {
       continue;
     }
@@ -230,6 +247,7 @@ function createIgnoreRules(ignoredPaths: Iterable<string>): IgnoreRule[] {
     rules.push({
       pattern: normalized,
       negated,
+      anchored,
       hasSlash: normalized.includes("/"),
       hasGlob: !unsupportedToken && (normalized.includes("*") || normalized.includes("?")),
     });
@@ -267,18 +285,26 @@ function isIgnoredPath(relativePath: string, rules: IgnoreRule[]): boolean {
 function matchesIgnoreRule(relativePath: string, rule: IgnoreRule): boolean {
   const pathSegments = relativePath.split("/").filter(Boolean);
   if (!rule.hasGlob) {
-    if (rule.hasSlash) {
+    if (rule.anchored || rule.hasSlash) {
       return relativePath === rule.pattern || relativePath.startsWith(`${rule.pattern}/`);
     }
     return pathSegments.includes(rule.pattern);
   }
 
   if (!rule.hasSlash) {
+    if (rule.anchored) {
+      return pathSegments.length > 0 && matchGlobSegment(pathSegments[0], rule.pattern);
+    }
     return pathSegments.some((segment) => matchGlobSegment(segment, rule.pattern));
   }
 
   const patternSegments = rule.pattern.split("/").filter(Boolean);
-  return matchGlobSegments(pathSegments, patternSegments);
+  for (let length = 1; length <= pathSegments.length; length += 1) {
+    if (matchGlobSegments(pathSegments.slice(0, length), patternSegments)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function matchGlobSegments(pathSegments: string[], patternSegments: string[]): boolean {

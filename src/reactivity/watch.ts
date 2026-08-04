@@ -34,6 +34,7 @@ function doWatch<T = unknown>(
     || (callback !== null && containsReactiveSource(source));
 
   let cleanup: (() => void) | undefined;
+  let stopped = false;
   const onCleanup: CleanupRegistrar = (fn) => {
     cleanup = fn;
   };
@@ -57,6 +58,10 @@ function doWatch<T = unknown>(
   let oldValue: unknown = INITIAL_WATCH_VALUE;
 
   const job = () => {
+    if (stopped) {
+      return;
+    }
+
     if (callback === null) {
       runner();
       return;
@@ -93,6 +98,10 @@ function doWatch<T = unknown>(
   }
 
   return () => {
+    if (stopped) {
+      return;
+    }
+    stopped = true;
     cleanup?.();
     cleanup = undefined;
     stop(runner);

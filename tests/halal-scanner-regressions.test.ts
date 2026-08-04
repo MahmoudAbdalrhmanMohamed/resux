@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { scanContentFiles } from "../src/halal-core/scanner/scanContent.js";
+import { getGitignoredPaths } from "../src/halal-core/scanner/scanProject.js";
 
 const tempRoots: string[] = [];
 
@@ -67,6 +68,32 @@ describe("halal scanner regressions", () => {
     );
 
     expect(results.map((entry) => entry.file)).toEqual(["src/included.ts"]);
+  });
+
+  it("honors root-anchored and negated gitignore rules", async () => {
+    const projectRoot = await createTempRoot("resux-scan-gitignore-");
+    await mkdir(path.join(projectRoot, "ignored"), { recursive: true });
+    await mkdir(path.join(projectRoot, "nested"), { recursive: true });
+    await writeFile(
+      path.join(projectRoot, ".gitignore"),
+      ["/root-only.ts", "ignored/**", "!ignored/keep.ts"].join("\n"),
+      "utf8",
+    );
+    await writeFile(path.join(projectRoot, "root-only.ts"), "ignored at root\n", "utf8");
+    await writeFile(path.join(projectRoot, "nested", "root-only.ts"), "included when nested\n", "utf8");
+    await writeFile(path.join(projectRoot, "ignored", "drop.ts"), "ignored\n", "utf8");
+    await writeFile(path.join(projectRoot, "ignored", "keep.ts"), "included\n", "utf8");
+
+    const results = scanContentFiles(
+      projectRoot,
+      projectRoot,
+      getGitignoredPaths(projectRoot),
+    );
+
+    expect(results.map((entry) => entry.file)).toEqual([
+      "ignored/keep.ts",
+      "nested/root-only.ts",
+    ]);
   });
 
   it("reads only the bounded prefix of large source files", async () => {

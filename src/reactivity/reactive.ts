@@ -1,5 +1,5 @@
-import { track, trigger } from "./effect.js";
-import { isObject, ReactiveFlags } from "./utils.js";
+import { ITERATE_KEY, track, trigger } from "./effect.js";
+import { hasOwn, isObject, ReactiveFlags } from "./utils.js";
 
 const reactiveMap = new WeakMap<object, object>();
 const readonlyMap = new WeakMap<object, object>();
@@ -22,28 +22,41 @@ const mutableHandlers: ProxyHandler<object> = {
     return isObject(result) ? reactive(result) : result;
   },
 
+  has(target, key) {
+    const result = Reflect.has(target, key);
+    track(target, key);
+    return result;
+  },
+
+  ownKeys(target) {
+    track(target, ITERATE_KEY);
+    return Reflect.ownKeys(target);
+  },
+
   set(target, key, value, receiver) {
-    const oldValue = Reflect.get(target, key, receiver);
     const oldLength = Array.isArray(target) ? target.length : 0;
-    const success = Reflect.set(target, key, value, receiver);
-    if (success && !Object.is(value, oldValue)) {
-      trigger(target, key);
-      if (
-        Array.isArray(target)
-        && isArrayIndex(key)
-        && Number(key) >= oldLength
-      ) {
-        trigger(target, "length");
-      }
+    const hadKey = Array.isArray(target) && isArrayIndex(key)
+      ? Number(key) < oldLength
+      : hasOwn(target, key);
+    const oldValue = toRaw(Reflect.get(target, key, receiver));
+    const rawValue = toRaw(value);
+    const success = Reflect.set(target, key, rawValue, receiver);
+
+    if (
+      success
+      && target === toRaw(receiver)
+      && !Object.is(rawValue, oldValue)
+    ) {
+      trigger(target, key, hadKey ? "set" : "add", rawValue);
     }
     return success;
   },
 
   deleteProperty(target, key) {
-    const hadKey = Reflect.has(target, key);
+    const hadKey = hasOwn(target, key);
     const success = Reflect.deleteProperty(target, key);
     if (hadKey && success) {
-      trigger(target, key);
+      trigger(target, key, "delete");
     }
     return success;
   }
@@ -63,6 +76,14 @@ const readonlyHandlers: ProxyHandler<object> = {
 
     const result = Reflect.get(target, key, receiver);
     return isObject(result) ? readonly(result) : result;
+  },
+
+  has(target, key) {
+    return Reflect.has(target, key);
+  },
+
+  ownKeys(target) {
+    return Reflect.ownKeys(target);
   },
 
   set() {
@@ -119,10 +140,12 @@ export function isReadonly(value: unknown): boolean {
 }
 
 export function toRaw<T>(value: T): T {
-  if (isObject(value) && ReactiveFlags.RAW in value) {
-    return (value as Record<PropertyKey, unknown>)[ReactiveFlags.RAW] as T;
+  if (!isObject(value) || (!isReactive(value) && !isReadonly(value))) {
+    return value;
   }
-  return value;
+
+  const raw = (value as Record<PropertyKey, unknown>)[ReactiveFlags.RAW] as T | undefined;
+  return raw === undefined || raw === value ? value : toRaw(raw);
 }
 
 function isArrayIndex(key: PropertyKey): boolean {

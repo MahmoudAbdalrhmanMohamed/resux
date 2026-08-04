@@ -49,6 +49,7 @@ describe("halal AI regressions", () => {
 
   it("bounds configured request timeouts", () => {
     expect(resolveAiTimeoutMs("invalid")).toBe(15_000);
+    expect(resolveAiTimeoutMs("0.5")).toBe(1);
     expect(resolveAiTimeoutMs("25")).toBe(25);
     expect(resolveAiTimeoutMs("9999999")).toBe(120_000);
   });
@@ -56,12 +57,14 @@ describe("halal AI regressions", () => {
   it("redacts private keys, tokens, assignments, and URL credentials", () => {
     const source = [
       "password='super-secret'",
+      "escaped_password=\"start\\\"still-secret\"",
       "DB_PASSWORD=database-secret",
       "STRIPE_SECRET_KEY=stripe-secret-value",
       "SESSION_TOKEN=session-token-value",
       "AWS_ACCESS_TOKEN: aws-token-value",
       "Authorization: Bearer abc.def.ghi",
       "postgres://admin:database-password@example.com/app",
+      "https://api-token@localhost/internal",
       "-----BEGIN PRIVATE KEY-----\nabc-123\n-----END PRIVATE KEY-----",
       "sk_abcdefghijklmnopqrstuvwxyz123456",
     ].join("\n");
@@ -70,12 +73,16 @@ describe("halal AI regressions", () => {
 
     for (const secret of [
       "super-secret",
+      "start",
+      "still-secret",
       "database-secret",
       "stripe-secret-value",
       "session-token-value",
       "aws-token-value",
       "abc.def.ghi",
+      "admin",
       "database-password",
+      "api-token",
       "abc-123",
       "sk_abcdefghijklmnopqrstuvwxyz123456",
     ]) {
@@ -83,6 +90,8 @@ describe("halal AI regressions", () => {
     }
     expect(redacted).toContain("DB_PASSWORD=[REDACTED]");
     expect(redacted).toContain("SESSION_TOKEN=[REDACTED]");
+    expect(redacted).toContain("postgres://[REDACTED]@example.com/app");
+    expect(redacted).toContain("https://[REDACTED]@localhost/internal");
     expect(redacted).toContain("[PRIVATE_KEY_REDACTED]");
   });
 });

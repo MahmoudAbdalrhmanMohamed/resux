@@ -13,5 +13,9 @@ refresh function: 1
 client scope: 1
 client useGlobal: 1
 client return: 1
+renderer store match 1 line 2417: : Record<string, AsyncDataResource<unknown>> = {};\n    const setupContext = createServerSetupContext(\n      this.route,\n      props,\n      stateRefs,\n      asyncDataRefs,\n      this.headEntries,\n      this.resuxApp,\n      this.runtimeConfig,\n      this.globalStateRefs\n    );\n    const sco
+renderer store match 2 line 2430: () => definition.script(setupContext));\n\n    this.scopes[scopeId] = {\n      id: scopeId,\n      moduleId: definition.id,\n      props,\n      stateRefs,\n      asyncDataRefs\n    };\n\n    return renderTemplateNodes(definition.template, {\n      scope,\n      scopeId,\n      moduleId: definition.id
+renderer store match 3 line 6256: : Record<string, AsyncDataResource<unknown>> = {};\n    const setupContext = createServerSetupContext(\n      this.route,\n      props,\n      stateRefs,\n      asyncDataRefs,\n      this.headEntries,\n      this.resuxApp,\n      this.runtimeConfig,\n      this.globalStateRefs\n    );\n    const sco
+renderer store match 4 line 6269: () => definition.script(setupContext));\n\n    this.scopes[scopeId] = {\n      id: scopeId,\n      moduleId: definition.id,\n      props,\n      stateRefs,\n      asyncDataRefs\n    };\n\n    return withActiveResuxApp(this.resuxApp, () => renderTemplateNodesAsync(\n      definition.template,\n      {
 test server block: 1
 test source function: 1

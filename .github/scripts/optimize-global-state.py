@@ -63,13 +63,21 @@ runtime = replace_count(
 
 runtime = replace_count(
     runtime,
-    '''      props,
+    '''    this.scopes[scopeId] = {
+      id: scopeId,
+      moduleId: definition.id,
+      props,
       stateRefs,
-      asyncDataRefs''',
-    '''      props,
+      asyncDataRefs
+    };''',
+    '''    this.scopes[scopeId] = {
+      id: scopeId,
+      moduleId: definition.id,
+      props,
       stateRefs,
       globalStateKeys,
-      asyncDataRefs''',
+      asyncDataRefs
+    };''',
     2,
     "store global key sets",
 )
@@ -289,5 +297,13 @@ test = replace_once(
 )
 test_path.write_text(test)
 
-Path(".github/workflows/optimize-global-state.yml").unlink(missing_ok=True)
-Path(".github/scripts/optimize-global-state.py").unlink(missing_ok=True)
+for filename in [
+    ".github/workflows/optimize-global-state.yml",
+    ".github/scripts/optimize-global-state.py",
+    ".github/workflows/fix-global-state-optimizer.yml",
+    ".github/scripts/fix-global-state-optimizer.py",
+    ".github/workflows/diagnose-global-state.yml",
+    ".github/scripts/diagnose-global-state.py",
+    ".github/global-state-pattern-counts.txt",
+]:
+    Path(filename).unlink(missing_ok=True)

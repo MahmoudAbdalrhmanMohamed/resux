@@ -1,18 +1,19 @@
 {
   "name": "resuxjs",
   "version": "0.3.0",
-  "description": "An experimental full-stack Vue framework with a custom server-rendered resumable runtime, file-based routing, server APIs, composables, modules, and deployment presets.",
+  "private": false,
+  "description": "Experimental resumable web framework with Vue-like SFC routing and a custom SSR/runtime pipeline.",
+  "type": "module",
+  "license": "MIT",
   "keywords": [
     "resux",
-    "vue",
+    "resumable",
     "framework",
     "ssr",
-    "resumability",
-    "full-stack",
-    "nitro",
-    "vite"
+    "vite",
+    "vue",
+    "routing"
   ],
-  "homepage": "https://resuxjs.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/MahmoudAbdalrhmanMohamed/resux.git"
@@ -20,26 +21,22 @@
   "bugs": {
     "url": "https://github.com/MahmoudAbdalrhmanMohamed/resux/issues"
   },
-  "license": "MIT",
-  "type": "module",
-  "sideEffects": false,
+  "homepage": "https://github.com/MahmoudAbdalrhmanMohamed/resux#readme",
   "files": [
     "dist",
     "templates",
-    "LICENSE",
-    "README.md",
-    "SECURITY.md",
-    "CHANGELOG.md"
+    "README.md"
   ],
   "bin": {
-    "resux": "dist/bin.js",
     "resuxjs": "dist/bin.js",
+    "resux": "dist/bin.js",
     "create-resux": "dist/create-bin.js",
     "create-resuxjs": "dist/create-bin.js"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -51,10 +48,10 @@
       "import": "./dist/node.js",
       "default": "./dist/node.js"
     },
-    "./create": {
-      "types": "./dist/create.d.ts",
-      "import": "./dist/create.js",
-      "default": "./dist/create.js"
+    "./globals": {
+      "types": "./dist/globals.d.ts",
+      "import": "./dist/globals.js",
+      "default": "./dist/globals.js"
     },
     "./runtime": {
       "types": "./dist/runtime/index.d.ts",
@@ -71,35 +68,35 @@
       "import": "./dist/compiler/index.js",
       "default": "./dist/compiler/index.js"
     },
-    "./deploy": {
-      "types": "./dist/deploy/index.d.ts",
-      "import": "./dist/deploy/index.js",
-      "default": "./dist/deploy/index.js"
+    "./create": {
+      "types": "./dist/create.d.ts",
+      "import": "./dist/create.js",
+      "default": "./dist/create.js"
     },
     "./i18n": {
-      "types": "./dist/i18n.d.ts",
-      "import": "./dist/i18n.js",
-      "default": "./dist/i18n.js"
+      "types": "./dist/i18n/index.d.ts",
+      "import": "./dist/i18n/index.js",
+      "default": "./dist/i18n/index.js"
     },
-    "./media": {
-      "types": "./dist/media.d.ts",
-      "import": "./dist/media.js",
-      "default": "./dist/media.js"
+    "./ui": {
+      "types": "./dist/ui/index.d.ts",
+      "import": "./dist/ui/index.js",
+      "default": "./dist/ui/index.js"
     },
-    "./seo": {
-      "types": "./dist/seo.d.ts",
-      "import": "./dist/seo.js",
-      "default": "./dist/seo.js"
+    "./icons": {
+      "types": "./dist/icons/index.d.ts",
+      "import": "./dist/icons/index.js",
+      "default": "./dist/icons/index.js"
     },
-    "./config": {
-      "types": "./dist/config.d.ts",
-      "import": "./dist/config.js",
-      "default": "./dist/config.js"
+    "./fonts": {
+      "types": "./dist/fonts/index.d.ts",
+      "import": "./dist/fonts/index.js",
+      "default": "./dist/fonts/index.js"
     },
-    "./module": {
-      "types": "./dist/module.d.ts",
-      "import": "./dist/module.js",
-      "default": "./dist/module.js"
+    "./kit": {
+      "types": "./dist/kit/index.d.ts",
+      "import": "./dist/kit/index.js",
+      "default": "./dist/kit/index.js"
     },
     "./core": {
       "types": "./dist/core/index.d.ts",

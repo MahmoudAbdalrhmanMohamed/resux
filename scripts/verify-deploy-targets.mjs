@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = path.join(rootDir, "dist", "cli.js");
+const fixtureSigningSecret = "resux-deploy-verification-secret-not-for-production-use";
 
 function fail(message) {
   throw new Error(`[verify:deploy-targets] ${message}`);
@@ -30,7 +31,8 @@ async function runBuild(appRoot) {
         stdio: "inherit",
         env: {
           ...process.env,
-          NITRO_PRESET: ""
+          NITRO_PRESET: "",
+          RESUX_HALAL_REPORT_SIGNING_SECRET: fixtureSigningSecret,
         }
       }
     );

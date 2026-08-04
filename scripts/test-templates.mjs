@@ -19,6 +19,10 @@ const templates = [
 ];
 const npmExecutable = "npm";
 const nodeExecutable = process.execPath;
+const templateTestEnvironment = {
+  ...process.env,
+  RESUX_HALAL_REPORT_SIGNING_SECRET: "resux-template-verification-secret-not-for-production-use",
+};
 
 if (!existsSync(distCreate)) {
   console.error("Missing dist/create.js. Run `npm run build` before template tests.");
@@ -105,7 +109,7 @@ if (failed) {
 function runCommand(command, args, options) {
   return spawnSync(command, args, {
     cwd: options.cwd,
-    env: options.env ?? process.env,
+    env: options.env ?? templateTestEnvironment,
     stdio: options.stdio ?? "inherit",
     encoding: "utf8",
     shell: process.platform === "win32",
@@ -147,7 +151,7 @@ async function runPreviewSmoke(projectRoot, template, port) {
   console.log(`[template:${template}] preview on port ${port}`);
   const child = spawn(npmExecutable, ["run", previewScript, "--", "--port", String(port)], {
     cwd: projectRoot,
-    env: process.env,
+    env: templateTestEnvironment,
     stdio: ["ignore", "pipe", "pipe"],
     shell: process.platform === "win32",
     detached: process.platform !== "win32",

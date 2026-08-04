@@ -87,7 +87,8 @@ export function validateAiEndpoint(endpoint: string): URL {
   const hostname = url.hostname.toLowerCase();
   const isLocalhost = hostname === "localhost"
     || hostname === "127.0.0.1"
-    || hostname === "::1";
+    || hostname === "::1"
+    || hostname === "[::1]";
   if (url.protocol !== "https:" && !(url.protocol === "http:" && isLocalhost)) {
     throw new Error("RESUX_AI_ENDPOINT must use HTTPS, except for localhost development endpoints.");
   }

@@ -1,0 +1,32 @@
+name: Diagnose global state patterns
+
+on:
+  push:
+    branches:
+      - feat/global-state
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    if: ${{ !contains(github.event.head_commit.message, '[global-state-diagnostic]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/global-state
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Count source patterns
+        run: python .github/scripts/diagnose-global-state.py
+
+      - name: Commit diagnostics
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/global-state-pattern-counts.txt
+          git commit -m "chore: record global state diagnostics [global-state-diagnostic]"
+          git push origin HEAD:feat/global-state

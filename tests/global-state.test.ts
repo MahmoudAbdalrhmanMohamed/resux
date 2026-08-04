@@ -67,6 +67,33 @@ describe("global state", () => {
     expect(Object.values(result.payload.scopes).every((scope) => Object.keys(scope.state).length === 0)).toBe(true);
   });
 
+  it("isolates global state between SSR requests", async () => {
+    const page: ComponentDefinition = defineComponent({
+      id: "request-global-page",
+      name: "RequestGlobalPage",
+      file: "RequestGlobalPage.vue",
+      handlers: [],
+      async script(ctx) {
+        const requestCount = ctx.useGlobalState("request-count", () => 0);
+        requestCount.value += 1;
+        return { requestCount };
+      },
+      template: [{ type: "interpolation", expression: "requestCount.value", bindingId: "request-count" }]
+    });
+
+    const firstRequest = await renderApp({
+      page,
+      route: { path: "/first", params: {}, query: {} }
+    });
+    const secondRequest = await renderApp({
+      page,
+      route: { path: "/second", params: {}, query: {} }
+    });
+
+    expect(firstRequest.payload.globalState).toEqual({ "request-count": 1 });
+    expect(secondRequest.payload.globalState).toEqual({ "request-count": 1 });
+  });
+
   it("generates a client registry that persists and refreshes global state", () => {
     const source = getClientRuntimeSource();
 

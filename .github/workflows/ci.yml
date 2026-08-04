@@ -50,9 +50,6 @@ jobs:
       - name: Verify runtime bundle
         run: npm run test:bundle
 
-      - name: Verify generated templates
-        run: npm run test:templates
-
       - name: Verify fixture builds
         run: npm run test:fixtures
 
@@ -61,6 +58,48 @@ jobs:
 
       - name: Package check
         run: npm run pack:check
+
+  templates:
+    name: Template ${{ matrix.template }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        template:
+          - minimal
+          - default
+          - full
+          - i18n
+          - pwa
+          - media
+          - package-compatibility
+          - dashboard
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify Rolldown Linux native binding
+        if: runner.os == 'Linux'
+        run: node -e "require.resolve('@rolldown/binding-linux-x64-gnu')"
+
+      - name: Build framework
+        run: npm run build
+
+      - name: Verify generated template
+        run: npm run test:templates
+        env:
+          RESUX_TEMPLATE_FILTER: ${{ matrix.template }}
 
   compatibility:
     name: Node ${{ matrix.node-version }} compatibility

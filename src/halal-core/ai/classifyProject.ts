@@ -87,7 +87,8 @@ export function validateAiEndpoint(endpoint: string): URL {
   const hostname = url.hostname.toLowerCase();
   const isLocalhost = hostname === "localhost"
     || hostname === "127.0.0.1"
-    || hostname === "::1";
+    || hostname === "::1"
+    || hostname === "[::1]";
   if (url.protocol !== "https:" && !(url.protocol === "http:" && isLocalhost)) {
     throw new Error("RESUX_AI_ENDPOINT must use HTTPS, except for localhost development endpoints.");
   }
@@ -102,7 +103,7 @@ export function resolveAiTimeoutMs(value = process.env.RESUX_AI_TIMEOUT_MS): num
   if (!Number.isFinite(parsed) || parsed <= 0) {
     return DEFAULT_AI_TIMEOUT_MS;
   }
-  return Math.min(Math.floor(parsed), MAX_AI_TIMEOUT_MS);
+  return Math.min(Math.max(1, Math.floor(parsed)), MAX_AI_TIMEOUT_MS);
 }
 
 function classificationFailure(error: unknown, category: string): HalalCheckResult {

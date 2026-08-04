@@ -94,7 +94,10 @@ function normalizeJsonValue(value: unknown): unknown {
     return value.map((entry) => entry === undefined ? null : normalizeJsonValue(entry));
   }
   if (typeof value === "object") {
-    const output: Record<string, unknown> = {};
+    // A null-prototype object preserves special JSON keys such as "__proto__"
+    // instead of invoking the legacy Object.prototype setter and dropping them
+    // from the canonical payload.
+    const output: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
     const keys = Object.keys(value as Record<string, unknown>).sort(compareCanonicalKeys);
     for (const key of keys) {
       const entry = (value as Record<string, unknown>)[key];

@@ -2,6 +2,11 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  createIntegritySignature,
+  stableSerialize,
+  verifyIntegritySignature,
+} from "../src/halal-core/crypto/integrity.js";
 import { generateReportSignature } from "../src/halal-core/report/signReport.js";
 import { isReportValid, verifyReportSignature } from "../src/halal-core/report/verifyReport.js";
 import {
@@ -47,6 +52,21 @@ describe("halal integrity regressions", () => {
       ...signed,
       createdDate: new Date(Date.now() + 60_000).toISOString(),
     }, { secret: REPORT_SECRET })).toBe(false);
+  });
+
+  it("covers own __proto__ fields with canonical signatures", () => {
+    const original = JSON.parse('{"__proto__":{"role":"reader"},"status":"allowed"}') as Record<string, unknown>;
+    const tampered = JSON.parse('{"__proto__":{"role":"admin"},"status":"allowed"}') as Record<string, unknown>;
+    const options = {
+      envName: "RESUX_TEST_INTEGRITY_SECRET",
+      secret: REPORT_SECRET,
+      requireSecret: true,
+    };
+    const signature = createIntegritySignature(original, options);
+
+    expect(stableSerialize(original)).toContain('"__proto__":{"role":"reader"}');
+    expect(verifyIntegritySignature(original, signature, options)).toBe(true);
+    expect(verifyIntegritySignature(tampered, signature, options)).toBe(false);
   });
 
   it("rejects invalid and unexpectedly future report dates", () => {

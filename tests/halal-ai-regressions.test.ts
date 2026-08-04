@@ -40,6 +40,7 @@ describe("halal AI regressions", () => {
     expect(() => validateAiEndpoint("http://example.com/classify")).toThrow(/HTTPS/);
     expect(() => validateAiEndpoint("https://user:pass@example.com/classify")).toThrow(/credentials/);
     expect(validateAiEndpoint("http://localhost:8080/classify").hostname).toBe("localhost");
+    expect(validateAiEndpoint("http://[::1]:8080/classify").hostname).toBe("[::1]");
 
     const result = await classifyProject(createScannedData(), "private-key", "http://example.com/classify");
     expect(result.status).toBe("review_required");

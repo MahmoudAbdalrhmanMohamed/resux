@@ -1,5 +1,5 @@
 import { trackEffects, triggerEffects, isTracking, type Dep } from "./effect.js";
-import { reactive } from "./reactive.js";
+import { reactive, toRaw } from "./reactive.js";
 import type { Ref } from "./types.js";
 import { hasChanged, isObject, ReactiveFlags } from "./utils.js";
 
@@ -10,7 +10,7 @@ class RefImpl<T> implements Ref<T> {
   private _rawValue: T;
 
   constructor(value: T) {
-    this._rawValue = value;
+    this._rawValue = toRaw(value);
     this._value = toReactive(value);
   }
 
@@ -20,10 +20,11 @@ class RefImpl<T> implements Ref<T> {
   }
 
   set value(newValue: T) {
-    if (!hasChanged(newValue, this._rawValue)) {
+    const rawValue = toRaw(newValue);
+    if (!hasChanged(rawValue, this._rawValue)) {
       return;
     }
-    this._rawValue = newValue;
+    this._rawValue = rawValue;
     this._value = toReactive(newValue);
     triggerRefValue(this);
   }
@@ -32,6 +33,10 @@ class RefImpl<T> implements Ref<T> {
     if (!this.dep) {
       this.dep = new Set();
     }
+    return this.dep;
+  }
+
+  _existingDep(): Dep | undefined {
     return this.dep;
   }
 }
@@ -91,7 +96,10 @@ export function trackRefValue(refValue: RefImpl<unknown>): void {
 }
 
 export function triggerRefValue(refValue: RefImpl<unknown>): void {
-  triggerEffects(refValue._dep());
+  const dep = refValue._existingDep();
+  if (dep) {
+    triggerEffects(dep);
+  }
 }
 
 function toReactive<T>(value: T): T {

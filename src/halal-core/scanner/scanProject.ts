@@ -22,8 +22,8 @@ export function getGitignoredPaths(appRoot: string): Set<string> {
       for (const line of lines) {
         const trimmed = line.trim();
         if (trimmed && !trimmed.startsWith("#")) {
-          // Normalize paths
-          const cleaned = trimmed.replace(/^\//, "").replace(/\/$/, "");
+          // Preserve a leading slash so root-anchored gitignore rules stay anchored.
+          const cleaned = trimmed.replace(/\/$/, "");
           if (cleaned) {
             ignored.add(cleaned);
           }

@@ -457,7 +457,8 @@ function createStarterPackageJson(
   const includeTests = selected.has("tests") || template === "default" || template === "full";
   const devDependencies: Record<string, string> = {
     "@types/node": "^24.10.1",
-    "vue-tsc": "^3.1.2",
+    "typescript": "^5.9.3",
+    "vue-tsc": "^3.3.8",
   };
   if (includeTests) {
     devDependencies.vitest = "^4.0.8";

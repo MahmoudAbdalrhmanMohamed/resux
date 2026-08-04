@@ -20,6 +20,20 @@ patterns = {
     'client return': '      const scope = await definition.script(setupContext);\n      await Promise.allSettled(mountedCallbacks.map((callback) => callback()));\n      return { scope, props, stateRefs, asyncDataRefs, pendingCompletions };',
 }
 lines = [f'{name}: {runtime.count(pattern)}' for name, pattern in patterns.items()]
+needle = patterns['renderer store']
+start = 0
+index = 0
+while True:
+    position = runtime.find(needle, start)
+    if position < 0:
+        break
+    index += 1
+    line = runtime.count('\n', 0, position) + 1
+    context_start = max(0, position - 120)
+    context_end = min(len(runtime), position + len(needle) + 120)
+    context = runtime[context_start:context_end].replace('\n', '\\n')
+    lines.append(f'renderer store match {index} line {line}: {context}')
+    start = position + 1
 lines.extend([
     f'test server block: {test.count("    expect(result.payload.globalState).toEqual({ session: { visits: 1 } });")}',
     f'test source function: {test.count("    expect(source).toContain(\"async function refreshAllScopesForGlobalState\");")}',

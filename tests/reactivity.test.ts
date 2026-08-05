@@ -56,7 +56,7 @@ describe("resux reactivity", () => {
   });
 
   it("tracks sparse-array additions without invalidating length unnecessarily", () => {
-    const values = reactive(new Array<number>(2));
+    const values = reactive(new Array<number | undefined>(2));
     let keys: string[] = [];
     let observedLength = 0;
     let lengthRuns = 0;
@@ -74,8 +74,13 @@ describe("resux reactivity", () => {
     expect(observedLength).toBe(2);
     expect(lengthRuns).toBe(1);
 
+    values[1] = undefined;
+    expect(keys).toEqual(["0", "1"]);
+    expect(observedLength).toBe(2);
+    expect(lengthRuns).toBe(1);
+
     values[2] = 3;
-    expect(keys).toEqual(["0", "2"]);
+    expect(keys).toEqual(["0", "1", "2"]);
     expect(observedLength).toBe(3);
     expect(lengthRuns).toBe(2);
   });

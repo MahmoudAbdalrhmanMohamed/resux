@@ -3,6 +3,9 @@ import { hasOwn, isObject, ReactiveFlags } from "./utils.js";
 
 const reactiveMap = new WeakMap<object, object>();
 const readonlyMap = new WeakMap<object, object>();
+const proxyToRaw = new WeakMap<object, object>();
+const reactiveProxies = new WeakSet<object>();
+const readonlyProxies = new WeakSet<object>();
 
 const mutableHandlers: ProxyHandler<object> = {
   get(target, key, receiver) {
@@ -34,10 +37,8 @@ const mutableHandlers: ProxyHandler<object> = {
   },
 
   set(target, key, value, receiver) {
-    const oldLength = Array.isArray(target) ? target.length : 0;
-    const hadKey = Array.isArray(target) && isArrayIndex(key)
-      ? Number(key) < oldLength
-      : hasOwn(target, key);
+    const oldLength = Array.isArray(target) ? target.length : undefined;
+    const hadKey = hasOwn(target, key);
     const oldValue = toRaw(Reflect.get(target, key, receiver));
     const rawValue = toRaw(value);
     const success = Reflect.set(target, key, rawValue, receiver);
@@ -47,7 +48,7 @@ const mutableHandlers: ProxyHandler<object> = {
       && target === toRaw(receiver)
       && !Object.is(rawValue, oldValue)
     ) {
-      trigger(target, key, hadKey ? "set" : "add", rawValue);
+      trigger(target, key, hadKey ? "set" : "add", rawValue, oldLength);
     }
     return success;
   },
@@ -116,8 +117,7 @@ function createReactiveObject(
     return target;
   }
 
-  const targetRecord = target as Record<PropertyKey, unknown>;
-  if (targetRecord[ReactiveFlags.RAW] && !(isReadonly && targetRecord[ReactiveFlags.IS_REACTIVE])) {
+  if (proxyToRaw.has(target) && !(isReadonly && reactiveProxies.has(target))) {
     return target;
   }
 
@@ -128,24 +128,40 @@ function createReactiveObject(
 
   const proxy = new Proxy(target, baseHandlers);
   proxyMap.set(target, proxy);
+  proxyToRaw.set(proxy, target);
+  if (isReadonly) {
+    readonlyProxies.add(proxy);
+  } else {
+    reactiveProxies.add(proxy);
+  }
   return proxy;
 }
 
 export function isReactive(value: unknown): boolean {
-  return Boolean(isObject(value) && (value as Record<PropertyKey, unknown>)[ReactiveFlags.IS_REACTIVE]);
+  if (!isObject(value)) {
+    return false;
+  }
+  if (reactiveProxies.has(value)) {
+    return true;
+  }
+  const wrapped = readonlyProxies.has(value) ? proxyToRaw.get(value) : undefined;
+  return wrapped ? isReactive(wrapped) : false;
 }
 
 export function isReadonly(value: unknown): boolean {
-  return Boolean(isObject(value) && (value as Record<PropertyKey, unknown>)[ReactiveFlags.IS_READONLY]);
+  return Boolean(isObject(value) && readonlyProxies.has(value));
 }
 
 export function toRaw<T>(value: T): T {
-  if (!isObject(value) || (!isReactive(value) && !isReadonly(value))) {
-    return value;
+  let current: unknown = value;
+  while (isObject(current)) {
+    const raw = proxyToRaw.get(current);
+    if (!raw || raw === current) {
+      break;
+    }
+    current = raw;
   }
-
-  const raw = (value as Record<PropertyKey, unknown>)[ReactiveFlags.RAW] as T | undefined;
-  return raw === undefined || raw === value ? value : toRaw(raw);
+  return current as T;
 }
 
 function isArrayIndex(key: PropertyKey): boolean {

@@ -130,7 +130,8 @@ export function trigger(
   target: object,
   key: PropertyKey,
   operation: TriggerOperation = "set",
-  newValue?: unknown
+  newValue?: unknown,
+  oldLength?: number
 ): void {
   const depsMap = targetMap.get(target);
   if (!depsMap) {
@@ -165,7 +166,13 @@ export function trigger(
       addEffects(depsMap.get(ITERATE_KEY));
     }
 
-    if (operation === "add" && Array.isArray(target) && isArrayIndex(key)) {
+    if (
+      operation === "add"
+      && Array.isArray(target)
+      && isArrayIndex(key)
+      && typeof oldLength === "number"
+      && Number(key) >= oldLength
+    ) {
       addEffects(depsMap.get("length"));
     }
   }

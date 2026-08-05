@@ -107,7 +107,7 @@
   },
   "scripts": {
     "typecheck": "tsc -b",
-    "build": "npm run typecheck && node scripts/finalize-build.mjs",
+    "build": "npm run typecheck",
     "test": "vitest run",
     "test:types": "npm run typecheck",
     "test:e2e": "vitest run tests/runtime.test.ts",

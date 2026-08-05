@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -256,14 +256,15 @@ async function assertPaths(root, targetName, relativePaths) {
 }
 
 async function verifyTarget(deployTarget, assertOutput) {
-  const appRoot = path.join(
-    os.tmpdir(),
-    `resux-deploy-target-${deployTarget}-${process.pid}-${Date.now()}`,
-  );
-  await createFixtureApp(appRoot, deployTarget);
-  await runBuild(appRoot, deployTarget);
-  await assertOutput(appRoot);
-  console.log(`[verify:deploy-targets] ${deployTarget} PASS`);
+  const appRoot = await mkdtemp(path.join(os.tmpdir(), `resux-deploy-target-${deployTarget}-`));
+  try {
+    await createFixtureApp(appRoot, deployTarget);
+    await runBuild(appRoot, deployTarget);
+    await assertOutput(appRoot);
+    console.log(`[verify:deploy-targets] ${deployTarget} PASS`);
+  } finally {
+    await rm(appRoot, { recursive: true, force: true });
+  }
 }
 
 function selectedTargets() {

@@ -55,6 +55,31 @@ describe("resux reactivity", () => {
     expect(hasCount).toBe(false);
   });
 
+  it("tracks sparse-array additions without invalidating length unnecessarily", () => {
+    const values = reactive(new Array<number>(2));
+    let keys: string[] = [];
+    let observedLength = 0;
+    let lengthRuns = 0;
+
+    effect(() => {
+      keys = Object.keys(values);
+    });
+    effect(() => {
+      observedLength = values.length;
+      lengthRuns++;
+    });
+
+    values[0] = 1;
+    expect(keys).toEqual(["0"]);
+    expect(observedLength).toBe(2);
+    expect(lengthRuns).toBe(1);
+
+    values[2] = 3;
+    expect(keys).toEqual(["0", "2"]);
+    expect(observedLength).toBe(3);
+    expect(lengthRuns).toBe(2);
+  });
+
   it("invalidates removed array indexes when length shrinks", () => {
     const values = reactive([1, 2, 3]);
     let third: number | undefined;
@@ -188,6 +213,22 @@ describe("resux reactivity", () => {
     expect(isReadonly(locked)).toBe(true);
     locked.count = 9;
     expect(source.count).toBe(1);
+  });
+
+  it("does not trust spoofed reactive flag properties", () => {
+    const spoofed = {
+      __v_isReactive: true,
+      __v_isReadonly: true,
+      __v_raw: { fake: true },
+      count: 1
+    };
+    const proxy = reactive(spoofed);
+
+    expect(proxy).not.toBe(spoofed);
+    expect(isReactive(spoofed)).toBe(false);
+    expect(isReadonly(spoofed)).toBe(false);
+    expect(toRaw(spoofed)).toBe(spoofed);
+    expect(toRaw(proxy)).toBe(spoofed);
   });
 
   it("preserves raw identity across proxies", () => {

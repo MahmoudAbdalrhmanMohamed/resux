@@ -266,12 +266,15 @@ function collectScriptWarnings(
     const eventLabel = eventName && /^[a-z][\w:-]*$/i.test(eventName)
       ? `@${eventName}`
       : "a template @event handler";
+    const listenerLabel = eventName
+      ? `addEventListener("${eventName}")`
+      : "addEventListener";
     const location = locate(source, contentOffset + node.expression.name.getStart(sourceFile));
     warnings.push({
       code: "RX_EVENT_DIRECT_LISTENER",
       file,
       ...location,
-      message: `Direct DOM \`addEventListener${eventName ? `("${eventName}")` : ""}\` bypasses Resux's resumable event delegation. Prefer \`${eventLabel}\` on the template element. Keep direct listeners for global or third-party EventTargets and always remove manually managed listeners during cleanup.`,
+      message: `Direct DOM \`${listenerLabel}\` bypasses Resux's resumable event delegation. Prefer \`${eventLabel}\` on the template element. Keep direct listeners for global or third-party EventTargets and always remove manually managed listeners during cleanup.`,
     });
   });
 }
@@ -420,7 +423,7 @@ function locate(source: string, offset: number): { line: number; column: number 
 }
 
 function isNormalResuxComponent(file: string): boolean {
-  const normalized = file.replace(/\\/g, "/").toLowerCase();
+  const normalized = file.replaceAll("\\", "/").toLowerCase();
   return normalized.endsWith(".vue")
     && !/(?:^|\/)node_modules\//.test(normalized)
     && !/(?:^|\/)islands\/vue\//.test(normalized);

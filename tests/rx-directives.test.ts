@@ -69,6 +69,26 @@ function toggle() { visible.value = !visible.value }
     expect(serialized).not.toContain("rx-if");
   });
 
+  it("supports @event and :binding as official Resux shortcuts", () => {
+    const component = compileVueSource(`<script setup lang="ts">
+const visible = ref(true)
+function toggle() { visible.value = !visible.value }
+</script>
+<template>
+  <button @click.prevent="toggle" :aria-pressed="visible">Toggle</button>
+</template>`, {
+      file: "/app/pages/shortcuts.vue",
+      id: "m-shortcuts",
+      name: "ShortcutsPage",
+    });
+
+    const serialized = JSON.stringify(component.template);
+    expect(serialized).toContain('"handler":"toggle"');
+    expect(serialized).toContain('"aria-pressed"');
+    expect(serialized).not.toContain("@click");
+    expect(serialized).not.toContain(":aria-pressed");
+  });
+
   it("keeps v-* syntax working for migration compatibility", () => {
     const component = compileVueSource(`<script setup lang="ts">
 const visible = ref(true)

@@ -63,7 +63,7 @@ function increment() {
       <p class="lede">Server-rendered Resux SFCs with resumable client handlers.</p>
       <p class="eyebrow">{{ pluginLabel }}</p>
       <div class="actions">
-        <button rx-on:click="increment">Count: {{ count }}</button>
+        <button @click="increment">Count: {{ count }}</button>
         <ResuxLink to="/about">About this app</ResuxLink>
       </div>
     </section>
@@ -96,7 +96,7 @@ function increment() {
     </section>
 
     <section class="vue-panel">
-      <VueIsland name="CounterIsland" rx-bind:props="{ label: 'Vue island' }" />
+      <VueIsland name="CounterIsland" :props="{ label: 'Vue island' }" />
     </section>
   </main>
 </template>

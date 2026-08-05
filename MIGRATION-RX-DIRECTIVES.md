@@ -15,33 +15,56 @@ Resux now has its own first-class template directive prefix: `rx-*`.
 </template>
 ```
 
+## Official shortcuts
+
+For everyday templates, Resux provides concise shortcuts for its two most common directive families:
+
+| Full Resux syntax | Shortcut |
+| --- | --- |
+| `rx-on:event` | `@event` |
+| `rx-bind:name` | `:name` |
+
+```vue
+<template>
+  <button @click.prevent="save" :disabled="pending">
+    Save
+  </button>
+
+  <li rx-for="item in items" :key="item.id">
+    {{ item.title }}
+  </li>
+</template>
+```
+
+The full and shortcut forms compile to the same Resux event and binding model. Use the shortcut when it improves readability; use the full `rx-on:*` or `rx-bind:*` form when teaching the syntax or when the explicit name is clearer.
+
 ## Why this change
 
 Resux uses Vue compiler packages to parse `.vue` single-file components, but normal Resux components are rendered and resumed by the Resux compiler/runtime rather than hydrated by the Vue runtime. The `rx-*` prefix makes that ownership visible in application code and gives the framework a stable branded syntax layer.
 
 ## Supported mapping
 
-| Resux syntax | Internal Vue-parser form |
-| --- | --- |
-| `rx-if` | `v-if` |
-| `rx-else-if` | `v-else-if` |
-| `rx-else` | `v-else` |
-| `rx-for` | `v-for` |
-| `rx-show` | `v-show` |
-| `rx-text` | `v-text` |
-| `rx-html` | `v-html` |
-| `rx-model` | `v-model` |
-| `rx-bind:name` | `v-bind:name` |
-| `rx-on:event` | `v-on:event` |
-| `rx-slot:name` | `v-slot:name` |
+| Resux syntax | Shortcut | Internal Vue-parser form |
+| --- | --- | --- |
+| `rx-if` | — | `v-if` |
+| `rx-else-if` | — | `v-else-if` |
+| `rx-else` | — | `v-else` |
+| `rx-for` | — | `v-for` |
+| `rx-show` | — | `v-show` |
+| `rx-text` | — | `v-text` |
+| `rx-html` | — | `v-html` |
+| `rx-model` | — | `v-model` |
+| `rx-bind:name` | `:name` | `v-bind:name` |
+| `rx-on:event` | `@event` | `v-on:event` |
+| `rx-slot:name` | — | `v-slot:name` |
 
 The conversion happens before Vue's template parser runs. Only directive attribute names in `<template>` blocks are changed. Script strings, CSS, comments, text nodes, and attribute values are not rewritten.
 
 ## Compatibility
 
-Existing `v-*`, `:binding`, and `@event` syntax remains supported so current projects can migrate gradually. New Resux documentation and starter templates use explicit `rx-bind:*` and `rx-on:*` syntax.
+Existing `v-*` syntax remains supported so current projects can migrate gradually. `@event` and `:binding` are first-class Resux shortcuts and are recommended for concise new code.
 
-No removal date is set for the compatibility syntax.
+No removal date is set for the `v-*` compatibility syntax.
 
 ## State guidance
 

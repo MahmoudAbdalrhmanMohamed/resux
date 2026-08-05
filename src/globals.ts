@@ -34,6 +34,7 @@ import type {
 
 declare global {
   const useState: <T = unknown>(key: string, factory?: () => T) => Ref<T>;
+  const useGlobalState: <T = unknown>(key: string, factory?: () => T) => Ref<T>;
   const useAsyncData: <T = unknown>(key: string, handler?: (context: AsyncDataHandlerContext) => T | Promise<T>) => AsyncDataResource<T>;
   const ref: <T = unknown>(value: T) => Ref<T>;
   const reactive: <T extends object>(value: T) => T;

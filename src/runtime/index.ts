@@ -510,6 +510,7 @@ export interface SetupContext {
   isReadonly: typeof isReadonly;
   nextTick: typeof nextTick;
   useState<T>(key: string, factory?: () => T): Ref<T>;
+  useGlobalState<T>(key: string, factory?: () => T): Ref<T>;
   useAsyncData<T>(key: string, handler?: (context: AsyncDataHandlerContext) => T | Promise<T>): AsyncDataResource<T>;
   defineProps<T extends Record<string, unknown> = Record<string, unknown>>(): T;
   defineEmits<T = (...args: any[]) => void>(emits?: unknown): (...args: any[]) => void;
@@ -570,6 +571,7 @@ export interface SerializedScope {
   moduleId: string;
   props?: Record<string, JsonValue>;
   state: Record<string, JsonValue>;
+  globalStateKeys?: string[];
   asyncData: Record<string, SerializedAsyncData>;
 }
 
@@ -582,6 +584,7 @@ export interface SerializedAsyncData {
 export interface ResuxPayload {
   route: RouteContext;
   scopes: Record<string, SerializedScope>;
+  globalState?: Record<string, JsonValue>;
   modules: Record<string, string>;
   vueIslands?: Record<string, string>;
   config?: RuntimeConfig;
@@ -632,6 +635,7 @@ interface ScopeRecord {
   moduleId: string;
   props: Record<string, unknown>;
   stateRefs: Record<string, Ref<unknown>>;
+  globalStateKeys: Set<string>;
   asyncDataRefs: Record<string, AsyncDataResource<unknown>>;
 }
 
@@ -2386,15 +2390,19 @@ if (typeof EventSource !== "undefined" && !window.__RESUX_DEV_RELOAD__) {
 class ResuxRenderer {
   private nextScopeId = 0;
   private readonly scopes: Record<string, ScopeRecord> = {};
+  private readonly globalStateRefs: Record<string, Ref<unknown>> = Object.create(null) as Record<string, Ref<unknown>>;
   private readonly headEntries: HeadEntry[] = [];
   private readonly styleIds = new Set<string>();
+  private readonly resuxApp: ResuxAppLike;
 
   constructor(
     private readonly route: RouteContext,
     private readonly components: Record<string, ComponentDefinition>,
     private readonly modules: Record<string, string>,
     private readonly runtimeConfig: RuntimeConfig = { public: {} }
-  ) {}
+  ) {
+    this.resuxApp = createResuxApp(route, modules, runtimeConfig);
+  }
 
   async renderComponent(
     definition: ComponentDefinition,
@@ -2405,16 +2413,27 @@ class ResuxRenderer {
     this.collectComponentStyles(definition);
     const scopeId = `s${this.nextScopeId++}`;
     const stateRefs: Record<string, Ref<unknown>> = {};
+    const globalStateKeys = new Set<string>();
     const asyncDataRefs: Record<string, AsyncDataResource<unknown>> = {};
-    const resuxApp = createResuxApp(this.route, this.modules, this.runtimeConfig);
-    const setupContext = createServerSetupContext(this.route, props, stateRefs, asyncDataRefs, this.headEntries, resuxApp, this.runtimeConfig);
-    const scope = await withActiveResuxApp(resuxApp, () => definition.script(setupContext));
+    const setupContext = createServerSetupContext(
+      this.route,
+      props,
+      stateRefs,
+      asyncDataRefs,
+      this.headEntries,
+      this.resuxApp,
+      this.runtimeConfig,
+      this.globalStateRefs,
+      globalStateKeys
+    );
+    const scope = await withActiveResuxApp(this.resuxApp, () => definition.script(setupContext));
 
     this.scopes[scopeId] = {
       id: scopeId,
       moduleId: definition.id,
       props,
       stateRefs,
+      globalStateKeys,
       asyncDataRefs
     };
 
@@ -2453,6 +2472,7 @@ class ResuxRenderer {
         moduleId: scope.moduleId,
         props: serializeProps(scope.props),
         state: serializeRefs(scope.stateRefs),
+        globalStateKeys: [...scope.globalStateKeys],
         asyncData: serializeAsyncData(scope.asyncDataRefs)
       };
     }
@@ -2460,6 +2480,7 @@ class ResuxRenderer {
     return {
       route: this.route,
       scopes,
+      globalState: serializeRefs(this.globalStateRefs),
       modules: this.modules,
       config: publicRuntimeConfig(this.runtimeConfig)
     };
@@ -2473,7 +2494,9 @@ export function createServerSetupContext(
   asyncDataRefs: Record<string, AsyncDataResource<unknown>>,
   headEntries: HeadEntry[],
   resuxApp: ResuxAppLike,
-  runtimeConfig: RuntimeConfig
+  runtimeConfig: RuntimeConfig,
+  globalStateRefs: Record<string, Ref<unknown>> = Object.create(null) as Record<string, Ref<unknown>>,
+  globalStateKeys: Set<string> = new Set()
 ): SetupContext {
   const apiURL = (url: string): string => resolveServerApiURL(url, route, runtimeConfig);
   const fetchJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
@@ -2510,6 +2533,23 @@ export function createServerSetupContext(
       assertJsonSerializable(value, `useState("${key}")`);
       const stateRef = ref(value as T);
       stateRefs[key] = stateRef as Ref<unknown>;
+      return stateRef;
+    },
+
+    useGlobalState<T>(key: string, factory?: () => T): Ref<T> {
+      const normalizedKey = String(key || "").trim();
+      if (!normalizedKey) {
+        throw new Error("useGlobalState(key) requires a non-empty key.");
+      }
+      globalStateKeys.add(normalizedKey);
+      if (Object.prototype.hasOwnProperty.call(globalStateRefs, normalizedKey)) {
+        return globalStateRefs[normalizedKey] as Ref<T>;
+      }
+
+      const value = factory ? factory() : undefined;
+      assertJsonSerializable(value, `useGlobalState("${normalizedKey}")`);
+      const stateRef = ref(value as T);
+      globalStateRefs[normalizedKey] = stateRef as Ref<unknown>;
       return stateRef;
     },
 
@@ -6192,6 +6232,7 @@ function resolveVueIslandProps(
 export class AsyncResuxRenderer {
   private nextScopeId = 0;
   private readonly scopes: Record<string, ScopeRecord> = {};
+  private readonly globalStateRefs: Record<string, Ref<unknown>> = Object.create(null) as Record<string, Ref<unknown>>;
   private readonly styleIds = new Set<string>();
   readonly headEntries: HeadEntry[] = [];
   readonly resuxApp: ResuxAppLike;
@@ -6217,6 +6258,7 @@ export class AsyncResuxRenderer {
     this.collectComponentStyles(definition);
     const scopeId = `s${this.nextScopeId++}`;
     const stateRefs: Record<string, Ref<unknown>> = {};
+    const globalStateKeys = new Set<string>();
     const asyncDataRefs: Record<string, AsyncDataResource<unknown>> = {};
     const setupContext = createServerSetupContext(
       this.route,
@@ -6225,7 +6267,9 @@ export class AsyncResuxRenderer {
       asyncDataRefs,
       this.headEntries,
       this.resuxApp,
-      this.runtimeConfig
+      this.runtimeConfig,
+      this.globalStateRefs,
+      globalStateKeys
     );
     const scope = await withActiveResuxApp(this.resuxApp, () => definition.script(setupContext));
 
@@ -6234,6 +6278,7 @@ export class AsyncResuxRenderer {
       moduleId: definition.id,
       props,
       stateRefs,
+      globalStateKeys,
       asyncDataRefs
     };
 
@@ -6295,6 +6340,7 @@ export class AsyncResuxRenderer {
         moduleId: scope.moduleId,
         props: serializeProps(scope.props),
         state: serializeRefs(scope.stateRefs),
+        globalStateKeys: [...scope.globalStateKeys],
         asyncData: serializeAsyncData(scope.asyncDataRefs)
       };
     }
@@ -6302,6 +6348,7 @@ export class AsyncResuxRenderer {
     return {
       route: this.route,
       scopes,
+      globalState: serializeRefs(this.globalStateRefs),
       modules: this.modules,
       vueIslands: this.vueIslands,
       config: publicRuntimeConfig(this.runtimeConfig)
@@ -6355,6 +6402,7 @@ function createResuxApp(route: RouteContext, modules: Record<string, string>, ru
   const payload: ResuxPayload = {
     route,
     scopes: {},
+    globalState: Object.create(null) as Record<string, JsonValue>,
     modules,
     config: publicRuntimeConfig(runtimeConfig)
   };
@@ -7380,6 +7428,10 @@ const lazyVideoObservers = new Map();
 const clientPluginIds = new Set();
 const clientMiddlewareById = new Map();
 const clientProvides = globalThis.__RESUX_PROVIDES__ ||= {};
+const globalStateRefs = globalThis.__RESUX_GLOBAL_STATE_REFS__ ||= new Map();
+const globalStateSnapshots = globalThis.__RESUX_GLOBAL_STATE_SNAPSHOTS__ ||= new Map();
+const dirtyGlobalStateKeys = new Set();
+let globalStateRefreshQueued = false;
 const RESUX_LAZY_PLACEHOLDER_SRC = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 const RESUX_DEFAULT_PLACEHOLDER_SRC = "/__resux/resux-placeholder.svg";
 const observedLazyImages = new Set();
@@ -9064,6 +9116,7 @@ function getClientResuxApp(routeOverride) {
   const payload = globalThis.__RESUX__ ?? {
     route: routeOverride ?? { path: "/", params: {}, query: {} },
     scopes: {},
+    globalState: {},
     modules: {},
     config: { public: {} }
   };
@@ -9533,10 +9586,141 @@ async function runClientRouteMiddleware(payload, fromRoute) {
   return null;
 }
 
+
+function useClientGlobalState(key, factory) {
+  const normalizedKey = String(key || "").trim();
+  if (!normalizedKey) {
+    throw new Error("useGlobalState(key) requires a non-empty key.");
+  }
+
+  if (!globalStateRefs.has(normalizedKey)) {
+    const payload = globalThis.__RESUX__;
+    const snapshot = payload && payload.globalState ? payload.globalState : Object.create(null);
+    const hasValue = Object.prototype.hasOwnProperty.call(snapshot, normalizedKey);
+    const value = hasValue ? snapshot[normalizedKey] : (typeof factory === "function" ? factory() : undefined);
+    const label = 'useGlobalState("' + normalizedKey + '")';
+    const serializedValue = cloneJsonSerializable(value, label);
+    const stateRef = ref(value);
+    globalStateSnapshots.set(normalizedKey, serializedValue);
+
+    watch(stateRef, () => {
+      try {
+        const nextSnapshot = cloneJsonSerializable(stateRef.value, label);
+        globalStateSnapshots.set(normalizedKey, nextSnapshot);
+        const currentPayload = globalThis.__RESUX__;
+        if (currentPayload) {
+          currentPayload.globalState ||= Object.create(null);
+          setSerializableRecordValue(currentPayload.globalState, normalizedKey, nextSnapshot);
+        }
+        queueGlobalStateRefresh(normalizedKey);
+      } catch (error) {
+        console.error("[resux:global-state] Reverting a non-serializable assignment for " + normalizedKey + ".", error);
+        if (globalStateSnapshots.has(normalizedKey)) {
+          stateRef.value = cloneJsonSerializable(globalStateSnapshots.get(normalizedKey), label);
+        }
+      }
+    }, { flush: "post", deep: true });
+
+    globalStateRefs.set(normalizedKey, stateRef);
+  }
+
+  return globalStateRefs.get(normalizedKey);
+}
+
+function serializeClientGlobalState() {
+  const output = Object.create(null);
+  for (const [key, stateRef] of globalStateRefs.entries()) {
+    const label = 'useGlobalState("' + key + '")';
+    try {
+      const snapshot = cloneJsonSerializable(stateRef.value, label);
+      globalStateSnapshots.set(key, snapshot);
+      setSerializableRecordValue(output, key, snapshot);
+    } catch (error) {
+      console.error("[resux:global-state] Reverting a non-serializable assignment for " + key + ".", error);
+      if (!globalStateSnapshots.has(key)) {
+        continue;
+      }
+      const snapshot = cloneJsonSerializable(globalStateSnapshots.get(key), label);
+      stateRef.value = cloneJsonSerializable(snapshot, label);
+      setSerializableRecordValue(output, key, snapshot);
+    }
+  }
+  return output;
+}
+
+function mergeClientGlobalState(payload) {
+  if (!payload) {
+    return payload;
+  }
+  const merged = Object.create(null);
+  for (const [key, value] of Object.entries(payload.globalState || {})) {
+    setSerializableRecordValue(merged, key, value);
+  }
+  for (const [key, value] of Object.entries(serializeClientGlobalState())) {
+    setSerializableRecordValue(merged, key, value);
+  }
+  payload.globalState = merged;
+  return payload;
+}
+
+function queueGlobalStateRefresh(key) {
+  dirtyGlobalStateKeys.add(key);
+  if (globalStateRefreshQueued) {
+    return;
+  }
+  globalStateRefreshQueued = true;
+  queueMicrotask(() => {
+    globalStateRefreshQueued = false;
+    const changedKeys = new Set(dirtyGlobalStateKeys);
+    dirtyGlobalStateKeys.clear();
+    void refreshScopesForGlobalState(changedKeys);
+  });
+}
+
+async function refreshScopesForGlobalState(changedKeys) {
+  const payload = globalThis.__RESUX__;
+  if (!payload || !payload.scopes || !payload.modules || changedKeys.size === 0) {
+    return;
+  }
+
+  const affectedScopes = [...scopeCache.entries()].filter(([scopeId]) => {
+    const serializedScope = payload.scopes[scopeId];
+    if (!serializedScope) {
+      return false;
+    }
+    const keys = Array.isArray(serializedScope.globalStateKeys) ? serializedScope.globalStateKeys : [];
+    return keys.some((key) => changedKeys.has(key));
+  });
+
+  await Promise.allSettled(affectedScopes.map(async ([scopeId, scopeRecord]) => {
+    const serializedScope = payload.scopes[scopeId];
+    if (!serializedScope) {
+      return;
+    }
+
+    try {
+      const component = await importComponent(serializedScope.moduleId, payload.modules, devImportRevision).catch(() => null);
+      if (!component) {
+        return;
+      }
+
+      const patches = component.render(scopeRecord);
+      const serialized = component.serialize(scopeRecord);
+      serializedScope.props = serialized.props;
+      serializedScope.state = serialized.state;
+      serializedScope.asyncData = serialized.asyncData;
+      applyPatches(scopeId, patches);
+    } catch (error) {
+      console.error("[resux:global-state] Failed to refresh scope " + scopeId + ".", error);
+    }
+  }));
+}
+
 export function createClientComponent(definition) {
   return {
     async createScope(serializedScope, route) {
       const stateRefs = {};
+      const globalStateKeys = new Set(Array.isArray(serializedScope.globalStateKeys) ? serializedScope.globalStateKeys : []);
       const asyncDataRefs = {};
       const pendingCompletions = [];
       const mountedCallbacks = [];
@@ -9562,6 +9746,13 @@ export function createClientComponent(definition) {
             stateRefs[key] = ref(hasValue ? serializedScope.state[key] : factory?.());
           }
           return stateRefs[key];
+        },
+        useGlobalState(key, factory) {
+          const normalizedKey = String(key || "").trim();
+          if (normalizedKey) {
+            globalStateKeys.add(normalizedKey);
+          }
+          return useClientGlobalState(key, factory);
         },
         useAsyncData(key, handler) {
           if (!asyncDataRefs[key]) {
@@ -9698,8 +9889,9 @@ export function createClientComponent(definition) {
         $device: useDevice()
       };
       const scope = await definition.script(setupContext);
+      serializedScope.globalStateKeys = [...globalStateKeys];
       await Promise.allSettled(mountedCallbacks.map((callback) => callback()));
-      return { scope, props, stateRefs, asyncDataRefs, pendingCompletions };
+      return { scope, props, stateRefs, globalStateKeys, asyncDataRefs, pendingCompletions };
     },
     async run(scopeRecord, handlerName, event) {
       const handler = scopeRecord.scope[handlerName];
@@ -12645,7 +12837,9 @@ async function navigateTo(target, options = {}) {
     await disposeClientEnhancements();
     setRouteTransition("swapping", { path: routePath });
     const preserved = replaceRouteHtml(root, result.html);
-    globalThis.__RESUX__ = mergePersistentLayoutPayload(previousPayload, nextPayload, preserved.scopeIds);
+    globalThis.__RESUX__ = mergeClientGlobalState(
+      mergePersistentLayoutPayload(previousPayload, nextPayload, preserved.scopeIds)
+    );
     getClientResuxApp(globalThis.__RESUX__.route);
     applyHead(result.head);
     clearScopeCacheExcept(preserved.scopeIds);
@@ -12735,13 +12929,15 @@ function replaceRouteHtml(root, html) {
 }
 
 function mergePersistentLayoutPayload(previousPayload, nextPayload, preservedScopeIds) {
-  if (!previousPayload || !previousPayload.scopes || !nextPayload || !nextPayload.scopes) {
+  if (!nextPayload) {
     return nextPayload;
   }
 
-  for (const scopeId of preservedScopeIds) {
-    if (previousPayload.scopes[scopeId]) {
-      nextPayload.scopes[scopeId] = previousPayload.scopes[scopeId];
+  if (previousPayload && previousPayload.scopes && nextPayload.scopes) {
+    for (const scopeId of preservedScopeIds) {
+      if (previousPayload.scopes[scopeId]) {
+        nextPayload.scopes[scopeId] = previousPayload.scopes[scopeId];
+      }
     }
   }
 
@@ -15288,7 +15484,7 @@ function evaluateExpression(expression, scope, locals) {
 }
 
 function serializeRefs(refs) {
-  const output = {};
+  const output = Object.create(null);
   for (const [key, ref] of Object.entries(refs)) {
     output[key] = ref.value;
   }
@@ -15484,6 +15680,20 @@ function assertJsonSerializable(value, label) {
   }
 }
 
+function cloneJsonSerializable(value, label) {
+  assertJsonSerializable(value, label);
+  return JSON.parse(JSON.stringify(value));
+}
+
+function setSerializableRecordValue(record, key, value) {
+  Object.defineProperty(record, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true
+  });
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -15500,7 +15710,7 @@ installResux();
 }
 
 function serializeRefs(refs: Record<string, Ref<unknown>>): Record<string, JsonValue> {
-  const output: Record<string, JsonValue> = {};
+  const output: Record<string, JsonValue> = Object.create(null) as Record<string, JsonValue>;
 
   for (const [key, ref] of Object.entries(refs)) {
     assertJsonSerializable(ref.value, key);

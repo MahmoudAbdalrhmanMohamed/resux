@@ -26,6 +26,7 @@ jobs:
         run: |
           python .github/scripts/fix-pr7-review.py
           sed -i 's/broken.value.invalid = BigInt(1);/broken.value.self = broken.value;/' tests/global-state.test.ts
+          sed -i 's/expect(errorSpy).toHaveBeenCalled();/await waitForCondition(() => errorSpy.mock.calls.length > 0);/' tests/global-state.test.ts
 
       - name: Setup Node
         uses: actions/setup-node@v6

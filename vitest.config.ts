@@ -8,7 +8,7 @@ export default defineConfig({
       "resuxjs/i18n": path.resolve(__dirname, "src/i18n/index.ts"),
       "resuxjs/reactivity": path.resolve(__dirname, "src/reactivity/index.ts"),
       "resuxjs/runtime": path.resolve(__dirname, "src/runtime/index.ts"),
-      "resuxjs/compiler": path.resolve(__dirname, "src/compiler/index.ts")
+      "resuxjs/compiler": path.resolve(__dirname, "src/compiler/adapter.ts")
     }
   },
   test: {

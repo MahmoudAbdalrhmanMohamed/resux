@@ -46,7 +46,7 @@ const mutableHandlers: ProxyHandler<object> = {
     if (
       success
       && target === toRaw(receiver)
-      && !Object.is(rawValue, oldValue)
+      && (!hadKey || !Object.is(rawValue, oldValue))
     ) {
       trigger(target, key, hadKey ? "set" : "add", rawValue, oldLength);
     }

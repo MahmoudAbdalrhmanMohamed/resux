@@ -23,7 +23,9 @@ jobs:
           fetch-depth: 0
 
       - name: Apply reviewed fixes
-        run: python .github/scripts/fix-pr7-review.py
+        run: |
+          python .github/scripts/fix-pr7-review.py
+          sed -i 's/broken.value.invalid = BigInt(1);/broken.value.self = broken.value;/' tests/global-state.test.ts
 
       - name: Setup Node
         uses: actions/setup-node@v6

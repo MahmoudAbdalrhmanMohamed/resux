@@ -3,7 +3,7 @@ definePageMeta({
   middleware: "auth"
 })
 
-const count = useState("count", () => 0)
+const count = ref(0)
 const config = useRuntimeConfig()
 const appName = String(config.public.appName ?? "Resux App")
 const pluginLabel = String(useResuxApp().provides.starterPlugin ?? "Starter plugin")
@@ -60,26 +60,26 @@ function increment() {
     <section class="hero">
       <p class="eyebrow">Resux starter</p>
       <h1>{{ appName }}</h1>
-      <p class="lede">Server-rendered Vue-like files with resumable client handlers.</p>
+      <p class="lede">Server-rendered Resux SFCs with resumable client handlers.</p>
       <p class="eyebrow">{{ pluginLabel }}</p>
       <div class="actions">
-        <button @click="increment">Count: {{ count }}</button>
+        <button rx-on:click="increment">Count: {{ count }}</button>
         <ResuxLink to="/about">About this app</ResuxLink>
       </div>
     </section>
 
     <section class="stats-panel">
-      <div v-if="pending" class="stats-grid">
+      <div rx-if="pending" class="stats-grid">
         <div class="stat skeleton"></div>
         <div class="stat skeleton"></div>
         <div class="stat skeleton"></div>
       </div>
-      <div v-if="error" class="stat error-state">
+      <div rx-if="error" class="stat error-state">
         <span>Stats unavailable</span>
         <strong>{{ statsError }}</strong>
         <a href="/">Try again</a>
       </div>
-      <div v-if="hasStats" class="stats-grid">
+      <div rx-if="hasStats" class="stats-grid">
         <article class="stat">
           <span>Response</span>
           <strong>{{ stats.response }}</strong>
@@ -90,13 +90,13 @@ function increment() {
         </article>
         <article class="stat">
           <span>Mode</span>
-          <strong v-text="stats.mode">Mode</strong>
+          <strong rx-text="stats.mode">Mode</strong>
         </article>
       </div>
     </section>
 
     <section class="vue-panel">
-      <VueIsland name="CounterIsland" :props="{ label: 'Vue island' }" />
+      <VueIsland name="CounterIsland" rx-bind:props="{ label: 'Vue island' }" />
     </section>
   </main>
 </template>

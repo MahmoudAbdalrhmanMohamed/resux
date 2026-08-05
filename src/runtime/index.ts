@@ -2390,7 +2390,7 @@ if (typeof EventSource !== "undefined" && !window.__RESUX_DEV_RELOAD__) {
 class ResuxRenderer {
   private nextScopeId = 0;
   private readonly scopes: Record<string, ScopeRecord> = {};
-  private readonly globalStateRefs: Record<string, Ref<unknown>> = {};
+  private readonly globalStateRefs: Record<string, Ref<unknown>> = Object.create(null) as Record<string, Ref<unknown>>;
   private readonly headEntries: HeadEntry[] = [];
   private readonly styleIds = new Set<string>();
   private readonly resuxApp: ResuxAppLike;
@@ -2495,7 +2495,7 @@ export function createServerSetupContext(
   headEntries: HeadEntry[],
   resuxApp: ResuxAppLike,
   runtimeConfig: RuntimeConfig,
-  globalStateRefs: Record<string, Ref<unknown>> = {},
+  globalStateRefs: Record<string, Ref<unknown>> = Object.create(null) as Record<string, Ref<unknown>>,
   globalStateKeys: Set<string> = new Set()
 ): SetupContext {
   const apiURL = (url: string): string => resolveServerApiURL(url, route, runtimeConfig);
@@ -6232,7 +6232,7 @@ function resolveVueIslandProps(
 export class AsyncResuxRenderer {
   private nextScopeId = 0;
   private readonly scopes: Record<string, ScopeRecord> = {};
-  private readonly globalStateRefs: Record<string, Ref<unknown>> = {};
+  private readonly globalStateRefs: Record<string, Ref<unknown>> = Object.create(null) as Record<string, Ref<unknown>>;
   private readonly styleIds = new Set<string>();
   readonly headEntries: HeadEntry[] = [];
   readonly resuxApp: ResuxAppLike;
@@ -6402,7 +6402,7 @@ function createResuxApp(route: RouteContext, modules: Record<string, string>, ru
   const payload: ResuxPayload = {
     route,
     scopes: {},
-    globalState: {},
+    globalState: Object.create(null) as Record<string, JsonValue>,
     modules,
     config: publicRuntimeConfig(runtimeConfig)
   };
@@ -7429,6 +7429,7 @@ const clientPluginIds = new Set();
 const clientMiddlewareById = new Map();
 const clientProvides = globalThis.__RESUX_PROVIDES__ ||= {};
 const globalStateRefs = globalThis.__RESUX_GLOBAL_STATE_REFS__ ||= new Map();
+const globalStateSnapshots = globalThis.__RESUX_GLOBAL_STATE_SNAPSHOTS__ ||= new Map();
 const dirtyGlobalStateKeys = new Set();
 let globalStateRefreshQueued = false;
 const RESUX_LAZY_PLACEHOLDER_SRC = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
@@ -9594,25 +9595,30 @@ function useClientGlobalState(key, factory) {
 
   if (!globalStateRefs.has(normalizedKey)) {
     const payload = globalThis.__RESUX__;
-    const snapshot = payload && payload.globalState ? payload.globalState : {};
+    const snapshot = payload && payload.globalState ? payload.globalState : Object.create(null);
     const hasValue = Object.prototype.hasOwnProperty.call(snapshot, normalizedKey);
     const value = hasValue ? snapshot[normalizedKey] : (typeof factory === "function" ? factory() : undefined);
-    assertJsonSerializable(value, 'useGlobalState("' + normalizedKey + '")');
+    const label = 'useGlobalState("' + normalizedKey + '")';
+    const serializedValue = cloneJsonSerializable(value, label);
     const stateRef = ref(value);
+    globalStateSnapshots.set(normalizedKey, serializedValue);
 
     watch(stateRef, () => {
       try {
-        assertJsonSerializable(stateRef.value, 'useGlobalState("' + normalizedKey + '")');
+        const nextSnapshot = cloneJsonSerializable(stateRef.value, label);
+        globalStateSnapshots.set(normalizedKey, nextSnapshot);
+        const currentPayload = globalThis.__RESUX__;
+        if (currentPayload) {
+          currentPayload.globalState ||= Object.create(null);
+          setSerializableRecordValue(currentPayload.globalState, normalizedKey, nextSnapshot);
+        }
+        queueGlobalStateRefresh(normalizedKey);
       } catch (error) {
-        console.error("[resux:global-state] Ignoring a non-serializable assignment for " + normalizedKey + ".", error);
-        return;
+        console.error("[resux:global-state] Reverting a non-serializable assignment for " + normalizedKey + ".", error);
+        if (globalStateSnapshots.has(normalizedKey)) {
+          stateRef.value = cloneJsonSerializable(globalStateSnapshots.get(normalizedKey), label);
+        }
       }
-      const currentPayload = globalThis.__RESUX__;
-      if (currentPayload) {
-        currentPayload.globalState ||= {};
-        currentPayload.globalState[normalizedKey] = stateRef.value;
-      }
-      queueGlobalStateRefresh(normalizedKey);
     }, { flush: "post", deep: true });
 
     globalStateRefs.set(normalizedKey, stateRef);
@@ -9622,10 +9628,22 @@ function useClientGlobalState(key, factory) {
 }
 
 function serializeClientGlobalState() {
-  const output = {};
+  const output = Object.create(null);
   for (const [key, stateRef] of globalStateRefs.entries()) {
-    assertJsonSerializable(stateRef.value, 'useGlobalState("' + key + '")');
-    output[key] = stateRef.value;
+    const label = 'useGlobalState("' + key + '")';
+    try {
+      const snapshot = cloneJsonSerializable(stateRef.value, label);
+      globalStateSnapshots.set(key, snapshot);
+      setSerializableRecordValue(output, key, snapshot);
+    } catch (error) {
+      console.error("[resux:global-state] Reverting a non-serializable assignment for " + key + ".", error);
+      if (!globalStateSnapshots.has(key)) {
+        continue;
+      }
+      const snapshot = cloneJsonSerializable(globalStateSnapshots.get(key), label);
+      stateRef.value = cloneJsonSerializable(snapshot, label);
+      setSerializableRecordValue(output, key, snapshot);
+    }
   }
   return output;
 }
@@ -9634,10 +9652,14 @@ function mergeClientGlobalState(payload) {
   if (!payload) {
     return payload;
   }
-  payload.globalState = {
-    ...(payload.globalState || {}),
-    ...serializeClientGlobalState()
-  };
+  const merged = Object.create(null);
+  for (const [key, value] of Object.entries(payload.globalState || {})) {
+    setSerializableRecordValue(merged, key, value);
+  }
+  for (const [key, value] of Object.entries(serializeClientGlobalState())) {
+    setSerializableRecordValue(merged, key, value);
+  }
+  payload.globalState = merged;
   return payload;
 }
 
@@ -15462,7 +15484,7 @@ function evaluateExpression(expression, scope, locals) {
 }
 
 function serializeRefs(refs) {
-  const output = {};
+  const output = Object.create(null);
   for (const [key, ref] of Object.entries(refs)) {
     output[key] = ref.value;
   }
@@ -15658,6 +15680,20 @@ function assertJsonSerializable(value, label) {
   }
 }
 
+function cloneJsonSerializable(value, label) {
+  assertJsonSerializable(value, label);
+  return JSON.parse(JSON.stringify(value));
+}
+
+function setSerializableRecordValue(record, key, value) {
+  Object.defineProperty(record, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true
+  });
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -15674,7 +15710,7 @@ installResux();
 }
 
 function serializeRefs(refs: Record<string, Ref<unknown>>): Record<string, JsonValue> {
-  const output: Record<string, JsonValue> = {};
+  const output: Record<string, JsonValue> = Object.create(null) as Record<string, JsonValue>;
 
   for (const [key, ref] of Object.entries(refs)) {
     assertJsonSerializable(ref.value, key);

@@ -104,22 +104,30 @@ describe("global state", () => {
     expect(Object.values(result.payload.scopes).every((scope) => Object.keys(scope.state).length === 0)).toBe(true);
   });
 
-  it("supports global-state keys inherited from Object.prototype", async () => {
+  it("supports prototype-sensitive global-state keys safely", async () => {
     const page: ComponentDefinition = defineComponent({
       id: "prototype-key-page",
       name: "PrototypeKeyPage",
       file: "PrototypeKeyPage.vue",
       handlers: [],
       async script(ctx) {
-        const state = ctx.useGlobalState("constructor", () => ({ ready: true }));
-        return { state };
+        const constructorState = ctx.useGlobalState("constructor", () => ({ ready: true }));
+        const protoState = ctx.useGlobalState("__proto__", () => ({ safe: true }));
+        return { constructorState, protoState };
       },
-      template: [{ type: "interpolation", expression: "state.value.ready", bindingId: "ready" }]
+      template: [
+        { type: "interpolation", expression: "constructorState.value.ready", bindingId: "ready" },
+        { type: "interpolation", expression: "protoState.value.safe", bindingId: "safe" }
+      ]
     });
 
     const result = await renderApp({ page, route: { path: "/prototype-key", params: {}, query: {} } });
-    expect(result.payload.globalState).toEqual({ constructor: { ready: true } });
-    expect(result.html).toContain(">true</span>");
+    expect(Object.getPrototypeOf(result.payload.globalState!)).toBeNull();
+    expect(Object.prototype.hasOwnProperty.call(result.payload.globalState, "constructor")).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(result.payload.globalState, "__proto__")).toBe(true);
+    expect(result.payload.globalState?.constructor).toEqual({ ready: true });
+    expect(result.payload.globalState?.["__proto__"]).toEqual({ safe: true });
+    expect(result.html.match(/>true<\/span>/g)?.length).toBe(2);
   });
 
   it("isolates global state between concurrent SSR requests", async () => {
@@ -213,7 +221,8 @@ export default createClientComponent({ id: "global-client-counter", name: "Globa
       }),
       __RESUX__: result.payload,
       __RESUX_INSTALLED__: false,
-      __RESUX_GLOBAL_STATE_REFS__: new Map()
+      __RESUX_GLOBAL_STATE_REFS__: new Map(),
+      __RESUX_GLOBAL_STATE_SNAPSHOTS__: new Map()
     });
 
     await import(runtimeImportUrl);
@@ -281,8 +290,10 @@ export default createClientComponent({ id: "global-queue", name: "GlobalQueue", 
       route: { path: "/queue", params: {}, query: {} },
       modules: { "global-queue": pathToFileURL(componentFile).href }
     });
+    const nextPayload = JSON.parse(JSON.stringify(result.payload));
+    nextPayload.route = { path: "/next", params: {}, query: {} };
     const window = new Window({ url: "http://localhost/queue" });
-    window.document.body.innerHTML = `<div id="__resux">${result.html}</div>`;
+    window.document.body.innerHTML = `<div id="__resux"><a href="/next">Next</a>${result.html}</div>`;
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     Object.assign(globalThis, {
@@ -290,9 +301,15 @@ export default createClientComponent({ id: "global-queue", name: "GlobalQueue", 
       window,
       location: window.location,
       history: window.history,
+      scrollTo: () => undefined,
+      fetch: async () => new Response(JSON.stringify({ html: result.html, head: { title: "Next" }, payload: nextPayload }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      }),
       __RESUX__: result.payload,
       __RESUX_INSTALLED__: false,
-      __RESUX_GLOBAL_STATE_REFS__: new Map()
+      __RESUX_GLOBAL_STATE_REFS__: new Map(),
+      __RESUX_GLOBAL_STATE_SNAPSHOTS__: new Map()
     });
 
     try {
@@ -301,6 +318,17 @@ export default createClientComponent({ id: "global-queue", name: "GlobalQueue", 
         .dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
       await waitForCondition(() => (globalThis as any).__RESUX__.globalState.safe.value === 1);
       await waitForCondition(() => errorSpy.mock.calls.length > 0);
+      await waitForCondition(() => {
+        const broken = (globalThis as any).__RESUX_GLOBAL_STATE_REFS__.get("broken");
+        return broken?.value?.value === 0;
+      });
+      expect((globalThis as any).__RESUX__.globalState.broken).toEqual({ value: 0 });
+
+      window.document.querySelector<HTMLAnchorElement>('a[href="/next"]')!
+        .dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+      await waitForCondition(() => window.location.pathname === "/next");
+      expect((globalThis as any).__RESUX__.globalState.broken).toEqual({ value: 0 });
+      expect((globalThis as any).__RESUX__.globalState.safe).toEqual({ value: 1 });
     } finally {
       errorSpy.mockRestore();
     }

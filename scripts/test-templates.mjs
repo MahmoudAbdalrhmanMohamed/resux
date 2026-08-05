@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -18,7 +19,10 @@ const templates = [
 ];
 const npmExecutable = "npm";
 const nodeExecutable = process.execPath;
-const portBase = 4200;
+const templateTestEnvironment = {
+  ...process.env,
+  RESUX_HALAL_REPORT_SIGNING_SECRET: "resux-template-verification-secret-not-for-production-use",
+};
 
 if (!existsSync(distCreate)) {
   console.error("Missing dist/create.js. Run `npm run build` before template tests.");
@@ -56,11 +60,9 @@ const tempRoot = await mkdtemp(path.join(os.tmpdir(), "resux-templates-"));
 console.log(`Template test workspace: ${tempRoot}`);
 
 let failed = false;
-for (let index = 0; index < selectedTemplates.length; index++) {
-  const template = selectedTemplates[index];
+for (const template of selectedTemplates) {
   const projectName = `starter-${template}`;
   const projectRoot = path.join(tempRoot, projectName);
-  const port = portBase + index;
   console.log(`\n[template:${template}] scaffold`);
 
   const createResult = runCommand(nodeExecutable, [
@@ -86,6 +88,7 @@ for (let index = 0; index < selectedTemplates.length; index++) {
     runOrFail(`[template:${template}] npm install`, npmExecutable, ["install", "--no-audit", "--no-fund"], projectRoot);
     await runTypecheckIfAvailable(projectRoot, template);
     runOrFail(`[template:${template}] npm run build`, npmExecutable, ["run", "build"], projectRoot);
+    const port = await getAvailablePort();
     await runPreviewSmoke(projectRoot, template, port);
     await assertGeneratedArtifacts(projectRoot, template);
     console.log(`[template:${template}] ok`);
@@ -106,7 +109,7 @@ if (failed) {
 function runCommand(command, args, options) {
   return spawnSync(command, args, {
     cwd: options.cwd,
-    env: options.env ?? process.env,
+    env: options.env ?? templateTestEnvironment,
     stdio: options.stdio ?? "inherit",
     encoding: "utf8",
     shell: process.platform === "win32",
@@ -145,14 +148,17 @@ async function runPreviewSmoke(projectRoot, template, port) {
     throw new Error("Missing preview/start script.");
   }
 
+  console.log(`[template:${template}] preview on port ${port}`);
   const child = spawn(npmExecutable, ["run", previewScript, "--", "--port", String(port)], {
     cwd: projectRoot,
-    env: process.env,
+    env: templateTestEnvironment,
     stdio: ["ignore", "pipe", "pipe"],
     shell: process.platform === "win32",
+    detached: process.platform !== "win32",
   });
 
   const logs = [];
+  let spawnError;
   const appendLog = (chunk) => {
     const text = chunk?.toString?.() ?? "";
     if (text) {
@@ -165,20 +171,40 @@ async function runPreviewSmoke(projectRoot, template, port) {
 
   child.stdout.on("data", appendLog);
   child.stderr.on("data", appendLog);
+  child.on("error", (error) => {
+    spawnError = error;
+    appendLog(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+  });
 
   try {
-    const ready = await waitForHttpReady(`http://127.0.0.1:${port}/`, 120_000);
+    const ready = await waitForHttpReady(`http://127.0.0.1:${port}/`, 120_000, child, () => spawnError);
     if (!ready) {
       throw new Error(`Preview server did not become ready. Logs:\n${logs.join("")}`);
     }
+  } catch (error) {
+    const detail = logs.join("");
+    if (detail && error instanceof Error && !error.message.includes("Logs:")) {
+      throw new Error(`${error.message}\nLogs:\n${detail}`, { cause: error });
+    }
+    throw error;
   } finally {
-    await stopProcessTree(child.pid);
+    await stopProcessTree(child);
   }
 }
 
-async function waitForHttpReady(url, timeoutMs) {
+async function waitForHttpReady(url, timeoutMs, child, getSpawnError) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
+    const spawnError = getSpawnError();
+    if (spawnError) {
+      throw new Error(`Preview process failed to start: ${spawnError.message}`);
+    }
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(
+        `Preview process exited before becoming ready (code ${child.exitCode ?? "none"}, signal ${child.signalCode ?? "none"}).`,
+      );
+    }
+
     try {
       const response = await fetch(url);
       if (response.status >= 200 && response.status < 500) {
@@ -190,6 +216,38 @@ async function waitForHttpReady(url, timeoutMs) {
     await sleep(1000);
   }
   return false;
+}
+
+async function getAvailablePort() {
+  const server = createServer();
+  server.unref();
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    await closeServer(server);
+    throw new Error("Unable to allocate a local preview port.");
+  }
+
+  const port = address.port;
+  await closeServer(server);
+  return port;
+}
+
+function closeServer(server) {
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    });
+  });
 }
 
 async function assertGeneratedArtifacts(projectRoot, template) {
@@ -250,19 +308,68 @@ async function assertGeneratedArtifacts(projectRoot, template) {
   }
 }
 
-async function stopProcessTree(pid) {
-  if (!pid) {
+async function stopProcessTree(child) {
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) {
     return;
   }
+
   if (process.platform === "win32") {
-    spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
+    spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+    await waitForProcessExit(child, 5_000);
     return;
   }
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    // Ignore shutdown failures.
+
+  signalProcessGroup(child, "SIGTERM");
+  if (await waitForProcessExit(child, 5_000)) {
+    return;
   }
+
+  signalProcessGroup(child, "SIGKILL");
+  await waitForProcessExit(child, 5_000);
+}
+
+function signalProcessGroup(child, signal) {
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+
+  try {
+    process.kill(-child.pid, signal);
+    return;
+  } catch {
+    // Fall back to signalling only the direct child.
+  }
+
+  try {
+    child.kill(signal);
+  } catch {
+    // The process may already have exited.
+  }
+}
+
+function waitForProcessExit(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve(true);
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (exited) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      child.off("exit", onExit);
+      child.off("close", onExit);
+      resolve(exited);
+    };
+    const onExit = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+
+    child.once("exit", onExit);
+    child.once("close", onExit);
+  });
 }
 
 function extractLastNonEmptyLine(value) {

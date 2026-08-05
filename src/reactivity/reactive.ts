@@ -1,8 +1,11 @@
-import { track, trigger } from "./effect.js";
-import { isObject, ReactiveFlags } from "./utils.js";
+import { ITERATE_KEY, track, trigger } from "./effect.js";
+import { hasOwn, isObject, ReactiveFlags } from "./utils.js";
 
 const reactiveMap = new WeakMap<object, object>();
 const readonlyMap = new WeakMap<object, object>();
+const proxyToRaw = new WeakMap<object, object>();
+const reactiveProxies = new WeakSet<object>();
+const readonlyProxies = new WeakSet<object>();
 
 const mutableHandlers: ProxyHandler<object> = {
   get(target, key, receiver) {
@@ -22,28 +25,39 @@ const mutableHandlers: ProxyHandler<object> = {
     return isObject(result) ? reactive(result) : result;
   },
 
+  has(target, key) {
+    const result = Reflect.has(target, key);
+    track(target, key);
+    return result;
+  },
+
+  ownKeys(target) {
+    track(target, ITERATE_KEY);
+    return Reflect.ownKeys(target);
+  },
+
   set(target, key, value, receiver) {
-    const oldValue = Reflect.get(target, key, receiver);
-    const oldLength = Array.isArray(target) ? target.length : 0;
-    const success = Reflect.set(target, key, value, receiver);
-    if (success && !Object.is(value, oldValue)) {
-      trigger(target, key);
-      if (
-        Array.isArray(target)
-        && isArrayIndex(key)
-        && Number(key) >= oldLength
-      ) {
-        trigger(target, "length");
-      }
+    const oldLength = Array.isArray(target) ? target.length : undefined;
+    const hadKey = hasOwn(target, key);
+    const oldValue = toRaw(Reflect.get(target, key, receiver));
+    const rawValue = toRaw(value);
+    const success = Reflect.set(target, key, rawValue, receiver);
+
+    if (
+      success
+      && target === toRaw(receiver)
+      && (!hadKey || !Object.is(rawValue, oldValue))
+    ) {
+      trigger(target, key, hadKey ? "set" : "add", rawValue, oldLength);
     }
     return success;
   },
 
   deleteProperty(target, key) {
-    const hadKey = Reflect.has(target, key);
+    const hadKey = hasOwn(target, key);
     const success = Reflect.deleteProperty(target, key);
     if (hadKey && success) {
-      trigger(target, key);
+      trigger(target, key, "delete");
     }
     return success;
   }
@@ -63,6 +77,14 @@ const readonlyHandlers: ProxyHandler<object> = {
 
     const result = Reflect.get(target, key, receiver);
     return isObject(result) ? readonly(result) : result;
+  },
+
+  has(target, key) {
+    return Reflect.has(target, key);
+  },
+
+  ownKeys(target) {
+    return Reflect.ownKeys(target);
   },
 
   set() {
@@ -95,8 +117,7 @@ function createReactiveObject(
     return target;
   }
 
-  const targetRecord = target as Record<PropertyKey, unknown>;
-  if (targetRecord[ReactiveFlags.RAW] && !(isReadonly && targetRecord[ReactiveFlags.IS_REACTIVE])) {
+  if (proxyToRaw.has(target) && !(isReadonly && reactiveProxies.has(target))) {
     return target;
   }
 
@@ -107,22 +128,40 @@ function createReactiveObject(
 
   const proxy = new Proxy(target, baseHandlers);
   proxyMap.set(target, proxy);
+  proxyToRaw.set(proxy, target);
+  if (isReadonly) {
+    readonlyProxies.add(proxy);
+  } else {
+    reactiveProxies.add(proxy);
+  }
   return proxy;
 }
 
 export function isReactive(value: unknown): boolean {
-  return Boolean(isObject(value) && (value as Record<PropertyKey, unknown>)[ReactiveFlags.IS_REACTIVE]);
+  if (!isObject(value)) {
+    return false;
+  }
+  if (reactiveProxies.has(value)) {
+    return true;
+  }
+  const wrapped = readonlyProxies.has(value) ? proxyToRaw.get(value) : undefined;
+  return wrapped ? isReactive(wrapped) : false;
 }
 
 export function isReadonly(value: unknown): boolean {
-  return Boolean(isObject(value) && (value as Record<PropertyKey, unknown>)[ReactiveFlags.IS_READONLY]);
+  return Boolean(isObject(value) && readonlyProxies.has(value));
 }
 
 export function toRaw<T>(value: T): T {
-  if (isObject(value) && ReactiveFlags.RAW in value) {
-    return (value as Record<PropertyKey, unknown>)[ReactiveFlags.RAW] as T;
+  let current: unknown = value;
+  while (isObject(current)) {
+    const raw = proxyToRaw.get(current);
+    if (!raw || raw === current) {
+      break;
+    }
+    current = raw;
   }
-  return value;
+  return current as T;
 }
 
 function isArrayIndex(key: PropertyKey): boolean {

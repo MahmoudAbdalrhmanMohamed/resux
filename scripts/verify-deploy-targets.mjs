@@ -1,11 +1,21 @@
 import { spawn } from "node:child_process";
-import { mkdir, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = path.join(rootDir, "dist", "cli.js");
+const fixtureSigningSecret = "resux-deploy-verification-secret-not-for-production-use";
+const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
+const frameworkPackage = JSON.parse(await readFile(path.join(rootDir, "package.json"), "utf8"));
+
+const targetAssertions = new Map([
+  ["node", assertNodeOutput],
+  ["static", assertStaticOutput],
+  ["netlify", assertNetlifyOutput],
+  ["vercel", assertVercelOutput],
+]);
 
 function fail(message) {
   throw new Error(`[verify:deploy-targets] ${message}`);
@@ -20,35 +30,58 @@ async function exists(file) {
   }
 }
 
-async function runBuild(appRoot) {
-  await new Promise((resolve, reject) => {
-    const child = spawn(
-      process.execPath,
-      [cliPath, "build", "."],
-      {
-        cwd: appRoot,
-        stdio: "inherit",
-        env: {
-          ...process.env,
-          NITRO_PRESET: ""
-        }
-      }
-    );
+function runProcess(command, args, options) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      stdio: "inherit",
+      env: options.env ?? process.env,
+      shell: process.platform === "win32",
+    });
 
     child.on("error", reject);
-    child.on("exit", (code) => {
+    child.on("exit", (code, signal) => {
       if (code === 0) {
         resolve();
       } else {
-        reject(new Error(`Build exited with code ${code ?? "unknown"}.`));
+        reject(new Error(
+          `${options.label} exited with code ${code ?? "unknown"}`
+          + (signal ? ` and signal ${signal}` : ""),
+        ));
       }
     });
+  });
+}
+
+async function runBuild(appRoot, deployTarget) {
+  console.log(`[verify:deploy-targets] building ${deployTarget}`);
+  await runProcess(process.execPath, [cliPath, "build", "."], {
+    cwd: appRoot,
+    label: `${deployTarget} build`,
+    env: {
+      ...process.env,
+      NITRO_PRESET: "",
+      RESUX_HALAL_REPORT_SIGNING_SECRET: fixtureSigningSecret,
+    },
   });
 }
 
 async function createFixtureApp(appRoot, deployTarget) {
   await mkdir(path.join(appRoot, "pages", "docs"), { recursive: true });
 
+  await writeFile(
+    path.join(appRoot, "package.json"),
+    `${JSON.stringify({
+      name: `resux-deploy-${deployTarget}`,
+      private: true,
+      type: "module",
+      dependencies: {
+        ...frameworkPackage.dependencies,
+        resuxjs: `file:${rootDir.replaceAll("\\", "/")}`,
+      },
+    }, null, 2)}\n`,
+    "utf8",
+  );
   await writeFile(
     path.join(appRoot, "pages", "index.vue"),
     "<template><main>Home</main></template>",
@@ -110,73 +143,67 @@ export default fromNodeMiddleware((req, res, next) => {
 `,
     "utf8",
   );
-  await symlink(path.join(rootDir, "node_modules"), path.join(appRoot, "node_modules"), "junction");
+
+  await runProcess(
+    npmExecutable,
+    ["install", "--no-audit", "--no-fund", "--package-lock=false"],
+    { cwd: appRoot, label: `${deployTarget} fixture install` },
+  );
 }
 
 async function assertNodeOutput(appRoot) {
-  const runtimeClientPath = path.join(appRoot, ".output", "public", "__resux", "runtime-client.mjs");
-  const serverEntryPath = path.join(appRoot, ".output", "server", "index.mjs");
-  if (!(await exists(runtimeClientPath))) {
-    fail("node target is missing .output/public/__resux/runtime-client.mjs");
-  }
-  if (!(await exists(serverEntryPath))) {
-    fail("node target is missing .output/server/index.mjs");
-  }
+  await assertPaths(appRoot, "node", [
+    ".output/public/__resux/runtime-client.mjs",
+    ".output/server/index.mjs",
+  ]);
 }
 
 async function assertStaticOutput(appRoot) {
-  const runtimeClientPath = path.join(appRoot, ".output", "public", "__resux", "runtime-client.mjs");
-  if (!(await exists(runtimeClientPath))) {
-    fail("static target is missing .output/public/__resux/runtime-client.mjs");
-  }
+  await assertPaths(appRoot, "static", [
+    ".output/public/__resux/runtime-client.mjs",
+  ]);
 }
 
 async function assertNetlifyOutput(appRoot) {
-  const runtimeClientPath = path.join(appRoot, "dist", "__resux", "runtime-client.mjs");
-  if (!(await exists(runtimeClientPath))) {
-    fail("netlify target is missing dist/__resux/runtime-client.mjs");
-  }
+  await assertPaths(appRoot, "netlify", [
+    "dist/__resux/runtime-client.mjs",
+    ".netlify/functions-internal",
+  ]);
 
   const functionsRoot = path.join(appRoot, ".netlify", "functions-internal");
-  if (!(await exists(functionsRoot))) {
-    fail("netlify target is missing .netlify/functions-internal");
-  }
-
   const functions = await readdir(functionsRoot, { withFileTypes: true });
-  const serverFunction = functions.find((entry) => entry.isDirectory());
-  if (!serverFunction) {
+  const functionDirectories = functions.filter((entry) => entry.isDirectory());
+  if (!functionDirectories.length) {
     fail("netlify target did not emit any internal function directories.");
   }
 
-  const serverManifestPath = path.join(
-    functionsRoot,
-    serverFunction.name,
-    ".resux",
-    "server",
-    "manifest.mjs",
-  );
-  if (!(await exists(serverManifestPath))) {
-    fail("netlify target function is missing .resux/server/manifest.mjs");
+  const manifests = await Promise.all(functionDirectories.map(async (entry) => ({
+    name: entry.name,
+    present: await exists(path.join(
+      functionsRoot,
+      entry.name,
+      ".resux",
+      "server",
+      "manifest.mjs",
+    )),
+  })));
+  if (!manifests.some((entry) => entry.present)) {
+    fail(
+      "netlify target functions are missing .resux/server/manifest.mjs; emitted directories: "
+      + functionDirectories.map((entry) => entry.name).join(", "),
+    );
   }
 }
 
 async function assertVercelOutput(appRoot) {
   const outputRoot = path.join(appRoot, ".vercel", "output");
-  const runtimeClientPath = path.join(outputRoot, "static", "__resux", "runtime-client.mjs");
-  const outputConfigPath = path.join(outputRoot, "config.json");
-  const functionsRoot = path.join(outputRoot, "functions");
+  await assertPaths(appRoot, "vercel", [
+    ".vercel/output/static/__resux/runtime-client.mjs",
+    ".vercel/output/config.json",
+    ".vercel/output/functions",
+  ]);
 
-  if (!(await exists(runtimeClientPath))) {
-    fail("vercel target is missing .vercel/output/static/__resux/runtime-client.mjs");
-  }
-  if (!(await exists(outputConfigPath))) {
-    fail("vercel target is missing .vercel/output/config.json");
-  }
-  if (!(await exists(functionsRoot))) {
-    fail("vercel target is missing .vercel/output/functions");
-  }
-
-  const outputConfig = JSON.parse(await readFile(outputConfigPath, "utf8"));
+  const outputConfig = JSON.parse(await readFile(path.join(outputRoot, "config.json"), "utf8"));
   if (outputConfig.version !== 3) {
     fail(`vercel config.json expected version=3, received ${String(outputConfig.version)}`);
   }
@@ -205,6 +232,7 @@ async function assertVercelOutput(appRoot) {
     fail("vercel config.json is missing a catch-all route.");
   }
 
+  const functionsRoot = path.join(outputRoot, "functions");
   const functions = await readdir(functionsRoot, { withFileTypes: true });
   const emittedFunctions = functions.filter((entry) => entry.isDirectory() && entry.name.endsWith(".func"));
   if (!emittedFunctions.length) {
@@ -212,21 +240,49 @@ async function assertVercelOutput(appRoot) {
   }
 
   for (const fn of emittedFunctions) {
-    const functionRoot = path.join(functionsRoot, fn.name);
-    if (!(await exists(path.join(functionRoot, ".vc-config.json")))) {
-      fail(`vercel function ${fn.name} is missing .vc-config.json`);
-    }
-    if (!(await exists(path.join(functionRoot, ".resux", "server", "manifest.mjs")))) {
-      fail(`vercel function ${fn.name} is missing .resux/server/manifest.mjs`);
+    await assertPaths(path.join(functionsRoot, fn.name), `vercel function ${fn.name}`, [
+      ".vc-config.json",
+      ".resux/server/manifest.mjs",
+    ]);
+  }
+}
+
+async function assertPaths(root, targetName, relativePaths) {
+  for (const relativePath of relativePaths) {
+    if (!(await exists(path.join(root, relativePath)))) {
+      fail(`${targetName} target is missing ${relativePath}`);
     }
   }
 }
 
 async function verifyTarget(deployTarget, assertOutput) {
-  const appRoot = path.join(os.tmpdir(), `resux-deploy-target-${deployTarget}-${Date.now()}`);
-  await createFixtureApp(appRoot, deployTarget);
-  await runBuild(appRoot);
-  await assertOutput(appRoot);
+  const appRoot = await mkdtemp(path.join(os.tmpdir(), `resux-deploy-target-${deployTarget}-`));
+  try {
+    await createFixtureApp(appRoot, deployTarget);
+    await runBuild(appRoot, deployTarget);
+    await assertOutput(appRoot);
+    console.log(`[verify:deploy-targets] ${deployTarget} PASS`);
+  } finally {
+    await rm(appRoot, { recursive: true, force: true });
+  }
+}
+
+function selectedTargets() {
+  const requested = (process.env.RESUX_DEPLOY_TARGET_FILTER ?? "")
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (!requested.length) {
+    return [...targetAssertions.entries()];
+  }
+
+  const unknown = requested.filter((target) => !targetAssertions.has(target));
+  if (unknown.length) {
+    fail(`unknown deployment target(s): ${unknown.join(", ")}`);
+  }
+
+  return requested.map((target) => [target, targetAssertions.get(target)]);
 }
 
 async function main() {
@@ -234,14 +290,13 @@ async function main() {
     fail("dist/cli.js not found. Run `npm run build` first.");
   }
 
-  await verifyTarget("node", assertNodeOutput);
-  await verifyTarget("static", assertStaticOutput);
-  await verifyTarget("netlify", assertNetlifyOutput);
-  await verifyTarget("vercel", assertVercelOutput);
+  for (const [deployTarget, assertOutput] of selectedTargets()) {
+    await verifyTarget(deployTarget, assertOutput);
+  }
   console.log("[verify:deploy-targets] PASS");
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
+  console.error(error instanceof Error ? error.stack ?? error.message : String(error));
   process.exit(1);
 });

@@ -9,6 +9,9 @@ export interface ReactiveEffectLike {
 
 export type Dep = Set<ReactiveEffectLike>;
 type KeyToDepMap = Map<PropertyKey, Dep>;
+export type TriggerOperation = "set" | "add" | "delete";
+
+export const ITERATE_KEY = Symbol("resux-iterate");
 
 const targetMap = new WeakMap<object, KeyToDepMap>();
 
@@ -123,15 +126,57 @@ export function trackEffects(dep: Dep): void {
   activeEffect.deps.push(dep);
 }
 
-export function trigger(target: object, key: PropertyKey): void {
+export function trigger(
+  target: object,
+  key: PropertyKey,
+  operation: TriggerOperation = "set",
+  newValue?: unknown,
+  oldLength?: number
+): void {
   const depsMap = targetMap.get(target);
   if (!depsMap) {
     return;
   }
-  const effects = depsMap.get(key);
-  if (!effects) {
-    return;
+
+  const effects: Dep = new Set();
+  const addEffects = (dep?: Dep) => {
+    if (!dep) {
+      return;
+    }
+    for (const effect of dep) {
+      effects.add(effect);
+    }
+  };
+
+  if (Array.isArray(target) && key === "length") {
+    const nextLength = Number(newValue);
+    for (const [depKey, dep] of depsMap) {
+      if (
+        depKey === "length"
+        || depKey === ITERATE_KEY
+        || (isArrayIndex(depKey) && Number(depKey) >= nextLength)
+      ) {
+        addEffects(dep);
+      }
+    }
+  } else {
+    addEffects(depsMap.get(key));
+
+    if (operation === "add" || operation === "delete") {
+      addEffects(depsMap.get(ITERATE_KEY));
+    }
+
+    if (
+      operation === "add"
+      && Array.isArray(target)
+      && isArrayIndex(key)
+      && typeof oldLength === "number"
+      && Number(key) >= oldLength
+    ) {
+      addEffects(depsMap.get("length"));
+    }
   }
+
   triggerEffects(effects);
 }
 
@@ -159,4 +204,13 @@ export function pauseTracking(): void {
 
 export function resetTracking(): void {
   shouldTrack = trackStack.pop() ?? true;
+}
+
+function isArrayIndex(key: PropertyKey): boolean {
+  if (typeof key === "symbol" || key === "length") {
+    return false;
+  }
+  const value = String(key);
+  return /^(?:0|[1-9]\d*)$/.test(value)
+    && Number(value) < 4_294_967_295;
 }

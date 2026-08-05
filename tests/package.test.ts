@@ -112,7 +112,8 @@ describe("create app", () => {
       });
       expect(appPackage.devDependencies).toMatchObject({
         "@types/node": "^24.10.1",
-        "vue-tsc": "^3.1.2",
+        "typescript": "^5.9.3",
+        "vue-tsc": "^3.3.8",
       });
       expect(envTypes).toContain("resuxjs/globals");
       expect(appTypes).toContain("resuxjs/globals");

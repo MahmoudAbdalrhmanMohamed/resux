@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computed,
+  effect,
   isReactive,
   isReadonly,
   isRef,
@@ -8,6 +9,7 @@ import {
   reactive,
   readonly,
   ref,
+  toRaw,
   toRef,
   toRefs,
   unref,
@@ -32,6 +34,69 @@ describe("resux reactivity", () => {
     expect(state.count).toBe(2);
   });
 
+  it("tracks property iteration and existence changes", () => {
+    const state = reactive<Record<string, number>>({});
+    let keys: string[] = [];
+    let hasCount = false;
+
+    effect(() => {
+      keys = Object.keys(state);
+    });
+    effect(() => {
+      hasCount = "count" in state;
+    });
+
+    state.count = 1;
+    expect(keys).toEqual(["count"]);
+    expect(hasCount).toBe(true);
+
+    delete state.count;
+    expect(keys).toEqual([]);
+    expect(hasCount).toBe(false);
+  });
+
+  it("tracks sparse-array additions without invalidating length unnecessarily", () => {
+    const values = reactive(new Array<number | undefined>(2));
+    let keys: string[] = [];
+    let observedLength = 0;
+    let lengthRuns = 0;
+
+    effect(() => {
+      keys = Object.keys(values);
+    });
+    effect(() => {
+      observedLength = values.length;
+      lengthRuns++;
+    });
+
+    values[0] = 1;
+    expect(keys).toEqual(["0"]);
+    expect(observedLength).toBe(2);
+    expect(lengthRuns).toBe(1);
+
+    values[1] = undefined;
+    expect(keys).toEqual(["0", "1"]);
+    expect(observedLength).toBe(2);
+    expect(lengthRuns).toBe(1);
+
+    values[2] = 3;
+    expect(keys).toEqual(["0", "1", "2"]);
+    expect(observedLength).toBe(3);
+    expect(lengthRuns).toBe(2);
+  });
+
+  it("invalidates removed array indexes when length shrinks", () => {
+    const values = reactive([1, 2, 3]);
+    let third: number | undefined;
+
+    effect(() => {
+      third = values[2];
+    });
+
+    values.length = 1;
+    expect(third).toBeUndefined();
+  });
+
   it("supports computed caching and invalidation", () => {
     const count = ref(2);
     let runs = 0;
@@ -46,6 +111,23 @@ describe("resux reactivity", () => {
 
     count.value = 3;
     expect(doubled.value).toBe(6);
+    expect(runs).toBe(2);
+  });
+
+  it("retries computed getters after an exception", () => {
+    let shouldThrow = true;
+    let runs = 0;
+    const value = computed(() => {
+      runs++;
+      if (shouldThrow) {
+        throw new Error("temporary failure");
+      }
+      return 42;
+    });
+
+    expect(() => value.value).toThrow("temporary failure");
+    shouldThrow = false;
+    expect(value.value).toBe(42);
     expect(runs).toBe(2);
   });
 
@@ -72,8 +154,24 @@ describe("resux reactivity", () => {
     ]);
   });
 
+  it("does not run queued watch callbacks after stop", async () => {
+    const count = ref(0);
+    const seen: number[] = [];
+    const stop = watch(count, (value) => {
+      seen.push(value);
+    });
+
+    count.value = 1;
+    stop();
+    await nextTick();
+
+    expect(seen).toEqual([]);
+  });
+
   it("supports deep watch for reactive trees", () => {
-    const state = reactive({ nested: { count: 0 } });
+    const state = reactive<{ nested: { count: number }; added?: number }>({
+      nested: { count: 0 }
+    });
     let runs = 0;
     const stop = watch(
       state,
@@ -84,10 +182,12 @@ describe("resux reactivity", () => {
     );
 
     state.nested.count++;
+    state.added = 1;
+    delete state.added;
     stop();
     state.nested.count++;
 
-    expect(runs).toBe(1);
+    expect(runs).toBe(3);
   });
 
   it("supports watchEffect and cleanup", () => {
@@ -118,6 +218,41 @@ describe("resux reactivity", () => {
     expect(isReadonly(locked)).toBe(true);
     locked.count = 9;
     expect(source.count).toBe(1);
+  });
+
+  it("does not trust spoofed reactive flag properties", () => {
+    const spoofed = {
+      __v_isReactive: true,
+      __v_isReadonly: true,
+      __v_raw: { fake: true },
+      count: 1
+    };
+    const proxy = reactive(spoofed);
+
+    expect(proxy).not.toBe(spoofed);
+    expect(isReactive(spoofed)).toBe(false);
+    expect(isReadonly(spoofed)).toBe(false);
+    expect(toRaw(spoofed)).toBe(spoofed);
+    expect(toRaw(proxy)).toBe(spoofed);
+  });
+
+  it("preserves raw identity across proxies", () => {
+    const raw = { count: 1 };
+    const proxy = reactive(raw);
+    const locked = readonly(proxy);
+    const holder = ref(raw);
+    let runs = 0;
+
+    effect(() => {
+      holder.value;
+      runs++;
+    });
+
+    holder.value = proxy;
+
+    expect(toRaw(proxy)).toBe(raw);
+    expect(toRaw(locked)).toBe(raw);
+    expect(runs).toBe(1);
   });
 
   it("supports toRef and toRefs", () => {

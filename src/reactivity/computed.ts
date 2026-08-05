@@ -19,7 +19,9 @@ class ComputedRefImpl<T> implements ComputedRef<T> {
       scheduler: () => {
         if (!this.dirty) {
           this.dirty = true;
-          triggerEffects(this._dep());
+          if (this.dep) {
+            triggerEffects(this.dep);
+          }
         }
       }
     });
@@ -28,8 +30,9 @@ class ComputedRefImpl<T> implements ComputedRef<T> {
   get value(): T {
     trackEffects(this._dep());
     if (this.dirty) {
+      const value = this.runner();
+      this._value = value;
       this.dirty = false;
-      this._value = this.runner();
     }
     return this._value;
   }

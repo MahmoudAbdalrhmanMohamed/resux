@@ -17,13 +17,18 @@ export function compileVueSource(
   source: string,
   options: { file: string; id: string; name: string },
 ): CompiledComponent {
+  const usesResuxDirectives = source.includes("rx-");
+
   try {
     return internalCompiler.compileVueSource(
       normalizeResuxSfcSource(source, options.file),
       options,
     );
   } catch (error) {
-    return rethrowWithResuxDirectiveBrand(error);
+    if (usesResuxDirectives) {
+      return rethrowWithResuxDirectiveBrand(error);
+    }
+    throw error;
   }
 }
 

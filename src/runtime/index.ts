@@ -2542,7 +2542,7 @@ export function createServerSetupContext(
         throw new Error("useGlobalState(key) requires a non-empty key.");
       }
       globalStateKeys.add(normalizedKey);
-      if (globalStateRefs[normalizedKey]) {
+      if (Object.prototype.hasOwnProperty.call(globalStateRefs, normalizedKey)) {
         return globalStateRefs[normalizedKey] as Ref<T>;
       }
 
@@ -9601,7 +9601,12 @@ function useClientGlobalState(key, factory) {
     const stateRef = ref(value);
 
     watch(stateRef, () => {
-      assertJsonSerializable(stateRef.value, 'useGlobalState("' + normalizedKey + '")');
+      try {
+        assertJsonSerializable(stateRef.value, 'useGlobalState("' + normalizedKey + '")');
+      } catch (error) {
+        console.error("[resux:global-state] Ignoring a non-serializable assignment for " + normalizedKey + ".", error);
+        return;
+      }
       const currentPayload = globalThis.__RESUX__;
       if (currentPayload) {
         currentPayload.globalState ||= {};
@@ -9656,29 +9661,36 @@ async function refreshScopesForGlobalState(changedKeys) {
     return;
   }
 
-  const affectedScopes = Object.entries(payload.scopes).filter(([, serializedScope]) => {
+  const affectedScopes = [...scopeCache.entries()].filter(([scopeId]) => {
+    const serializedScope = payload.scopes[scopeId];
+    if (!serializedScope) {
+      return false;
+    }
     const keys = Array.isArray(serializedScope.globalStateKeys) ? serializedScope.globalStateKeys : [];
     return keys.some((key) => changedKeys.has(key));
   });
 
-  await Promise.all(affectedScopes.map(async ([scopeId, serializedScope]) => {
-    const component = await importComponent(serializedScope.moduleId, payload.modules, devImportRevision).catch(() => null);
-    if (!component) {
+  await Promise.allSettled(affectedScopes.map(async ([scopeId, scopeRecord]) => {
+    const serializedScope = payload.scopes[scopeId];
+    if (!serializedScope) {
       return;
     }
 
-    let scopeRecord = scopeCache.get(scopeId);
-    if (!scopeRecord) {
-      scopeRecord = await component.createScope(serializedScope, payload.route);
-      scopeCache.set(scopeId, scopeRecord);
-    }
+    try {
+      const component = await importComponent(serializedScope.moduleId, payload.modules, devImportRevision).catch(() => null);
+      if (!component) {
+        return;
+      }
 
-    const patches = component.render(scopeRecord);
-    const serialized = component.serialize(scopeRecord);
-    payload.scopes[scopeId].props = serialized.props;
-    payload.scopes[scopeId].state = serialized.state;
-    payload.scopes[scopeId].asyncData = serialized.asyncData;
-    applyPatches(scopeId, patches);
+      const patches = component.render(scopeRecord);
+      const serialized = component.serialize(scopeRecord);
+      serializedScope.props = serialized.props;
+      serializedScope.state = serialized.state;
+      serializedScope.asyncData = serialized.asyncData;
+      applyPatches(scopeId, patches);
+    } catch (error) {
+      console.error("[resux:global-state] Failed to refresh scope " + scopeId + ".", error);
+    }
   }));
 }
 

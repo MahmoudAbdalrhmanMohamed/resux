@@ -7,21 +7,38 @@ import {
   normalizeResuxSfcSource,
   rethrowWithResuxDirectiveBrand,
 } from "./directives.js";
+import { emitResuxDevWarnings } from "./dev-warnings.js";
 import type { BuildOptions, BuildResult, CompiledComponent } from "./implementation.js";
 
 export * from "./implementation.js";
 export { normalizeResuxDirectiveSyntax, normalizeResuxSfcSource } from "./directives.js";
 
+export interface ResuxCompileVueSourceOptions {
+  file: string;
+  id: string;
+  name: string;
+  /** Enables development-only compiler diagnostics. */
+  dev?: boolean;
+}
+
 export function compileVueSource(
   source: string,
-  options: { file: string; id: string; name: string },
+  options: ResuxCompileVueSourceOptions,
 ): CompiledComponent {
   const usesResuxDirectives = source.includes("rx-");
+
+  if (options.dev === true) {
+    emitResuxDevWarnings(source, options.file);
+  }
 
   try {
     return implementation.compileVueSource(
       normalizeResuxSfcSource(source, options.file),
-      options,
+      {
+        file: options.file,
+        id: options.id,
+        name: options.name,
+      },
     );
   } catch (error) {
     if (usesResuxDirectives) {
@@ -33,17 +50,19 @@ export function compileVueSource(
 
 export async function compileVueFile(
   file: string,
-  options: { id: string; name?: string },
+  options: { id: string; name?: string; dev?: boolean },
 ): Promise<CompiledComponent> {
   const source = await readFile(file, "utf8");
   return compileVueSource(source, {
     file,
     id: options.id,
     name: options.name ?? pascalCase(path.basename(file, ".vue")),
+    dev: options.dev,
   });
 }
 
 let buildQueue: Promise<void> = Promise.resolve();
+const emittedBuildDevWarnings = new Set<string>();
 
 export function buildProject(
   appRoot: string,
@@ -51,10 +70,15 @@ export function buildProject(
   options?: BuildOptions,
 ): Promise<BuildResult> {
   return enqueueBuild(async () => {
+    const emittedDevWarnings = options?.vite === "dev"
+      ? emittedBuildDevWarnings
+      : undefined;
+
     try {
-      return await withResuxDirectiveFileReads(() => (
-        implementation.buildProject(appRoot, outDir, options)
-      ));
+      return await withResuxDirectiveFileReads(
+        () => implementation.buildProject(appRoot, outDir, options),
+        emittedDevWarnings,
+      );
     } catch (error) {
       return rethrowWithResuxDirectiveBrand(error);
     }
@@ -67,7 +91,10 @@ function enqueueBuild<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
-async function withResuxDirectiveFileReads<T>(task: () => Promise<T>): Promise<T> {
+async function withResuxDirectiveFileReads<T>(
+  task: () => Promise<T>,
+  emittedDevWarnings?: Set<string>,
+): Promise<T> {
   const mutableFs = fsPromises as typeof fsPromises & { readFile: typeof fsPromises.readFile };
   const originalReadFile = mutableFs.readFile;
 
@@ -87,11 +114,18 @@ async function withResuxDirectiveFileReads<T>(task: () => Promise<T>): Promise<T
     }
 
     if (typeof result === "string") {
+      if (emittedDevWarnings) {
+        emitResuxDevWarnings(result, filename, emittedDevWarnings);
+      }
       return normalizeResuxSfcSource(result, filename);
     }
 
     if (Buffer.isBuffer(result)) {
-      return Buffer.from(normalizeResuxSfcSource(result.toString("utf8"), filename), "utf8");
+      const source = result.toString("utf8");
+      if (emittedDevWarnings) {
+        emitResuxDevWarnings(source, filename, emittedDevWarnings);
+      }
+      return Buffer.from(normalizeResuxSfcSource(source, filename), "utf8");
     }
 
     return result;

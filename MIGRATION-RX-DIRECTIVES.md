@@ -38,6 +38,26 @@ For everyday templates, Resux provides concise shortcuts for its two most common
 
 The full and shortcut forms compile to the same Resux event and binding model. Use the shortcut when it improves readability; use the full `rx-on:*` or `rx-bind:*` form when teaching the syntax or when the explicit name is clearer.
 
+## Development-only event delegation warnings
+
+Resux template events use delegated browser listeners so the page can remain resumable without attaching one listener to every rendered element. During `resux dev`, the compiler warns when normal Resux components clearly bypass that model:
+
+```vue
+<!-- Development warning: use @click instead. -->
+<button onclick="save()">Save</button>
+
+<script setup lang="ts">
+const button = ref<HTMLButtonElement | null>(null)
+
+onMounted(() => {
+  // Development warning: place @click on the template element instead.
+  button.value?.addEventListener('click', save)
+})
+</script>
+```
+
+These diagnostics are advisory and development-only. Production builds do not print them. Direct listeners remain valid for `window`, `document`, third-party `EventTarget` objects, or cases that need manual lifecycle control. Manually attached listeners should always be removed during cleanup. Vue islands are excluded because their client behavior is owned by Vue.
+
 ## Why this change
 
 Resux uses Vue compiler packages to parse `.vue` single-file components, but normal Resux components are rendered and resumed by the Resux compiler/runtime rather than hydrated by the Vue runtime. The `rx-*` prefix makes that ownership visible in application code and gives the framework a stable branded syntax layer.

@@ -2412,9 +2412,9 @@ class ResuxRenderer {
   ): Promise<string> {
     this.collectComponentStyles(definition);
     const scopeId = `s${this.nextScopeId++}`;
-    const stateRefs: Record<string, Ref<unknown>> = {};
+    const stateRefs: Record<string, Ref<unknown>> = Object.create(null) as Record<string, Ref<unknown>>;
     const globalStateKeys = new Set<string>();
-    const asyncDataRefs: Record<string, AsyncDataResource<unknown>> = {};
+    const asyncDataRefs: Record<string, AsyncDataResource<unknown>> = Object.create(null) as Record<string, AsyncDataResource<unknown>>;
     const setupContext = createServerSetupContext(
       this.route,
       props,
@@ -2487,6 +2487,30 @@ class ResuxRenderer {
   }
 }
 
+function normalizeComponentRegistryKey(
+  key: string,
+  apiName: "useState" | "useAsyncData"
+): string {
+  const normalizedKey = String(key || "").trim();
+  if (!normalizedKey) {
+    throw new Error(`${apiName}(key) requires a non-empty key.`);
+  }
+  return normalizedKey;
+}
+
+function hasOwnRegistryKey(registry: object, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(registry, key);
+}
+
+function setRegistryValue<T>(registry: Record<string, T>, key: string, value: T): void {
+  Object.defineProperty(registry, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true
+  });
+}
+
 export function createServerSetupContext(
   route: RouteContext,
   props: ComponentProps,
@@ -2525,14 +2549,15 @@ export function createServerSetupContext(
     nextTick,
 
     useState<T>(key: string, factory?: () => T): Ref<T> {
-      if (stateRefs[key]) {
-        return stateRefs[key] as Ref<T>;
+      const normalizedKey = normalizeComponentRegistryKey(key, "useState");
+      if (hasOwnRegistryKey(stateRefs, normalizedKey)) {
+        return stateRefs[normalizedKey] as Ref<T>;
       }
 
       const value = factory ? factory() : undefined;
-      assertJsonSerializable(value, `useState("${key}")`);
+      assertJsonSerializable(value, `useState("${normalizedKey}")`);
       const stateRef = ref(value as T);
-      stateRefs[key] = stateRef as Ref<unknown>;
+      setRegistryValue(stateRefs, normalizedKey, stateRef as Ref<unknown>);
       return stateRef;
     },
 
@@ -2554,14 +2579,14 @@ export function createServerSetupContext(
     },
 
     useAsyncData<T>(key: string, handler?: (context: AsyncDataHandlerContext) => T | Promise<T>): AsyncDataResource<T> {
-      const existing = asyncDataRefs[key] as AsyncDataResource<unknown> | undefined;
-      if (existing) {
-        return existing as AsyncDataResource<T>;
+      const normalizedKey = normalizeComponentRegistryKey(key, "useAsyncData");
+      if (hasOwnRegistryKey(asyncDataRefs, normalizedKey)) {
+        return asyncDataRefs[normalizedKey] as AsyncDataResource<T>;
       }
 
       const pending = createPendingAsyncDataResource<T>();
-      asyncDataRefs[key] = pending.resource as AsyncDataResource<unknown>;
-      pending.setCompletion(settleAsyncDataResource(pending.resource, handler, key));
+      setRegistryValue(asyncDataRefs, normalizedKey, pending.resource as AsyncDataResource<unknown>);
+      pending.setCompletion(settleAsyncDataResource(pending.resource, handler, normalizedKey));
       return pending.resource;
     },
 
@@ -2620,13 +2645,12 @@ export function createServerSetupContext(
 
     useFetch<T>(url: string, init?: RequestInit): AsyncDataResource<T> {
       const key = `fetch:${url}`;
-      const existing = asyncDataRefs[key] as AsyncDataResource<unknown> | undefined;
-      if (existing) {
-        return existing as AsyncDataResource<T>;
+      if (hasOwnRegistryKey(asyncDataRefs, key)) {
+        return asyncDataRefs[key] as AsyncDataResource<T>;
       }
 
       const pending = createPendingAsyncDataResource<T>();
-      asyncDataRefs[key] = pending.resource as AsyncDataResource<unknown>;
+      setRegistryValue(asyncDataRefs, key, pending.resource as AsyncDataResource<unknown>);
       pending.setCompletion(settleAsyncDataResource(pending.resource, () => fetchJson<T>(url, init), key));
       return pending.resource;
     },
@@ -6257,9 +6281,9 @@ export class AsyncResuxRenderer {
   ): Promise<string> {
     this.collectComponentStyles(definition);
     const scopeId = `s${this.nextScopeId++}`;
-    const stateRefs: Record<string, Ref<unknown>> = {};
+    const stateRefs: Record<string, Ref<unknown>> = Object.create(null) as Record<string, Ref<unknown>>;
     const globalStateKeys = new Set<string>();
-    const asyncDataRefs: Record<string, AsyncDataResource<unknown>> = {};
+    const asyncDataRefs: Record<string, AsyncDataResource<unknown>> = Object.create(null) as Record<string, AsyncDataResource<unknown>>;
     const setupContext = createServerSetupContext(
       this.route,
       props,
@@ -9716,12 +9740,33 @@ async function refreshScopesForGlobalState(changedKeys) {
   }));
 }
 
+function normalizeComponentRegistryKey(key, apiName) {
+  const normalizedKey = String(key || "").trim();
+  if (!normalizedKey) {
+    throw new Error(apiName + "(key) requires a non-empty key.");
+  }
+  return normalizedKey;
+}
+
+function hasOwnRegistryKey(registry, key) {
+  return Object.prototype.hasOwnProperty.call(registry, key);
+}
+
+function setRegistryValue(registry, key, value) {
+  Object.defineProperty(registry, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true
+  });
+}
+
 export function createClientComponent(definition) {
   return {
     async createScope(serializedScope, route) {
-      const stateRefs = {};
+      const stateRefs = Object.create(null);
       const globalStateKeys = new Set(Array.isArray(serializedScope.globalStateKeys) ? serializedScope.globalStateKeys : []);
-      const asyncDataRefs = {};
+      const asyncDataRefs = Object.create(null);
       const pendingCompletions = [];
       const mountedCallbacks = [];
       const props = serializedScope.props ?? {};
@@ -9741,11 +9786,16 @@ export function createClientComponent(definition) {
         isReadonly,
         nextTick,
         useState(key, factory) {
-          if (!stateRefs[key]) {
-            const hasValue = serializedScope.state && Object.prototype.hasOwnProperty.call(serializedScope.state, key);
-            stateRefs[key] = ref(hasValue ? serializedScope.state[key] : factory?.());
+          const normalizedKey = normalizeComponentRegistryKey(key, "useState");
+          if (!hasOwnRegistryKey(stateRefs, normalizedKey)) {
+            const hasValue = serializedScope.state && hasOwnRegistryKey(serializedScope.state, normalizedKey);
+            setRegistryValue(
+              stateRefs,
+              normalizedKey,
+              ref(hasValue ? serializedScope.state[normalizedKey] : factory?.())
+            );
           }
-          return stateRefs[key];
+          return stateRefs[normalizedKey];
         },
         useGlobalState(key, factory) {
           const normalizedKey = String(key || "").trim();
@@ -9755,21 +9805,24 @@ export function createClientComponent(definition) {
           return useClientGlobalState(key, factory);
         },
         useAsyncData(key, handler) {
-          if (!asyncDataRefs[key]) {
-            const snapshot = serializedScope.asyncData ? serializedScope.asyncData[key] : undefined;
+          const normalizedKey = normalizeComponentRegistryKey(key, "useAsyncData");
+          if (!hasOwnRegistryKey(asyncDataRefs, normalizedKey)) {
+            const hasSnapshot = serializedScope.asyncData
+              && hasOwnRegistryKey(serializedScope.asyncData, normalizedKey);
+            const snapshot = hasSnapshot ? serializedScope.asyncData[normalizedKey] : undefined;
             const resource = createAsyncDataResource(
               snapshot?.value,
               snapshot?.pending ?? false,
               snapshot?.error ?? null
             );
-            asyncDataRefs[key] = resource;
+            setRegistryValue(asyncDataRefs, normalizedKey, resource);
             if (resource.pending.value && typeof handler === "function") {
               const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
               if (controller) {
                 pendingAsyncDataControllers.add(controller);
                 resource.abortController = controller;
               }
-              const completion = settleAsyncDataResource(resource, handler, key, controller ? controller.signal : undefined)
+              const completion = settleAsyncDataResource(resource, handler, normalizedKey, controller ? controller.signal : undefined)
                 .finally(() => {
                   if (controller) {
                     pendingAsyncDataControllers.delete(controller);
@@ -9780,7 +9833,7 @@ export function createClientComponent(definition) {
               pendingCompletions.push(completion);
             }
           }
-          return asyncDataRefs[key];
+          return asyncDataRefs[normalizedKey];
         },
         defineProps() {
           return props;
@@ -12319,7 +12372,7 @@ async function settleAsyncDataResource(resource, handler, key, signal) {
 }
 
 function serializeAsyncData(refs) {
-  const output = {};
+  const output = Object.create(null);
   for (const [key, ref] of Object.entries(refs)) {
     output[key] = {
       value: ref.data.value === undefined ? null : ref.data.value,
@@ -15732,7 +15785,7 @@ function serializeProps(props: ComponentProps): Record<string, JsonValue> {
 }
 
 function serializeAsyncData(refs: Record<string, AsyncDataResource<unknown>>): Record<string, SerializedAsyncData> {
-  const output: Record<string, SerializedAsyncData> = {};
+  const output: Record<string, SerializedAsyncData> = Object.create(null);
 
   for (const [key, resource] of Object.entries(refs)) {
     const value = resource.data.value;

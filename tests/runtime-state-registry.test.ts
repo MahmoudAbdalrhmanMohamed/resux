@@ -185,8 +185,8 @@ describe("runtime state registries", () => {
     expect(scopeRecord.scope.repeatedProtoData).toBe(scopeRecord.scope.protoData);
     expect(scopeRecord.scope.protoState.value).toEqual({ source: "payload" });
     expect(scopeRecord.scope.constructorState.value).toEqual({ source: "constructor-payload" });
-    expect(scopeRecord.scope.protoData.value).toBe("payload-data");
-    expect(scopeRecord.scope.constructorData.value).toBe("constructor-payload-data");
+    expect(scopeRecord.scope.protoData.value.value).toBe("payload-data");
+    expect(scopeRecord.scope.constructorData.value.value).toBe("constructor-payload-data");
     expect(stateFactoryCalls).toBe(0);
     expect(dataHandlerCalls).toBe(0);
 

@@ -142,8 +142,14 @@ function traverse(value: unknown, seen: Set<unknown> = new Set()): unknown {
   }
 
   seen.add(value);
-  for (const key of Object.keys(value)) {
-    traverse((value as Record<string, unknown>)[key], seen);
+  const record = value as Record<PropertyKey, unknown>;
+  for (const key of Object.keys(record)) {
+    traverse(record[key], seen);
+  }
+  for (const key of Object.getOwnPropertySymbols(record)) {
+    if (Object.prototype.propertyIsEnumerable.call(record, key)) {
+      traverse(record[key], seen);
+    }
   }
   return value;
 }

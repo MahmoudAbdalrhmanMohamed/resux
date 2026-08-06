@@ -1,0 +1,35 @@
+name: Apply runtime registry hardening
+
+on:
+  push:
+    branches:
+      - fix/collision-safe-runtime-registries
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/collision-safe-runtime-registries
+          fetch-depth: 0
+
+      - name: Apply reviewed source transformations
+        run: node scripts/apply-runtime-registry-hardening.mjs
+
+      - name: Validate patch formatting
+        run: git diff --check
+
+      - name: Commit implementation and remove one-time tooling
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm scripts/apply-runtime-registry-hardening.mjs .github/workflows/apply-runtime-registry-hardening.yml
+          git add src/runtime/index.ts tests/runtime-state-registry.test.ts
+          git commit -m "fix(runtime): harden component state registries"
+          git push origin HEAD:fix/collision-safe-runtime-registries

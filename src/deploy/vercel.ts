@@ -26,6 +26,7 @@ interface BuildOutputConfig extends Record<string, unknown> {
 }
 
 interface PackageRecord extends Record<string, unknown> {
+  name?: unknown;
   dependencies?: unknown;
   optionalDependencies?: unknown;
 }
@@ -107,13 +108,53 @@ function resolveResuxPackageRequire(
   return null;
 }
 
-function resolveDependencyPackageJsonPath(
+function formatResolutionError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function findPackageJsonFromEntry(
+  dependency: string,
+  entryPath: string,
+): Promise<string | null> {
+  let currentDirectory = path.dirname(entryPath);
+
+  while (true) {
+    const candidate = path.join(currentDirectory, "package.json");
+    const packageJson = (await readJsonRecord(candidate)) as PackageRecord | null;
+    if (packageJson?.name === dependency) {
+      return candidate;
+    }
+
+    const parentDirectory = path.dirname(currentDirectory);
+    if (parentDirectory === currentDirectory) {
+      return null;
+    }
+    currentDirectory = parentDirectory;
+  }
+}
+
+async function resolveDependencyPackageJsonPath(
   dependency: string,
   resolver: ReturnType<typeof createRequire>,
-): string | null {
+  resolutionErrors?: string[],
+): Promise<string | null> {
   try {
     return resolver.resolve(`${dependency}/package.json`);
-  } catch {
+  } catch (packageJsonError) {
+    try {
+      const entryPath = resolver.resolve(dependency);
+      const packageJsonPath = await findPackageJsonFromEntry(dependency, entryPath);
+      if (packageJsonPath) {
+        return packageJsonPath;
+      }
+      resolutionErrors?.push(
+        `${formatResolutionError(packageJsonError)} | Resolved "${dependency}" to ${entryPath}, but its package root could not be located.`,
+      );
+    } catch (entryError) {
+      resolutionErrors?.push(
+        `${formatResolutionError(packageJsonError)} | ${formatResolutionError(entryError)}`,
+      );
+    }
     return null;
   }
 }
@@ -129,11 +170,13 @@ async function copyRuntimeDependencyTree(
   const resolutionErrors: string[] = [];
   let rootDependencyPackageJsonPath: string | null = null;
   for (const resolver of rootResolvers) {
-    try {
-      rootDependencyPackageJsonPath = resolver.resolve(`${rootDependency}/package.json`);
+    rootDependencyPackageJsonPath = await resolveDependencyPackageJsonPath(
+      rootDependency,
+      resolver,
+      resolutionErrors,
+    );
+    if (rootDependencyPackageJsonPath) {
       break;
-    } catch (error) {
-      resolutionErrors.push(error instanceof Error ? error.message : String(error));
     }
   }
   if (!rootDependencyPackageJsonPath) {
@@ -172,7 +215,7 @@ async function copyRuntimeDependencyTree(
 
     const dependencyResolver = createRequire(sourcePackageJsonPath);
     for (const dependency of runtimeDependencyNames(packageJson.dependencies)) {
-      const dependencyPackageJsonPath = resolveDependencyPackageJsonPath(
+      const dependencyPackageJsonPath = await resolveDependencyPackageJsonPath(
         dependency,
         dependencyResolver,
       );
@@ -184,7 +227,7 @@ async function copyRuntimeDependencyTree(
       pending.push({ dependency, packageJsonPath: dependencyPackageJsonPath });
     }
     for (const dependency of runtimeDependencyNames(packageJson.optionalDependencies)) {
-      const dependencyPackageJsonPath = resolveDependencyPackageJsonPath(
+      const dependencyPackageJsonPath = await resolveDependencyPackageJsonPath(
         dependency,
         dependencyResolver,
       );

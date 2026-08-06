@@ -14,8 +14,9 @@ function own(record: object, key: PropertyKey): boolean {
   return Object.prototype.hasOwnProperty.call(record, key);
 }
 
-function collisionRecord<T>(entries: Record<string, T>): Record<string, T> {
-  return JSON.parse(JSON.stringify(entries)) as Record<string, T>;
+function collisionRecord<T>(entries: Array<[string, T]>): Record<string, T> {
+  const json = `{)}}`;
+  return JSON.parse(json) as Record<string, T>;
 }
 
 describe("runtime state registries", () => {
@@ -150,14 +151,14 @@ describe("runtime state registries", () => {
 
     const serializedScope = {
       props: {},
-      state: collisionRecord({
-        "__proto__": { source: "payload" },
-        constructor: { source: "constructor-payload" }
-      }),
-      asyncData: collisionRecord({
-        "__proto__": { value: "payload-data", pending: false, error: null },
-        constructor: { value: "constructor-payload-data", pending: false, error: null }
-      }),
+      state: collisionRecord([
+        ["__proto__", { source: "payload" }],
+        ["constructor", { source: "constructor-payload" }]
+      ]),
+      asyncData: collisionRecord([
+        ["__proto__", { value: "payload-data", pending: false, error: null }],
+        ["constructor", { value: "constructor-payload-data", pending: false, error: null }]
+      ]),
       globalStateKeys: []
     };
 

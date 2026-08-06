@@ -95,7 +95,7 @@ source = replaceExact(
       }
 
       const value = factory ? factory() : undefined;
-      assertJsonSerializable(value, \`useState(\\"${"${key}"}\\")\`);
+      assertJsonSerializable(value, \`useState("${"${key}"}")\`);
       const stateRef = ref(value as T);
       stateRefs[key] = stateRef as Ref<unknown>;
       return stateRef;
@@ -107,7 +107,7 @@ source = replaceExact(
       }
 
       const value = factory ? factory() : undefined;
-      assertJsonSerializable(value, \`useState(\\"${"${normalizedKey}"}\\")\`);
+      assertJsonSerializable(value, \`useState("${"${normalizedKey}"}")\`);
       const stateRef = ref(value as T);
       setRegistryValue(stateRefs, normalizedKey, stateRef as Ref<unknown>);
       return stateRef;
@@ -309,7 +309,7 @@ testSource = replaceExact(
   return JSON.parse(JSON.stringify(entries)) as Record<string, T>;
 }`,
   `function collisionRecord<T>(entries: Array<[string, T]>): Record<string, T> {
-  const json = \`{${"${entries.map(([key, value]) => `${JSON.stringify(key)}:${JSON.stringify(value)}`).join(\",\")}"}}\`;
+  const json = \`{${"${entries.map(([key, value]) => `${JSON.stringify(key)}:${JSON.stringify(value)}`).join(",")}"}}\`;
   return JSON.parse(json) as Record<string, T>;
 }`,
   1,

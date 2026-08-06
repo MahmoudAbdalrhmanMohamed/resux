@@ -1,9 +1,9 @@
 import { gzipSync } from "node:zlib";
 import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-const rootDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const budgetPath = path.join(rootDir, "runtime-size-budget.json");
 
 async function fileBytes(filePath) {

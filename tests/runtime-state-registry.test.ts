@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
 import {
   defineComponent,
@@ -15,8 +16,7 @@ function own(record: object, key: PropertyKey): boolean {
 }
 
 function collisionRecord<T>(entries: Array<[string, T]>): Record<string, T> {
-  const json = `{)}}`;
-  return JSON.parse(json) as Record<string, T>;
+  return JSON.parse(JSON.stringify(Object.fromEntries(entries))) as Record<string, T>;
 }
 
 describe("runtime state registries", () => {
@@ -114,6 +114,20 @@ describe("runtime state registries", () => {
     await mkdir(tempDir, { recursive: true });
     const runtimeFile = path.join(tempDir, "runtime-client.mjs");
     await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const window = new Window({ url: "http://localhost/" });
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      __RESUX__: {
+        route: { path: "/client-registry", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
+    });
 
     const runtime = await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
     let stateFactoryCalls = 0;

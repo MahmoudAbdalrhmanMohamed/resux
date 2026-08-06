@@ -1,14 +1,16 @@
 import path from "node:path";
 import { defineConfig } from "vitest/config";
 
+const rootDir = import.meta.dirname;
+
 export default defineConfig({
   resolve: {
     alias: {
-      "resuxjs/create": path.resolve(__dirname, "src/create.ts"),
-      "resuxjs/i18n": path.resolve(__dirname, "src/i18n/index.ts"),
-      "resuxjs/reactivity": path.resolve(__dirname, "src/reactivity/index.ts"),
-      "resuxjs/runtime": path.resolve(__dirname, "src/runtime/index.ts"),
-      "resuxjs/compiler": path.resolve(__dirname, "src/compiler/adapter.ts")
+      "resuxjs/create": path.resolve(rootDir, "src/create.ts"),
+      "resuxjs/i18n": path.resolve(rootDir, "src/i18n/index.ts"),
+      "resuxjs/reactivity": path.resolve(rootDir, "src/reactivity/index.ts"),
+      "resuxjs/runtime": path.resolve(rootDir, "src/runtime/index.ts"),
+      "resuxjs/compiler": path.resolve(rootDir, "src/compiler/adapter.ts")
     }
   },
   test: {

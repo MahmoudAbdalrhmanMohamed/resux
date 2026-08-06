@@ -20,7 +20,19 @@ jobs:
           fetch-depth: 0
 
       - name: Apply reviewed source transformations
-        run: node scripts/apply-runtime-registry-hardening.mjs
+        shell: bash
+        run: |
+          set +e
+          output="$(node scripts/apply-runtime-registry-hardening.mjs 2>&1)"
+          status=$?
+          printf '%s\n' "$output"
+          if [ "$status" -ne 0 ]; then
+            escaped="${output//'%'/'%25'}"
+            escaped="${escaped//$'\n'/'%0A'}"
+            escaped="${escaped//$'\r'/'%0D'}"
+            echo "::error title=Runtime registry patch failed::$escaped"
+            exit "$status"
+          fi
 
       - name: Validate patch formatting
         run: git diff --check

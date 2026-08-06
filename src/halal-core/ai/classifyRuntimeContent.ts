@@ -38,6 +38,7 @@ export async function classifyRuntimeContentWithAi(
     return null;
   }
 
+  const required = requiresRuntimeAi(content, options);
   const endpoint = options.endpoint || process.env.RESUX_AI_ENDPOINT;
   const apiKey = options.apiKey || process.env.RESUX_AI_API_KEY;
   if (!endpoint || !apiKey) {
@@ -48,7 +49,9 @@ export async function classifyRuntimeContentWithAi(
   try {
     endpointUrl = validateAiEndpoint(endpoint);
   } catch (error) {
-    return runtimeClassificationFailure(error, "ai_configuration_error");
+    return required
+      ? runtimeClassificationFailure(error, "ai_configuration_error")
+      : null;
   }
 
   const timeoutMs = resolveAiTimeoutMs();
@@ -100,8 +103,15 @@ export async function classifyRuntimeContentWithAi(
       throw new Error("AI API response did not contain a runtime classification message.");
     }
 
-    return validateAiResponse(messageContent);
+    const result = validateAiResponse(messageContent);
+    if (!required && result.status === "review_required" && result.categories.includes("ai_error")) {
+      return null;
+    }
+    return result;
   } catch (error) {
+    if (!required) {
+      return null;
+    }
     if (controller.signal.aborted) {
       return runtimeClassificationFailure(
         new Error(`AI request exceeded ${timeoutMs}ms.`),
@@ -112,6 +122,15 @@ export async function classifyRuntimeContentWithAi(
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+function requiresRuntimeAi(
+  content: HalalRuntimeContent,
+  options: HalalRuntimeAiOptions,
+): boolean {
+  return content.kind === "advertisement"
+    ? options.requireForAds !== false
+    : options.requireForDynamicContent === true;
 }
 
 function runtimeClassificationFailure(error: unknown, category: string): HalalCheckResult {

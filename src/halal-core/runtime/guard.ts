@@ -6,7 +6,7 @@ import {
   createRuntimeContentFingerprint,
   findReviewedRuntimeDecision,
 } from "./reviewedMemory.js";
-import { serializeRuntimeContent } from "./serializeRuntimeContent.js";
+import { prepareRuntimeContent } from "./serializeRuntimeContent.js";
 import type {
   HalalRuntimeContent,
   HalalRuntimeDecision,
@@ -76,10 +76,10 @@ export async function evaluateHalalRuntimeContent(
   content: HalalRuntimeContent,
   options: HalalRuntimeGuardOptions = {},
 ): Promise<HalalRuntimeDecision> {
-  const serializedContent = serializeRuntimeContent(content, options.maxContentCharacters);
-  const fingerprint = createRuntimeContentFingerprint(content, options.maxContentCharacters);
+  const serialized = prepareRuntimeContent(content, options.maxContentCharacters);
+  const fingerprint = createRuntimeContentFingerprint(content);
   const file = `runtime:${content.kind}:${content.id || content.route || "anonymous"}`;
-  const localResult = evaluateRules({
+  const scannedResult = evaluateRules({
     routes: content.route ? [content.route] : [],
     pages: content.kind === "dynamic_page" && content.route ? [content.route] : [],
     components: [],
@@ -92,15 +92,17 @@ export async function evaluateHalalRuntimeContent(
     envNames: [],
     dependencies: {},
     i18nWords: [],
-    contentTexts: [{ file, text: serializedContent }],
-    endpoints: scanDomains([{ file, text: serializedContent }]),
+    contentTexts: [{ file, text: serialized.localText }],
+    endpoints: scanDomains([{ file, text: serialized.localText }]),
   }, options.policy ?? {});
+  const localResult = serialized.truncated
+    ? mergeResults(scannedResult, truncatedContentResult(file, serialized.maxCharacters))
+    : scannedResult;
 
   const reviewed = findReviewedRuntimeDecision(
     content,
     options.reviewedDecisions,
     options.reviewSecret,
-    options.maxContentCharacters,
   );
   if (reviewed) {
     const reviewedResult = decisionFromReviewedMemory(content, fingerprint, reviewed, options.strict === true);
@@ -116,7 +118,7 @@ export async function evaluateHalalRuntimeContent(
 
   const aiResult = await classifyRuntimeContentWithAi(
     content,
-    serializedContent,
+    serialized.aiText,
     localResult,
     options.ai,
   );
@@ -130,7 +132,7 @@ export async function evaluateHalalRuntimeContent(
       riskLevel: "medium",
       categories: [content.kind === "advertisement" ? "unverified_ad" : "unverified_dynamic_content"],
       confidence: 0,
-      reasons: ["Required runtime AI verification is not configured."],
+      reasons: ["Required runtime AI verification is not configured or unavailable."],
       matchedFiles: [file],
       matchedSnippets: [],
       recommendedAction: "Do not render this content until AI verification or signed human review is available.",
@@ -146,6 +148,21 @@ export async function evaluateHalalRuntimeContent(
     aiResult ? "local_and_ai" : "local_rules",
     options.strict === true,
   );
+}
+
+function truncatedContentResult(file: string, maxCharacters: number): HalalCheckResult {
+  return {
+    status: "review_required",
+    riskLevel: "medium",
+    categories: ["runtime_content_truncated"],
+    confidence: 1,
+    reasons: [
+      `Runtime content exceeded the ${maxCharacters}-character scan limit and was not fully inspected.`,
+    ],
+    matchedFiles: [file],
+    matchedSnippets: [],
+    recommendedAction: "Increase maxContentCharacters or complete a manual review before rendering.",
+  };
 }
 
 function decisionFromReviewedMemory(
@@ -192,16 +209,21 @@ function finalizeDecision(
 }
 
 function mergeResults(left: HalalCheckResult, right: HalalCheckResult): HalalCheckResult {
-  const dominant = STATUS_RANK[right.status] > STATUS_RANK[left.status] ? right : left;
+  const leftRank = STATUS_RANK[left.status];
+  const rightRank = STATUS_RANK[right.status];
+  const dominant = rightRank > leftRank ? right : left;
   const riskLevel = RISK_RANK[right.riskLevel] > RISK_RANK[left.riskLevel]
     ? right.riskLevel
     : left.riskLevel;
+  const confidence = leftRank === rightRank
+    ? Math.max(left.confidence, right.confidence)
+    : dominant.confidence;
 
   return {
     status: dominant.status,
     riskLevel,
     categories: uniqueStrings([...left.categories, ...right.categories]),
-    confidence: Math.max(left.confidence, right.confidence),
+    confidence,
     reasons: uniqueStrings([...left.reasons, ...right.reasons]),
     matchedFiles: uniqueStrings([...left.matchedFiles, ...right.matchedFiles]),
     matchedSnippets: uniqueStrings([...left.matchedSnippets, ...right.matchedSnippets]),

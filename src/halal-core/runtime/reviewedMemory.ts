@@ -3,7 +3,7 @@ import {
   createIntegritySignature,
   verifyIntegritySignature,
 } from "../crypto/integrity.js";
-import { serializeRuntimeContent } from "./serializeRuntimeContent.js";
+import { serializeRuntimeContentCanonical } from "./serializeRuntimeContent.js";
 import type {
   HalalRuntimeContent,
   HalalRuntimeReviewInput,
@@ -11,13 +11,20 @@ import type {
 } from "./types.js";
 
 const REVIEW_SECRET_ENV = "RESUX_HALAL_REVIEW_SECRET";
+const MAX_CLOCK_SKEW_MS = 5 * 60 * 1_000;
+const STATUS_RANK: Record<SignedHalalRuntimeDecision["status"], number> = {
+  allowed: 0,
+  warning: 1,
+  review_required: 2,
+  blocked: 3,
+};
 
 export function createRuntimeContentFingerprint(
   content: HalalRuntimeContent,
-  maxContentCharacters?: number,
+  _maxContentCharacters?: number,
 ): string {
-  const serialized = serializeRuntimeContent(content, maxContentCharacters);
-  return createHash("sha256").update(serialized).digest("hex");
+  const canonical = serializeRuntimeContentCanonical(content);
+  return createHash("sha256").update(canonical).digest("hex");
 }
 
 export function createSignedHalalRuntimeDecision(
@@ -25,6 +32,7 @@ export function createSignedHalalRuntimeDecision(
   review: HalalRuntimeReviewInput,
   secret?: string,
 ): SignedHalalRuntimeDecision {
+  const createdAt = new Date();
   const unsigned = {
     version: 1 as const,
     fingerprint: createRuntimeContentFingerprint(content),
@@ -32,8 +40,10 @@ export function createSignedHalalRuntimeDecision(
     categories: normalizeCategories(review.categories),
     reason: requireText(review.reason, "Review reason"),
     reviewerId: requireText(review.reviewerId, "Reviewer ID"),
-    createdAt: new Date().toISOString(),
-    ...(review.expiresAt ? { expiresAt: validateDate(review.expiresAt, "Review expiry") } : {}),
+    createdAt: createdAt.toISOString(),
+    ...(review.expiresAt
+      ? { expiresAt: validateFutureDate(review.expiresAt, "Review expiry", createdAt.getTime()) }
+      : {}),
   };
 
   return {
@@ -60,18 +70,22 @@ export function verifySignedHalalRuntimeDecision(
     || !decision.reason.trim()
     || typeof decision.reviewerId !== "string"
     || !decision.reviewerId.trim()
+    || typeof decision.createdAt !== "string"
     || !Array.isArray(decision.categories)
     || decision.categories.some((entry) => typeof entry !== "string")) {
     return false;
   }
 
-  const createdAt = Date.parse(String(decision.createdAt));
-  if (!Number.isFinite(createdAt)) {
+  const createdAt = Date.parse(decision.createdAt);
+  if (!Number.isFinite(createdAt) || createdAt > Date.now() + MAX_CLOCK_SKEW_MS) {
     return false;
   }
   if (decision.expiresAt !== undefined) {
-    const expiresAt = Date.parse(String(decision.expiresAt));
-    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    if (typeof decision.expiresAt !== "string") {
+      return false;
+    }
+    const expiresAt = Date.parse(decision.expiresAt);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() || expiresAt <= createdAt) {
       return false;
     }
   }
@@ -88,16 +102,38 @@ export function findReviewedRuntimeDecision(
   content: HalalRuntimeContent,
   decisions: readonly SignedHalalRuntimeDecision[] | undefined,
   secret?: string,
-  maxContentCharacters?: number,
+  _maxContentCharacters?: number,
 ): SignedHalalRuntimeDecision | undefined {
   if (!decisions?.length) {
     return undefined;
   }
 
-  const fingerprint = createRuntimeContentFingerprint(content, maxContentCharacters);
-  return decisions.find((decision) =>
-    decision.fingerprint === fingerprint
-    && verifySignedHalalRuntimeDecision(decision, secret));
+  const fingerprint = createRuntimeContentFingerprint(content);
+  let selected: SignedHalalRuntimeDecision | undefined;
+
+  for (const decision of decisions) {
+    if (decision.fingerprint !== fingerprint
+      || !verifySignedHalalRuntimeDecision(decision, secret)) {
+      continue;
+    }
+    if (!selected || isNewerOrStricter(decision, selected)) {
+      selected = decision;
+    }
+  }
+
+  return selected;
+}
+
+function isNewerOrStricter(
+  candidate: SignedHalalRuntimeDecision,
+  current: SignedHalalRuntimeDecision,
+): boolean {
+  const candidateCreatedAt = Date.parse(candidate.createdAt);
+  const currentCreatedAt = Date.parse(current.createdAt);
+  if (candidateCreatedAt !== currentCreatedAt) {
+    return candidateCreatedAt > currentCreatedAt;
+  }
+  return STATUS_RANK[candidate.status] > STATUS_RANK[current.status];
 }
 
 function normalizeCategories(categories: string[] | undefined): string[] {
@@ -113,15 +149,18 @@ function requireText(value: string, label: string): string {
   return normalized.slice(0, 2_000);
 }
 
-function validateDate(value: string, label: string): string {
+function validateFutureDate(value: string, label: string, createdAt: number): string {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) {
     throw new Error(`${label} must be a valid date.`);
   }
+  if (timestamp <= createdAt) {
+    throw new Error(`${label} must be later than the review creation time.`);
+  }
   return new Date(timestamp).toISOString();
 }
 
-function isValidStatus(value: unknown): boolean {
+function isValidStatus(value: unknown): value is SignedHalalRuntimeDecision["status"] {
   return value === "allowed"
     || value === "warning"
     || value === "review_required"

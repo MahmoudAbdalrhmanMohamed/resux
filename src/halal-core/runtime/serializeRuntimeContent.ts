@@ -2,17 +2,42 @@ import { redactSensitiveData } from "../ai/redactSensitiveData.js";
 import type { HalalRuntimeContent } from "./types.js";
 
 const DEFAULT_MAX_CONTENT_CHARACTERS = 20_000;
-const MAX_DEPTH = 12;
+const MAX_DEPTH = 128;
+
+export interface PreparedRuntimeContent {
+  canonical: string;
+  localText: string;
+  aiText: string;
+  truncated: boolean;
+  maxCharacters: number;
+}
 
 export function serializeRuntimeContent(
   content: HalalRuntimeContent,
   maxCharacters = DEFAULT_MAX_CONTENT_CHARACTERS,
 ): string {
-  const safeLimit = Number.isFinite(maxCharacters) && maxCharacters > 0
-    ? Math.max(1, Math.floor(maxCharacters))
-    : DEFAULT_MAX_CONTENT_CHARACTERS;
-  const seen = new WeakSet<object>();
-  const values = {
+  return prepareRuntimeContent(content, maxCharacters).aiText;
+}
+
+export function prepareRuntimeContent(
+  content: HalalRuntimeContent,
+  maxCharacters = DEFAULT_MAX_CONTENT_CHARACTERS,
+): PreparedRuntimeContent {
+  const safeLimit = resolveMaxCharacters(maxCharacters);
+  const canonical = serializeRuntimeContentCanonical(content);
+
+  return {
+    canonical,
+    localText: canonical.slice(0, safeLimit),
+    aiText: redactSensitiveData(canonical).slice(0, safeLimit),
+    truncated: canonical.length > safeLimit,
+    maxCharacters: safeLimit,
+  };
+}
+
+export function serializeRuntimeContentCanonical(content: HalalRuntimeContent): string {
+  const ancestors = new WeakMap<object, string>();
+  return serializeValue({
     kind: content.kind,
     id: content.id,
     route: content.route,
@@ -22,43 +47,81 @@ export function serializeRuntimeContent(
     advertiser: content.advertiser,
     metadata: content.metadata,
     payload: content.payload,
-  };
-  const serialized = serializeValue(values, seen, 0);
-  return redactSensitiveData(serialized).slice(0, safeLimit);
+  }, ancestors, 0, "$runtime");
 }
 
-function serializeValue(value: unknown, seen: WeakSet<object>, depth: number): string {
+function serializeValue(
+  value: unknown,
+  ancestors: WeakMap<object, string>,
+  depth: number,
+  valuePath: string,
+): string {
   if (value === null) return "null";
   if (value === undefined) return "undefined";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
-    return String(value);
+  if (typeof value === "string") return `string:${value.length}:${value}`;
+  if (typeof value === "number") {
+    if (Number.isNaN(value)) return "number:NaN";
+    if (value === Number.POSITIVE_INFINITY) return "number:Infinity";
+    if (value === Number.NEGATIVE_INFINITY) return "number:-Infinity";
+    return `number:${Object.is(value, -0) ? "-0" : String(value)}`;
   }
-  if (typeof value === "symbol" || typeof value === "function") {
-    return `[${typeof value}]`;
-  }
-  if (depth >= MAX_DEPTH) {
-    return "[max-depth]";
-  }
-  if (seen.has(value)) {
-    return "[circular]";
+  if (typeof value === "boolean") return `boolean:${value}`;
+  if (typeof value === "bigint") return `bigint:${value.toString()}`;
+  if (typeof value === "symbol") return `symbol:${String(value.description ?? "")}`;
+  if (typeof value === "function") return `function:${value.name || "anonymous"}`;
+  if (depth >= MAX_DEPTH) return `max-depth:${valuePath}`;
+
+  const existingPath = ancestors.get(value);
+  if (existingPath) {
+    return `circular-reference:${existingPath}`;
   }
 
-  seen.add(value);
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime())
+      ? `date:${value.toISOString()}`
+      : "date:invalid";
+  }
+  if (value instanceof URL) {
+    return `url:${value.href.length}:${value.href}`;
+  }
+  if (value instanceof RegExp) {
+    return `regexp:${value.source.length}:${value.source}/${value.flags}`;
+  }
+
+  ancestors.set(value, valuePath);
   try {
     if (Array.isArray(value)) {
-      return value.map((entry) => serializeValue(entry, seen, depth + 1)).join("\n");
+      const entries = value.map((entry, index) =>
+        `${index}=${serializeValue(entry, ancestors, depth + 1, `${valuePath}[${index}]`)}`);
+      return `array:${value.length}[${entries.join(";")}]`;
     }
 
-    const record = value as Record<string, unknown>;
-    const lines: string[] = [];
-    for (const key of Object.keys(record).sort(compareCodeUnits)) {
-      lines.push(`${key}: ${serializeValue(record[key], seen, depth + 1)}`);
+    let keys: string[];
+    try {
+      keys = Object.keys(value as Record<string, unknown>).sort(compareCodeUnits);
+    } catch {
+      return `unreadable-object:${valuePath}`;
     }
-    return lines.join("\n");
+
+    const entries = keys.map((key) => {
+      let entry: unknown;
+      try {
+        entry = (value as Record<string, unknown>)[key];
+      } catch {
+        return `${key.length}:${key}=unreadable-property`;
+      }
+      return `${key.length}:${key}=${serializeValue(entry, ancestors, depth + 1, `${valuePath}.${key}`)}`;
+    });
+    return `object:${keys.length}{${entries.join(";")}}`;
   } finally {
-    seen.delete(value);
+    ancestors.delete(value);
   }
+}
+
+function resolveMaxCharacters(value: number): number {
+  return Number.isFinite(value) && value > 0
+    ? Math.max(1, Math.floor(value))
+    : DEFAULT_MAX_CONTENT_CHARACTERS;
 }
 
 function compareCodeUnits(left: string, right: string): number {

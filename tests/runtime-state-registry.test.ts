@@ -1,15 +1,23 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Window } from "happy-dom";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   defineComponent,
   getClientRuntimeSource,
   renderApp,
   type ComponentDefinition
 } from "resuxjs/runtime";
+
+const cleanupCallbacks: Array<() => void | Promise<void>> = [];
+
+afterEach(async () => {
+  while (cleanupCallbacks.length > 0) {
+    await cleanupCallbacks.pop()?.();
+  }
+});
 
 function own(record: object, key: PropertyKey): boolean {
   return Object.prototype.hasOwnProperty.call(record, key);
@@ -113,9 +121,42 @@ describe("runtime state registries", () => {
     const tempDir = path.join(os.tmpdir(), `resux-registry-client-${Date.now()}`);
     await mkdir(tempDir, { recursive: true });
     const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const manifestFile = path.join(tempDir, "client-enhancements.mjs");
     await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+    await writeFile(manifestFile, "export const clientEnhancements = [];\n", "utf8");
 
     const window = new Window({ url: "http://localhost/" });
+    (window as unknown as { __RESUX_CLIENT_ENHANCEMENTS_SRC__?: string })
+      .__RESUX_CLIENT_ENHANCEMENTS_SRC__ = pathToFileURL(manifestFile).href;
+
+    const managedGlobalKeys = [
+      "document",
+      "window",
+      "location",
+      "history",
+      "__RESUX__",
+      "__RESUX_INSTALLED__"
+    ] as const;
+    const previousGlobals = new Map<PropertyKey, PropertyDescriptor | undefined>();
+    for (const key of managedGlobalKeys) {
+      previousGlobals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    }
+
+    let runtimeModule: { disposeClientEnhancements?: () => Promise<void> | void } | undefined;
+    cleanupCallbacks.push(async () => {
+      await runtimeModule?.disposeClientEnhancements?.();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      window.close();
+      for (const [key, descriptor] of previousGlobals) {
+        if (descriptor) {
+          Object.defineProperty(globalThis, key, descriptor);
+        } else {
+          Reflect.deleteProperty(globalThis, key);
+        }
+      }
+      await rm(tempDir, { recursive: true, force: true });
+    });
+
     Object.assign(globalThis, {
       document: window.document,
       window,
@@ -130,6 +171,7 @@ describe("runtime state registries", () => {
     });
 
     const runtime = await import(`${pathToFileURL(runtimeFile).href}?test=${Date.now()}`);
+    runtimeModule = runtime;
     let stateFactoryCalls = 0;
     let dataHandlerCalls = 0;
     const component = runtime.createClientComponent({

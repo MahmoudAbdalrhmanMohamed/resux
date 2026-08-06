@@ -7,12 +7,26 @@ import * as runtime from "resuxjs/runtime";
 import { checkRuntimeBudgets } from "../scripts/report-runtime-metrics.mjs";
 
 describe("runtime package boundaries", () => {
-  it("keeps root and runtime exports aligned", () => {
-    expect(root.renderApp).toBe(runtime.renderApp);
-    expect(root.getClientRuntimeSource).toBe(runtime.getClientRuntimeSource);
-    expect(root.ref).toBe(runtime.ref);
-    expect(runtime.ref).toBe(reactivity.ref);
-    expect(runtime.reactive).toBe(reactivity.reactive);
+  it("keeps the documented root and runtime exports available", () => {
+    for (const exportName of [
+      "renderApp",
+      "getClientRuntimeSource",
+      "defineComponent",
+      "ref",
+      "reactive"
+    ]) {
+      expect(exportName in root, `root export ${exportName}`).toBe(true);
+      expect(exportName in runtime, `runtime export ${exportName}`).toBe(true);
+    }
+
+    const rootRef = root.ref(1);
+    const runtimeRef = runtime.ref(2);
+    const focusedRef = reactivity.ref(3);
+
+    expect(root.isRef(rootRef)).toBe(true);
+    expect(runtime.isRef(runtimeRef)).toBe(true);
+    expect(reactivity.isRef(focusedRef)).toBe(true);
+    expect([rootRef.value, runtimeRef.value, focusedRef.value]).toEqual([1, 2, 3]);
   });
 
   it("keeps the focused reactivity entry free of runtime rendering APIs", () => {

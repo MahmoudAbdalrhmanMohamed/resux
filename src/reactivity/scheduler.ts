@@ -31,6 +31,21 @@ function queueFlush(): void {
 }
 
 function flushJobs(): void {
+  let didError = false;
+  let firstError: unknown;
+  const runJobs = (jobs: Job[]) => {
+    for (let i = 0; i < jobs.length; i++) {
+      try {
+        jobs[i]();
+      } catch (error) {
+        if (!didError) {
+          didError = true;
+          firstError = error;
+        }
+      }
+    }
+  };
+
   try {
     let hasJobs = true;
     while (hasJobs) {
@@ -38,23 +53,23 @@ function flushJobs(): void {
       if (queue.size > 0) {
         const currentQueue = Array.from(queue);
         queue.clear();
-        for (let i = 0; i < currentQueue.length; i++) {
-          currentQueue[i]();
-        }
+        runJobs(currentQueue);
         hasJobs = true;
       }
       if (postFlushQueue.size > 0) {
         const currentPostQueue = Array.from(postFlushQueue);
         postFlushQueue.clear();
-        for (let i = 0; i < currentPostQueue.length; i++) {
-          currentPostQueue[i]();
-        }
+        runJobs(currentPostQueue);
         hasJobs = true;
       }
     }
   } finally {
     flushing = false;
     flushPromise = null;
+  }
+
+  if (didError) {
+    throw firstError;
   }
 }
 

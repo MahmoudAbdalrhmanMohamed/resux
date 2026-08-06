@@ -81,7 +81,7 @@ export function toRef<T extends object, K extends keyof T>(object: T, key: K, de
 }
 
 export function toRefs<T extends object>(object: T): { [K in keyof T]: Ref<T[K]> } {
-  const output = {} as { [K in keyof T]: Ref<T[K]> };
+  const output = (Array.isArray(object) ? new Array(object.length) : {}) as { [K in keyof T]: Ref<T[K]> };
   for (const key of Object.keys(object) as Array<keyof T>) {
     output[key] = toRef(object, key);
   }

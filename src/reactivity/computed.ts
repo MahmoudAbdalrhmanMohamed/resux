@@ -1,4 +1,4 @@
-import { effect, trackEffects, triggerEffects, type Dep } from "./effect.js";
+import { effect, isTracking, trackEffects, triggerEffects, type Dep } from "./effect.js";
 import type { ComputedRef } from "./types.js";
 import { ReactiveFlags } from "./utils.js";
 
@@ -28,7 +28,9 @@ class ComputedRefImpl<T> implements ComputedRef<T> {
   }
 
   get value(): T {
-    trackEffects(this._dep());
+    if (isTracking()) {
+      trackEffects(this._dep());
+    }
     if (this.dirty) {
       const value = this.runner();
       this._value = value;

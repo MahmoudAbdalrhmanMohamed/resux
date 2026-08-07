@@ -30,11 +30,14 @@ jobs:
           const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'))
           const nitro = lock.packages?.['node_modules/nitropack']
           const visualizer = lock.packages?.['node_modules/rollup-plugin-visualizer']
-          if (nitro?.version !== '2.12.6') {
-            throw new Error(`Expected nitropack 2.12.6, got ${nitro?.version ?? 'missing'}`)
+          if (!/^2\.12\./.test(nitro?.version ?? '')) {
+            throw new Error(`Expected a Nitro 2.12.x release, got ${nitro?.version ?? 'missing'}`)
           }
-          if (visualizer?.version !== '6.0.11') {
-            throw new Error(`Expected rollup-plugin-visualizer 6.0.11, got ${visualizer?.version ?? 'missing'}`)
+          if (!nitro?.engines?.node?.includes('20.19.0')) {
+            throw new Error(`Nitro no longer declares Node 20.19 compatibility: ${nitro?.engines?.node ?? 'missing'}`)
+          }
+          if (!/^6\./.test(visualizer?.version ?? '')) {
+            throw new Error(`Expected rollup-plugin-visualizer 6.x, got ${visualizer?.version ?? 'missing'}`)
           }
           if (visualizer.engines?.node !== '>=18') {
             throw new Error(`Unexpected visualizer Node engine: ${visualizer.engines?.node ?? 'missing'}`)

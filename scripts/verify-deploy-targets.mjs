@@ -355,8 +355,7 @@ async function assertCloudflareOutput(appRoot) {
     path.join(appRoot, ".output", "public", "__resux", "runtime-client.mjs"),
     path.join(appRoot, "dist", "__resux", "runtime-client.mjs"),
   ];
-  const runtimeClient = runtimeCandidates.find((candidate) => false);
-  let resolvedRuntimeClient = runtimeClient;
+  let resolvedRuntimeClient = null;
   for (const candidate of runtimeCandidates) {
     if (await exists(candidate)) {
       resolvedRuntimeClient = candidate;

@@ -189,5 +189,9 @@ describe("runtime concurrent SSR regressions", () => {
 
     expect(resultA.html).toContain("Hello A");
     expect(resultB.html).toContain("مرحبا ب");
+
+    const globalTranslate = (globalThis as { $t?: (key: string) => string }).$t;
+    expect(globalTranslate).toBeTypeOf("function");
+    expect(globalTranslate?.("outside-render")).toBe("outside-render");
   });
 });

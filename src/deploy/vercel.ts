@@ -102,7 +102,12 @@ function resolveResuxPackageRequire(
       const packageEntryPath = appRequire.resolve(packageName);
       return createRequire(packageEntryPath);
     } catch {
-      // Keep trying known package names.
+      try {
+        const packageJsonPath = appRequire.resolve(`${packageName}/package.json`);
+        return createRequire(packageJsonPath);
+      } catch {
+        // Keep trying known package names.
+      }
     }
   }
   return null;

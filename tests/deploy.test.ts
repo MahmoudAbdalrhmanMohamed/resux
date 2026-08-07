@@ -46,6 +46,13 @@ async function scaffoldSharpPackages(root: string): Promise<void> {
     JSON.stringify({
       name: "sharp",
       version: "1.0.0",
+      type: "commonjs",
+      exports: {
+        ".": {
+          require: "./dist/index.cjs",
+          import: "./dist/index.mjs",
+        },
+      },
       dependencies: {
         "dep-a": "1.0.0",
       },
@@ -55,6 +62,9 @@ async function scaffoldSharpPackages(root: string): Promise<void> {
     }, null, 2),
     "utf8",
   );
+  await mkdir(path.join(sharpRoot, "dist"), { recursive: true });
+  await writeFile(path.join(sharpRoot, "dist", "index.cjs"), "module.exports = {};\n", "utf8");
+  await writeFile(path.join(sharpRoot, "dist", "index.mjs"), "export default {};\n", "utf8");
 
   const depARoot = path.join(root, "node_modules", "dep-a");
   await mkdir(depARoot, { recursive: true });
@@ -181,7 +191,7 @@ describe("deployment resolution", () => {
 });
 
 describe("vercel post-build dependencies", () => {
-  it("copies sharp runtime packages into each vercel function output", async () => {
+  it("copies sharp runtime packages when package.json is hidden by exports", async () => {
     const root = await createTempApp("resux-deploy-vercel-sharp");
     const functionRoot = await scaffoldVercelBuildLayout(root);
     await scaffoldSharpPackages(root);

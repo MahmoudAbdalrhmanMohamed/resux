@@ -44,6 +44,61 @@ describe("halal runtime security regressions", () => {
     expect(decision.categories).toContain("runtime_content_truncated");
   });
 
+  it("fails closed for unreadable runtime properties even with a signed allow review", async () => {
+    const payload: Record<string, unknown> = {
+      visible: "Safe visible content.",
+    };
+    Object.defineProperty(payload, "hidden", {
+      enumerable: true,
+      get() {
+        throw new Error("unreadable runtime value");
+      },
+    });
+
+    const content = {
+      kind: "dynamic_page" as const,
+      route: "/unreadable-content",
+      payload,
+    };
+    const signed = createSignedHalalRuntimeDecision(content, {
+      status: "allowed",
+      reason: "This fixture must not bypass incomplete inspection.",
+      reviewerId: "reviewer-01",
+    }, REVIEW_SECRET);
+    const guard = createHalalRuntimeGuard({
+      ai: { enabled: false },
+      reviewSecret: REVIEW_SECRET,
+      reviewedDecisions: [signed],
+    });
+
+    const decision = await guard.check(content);
+
+    expect(decision.status).toBe("review_required");
+    expect(decision.allowed).toBe(false);
+    expect(decision.categories).toContain("runtime_content_uninspectable");
+    expect(decision.source).toBe("local_rules");
+  });
+
+  it("fails closed when runtime content exceeds the serializer depth limit", async () => {
+    const payload: Record<string, unknown> = {};
+    let cursor = payload;
+    for (let depth = 0; depth < 140; depth += 1) {
+      const next: Record<string, unknown> = {};
+      cursor.next = next;
+      cursor = next;
+    }
+
+    const guard = createHalalRuntimeGuard({ ai: { enabled: false } });
+    const decision = await guard.checkDynamicPage({
+      route: "/deep-content",
+      payload,
+    });
+
+    expect(decision.status).toBe("review_required");
+    expect(decision.allowed).toBe(false);
+    expect(decision.categories).toContain("runtime_content_uninspectable");
+  });
+
   it("fingerprints the complete unredacted content", () => {
     const sharedPrefix = "safe-prefix-".repeat(2_000);
     const first = {

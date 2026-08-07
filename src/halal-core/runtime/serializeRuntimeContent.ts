@@ -4,12 +4,18 @@ import type { HalalRuntimeContent } from "./types.js";
 const DEFAULT_MAX_CONTENT_CHARACTERS = 20_000;
 const MAX_DEPTH = 128;
 
+export type RuntimeContentInspectionIssue =
+  | "max_depth"
+  | "unreadable_object"
+  | "unreadable_property";
+
 export interface PreparedRuntimeContent {
   canonical: string;
   localText: string;
   aiText: string;
   truncated: boolean;
   maxCharacters: number;
+  inspectionIssues: RuntimeContentInspectionIssue[];
 }
 
 export function serializeRuntimeContent(
@@ -24,20 +30,29 @@ export function prepareRuntimeContent(
   maxCharacters = DEFAULT_MAX_CONTENT_CHARACTERS,
 ): PreparedRuntimeContent {
   const safeLimit = resolveMaxCharacters(maxCharacters);
-  const canonical = serializeRuntimeContentCanonical(content);
+  const prepared = serializeRuntimeContentCanonicalWithInspection(content);
 
   return {
-    canonical,
-    localText: canonical.slice(0, safeLimit),
-    aiText: redactSensitiveData(canonical).slice(0, safeLimit),
-    truncated: canonical.length > safeLimit,
+    canonical: prepared.canonical,
+    localText: prepared.canonical.slice(0, safeLimit),
+    aiText: redactSensitiveData(prepared.canonical).slice(0, safeLimit),
+    truncated: prepared.canonical.length > safeLimit,
     maxCharacters: safeLimit,
+    inspectionIssues: prepared.inspectionIssues,
   };
 }
 
 export function serializeRuntimeContentCanonical(content: HalalRuntimeContent): string {
+  return serializeRuntimeContentCanonicalWithInspection(content).canonical;
+}
+
+function serializeRuntimeContentCanonicalWithInspection(content: HalalRuntimeContent): {
+  canonical: string;
+  inspectionIssues: RuntimeContentInspectionIssue[];
+} {
   const ancestors = new WeakMap<object, string>();
-  return serializeValue({
+  const inspectionIssues = new Set<RuntimeContentInspectionIssue>();
+  const canonical = serializeValue({
     kind: content.kind,
     id: content.id,
     route: content.route,
@@ -47,12 +62,18 @@ export function serializeRuntimeContentCanonical(content: HalalRuntimeContent): 
     advertiser: content.advertiser,
     metadata: content.metadata,
     payload: content.payload,
-  }, ancestors, 0, "$runtime");
+  }, ancestors, inspectionIssues, 0, "$runtime");
+
+  return {
+    canonical,
+    inspectionIssues: [...inspectionIssues],
+  };
 }
 
 function serializeValue(
   value: unknown,
   ancestors: WeakMap<object, string>,
+  inspectionIssues: Set<RuntimeContentInspectionIssue>,
   depth: number,
   valuePath: string,
 ): string {
@@ -68,31 +89,76 @@ function serializeValue(
   if (typeof value === "boolean") return `boolean:${value}`;
   if (typeof value === "bigint") return `bigint:${value.toString()}`;
   if (typeof value === "symbol") return `symbol:${String(value.description ?? "")}`;
-  if (typeof value === "function") return `function:${value.name || "anonymous"}`;
-  if (depth >= MAX_DEPTH) return `max-depth:${valuePath}`;
+  if (typeof value === "function") {
+    try {
+      return `function:${value.name || "anonymous"}`;
+    } catch {
+      inspectionIssues.add("unreadable_object");
+      return `unreadable-function:${valuePath}`;
+    }
+  }
+  if (depth >= MAX_DEPTH) {
+    inspectionIssues.add("max_depth");
+    return `max-depth:${valuePath}`;
+  }
 
   const existingPath = ancestors.get(value);
   if (existingPath) {
     return `circular-reference:${existingPath}`;
   }
 
-  if (value instanceof Date) {
-    return Number.isFinite(value.getTime())
-      ? `date:${value.toISOString()}`
-      : "date:invalid";
+  let isArray: boolean;
+  let isDate: boolean;
+  let isUrl: boolean;
+  let isRegExp: boolean;
+  try {
+    isArray = Array.isArray(value);
+    isDate = value instanceof Date;
+    isUrl = value instanceof URL;
+    isRegExp = value instanceof RegExp;
+  } catch {
+    inspectionIssues.add("unreadable_object");
+    return `unreadable-object:${valuePath}`;
   }
-  if (value instanceof URL) {
-    return `url:${value.href.length}:${value.href}`;
+
+  if (isDate) {
+    try {
+      return Number.isFinite(value.getTime())
+        ? `date:${value.toISOString()}`
+        : "date:invalid";
+    } catch {
+      inspectionIssues.add("unreadable_object");
+      return `unreadable-date:${valuePath}`;
+    }
   }
-  if (value instanceof RegExp) {
-    return `regexp:${value.source.length}:${value.source}/${value.flags}`;
+  if (isUrl) {
+    try {
+      return `url:${value.href.length}:${value.href}`;
+    } catch {
+      inspectionIssues.add("unreadable_object");
+      return `unreadable-url:${valuePath}`;
+    }
+  }
+  if (isRegExp) {
+    try {
+      return `regexp:${value.source.length}:${value.source}/${value.flags}`;
+    } catch {
+      inspectionIssues.add("unreadable_object");
+      return `unreadable-regexp:${valuePath}`;
+    }
   }
 
   ancestors.set(value, valuePath);
   try {
-    if (Array.isArray(value)) {
+    if (isArray) {
       const entries = value.map((entry, index) =>
-        `${index}=${serializeValue(entry, ancestors, depth + 1, `${valuePath}[${index}]`)}`);
+        `${index}=${serializeValue(
+          entry,
+          ancestors,
+          inspectionIssues,
+          depth + 1,
+          `${valuePath}[${index}]`,
+        )}`);
       return `array:${value.length}[${entries.join(";")}]`;
     }
 
@@ -100,6 +166,7 @@ function serializeValue(
     try {
       keys = Object.keys(value as Record<string, unknown>).sort(compareCodeUnits);
     } catch {
+      inspectionIssues.add("unreadable_object");
       return `unreadable-object:${valuePath}`;
     }
 
@@ -108,9 +175,16 @@ function serializeValue(
       try {
         entry = (value as Record<string, unknown>)[key];
       } catch {
+        inspectionIssues.add("unreadable_property");
         return `${key.length}:${key}=unreadable-property`;
       }
-      return `${key.length}:${key}=${serializeValue(entry, ancestors, depth + 1, `${valuePath}.${key}`)}`;
+      return `${key.length}:${key}=${serializeValue(
+        entry,
+        ancestors,
+        inspectionIssues,
+        depth + 1,
+        `${valuePath}.${key}`,
+      )}`;
     });
     return `object:${keys.length}{${entries.join(";")}}`;
   } finally {

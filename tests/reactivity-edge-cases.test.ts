@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isReactive,
   nextTick,
   reactive,
   ref,
@@ -17,6 +18,25 @@ describe("resux reactivity edge cases", () => {
 
     refs[0].value = 3;
     expect(values[0]).toBe(3);
+  });
+
+  it("leaves native internal-slot objects usable instead of wrapping them with plain handlers", () => {
+    const date = new Date("2026-08-07T00:00:00.000Z");
+    const map = new Map<string, number>([["count", 1]]);
+    const set = new Set<string>(["ready"]);
+    const regexp = /resux/i;
+    const state = reactive({ date, map, set, regexp });
+
+    expect(state.date).toBe(date);
+    expect(state.date.getUTCFullYear()).toBe(2026);
+    expect(state.map).toBe(map);
+    expect(state.map.get("count")).toBe(1);
+    expect(state.set).toBe(set);
+    expect(state.set.has("ready")).toBe(true);
+    expect(state.regexp).toBe(regexp);
+    expect(state.regexp.test("Resux")).toBe(true);
+    expect(isReactive(state.date)).toBe(false);
+    expect(isReactive(state.map)).toBe(false);
   });
 
   it("tracks enumerable symbol keys in deep watches", () => {

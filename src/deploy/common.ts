@@ -65,11 +65,15 @@ function parseDeployConfig(value: unknown): ResuxDeployConfig {
     return {};
   }
 
-  const target = normalizeDeployTarget(value.target);
-  const nitroPresetCandidate = typeof value.nitroPreset === "string"
-    ? value.nitroPreset.trim()
-    : typeof value.preset === "string"
-      ? value.preset.trim()
+  // Compiled Resux config modules export the full framework config, where the
+  // deployment options live under `deploy`. Keep accepting the direct shape as
+  // well for compatibility with callers that already pass the deploy section.
+  const deploy = isRecord(value.deploy) ? value.deploy : value;
+  const target = normalizeDeployTarget(deploy.target);
+  const nitroPresetCandidate = typeof deploy.nitroPreset === "string"
+    ? deploy.nitroPreset.trim()
+    : typeof deploy.preset === "string"
+      ? deploy.preset.trim()
       : "";
 
   return {

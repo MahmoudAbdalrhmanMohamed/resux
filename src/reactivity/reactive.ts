@@ -113,7 +113,7 @@ function createReactiveObject(
   proxyMap: WeakMap<object, object>,
   baseHandlers: ProxyHandler<object>
 ): object {
-  if (!isObject(target)) {
+  if (!isObject(target) || !canUseBaseProxyHandlers(target)) {
     return target;
   }
 
@@ -135,6 +135,11 @@ function createReactiveObject(
     reactiveProxies.add(proxy);
   }
   return proxy;
+}
+
+function canUseBaseProxyHandlers(target: object): boolean {
+  const rawType = Object.prototype.toString.call(target);
+  return rawType === "[object Object]" || rawType === "[object Array]";
 }
 
 export function isReactive(value: unknown): boolean {

@@ -92,17 +92,130 @@ describe("generated browser reactivity regressions", () => {
     expect(length).toBe(4);
     expect(runs).toBe(3);
   });
+
+  it("preserves array shape in generated toRefs", async () => {
+    const runtime = await importGeneratedRuntime();
+    const list = runtime.reactive([1, 2]);
+    const refs = runtime.toRefs(list);
+
+    expect(Array.isArray(refs)).toBe(true);
+    expect(refs).toHaveLength(2);
+    refs[0].value = 7;
+    expect(list[0]).toBe(7);
+  });
+
+  it("tracks enumerable symbol keys and property iteration in deep watches", async () => {
+    const runtime = await importGeneratedRuntime();
+    const symbolKey = Symbol("count");
+    const state = runtime.reactive<Record<PropertyKey, any>>({
+      [symbolKey]: { value: 0 },
+    });
+    let runs = 0;
+
+    const stop = runtime.watch(state, () => {
+      runs += 1;
+    }, { flush: "sync", deep: true });
+
+    state[symbolKey].value += 1;
+    state.added = 1;
+    delete state.added;
+    stop();
+
+    expect(runs).toBe(3);
+  });
+
+  it("notifies deep generated watchers when a new property is added as undefined", async () => {
+    const runtime = await importGeneratedRuntime();
+    const state = runtime.reactive<Record<string, unknown>>({});
+    let runs = 0;
+
+    const stop = runtime.watch(state, () => {
+      runs += 1;
+    }, { flush: "sync", deep: true });
+
+    state.added = undefined;
+    stop();
+
+    expect(runs).toBe(1);
+  });
+
+  it("continues generated queued watchers after one callback throws", async () => {
+    const runtime = await importGeneratedRuntime();
+    const failing = runtime.ref(0);
+    const healthy = runtime.ref(0);
+    const seen: number[] = [];
+
+    const stopFailing = runtime.watch(failing, () => {
+      throw new Error("generated watch failed");
+    });
+    const stopHealthy = runtime.watch(healthy, (value: number) => {
+      seen.push(value);
+    });
+
+    failing.value = 1;
+    healthy.value = 2;
+
+    await expect(runtime.nextTick()).rejects.toThrow("generated watch failed");
+    expect(seen).toEqual([2]);
+    stopFailing();
+    stopHealthy();
+  });
+
+  it("caps recursively queued generated watchers instead of hanging", async () => {
+    const runtime = await importGeneratedRuntime();
+    const count = runtime.ref(0);
+    const stop = runtime.watch(count, () => {
+      count.value += 1;
+    });
+
+    count.value = 1;
+    await expect(runtime.nextTick()).rejects.toThrow("recursively queued job");
+    stop();
+    expect(count.value).toBeGreaterThan(1);
+  });
+
+  it("keeps native internal-slot objects usable in the generated runtime", async () => {
+    const runtime = await importGeneratedRuntime();
+    const date = new Date("2026-08-07T00:00:00.000Z");
+    const map = new Map<string, number>([["count", 1]]);
+    const set = new Set<string>(["ready"]);
+    const regexp = /resux/i;
+    const state = runtime.reactive({ date, map, set, regexp });
+
+    expect(state.date).toBe(date);
+    expect(state.date.getUTCFullYear()).toBe(2026);
+    expect(state.map.get("count")).toBe(1);
+    expect(state.set.has("ready")).toBe(true);
+    expect(state.regexp.test("Resux")).toBe(true);
+  });
+
+  it("evicts rejected generated lazy-package promises so a later call retries", async () => {
+    const runtime = await importGeneratedRuntime();
+    let errorEvents = 0;
+    window.addEventListener("resux:package:error", () => {
+      errorEvents += 1;
+    });
+
+    const packageName = "resux-definitely-missing-generated-audit-package";
+    await expect(runtime.useLazyPackage(packageName, { mode: "clientOnly" })).rejects.toThrow();
+    await expect(runtime.useLazyPackage(packageName, { mode: "clientOnly" })).rejects.toThrow();
+
+    expect(errorEvents).toBe(2);
+  });
 });
 
 async function importGeneratedRuntime(): Promise<{
   effect: (fn: () => void) => unknown;
   reactive: <T extends object>(value: T) => T;
   ref: <T>(value: T) => { value: T };
+  toRefs: <T extends object>(value: T) => any;
+  nextTick: () => Promise<void>;
   watch: (
-    source: object,
-    callback: () => void,
-    options?: { flush?: "sync" | "post" },
+    source: any,
+    callback: (...args: any[]) => void,
+    options?: { flush?: "sync" | "post"; deep?: boolean },
   ) => () => void;
+  useLazyPackage: (name: string, options?: Record<string, unknown>) => Promise<unknown>;
 }> {
   importCounter += 1;
   const root = path.join(os.tmpdir(), `resux-generated-reactivity-${Date.now()}-${importCounter}`);
@@ -111,7 +224,7 @@ async function importGeneratedRuntime(): Promise<{
   const runtimeFile = path.join(root, "runtime-client.mjs");
   await writeFile(
     runtimeFile,
-    `${getClientRuntimeSource()}\nexport { effect, reactive, ref, watch };\n`,
+    `${getClientRuntimeSource()}\nexport { effect, reactive, ref, toRefs, watch, nextTick };\n`,
     "utf8",
   );
 

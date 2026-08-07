@@ -12,6 +12,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { ViteDevServer } from "vite";
 import type { BuildOptions } from "./compiler/index.js";
 import { createResux } from "./core/resux.js";
+import { normalizeResuxGeneratedPath } from "./core/config.js";
 import { runCreateResux } from "./create.js";
 import {
   applyDeploymentPostBuild,
@@ -284,7 +285,7 @@ export async function runResuxCli(args: string[]): Promise<void> {
     const subcommand = commandArgs[0];
     const cliOptions = readCliOptions(commandArgs.slice(1), subcommand);
     const appRoot = path.resolve(cliOptions.appRoot);
-    const resolvedBuildDir = await resolveConfiguredBuildDir(appRoot);
+    const resolvedBuildDir = normalizeResuxGeneratedPath(await resolveConfiguredBuildDir(appRoot));
     const outDir = path.resolve(appRoot, resolvedBuildDir);
 
     if (subcommand === "check") {
@@ -315,7 +316,7 @@ export async function runResuxCli(args: string[]): Promise<void> {
 
   const cliOptions = readCliOptions(commandArgs, command);
   const appRoot = path.resolve(cliOptions.appRoot);
-  const resolvedBuildDir = await resolveConfiguredBuildDir(appRoot);
+  const resolvedBuildDir = normalizeResuxGeneratedPath(await resolveConfiguredBuildDir(appRoot));
   const outDir = path.resolve(appRoot, resolvedBuildDir);
   const buildOptions: BuildOptions = {
     traceBuild: cliOptions.traceBuild === true
@@ -1837,7 +1838,7 @@ async function ensureNitroBuildFiles(appRoot: string): Promise<void> {
     );
   }
 
-  const resolvedBuildDir = await resolveConfiguredBuildDir(appRoot);
+  const resolvedBuildDir = normalizeResuxGeneratedPath(await resolveConfiguredBuildDir(appRoot));
   const outDir = path.resolve(appRoot, resolvedBuildDir);
   await updateNitroConfigPrerenderRoutes(appRoot, outDir);
 }

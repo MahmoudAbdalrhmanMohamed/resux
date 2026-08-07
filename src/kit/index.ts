@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type {
   PagesExtender,
   ResuxComponentInput,
@@ -24,16 +25,10 @@ export interface ResuxModuleDefinition<TOptions = Record<string, unknown>> {
   setup: (options: TOptions, resux: ResuxModuleContext) => void | Promise<void>;
 }
 
-let activeContext: ResuxModuleContext | null = null;
+const kitContextStorage = new AsyncLocalStorage<ResuxModuleContext>();
 
 export function withResuxKitContext<T>(context: ResuxModuleContext, run: () => Promise<T> | T): Promise<T> | T {
-  const previous = activeContext;
-  activeContext = context;
-  try {
-    return run();
-  } finally {
-    activeContext = previous;
-  }
+  return kitContextStorage.run(context, run);
 }
 
 export function defineResuxModule<TOptions = Record<string, unknown>>(module: ResuxModuleDefinition<TOptions>): ResuxModuleDefinition<TOptions> {
@@ -109,8 +104,9 @@ export function addPrerenderRoutes(route: string | string[]): void {
 }
 
 function useContext(api: string): ResuxModuleContext {
-  if (!activeContext) {
+  const context = kitContextStorage.getStore();
+  if (!context) {
     throw new Error(`Resux Kit "${api}" was called outside of a module setup context.`);
   }
-  return activeContext;
+  return context;
 }

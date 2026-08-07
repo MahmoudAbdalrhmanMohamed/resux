@@ -110,6 +110,11 @@ export function useAnimate(
   return null;
 }
 
+const animeDirectiveState = new WeakMap<HTMLElement, {
+  observer?: IntersectionObserver;
+  animation?: Animation;
+}>();
+
 export const vAnime = {
   mounted(el: HTMLElement, binding: { value?: string | AnimateOptions }) {
     if (typeof window === "undefined" || isReducedMotion()) return;
@@ -118,11 +123,14 @@ export const vAnime = {
       typeof binding.value === "string"
         ? { type: binding.value }
         : binding.value || { type: "fade-up" };
-
-    el.style.opacity = "0";
+    const state: { observer?: IntersectionObserver; animation?: Animation } = {};
+    animeDirectiveState.set(el, state);
 
     const triggerAnimation = () => {
-      useAnimate(el, config);
+      const animation = useAnimate(el, { ...config, fill: config.fill ?? "both" });
+      if (animation) {
+        state.animation = animation;
+      }
     };
 
     if ("IntersectionObserver" in window) {
@@ -131,14 +139,22 @@ export const vAnime = {
           if (entries.some((entry) => entry.isIntersecting)) {
             triggerAnimation();
             observer.unobserve(el);
+            state.observer = undefined;
           }
         },
         { rootMargin: "50px" }
       );
+      state.observer = observer;
       observer.observe(el);
     } else {
       triggerAnimation();
     }
+  },
+  unmounted(el: HTMLElement) {
+    const state = animeDirectiveState.get(el);
+    state?.observer?.disconnect();
+    state?.animation?.cancel();
+    animeDirectiveState.delete(el);
   }
 };
 
@@ -348,6 +364,13 @@ export const RxSelect = defineComponent({
   }
 });
 
+function formatDatePickerValue(value: string | Date): string {
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value.toISOString().split("T")[0] : "";
+  }
+  return String(value || "");
+}
+
 export const RxDatePicker = defineComponent({
   name: "RxDatePicker",
   props: {
@@ -357,15 +380,12 @@ export const RxDatePicker = defineComponent({
   },
   emits: ["update:modelValue"],
   setup(props, { emit, attrs }) {
-    const formattedValue = typeof props.modelValue === "object" && props.modelValue instanceof Date
-      ? props.modelValue.toISOString().split("T")[0]
-      : String(props.modelValue || "");
     return () => {
       const classes = props.unstyled ? (attrs.class || "") : ["rx-input", "rx-datepicker", attrs.class].filter(Boolean).join(" ");
       return h("input", {
         ...attrs,
         type: "date",
-        value: formattedValue,
+        value: formatDatePickerValue(props.modelValue),
         placeholder: props.placeholder,
         class: classes,
         onInput: (e: Event) => emit("update:modelValue", (e.target as HTMLInputElement).value)

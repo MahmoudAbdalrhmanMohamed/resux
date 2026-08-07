@@ -126,7 +126,7 @@
     "verify:vercel-output": "npm run build && node scripts/verify-vercel-output.mjs",
     "verify:deploy-targets": "npm run build && node scripts/verify-deploy-targets.mjs",
     "create:local": "npm run build && node dist/cli.js init",
-    "pack:check": "npm run build && npm test && npm pack --dry-run"
+    "pack:check": "npm run build && npm test && npm pack --dry-run && npm pack --dry-run ./packages/create-resuxjs"
   },
   "engines": {
     "node": ">=20.19.0"
@@ -136,7 +136,7 @@
     "@vue/compiler-dom": "^3.5.22",
     "@vue/compiler-sfc": "^3.5.22",
     "h3": "^1.15.4",
-    "nitropack": "^2.12.6",
+    "nitropack": "~2.12.6",
     "sharp": "^0.35.3",
     "typescript": "^5.9.3",
     "vite": "^8.2.0",

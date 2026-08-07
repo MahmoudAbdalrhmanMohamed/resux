@@ -68,7 +68,11 @@ export class ResuxHooks {
     if (!handlers || handlers.length === 0) {
       return;
     }
-    for (const handler of handlers) {
+
+    // Dispatch a stable snapshot. A hook is allowed to register or remove hooks,
+    // but those mutations must affect the next dispatch rather than extending or
+    // shrinking the loop that is currently running.
+    for (const handler of [...handlers]) {
       try {
         await handler(payload);
       } catch (error) {

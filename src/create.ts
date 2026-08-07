@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { Dirent } from "node:fs";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { stdin, stdout } from "node:process";
@@ -368,6 +368,11 @@ export function assertSafeCreateTarget(root: string, cwd: string, force: boolean
 }
 
 async function prepareTarget(root: string, force: boolean): Promise<void> {
+  const existing = await lstat(root).catch(() => null);
+  if (existing?.isSymbolicLink()) {
+    throw new Error(`Refusing to create a Resux project through symbolic link "${root}". Choose a real directory instead.`);
+  }
+
   await mkdir(root, { recursive: true });
   const entries = await readdir(root);
 

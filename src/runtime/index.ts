@@ -1028,6 +1028,7 @@ async function injectClientPackageCss(cssEntries: string[], packageName: string)
           });
         })
         .catch((error) => {
+          resuxInjectedPackageCss.delete(href);
           throw new Error(
             `Failed to load CSS entry "${href}" for package "${packageName}": ${error instanceof Error ? error.message : String(error)}`
           );
@@ -1131,6 +1132,11 @@ export async function useLazyPackage<T = unknown>(
   })();
 
   resuxLazyPackageCache.set(key, loader as Promise<unknown>);
+  void loader.catch(() => {
+    if (resuxLazyPackageCache.get(key) === loader) {
+      resuxLazyPackageCache.delete(key);
+    }
+  });
   return loader;
 }
 

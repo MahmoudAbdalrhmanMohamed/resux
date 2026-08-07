@@ -1,0 +1,31 @@
+name: Validate Cloudflare hardening
+
+on:
+  push:
+    branches:
+      - fix/vercel-sharp-exports-resolution
+    paths:
+      - .github/workflows/validate-cloudflare-hardening.yml
+
+permissions:
+  contents: read
+
+jobs:
+  cloudflare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/vercel-sharp-exports-resolution
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      # Re-run after the Nitro 2.13 compatibility-layer upgrade.
+      - run: npm run test:deploy
+        env:
+          RESUX_DEPLOY_TARGET_FILTER: cloudflare

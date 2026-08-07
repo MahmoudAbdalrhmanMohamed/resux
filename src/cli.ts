@@ -255,13 +255,6 @@ export function createResuxNodeHandler(options: ResuxNodeHandlerOptions = {}) {
   };
 }
 
-if (isMainModule()) {
-  void runResuxCli(process.argv.slice(2)).catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-  });
-}
-
 export async function runResuxCli(args: string[]): Promise<void> {
   const command = readCommand(args);
   const commandArgs = command === args[0] ? args.slice(1) : args;
@@ -2117,6 +2110,9 @@ function createNitroConfig(): string {
 export default defineNitroConfig({
   srcDir: ".resux-nitro",
   compatibilityDate: "2026-05-02",
+  cloudflare: {
+    nodeCompat: true
+  },
   // Resux uses top-level /plugins, /modules, and /middleware for app features.
   // Nitro auto-scans these folders too, so exclude them from Nitro scanning.
   ignore: ["plugins/**", "modules/**", "middleware/**", "assets/**"],

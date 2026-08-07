@@ -1,0 +1,37 @@
+name: Framework audit patch runner
+
+on:
+  push:
+    branches:
+      - fix/framework-audit-regressions
+    paths:
+      - scripts/apply-framework-audit-patches.mjs
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/framework-audit-regressions
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Apply exact source patches
+        run: node scripts/apply-framework-audit-patches.mjs
+      - name: Commit patched framework sources
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "fix: harden runtime and generated framework paths"
+          git push origin HEAD:fix/framework-audit-regressions

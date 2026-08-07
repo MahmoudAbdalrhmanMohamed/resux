@@ -3,6 +3,8 @@ export * from "./config.js";
 export * from "./policy.js";
 export * from "./enforce.js";
 export * from "./lifecycle.js";
+export * from "./runtime/index.js";
+export { classifyRuntimeContentWithAi } from "./ai/classifyRuntimeContent.js";
 
 // CLI command runners
 export { runHalalCheck } from "./cli/check.js";

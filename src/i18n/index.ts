@@ -71,14 +71,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function readCurrentRoutePath(): string {
+  if (typeof window !== "undefined" && typeof location !== "undefined") {
+    return `${location.pathname}${location.search}${location.hash}`;
+  }
+
   const app = useResuxApp();
   const currentRoute = app.route;
   if (currentRoute && typeof currentRoute.path === "string" && currentRoute.path.trim()) {
     return currentRoute.path;
-  }
-
-  if (typeof window !== "undefined" && typeof location !== "undefined") {
-    return `${location.pathname}${location.search}${location.hash}`;
   }
 
   return "/";
@@ -380,4 +380,3 @@ if (typeof globalThis !== "undefined") {
   (globalThis as any).__RESUX_USE_LOCALE_PATH__ = useLocalePath;
   (globalThis as any).__RESUX_USE_SWITCH_LOCALE_PATH__ = useSwitchLocalePath;
 }
-

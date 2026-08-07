@@ -12,22 +12,28 @@ afterEach(async () => {
   }
 });
 
+async function createSiblingAssetFixture() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "resux-project-"));
+  const siblingRoot = `${root}-sibling`;
+  tempRoots.push(root, siblingRoot);
+  const pageFile = path.join(root, "pages", "index.vue");
+  const assetFile = path.join(siblingRoot, "outside.png");
+  await mkdir(path.dirname(pageFile), { recursive: true });
+  await mkdir(siblingRoot, { recursive: true });
+  await writeFile(path.join(root, "resux.config.ts"), "export default defineResuxConfig({})\n", "utf8");
+  await writeFile(assetFile, "not-a-real-image", "utf8");
+
+  let importPath = path.relative(path.dirname(pageFile), assetFile).replace(/\\/g, "/");
+  if (!importPath.startsWith(".")) {
+    importPath = `./${importPath}`;
+  }
+
+  return { pageFile, importPath };
+}
+
 describe("compiler path regressions", () => {
   it("does not treat a prefix-matching sibling directory as inside the project", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "resux-project-"));
-    const siblingRoot = `${root}-sibling`;
-    tempRoots.push(root, siblingRoot);
-    const pageFile = path.join(root, "pages", "index.vue");
-    const assetFile = path.join(siblingRoot, "outside.png");
-    await mkdir(path.dirname(pageFile), { recursive: true });
-    await mkdir(siblingRoot, { recursive: true });
-    await writeFile(path.join(root, "resux.config.ts"), "export default defineResuxConfig({})\n", "utf8");
-    await writeFile(assetFile, "not-a-real-image", "utf8");
-
-    let importPath = path.relative(path.dirname(pageFile), assetFile).replace(/\\/g, "/");
-    if (!importPath.startsWith(".")) {
-      importPath = `./${importPath}`;
-    }
+    const { pageFile, importPath } = await createSiblingAssetFixture();
 
     const component = compileVueSource(
       `<script setup>\nimport outsideImage from ${JSON.stringify(importPath)}\nconst image = outsideImage\n</script>\n<template><img :src="image" alt="outside" /></template>`,
@@ -35,6 +41,22 @@ describe("compiler path regressions", () => {
         file: pageFile,
         id: "outside-asset",
         name: "OutsideAsset",
+      },
+    );
+
+    expect(component.serverSource).toContain(JSON.stringify(importPath));
+    expect(component.serverSource).not.toContain('"/../');
+  });
+
+  it("applies the same containment rules to TypeScript import-equals assets", async () => {
+    const { pageFile, importPath } = await createSiblingAssetFixture();
+
+    const component = compileVueSource(
+      `<script setup lang="ts">\nimport outsideImage = require(${JSON.stringify(importPath)})\nconst image = outsideImage\n</script>\n<template><img :src="image" alt="outside" /></template>`,
+      {
+        file: pageFile,
+        id: "outside-asset-import-equals",
+        name: "OutsideAssetImportEquals",
       },
     );
 

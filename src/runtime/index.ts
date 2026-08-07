@@ -2780,7 +2780,7 @@ export function createServerSetupContext(
     },
 
     useError(): Ref<ResuxError | null> {
-      return activeResuxError;
+      return readActiveResuxError();
     },
 
     clearError(): void {

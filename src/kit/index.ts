@@ -29,11 +29,23 @@ let activeContext: ResuxModuleContext | null = null;
 export function withResuxKitContext<T>(context: ResuxModuleContext, run: () => Promise<T> | T): Promise<T> | T {
   const previous = activeContext;
   activeContext = context;
+
+  let result: Promise<T> | T;
   try {
-    return run();
-  } finally {
+    result = run();
+  } catch (error) {
     activeContext = previous;
+    throw error;
   }
+
+  if (isPromiseLike(result)) {
+    return Promise.resolve(result).finally(() => {
+      activeContext = previous;
+    });
+  }
+
+  activeContext = previous;
+  return result;
 }
 
 export function defineResuxModule<TOptions = Record<string, unknown>>(module: ResuxModuleDefinition<TOptions>): ResuxModuleDefinition<TOptions> {
@@ -113,4 +125,12 @@ function useContext(api: string): ResuxModuleContext {
     throw new Error(`Resux Kit "${api}" was called outside of a module setup context.`);
   }
   return activeContext;
+}
+
+function isPromiseLike<T>(value: Promise<T> | T): value is PromiseLike<T> {
+  return Boolean(
+    value
+      && (typeof value === "object" || typeof value === "function")
+      && typeof (value as PromiseLike<T>).then === "function"
+  );
 }

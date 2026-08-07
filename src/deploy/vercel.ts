@@ -99,10 +99,15 @@ function resolveResuxPackageRequire(
 ): ReturnType<typeof createRequire> | null {
   for (const packageName of ["resuxjs", "resux"]) {
     try {
-      const packageJsonPath = appRequire.resolve(`${packageName}/package.json`);
-      return createRequire(packageJsonPath);
+      const packageEntryPath = appRequire.resolve(packageName);
+      return createRequire(packageEntryPath);
     } catch {
-      // Keep trying known package names.
+      try {
+        const packageJsonPath = appRequire.resolve(`${packageName}/package.json`);
+        return createRequire(packageJsonPath);
+      } catch {
+        // Keep trying known package names.
+      }
     }
   }
   return null;
@@ -138,23 +143,29 @@ async function resolveDependencyPackageJsonPath(
   resolver: ReturnType<typeof createRequire>,
   resolutionErrors?: string[],
 ): Promise<string | null> {
+  let entryResolutionError: unknown = null;
+  try {
+    const entryPath = resolver.resolve(dependency);
+    const packageJsonPath = await findPackageJsonFromEntry(dependency, entryPath);
+    if (packageJsonPath) {
+      return packageJsonPath;
+    }
+    entryResolutionError = new Error(
+      `Resolved "${dependency}" to ${entryPath}, but its package root could not be located.`,
+    );
+  } catch (error) {
+    entryResolutionError = error;
+  }
+
+  // Legacy packages may expose package.json directly but have no resolvable root entry.
+  // Keep this as a fallback only: modern packages such as sharp intentionally do not
+  // export ./package.json and should resolve through their public entry point instead.
   try {
     return resolver.resolve(`${dependency}/package.json`);
   } catch (packageJsonError) {
-    try {
-      const entryPath = resolver.resolve(dependency);
-      const packageJsonPath = await findPackageJsonFromEntry(dependency, entryPath);
-      if (packageJsonPath) {
-        return packageJsonPath;
-      }
-      resolutionErrors?.push(
-        `${formatResolutionError(packageJsonError)} | Resolved "${dependency}" to ${entryPath}, but its package root could not be located.`,
-      );
-    } catch (entryError) {
-      resolutionErrors?.push(
-        `${formatResolutionError(packageJsonError)} | ${formatResolutionError(entryError)}`,
-      );
-    }
+    resolutionErrors?.push(
+      `${formatResolutionError(entryResolutionError)} | ${formatResolutionError(packageJsonError)}`,
+    );
     return null;
   }
 }

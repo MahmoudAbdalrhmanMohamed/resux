@@ -39,7 +39,7 @@ export function withResuxKitContext<T>(context: ResuxModuleContext, run: () => P
   }
 
   if (isPromiseLike(result)) {
-    return Promise.resolve(result).finally(() => {
+    return Promise.resolve(result as PromiseLike<T>).finally(() => {
       activeContext = previous;
     });
   }
@@ -127,10 +127,10 @@ function useContext(api: string): ResuxModuleContext {
   return activeContext;
 }
 
-function isPromiseLike<T>(value: Promise<T> | T): value is PromiseLike<T> {
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   return Boolean(
     value
       && (typeof value === "object" || typeof value === "function")
-      && typeof (value as PromiseLike<T>).then === "function"
+      && typeof (value as PromiseLike<unknown>).then === "function"
   );
 }

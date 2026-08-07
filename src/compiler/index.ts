@@ -2001,8 +2001,12 @@ function processImportDeclaration(
         }
 
         let webPath = importPath;
-        if (absolutePath.startsWith(projectRoot)) {
-          const relativeToRoot = path.relative(projectRoot, absolutePath);
+        const relativeToRoot = path.relative(projectRoot, absolutePath);
+        const isInsideProject = relativeToRoot === ""
+          || (relativeToRoot !== ".."
+            && !relativeToRoot.startsWith(`..${path.sep}`)
+            && !path.isAbsolute(relativeToRoot));
+        if (isInsideProject) {
           webPath = "/" + relativeToRoot.replace(/\\/g, "/");
         }
 

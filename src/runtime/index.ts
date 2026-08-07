@@ -656,10 +656,62 @@ interface RenderTemplateContext {
 }
 
 type ComponentProps = Record<string, unknown>;
+type ResuxAsyncContextStorage = {
+  getStore(): ResuxAppLike | undefined;
+  run<T>(store: ResuxAppLike, callback: () => T): T;
+};
+
 let activeResuxApp: ResuxAppLike | null = null;
-const activeResuxError = ref<ResuxError | null>(null);
+const fallbackResuxError = ref<ResuxError | null>(null);
+const resuxErrorByApp = new WeakMap<ResuxAppLike, Ref<ResuxError | null>>();
+const resuxAsyncContextStorage = createResuxAsyncContextStorage();
+
+function createResuxAsyncContextStorage(): ResuxAsyncContextStorage | null {
+  const maybeProcess = typeof process !== "undefined"
+    ? process as typeof process & { getBuiltinModule?: (id: string) => unknown }
+    : undefined;
+  const getBuiltinModule = maybeProcess?.getBuiltinModule;
+  if (typeof getBuiltinModule !== "function") {
+    return null;
+  }
+
+  try {
+    const asyncHooks = getBuiltinModule.call(maybeProcess, "node:async_hooks") as {
+      AsyncLocalStorage?: new () => ResuxAsyncContextStorage;
+    } | undefined;
+    const AsyncLocalStorage = asyncHooks?.AsyncLocalStorage;
+    return AsyncLocalStorage ? new AsyncLocalStorage() : null;
+  } catch {
+    return null;
+  }
+}
+
+function readActiveResuxApp(): ResuxAppLike | null {
+  return resuxAsyncContextStorage?.getStore()
+    ?? activeResuxApp
+    ?? (globalThis as { __RESUX_APP__?: ResuxAppLike }).__RESUX_APP__
+    ?? null;
+}
+
+function readActiveResuxError(): Ref<ResuxError | null> {
+  const app = readActiveResuxApp();
+  if (!app) {
+    return fallbackResuxError;
+  }
+  const existing = resuxErrorByApp.get(app);
+  if (existing) {
+    return existing;
+  }
+  const errorRef = ref<ResuxError | null>(null);
+  resuxErrorByApp.set(app, errorRef);
+  return errorRef;
+}
 
 async function withActiveResuxApp<T>(resuxApp: ResuxAppLike, run: () => Promise<T> | T): Promise<T> {
+  if (resuxAsyncContextStorage) {
+    return await resuxAsyncContextStorage.run(resuxApp, () => Promise.resolve(run()));
+  }
+
   const previous = activeResuxApp;
   activeResuxApp = resuxApp;
   const previousGlobal = (globalThis as { __RESUX_APP__?: ResuxAppLike }).__RESUX_APP__;
@@ -693,13 +745,9 @@ export function defineResuxRouteMiddleware(middleware: ResuxRouteMiddleware): Re
 }
 
 export function useResuxApp(): ResuxAppLike {
-  if (activeResuxApp) {
-    return activeResuxApp;
-  }
-
-  const globalApp = (globalThis as { __RESUX_APP__?: ResuxAppLike }).__RESUX_APP__;
-  if (globalApp) {
-    return globalApp;
+  const app = readActiveResuxApp();
+  if (app) {
+    return app;
   }
 
   console.error("useResuxApp error trace:");
@@ -735,7 +783,7 @@ export function parseUserAgent(ua?: string): DeviceInfo {
 }
 
 export function useDevice(): DeviceInfo {
-  const app = activeResuxApp || (globalThis as any).__RESUX_APP__;
+  const app = readActiveResuxApp();
   const ua = app?.route?.userAgent || (typeof navigator !== "undefined" ? navigator.userAgent : "");
   return parseUserAgent(ua);
 }
@@ -821,18 +869,18 @@ export function createError(input: string | Partial<ResuxError>): ResuxError {
 }
 
 export function useError(): Ref<ResuxError | null> {
-  return activeResuxError;
+  return readActiveResuxError();
 }
 
 export function showError(input: string | Partial<ResuxError>): never {
   const error = createError(input);
-  activeResuxError.value = error;
+  readActiveResuxError().value = error;
   dispatchRuntimeErrorEvent("resux:app-error", error);
   throw error;
 }
 
 export function clearError(): void {
-  activeResuxError.value = null;
+  readActiveResuxError().value = null;
   dispatchRuntimeErrorEvent("resux:app-error-cleared", null);
 }
 
@@ -2437,7 +2485,7 @@ class ResuxRenderer {
       asyncDataRefs
     };
 
-    return renderTemplateNodes(definition.template, {
+    return withActiveResuxApp(this.resuxApp, () => renderTemplateNodes(definition.template, {
       scope,
       scopeId,
       moduleId: definition.id,
@@ -2450,7 +2498,7 @@ class ResuxRenderer {
       addHeadEntry: (entry) => insertHeadEntryWithPriority(this.headEntries, entry),
       renderPage,
       renderSlot
-    });
+    }));
   }
 
   private collectComponentStyles(definition: ComponentDefinition): void {
@@ -2509,6 +2557,78 @@ function setRegistryValue<T>(registry: Record<string, T>, key: string, value: T)
     enumerable: true,
     configurable: true
   });
+}
+
+function createFetchAsyncDataKey(url: string, init?: RequestInit): string {
+  return `fetch:${hashFetchIdentity(serializeFetchRequestIdentity(url, init))}`;
+}
+
+function serializeFetchRequestIdentity(url: string, init?: RequestInit): string {
+  const headers: Array<[string, string]> = [];
+  if (typeof Headers !== "undefined") {
+    try {
+      new Headers(init?.headers).forEach((value, key) => headers.push([key, value]));
+      headers.sort(([left], [right]) => left.localeCompare(right));
+    } catch {
+      // Invalid headers will be reported by fetch itself; keep the cache key deterministic.
+    }
+  }
+  const extended = (init ?? {}) as RequestInit & { duplex?: string; priority?: string };
+  return JSON.stringify({
+    url,
+    method: String(init?.method ?? "GET").toUpperCase(),
+    headers,
+    body: serializeFetchRequestBody(init?.body),
+    cache: init?.cache ?? "",
+    credentials: init?.credentials ?? "",
+    integrity: init?.integrity ?? "",
+    keepalive: init?.keepalive ?? false,
+    mode: init?.mode ?? "",
+    redirect: init?.redirect ?? "",
+    referrer: init?.referrer ?? "",
+    referrerPolicy: init?.referrerPolicy ?? "",
+    duplex: extended.duplex ?? "",
+    priority: extended.priority ?? ""
+  });
+}
+
+function serializeFetchRequestBody(body: BodyInit | null | undefined): unknown {
+  if (body === undefined || body === null) return null;
+  if (typeof body === "string") return ["string", body];
+  if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) {
+    return ["url-search-params", body.toString()];
+  }
+  if (typeof FormData !== "undefined" && body instanceof FormData) {
+    return ["form-data", ...Array.from(body.entries()).map(([key, value]) => [
+      key,
+      typeof value === "string"
+        ? ["string", value]
+        : ["file", value.name, value.size, value.type, value.lastModified]
+    ])];
+  }
+  if (typeof Blob !== "undefined" && body instanceof Blob) {
+    const file = body as Blob & { name?: string; lastModified?: number };
+    return ["blob", file.name ?? "", body.size, body.type, file.lastModified ?? 0];
+  }
+  if (body instanceof ArrayBuffer) {
+    return ["array-buffer", ...new Uint8Array(body)];
+  }
+  if (ArrayBuffer.isView(body)) {
+    return ["array-buffer-view", ...new Uint8Array(body.buffer, body.byteOffset, body.byteLength)];
+  }
+  return ["body", Object.prototype.toString.call(body)];
+}
+
+function hashFetchIdentity(value: string): string {
+  let first = 2166136261;
+  let second = 2246822519;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    first = Math.imul(first ^ code, 16777619);
+    second = Math.imul(second ^ code, 3266489917);
+  }
+  return (first >>> 0).toString(16).padStart(8, "0")
+    + (second >>> 0).toString(16).padStart(8, "0");
 }
 
 export function createServerSetupContext(
@@ -2644,7 +2764,7 @@ export function createServerSetupContext(
     },
 
     useFetch<T>(url: string, init?: RequestInit): AsyncDataResource<T> {
-      const key = `fetch:${url}`;
+      const key = createFetchAsyncDataKey(url, init);
       if (hasOwnRegistryKey(asyncDataRefs, key)) {
         return asyncDataRefs[key] as AsyncDataResource<T>;
       }
@@ -2745,9 +2865,9 @@ export function createServerSetupContext(
       return (globalThis as any).__RESUX_USE_SWITCH_LOCALE_PATH__ ? (globalThis as any).__RESUX_USE_SWITCH_LOCALE_PATH__() : (to: string) => to;
     },
     useDevice(): DeviceInfo {
-      return useDevice();
+      return parseUserAgent(route.userAgent);
     },
-    $device: useDevice(),
+    $device: parseUserAgent(route.userAgent),
     $t(key: string, params?: Record<string, unknown>): string {
       const i18nCandidate = runtimeConfig.public?.i18n;
       const normalizedI18n = normalizeI18nRuntimeConfig(i18nCandidate);
@@ -2768,8 +2888,20 @@ export function createServerSetupContext(
     }
   };
 
-  (globalThis as any).$t = ctx.$t;
-  (globalThis as any).$tm = ctx.$tm;
+  (globalThis as any).$t = (key: string, params?: Record<string, unknown>): string => {
+    const app = useResuxApp();
+    const normalizedI18n = normalizeI18nRuntimeConfig(app.$config.public?.i18n);
+    if (!normalizedI18n) return key;
+    const locale = resolveI18nRoute(app.route.path, normalizedI18n).locale.code;
+    return translateText(normalizedI18n, locale, key, params as any);
+  };
+  (globalThis as any).$tm = (key: string): unknown => {
+    const app = useResuxApp();
+    const normalizedI18n = normalizeI18nRuntimeConfig(app.$config.public?.i18n);
+    if (!normalizedI18n) return key;
+    const locale = resolveI18nRoute(app.route.path, normalizedI18n).locale.code;
+    return translateRaw(normalizedI18n, locale, key);
+  };
 
   return ctx;
 }
@@ -8647,6 +8779,8 @@ async function activateDeclaredClientEnhancements(root = document) {
 }
 
 
+const __rxIterateKey = Symbol("iterate");
+
 function __rxIsObject(value) {
   return value !== null && typeof value === "object";
 }
@@ -8661,17 +8795,44 @@ function __rxQueueJob(job) {
     return;
   }
   __rxFlushing = true;
-  __rxFlushPromise = __rxResolvedPromise.then(() => {
-    try {
-      for (const queued of __rxQueue) {
-        queued();
-      }
-    } finally {
+  __rxFlushPromise = __rxResolvedPromise.then(__rxFlushJobs);
+}
+
+function __rxFlushJobs() {
+  let didError = false;
+  let firstError;
+  const executionCounts = new Map();
+  try {
+    while (__rxQueue.size > 0) {
+      const currentQueue = [...__rxQueue];
       __rxQueue.clear();
-      __rxFlushing = false;
-      __rxFlushPromise = null;
+      for (const job of currentQueue) {
+        const count = executionCounts.get(job) || 0;
+        if (count >= 100) {
+          if (!didError) {
+            didError = true;
+            firstError = new Error("Resux scheduler stopped a recursively queued job after 100 executions.");
+          }
+          continue;
+        }
+        executionCounts.set(job, count + 1);
+        try {
+          job();
+        } catch (error) {
+          if (!didError) {
+            didError = true;
+            firstError = error;
+          }
+        }
+      }
     }
-  });
+  } finally {
+    __rxFlushing = false;
+    __rxFlushPromise = null;
+  }
+  if (didError) {
+    throw firstError;
+  }
 }
 
 function nextTick(fn) {
@@ -8777,16 +8938,21 @@ function __rxTrack(target, key) {
   __rxActiveEffect.deps.push(dep);
 }
 
-function __rxTrigger(target, key) {
+function __rxTrigger(target, key, type = "set") {
   const depsMap = __rxTargetMap.get(target);
   if (!depsMap) {
     return;
   }
-  const dep = depsMap.get(key);
-  if (!dep) {
-    return;
+  const effects = new Set();
+  const addEffects = (dep) => {
+    if (!dep) return;
+    for (const effect of dep) effects.add(effect);
+  };
+  addEffects(depsMap.get(key));
+  if (type === "add" || type === "delete") {
+    addEffects(depsMap.get(__rxIterateKey));
   }
-  __rxTriggerEffects(dep);
+  __rxTriggerEffects(effects);
 }
 
 function reactive(target) {
@@ -8797,8 +8963,13 @@ function readonly(target) {
   return __rxCreateReactiveObject(target, true, __rxReadonlyMap, false);
 }
 
+function __rxCanUseBaseProxyHandlers(target) {
+  const rawType = Object.prototype.toString.call(target);
+  return rawType === "[object Object]" || rawType === "[object Array]";
+}
+
 function __rxCreateReactiveObject(target, isReadonlyValue, proxyMap, isShallow) {
-  if (!__rxIsObject(target)) {
+  if (!__rxIsObject(target) || !__rxCanUseBaseProxyHandlers(target)) {
     return target;
   }
   const existing = proxyMap.get(target);
@@ -8829,11 +9000,12 @@ function __rxCreateReactiveObject(target, isReadonlyValue, proxyMap, isShallow) 
       if (isReadonlyValue) {
         return true;
       }
+      const hadKey = Object.prototype.hasOwnProperty.call(rawTarget, key);
       const oldValue = Reflect.get(rawTarget, key, receiver);
       const oldLength = Array.isArray(rawTarget) ? rawTarget.length : 0;
       const success = Reflect.set(rawTarget, key, value, receiver);
       if (success && __rxHasChanged(value, oldValue)) {
-        __rxTrigger(rawTarget, key);
+        __rxTrigger(rawTarget, key, hadKey ? "set" : "add");
         if (
           Array.isArray(rawTarget)
           && key !== "length"
@@ -8846,14 +9018,20 @@ function __rxCreateReactiveObject(target, isReadonlyValue, proxyMap, isShallow) 
       }
       return success;
     },
+    ownKeys(rawTarget) {
+      if (!isReadonlyValue) {
+        __rxTrack(rawTarget, __rxIterateKey);
+      }
+      return Reflect.ownKeys(rawTarget);
+    },
     deleteProperty(rawTarget, key) {
       if (isReadonlyValue) {
         return true;
       }
-      const hadKey = Reflect.has(rawTarget, key);
+      const hadKey = Object.prototype.hasOwnProperty.call(rawTarget, key);
       const success = Reflect.deleteProperty(rawTarget, key);
       if (hadKey && success) {
-        __rxTrigger(rawTarget, key);
+        __rxTrigger(rawTarget, key, "delete");
       }
       return success;
     }
@@ -8934,7 +9112,7 @@ function toRef(object, key, defaultValue) {
 }
 
 function toRefs(object) {
-  const output = {};
+  const output = Array.isArray(object) ? new Array(object.length) : {};
   for (const key of Object.keys(object)) {
     output[key] = toRef(object, key);
   }
@@ -9097,8 +9275,11 @@ function __rxTraverse(value, seen = new Set()) {
     return value;
   }
   seen.add(value);
-  for (const key of Object.keys(value)) {
-    __rxTraverse(value[key], seen);
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor?.enumerable) {
+      __rxTraverse(value[key], seen);
+    }
   }
   return value;
 }
@@ -9761,6 +9942,76 @@ function setRegistryValue(registry, key, value) {
   });
 }
 
+function createFetchAsyncDataKey(url, init) {
+  return "fetch:" + hashFetchIdentity(serializeFetchRequestIdentity(url, init));
+}
+
+function serializeFetchRequestIdentity(url, init) {
+  const headers = [];
+  if (typeof Headers !== "undefined") {
+    try {
+      new Headers(init?.headers).forEach((value, key) => headers.push([key, value]));
+      headers.sort(([left], [right]) => left.localeCompare(right));
+    } catch {
+      // Invalid headers will be reported by fetch itself; keep the cache key deterministic.
+    }
+  }
+  return JSON.stringify({
+    url,
+    method: String(init?.method ?? "GET").toUpperCase(),
+    headers,
+    body: serializeFetchRequestBody(init?.body),
+    cache: init?.cache ?? "",
+    credentials: init?.credentials ?? "",
+    integrity: init?.integrity ?? "",
+    keepalive: init?.keepalive ?? false,
+    mode: init?.mode ?? "",
+    redirect: init?.redirect ?? "",
+    referrer: init?.referrer ?? "",
+    referrerPolicy: init?.referrerPolicy ?? "",
+    duplex: init?.duplex ?? "",
+    priority: init?.priority ?? ""
+  });
+}
+
+function serializeFetchRequestBody(body) {
+  if (body === undefined || body === null) return null;
+  if (typeof body === "string") return ["string", body];
+  if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) {
+    return ["url-search-params", body.toString()];
+  }
+  if (typeof FormData !== "undefined" && body instanceof FormData) {
+    return ["form-data", ...Array.from(body.entries()).map(([key, value]) => [
+      key,
+      typeof value === "string"
+        ? ["string", value]
+        : ["file", value.name, value.size, value.type, value.lastModified]
+    ])];
+  }
+  if (typeof Blob !== "undefined" && body instanceof Blob) {
+    return ["blob", body.name ?? "", body.size, body.type, body.lastModified ?? 0];
+  }
+  if (body instanceof ArrayBuffer) {
+    return ["array-buffer", ...new Uint8Array(body)];
+  }
+  if (ArrayBuffer.isView(body)) {
+    return ["array-buffer-view", ...new Uint8Array(body.buffer, body.byteOffset, body.byteLength)];
+  }
+  return ["body", Object.prototype.toString.call(body)];
+}
+
+function hashFetchIdentity(value) {
+  let first = 2166136261;
+  let second = 2246822519;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    first = Math.imul(first ^ code, 16777619);
+    second = Math.imul(second ^ code, 3266489917);
+  }
+  return (first >>> 0).toString(16).padStart(8, "0")
+    + (second >>> 0).toString(16).padStart(8, "0");
+}
+
 export function createClientComponent(definition) {
   return {
     async createScope(serializedScope, route) {
@@ -9863,7 +10114,7 @@ export function createClientComponent(definition) {
           return url;
         },
         useFetch(url, init) {
-          const key = "fetch:" + url;
+          const key = createFetchAsyncDataKey(url, init);
           return setupContext.useAsyncData(key, () => setupContext.$fetch(url, init));
         },
         async $fetch(url, init) {

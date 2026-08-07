@@ -1,0 +1,52 @@
+name: Sync Node 20 dependency lock
+
+on:
+  push:
+    branches:
+      - fix/framework-audit-regressions
+    paths:
+      - .github/workflows/sync-node20-lock.yml
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/framework-audit-regressions
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Resolve compatible Nitro lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --ignore-scripts
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs'
+          const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'))
+          const nitro = lock.packages?.['node_modules/nitropack']
+          const visualizer = lock.packages?.['node_modules/rollup-plugin-visualizer']
+          if (nitro?.version !== '2.12.6') {
+            throw new Error(`Expected nitropack 2.12.6, got ${nitro?.version ?? 'missing'}`)
+          }
+          if (visualizer?.version !== '6.0.11') {
+            throw new Error(`Expected rollup-plugin-visualizer 6.0.11, got ${visualizer?.version ?? 'missing'}`)
+          }
+          if (visualizer.engines?.node !== '>=18') {
+            throw new Error(`Unexpected visualizer Node engine: ${visualizer.engines?.node ?? 'missing'}`)
+          }
+          NODE
+      - name: Commit lockfile and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/sync-node20-lock.yml
+          git add package-lock.json
+          git commit -m "fix(deps): lock Node 20 compatible Nitro toolchain"
+          git push origin HEAD:fix/framework-audit-regressions

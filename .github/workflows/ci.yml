@@ -110,6 +110,7 @@ jobs:
           - static
           - netlify
           - vercel
+          - cloudflare
 
     steps:
       - name: Checkout

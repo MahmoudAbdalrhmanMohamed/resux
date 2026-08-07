@@ -32,4 +32,27 @@ describe("create command safety regressions", () => {
 
     await expect(readFile(sentinel, "utf8")).resolves.toBe("keep-me\n");
   });
+
+  it("refuses --force when any existing parent path component is a symbolic link", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "resux-create-parent-symlink-"));
+    tempRoots.push(root);
+    const victim = path.join(root, "victim");
+    const realProject = path.join(victim, "project");
+    const linkedParent = path.join(root, "linked-parent");
+    const target = path.join(linkedParent, "project");
+    const sentinel = path.join(realProject, "keep.txt");
+
+    await mkdir(realProject, { recursive: true });
+    await writeFile(sentinel, "keep-parent-target\n", "utf8");
+    await symlink(victim, linkedParent, "dir");
+
+    await expect(runCreateResux([
+      target,
+      "--yes",
+      "--no-install",
+      "--force",
+    ])).rejects.toThrow("symbolic link component");
+
+    await expect(readFile(sentinel, "utf8")).resolves.toBe("keep-parent-target\n");
+  });
 });

@@ -2110,6 +2110,9 @@ function createNitroConfig(): string {
 export default defineNitroConfig({
   srcDir: ".resux-nitro",
   compatibilityDate: "2026-05-02",
+  cloudflare: {
+    nodeCompat: true
+  },
   // Resux uses top-level /plugins, /modules, and /middleware for app features.
   // Nitro auto-scans these folders too, so exclude them from Nitro scanning.
   ignore: ["plugins/**", "modules/**", "middleware/**", "assets/**"],

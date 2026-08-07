@@ -105,6 +105,9 @@ async function createFixtureApp(appRoot, deployTarget) {
 
 export default defineNitroConfig({
   compatibilityDate: "2026-05-02",
+  cloudflare: {
+    nodeCompat: true
+  },
   ignore: ["plugins/**", "modules/**", "middleware/**"],
   scanDirs: [".resux-nitro"],
   publicAssets: [

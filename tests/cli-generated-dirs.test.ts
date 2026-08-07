@@ -53,6 +53,21 @@ describe("cli generated directory bootstrap", () => {
     }
   }, 120000);
 
+  it("normalizes a legacy .nuxt buildDir to the Resux output directory", async () => {
+    const root = await createMinimalProject("resux-legacy-build-dir");
+    await writeFile(
+      path.join(root, "resux.config.ts"),
+      `export default defineResuxConfig({ buildDir: ".nuxt" })\n`,
+      "utf8",
+    );
+
+    await runResuxCli(["prepare", root]);
+
+    await expect(directoryExists(path.join(root, ".resux"))).resolves.toBe(true);
+    await expect(fileExists(path.join(root, ".resux", "client", "runtime-client.mjs"))).resolves.toBe(true);
+    await expect(directoryExists(path.join(root, ".nuxt"))).resolves.toBe(false);
+  }, 120000);
+
   it("check --fix appends gitignore entries and keeps existing generated files", async () => {
     const root = await createMinimalProject("resux-check-fix");
     const gitignoreFile = path.join(root, ".gitignore");

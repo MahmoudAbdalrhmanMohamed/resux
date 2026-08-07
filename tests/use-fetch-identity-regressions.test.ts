@@ -59,16 +59,24 @@ describe("useFetch request identity regressions", () => {
       method: "POST",
       body: "second",
     });
+    const differentMethod = context.useFetch<{ method: string; body: string }>("/api/items", {
+      method: "PUT",
+      body: "first",
+    });
 
     expect(first).not.toBe(second);
-    const [firstSettled, secondSettled] = await Promise.all([
+    expect(first).not.toBe(differentMethod);
+    expect(second).not.toBe(differentMethod);
+    const [firstSettled, secondSettled, methodSettled] = await Promise.all([
       first as AsyncDataResource<{ method: string; body: string }>,
       second as AsyncDataResource<{ method: string; body: string }>,
+      differentMethod as AsyncDataResource<{ method: string; body: string }>,
     ]);
 
     expect(firstSettled.data.value).toEqual({ method: "POST", body: "first" });
     expect(secondSettled.data.value).toEqual({ method: "POST", body: "second" });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(methodSettled.data.value).toEqual({ method: "PUT", body: "first" });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("still deduplicates truly identical requests", async () => {

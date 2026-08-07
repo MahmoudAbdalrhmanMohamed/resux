@@ -25,6 +25,7 @@ jobs:
           package-manager-cache: false
       - run: npm ci --no-audit --no-fund
       - run: npm run build
+      # Re-run after the Nitro 2.13 compatibility-layer upgrade.
       - run: npm run test:deploy
         env:
           RESUX_DEPLOY_TARGET_FILTER: cloudflare

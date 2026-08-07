@@ -122,9 +122,10 @@ function serializeValue(
   }
 
   if (isDate) {
+    const dateValue = value as Date;
     try {
-      return Number.isFinite(value.getTime())
-        ? `date:${value.toISOString()}`
+      return Number.isFinite(dateValue.getTime())
+        ? `date:${dateValue.toISOString()}`
         : "date:invalid";
     } catch {
       inspectionIssues.add("unreadable_object");
@@ -132,16 +133,18 @@ function serializeValue(
     }
   }
   if (isUrl) {
+    const urlValue = value as URL;
     try {
-      return `url:${value.href.length}:${value.href}`;
+      return `url:${urlValue.href.length}:${urlValue.href}`;
     } catch {
       inspectionIssues.add("unreadable_object");
       return `unreadable-url:${valuePath}`;
     }
   }
   if (isRegExp) {
+    const regexpValue = value as RegExp;
     try {
-      return `regexp:${value.source.length}:${value.source}/${value.flags}`;
+      return `regexp:${regexpValue.source.length}:${regexpValue.source}/${regexpValue.flags}`;
     } catch {
       inspectionIssues.add("unreadable_object");
       return `unreadable-regexp:${valuePath}`;
@@ -151,7 +154,8 @@ function serializeValue(
   ancestors.set(value, valuePath);
   try {
     if (isArray) {
-      const entries = value.map((entry, index) =>
+      const arrayValue = value as unknown[];
+      const entries = arrayValue.map((entry, index) =>
         `${index}=${serializeValue(
           entry,
           ancestors,
@@ -159,7 +163,7 @@ function serializeValue(
           depth + 1,
           `${valuePath}[${index}]`,
         )}`);
-      return `array:${value.length}[${entries.join(";")}]`;
+      return `array:${arrayValue.length}[${entries.join(";")}]`;
     }
 
     let keys: string[];

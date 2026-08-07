@@ -6,7 +6,10 @@ import {
   createRuntimeContentFingerprint,
   findReviewedRuntimeDecision,
 } from "./reviewedMemory.js";
-import { prepareRuntimeContent } from "./serializeRuntimeContent.js";
+import {
+  prepareRuntimeContent,
+  type RuntimeContentInspectionIssue,
+} from "./serializeRuntimeContent.js";
 import type {
   HalalRuntimeContent,
   HalalRuntimeDecision,
@@ -95,9 +98,20 @@ export async function evaluateHalalRuntimeContent(
     contentTexts: [{ file, text: serialized.localText }],
     endpoints: scanDomains([{ file, text: serialized.localText }]),
   }, options.policy ?? {});
-  const localResult = serialized.truncated
-    ? mergeResults(scannedResult, truncatedContentResult(file, serialized.maxCharacters))
-    : scannedResult;
+
+  let localResult = scannedResult;
+  if (serialized.truncated) {
+    localResult = mergeResults(
+      localResult,
+      truncatedContentResult(file, serialized.maxCharacters),
+    );
+  }
+  if (serialized.inspectionIssues.length > 0) {
+    localResult = mergeResults(
+      localResult,
+      uninspectableContentResult(file, serialized.inspectionIssues),
+    );
+  }
 
   const reviewed = findReviewedRuntimeDecision(
     content,
@@ -162,6 +176,30 @@ function truncatedContentResult(file: string, maxCharacters: number): HalalCheck
     matchedFiles: [file],
     matchedSnippets: [],
     recommendedAction: "Increase maxContentCharacters or complete a manual review before rendering.",
+  };
+}
+
+function uninspectableContentResult(
+  file: string,
+  issues: readonly RuntimeContentInspectionIssue[],
+): HalalCheckResult {
+  const issueDescriptions = issues.map((issue) => {
+    if (issue === "max_depth") return "maximum serialization depth was reached";
+    if (issue === "unreadable_property") return "one or more properties could not be read";
+    return "one or more objects could not be inspected";
+  });
+
+  return {
+    status: "review_required",
+    riskLevel: "high",
+    categories: ["runtime_content_uninspectable"],
+    confidence: 1,
+    reasons: [
+      `Runtime content could not be fully inspected: ${uniqueStrings(issueDescriptions).join("; ")}.`,
+    ],
+    matchedFiles: [file],
+    matchedSnippets: [],
+    recommendedAction: "Normalize runtime content to plain inspectable data or complete a manual review before rendering.",
   };
 }
 

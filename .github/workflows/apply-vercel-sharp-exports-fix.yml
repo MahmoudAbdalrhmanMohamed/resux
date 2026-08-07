@@ -1,0 +1,39 @@
+name: Apply Vercel sharp exports fix
+
+on:
+  push:
+    branches:
+      - fix/vercel-sharp-exports-resolution
+    paths:
+      - scripts/apply-vercel-sharp-exports-fix.mjs
+      - .github/workflows/apply-vercel-sharp-exports-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/vercel-sharp-exports-resolution
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Apply resolver and regression patch
+        run: node scripts/apply-vercel-sharp-exports-fix.mjs
+
+      - name: Commit fix and remove temporary patch files
+        run: |
+          set -euo pipefail
+          rm scripts/apply-vercel-sharp-exports-fix.mjs
+          rm .github/workflows/apply-vercel-sharp-exports-fix.yml
+          git config user.name "Mahmoud Abdalrahman Mohamed"
+          git config user.email "mahnoudhouda5632@gmail.com"
+          git add src/deploy/vercel.ts tests/deploy.test.ts scripts/apply-vercel-sharp-exports-fix.mjs .github/workflows/apply-vercel-sharp-exports-fix.yml
+          git commit -m "fix(vercel): resolve sharp through public package entry"
+          git push origin HEAD:fix/vercel-sharp-exports-resolution

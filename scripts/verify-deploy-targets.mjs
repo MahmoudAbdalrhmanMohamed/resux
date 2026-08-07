@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +16,7 @@ const targetAssertions = new Map([
   ["static", assertStaticOutput],
   ["netlify", assertNetlifyOutput],
   ["vercel", assertVercelOutput],
+  ["cloudflare", assertCloudflareOutput],
 ]);
 
 function fail(message) {
@@ -151,17 +153,64 @@ export default fromNodeMiddleware((req, res, next) => {
   );
 }
 
+function assertPackageResolvable(appRoot, packageName) {
+  const appRequire = createRequire(path.join(appRoot, "package.json"));
+  try {
+    appRequire.resolve(packageName);
+  } catch (error) {
+    fail(
+      `${packageName} must be resolvable for the server image optimizer: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+async function assertNoSharpRuntimeLeak(root, targetName) {
+  if (!(await exists(root))) {
+    return;
+  }
+
+  const pending = [root];
+  const sharpImportPattern = /(?:from\s+["']sharp["']|import\(\s*["']sharp["']\s*\)|require\(\s*["']sharp["']\s*\))/;
+
+  while (pending.length) {
+    const current = pending.pop();
+    const entries = await readdir(current, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const absolute = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules") {
+          if (await exists(path.join(absolute, "sharp"))) {
+            fail(`${targetName} output must not package the Node-only sharp runtime.`);
+          }
+          continue;
+        }
+        pending.push(absolute);
+        continue;
+      }
+      if (!entry.isFile() || !/\.(?:mjs|cjs|js)$/.test(entry.name)) {
+        continue;
+      }
+      const source = await readFile(absolute, "utf8").catch(() => "");
+      if (sharpImportPattern.test(source)) {
+        fail(`${targetName} output contains a runtime import of Node-only sharp in ${path.relative(root, absolute)}.`);
+      }
+    }
+  }
+}
+
 async function assertNodeOutput(appRoot) {
   await assertPaths(appRoot, "node", [
     ".output/public/__resux/runtime-client.mjs",
     ".output/server/index.mjs",
   ]);
+  assertPackageResolvable(appRoot, "sharp");
 }
 
 async function assertStaticOutput(appRoot) {
   await assertPaths(appRoot, "static", [
     ".output/public/__resux/runtime-client.mjs",
   ]);
+  await assertNoSharpRuntimeLeak(path.join(appRoot, ".output"), "static");
 }
 
 async function assertNetlifyOutput(appRoot) {
@@ -169,6 +218,7 @@ async function assertNetlifyOutput(appRoot) {
     "dist/__resux/runtime-client.mjs",
     ".netlify/functions-internal",
   ]);
+  assertPackageResolvable(appRoot, "sharp");
 
   const functionsRoot = path.join(appRoot, ".netlify", "functions-internal");
   const functions = await readdir(functionsRoot, { withFileTypes: true });
@@ -239,12 +289,36 @@ async function assertVercelOutput(appRoot) {
     fail("vercel target emitted no function directories.");
   }
 
+  let sharpPackaged = false;
   for (const fn of emittedFunctions) {
-    await assertPaths(path.join(functionsRoot, fn.name), `vercel function ${fn.name}`, [
+    const functionRoot = path.join(functionsRoot, fn.name);
+    await assertPaths(functionRoot, `vercel function ${fn.name}`, [
       ".vc-config.json",
       ".resux/server/manifest.mjs",
     ]);
+    if (await exists(path.join(functionRoot, "node_modules", "sharp", "package.json"))) {
+      sharpPackaged = true;
+    }
   }
+
+  if (!sharpPackaged) {
+    fail("vercel functions are missing the sharp runtime required by the Resux image optimizer.");
+  }
+}
+
+async function assertCloudflareOutput(appRoot) {
+  const outputCandidates = [
+    path.join(appRoot, ".output", "public", "__resux", "runtime-client.mjs"),
+    path.join(appRoot, "dist", "__resux", "runtime-client.mjs"),
+  ];
+  const hasClientRuntime = (await Promise.all(outputCandidates.map((candidate) => exists(candidate))))
+    .some(Boolean);
+  if (!hasClientRuntime) {
+    fail("cloudflare target is missing the Resux client runtime in .output/public or dist.");
+  }
+
+  await assertNoSharpRuntimeLeak(path.join(appRoot, ".output"), "cloudflare");
+  await assertNoSharpRuntimeLeak(path.join(appRoot, "dist"), "cloudflare");
 }
 
 async function assertPaths(root, targetName, relativePaths) {

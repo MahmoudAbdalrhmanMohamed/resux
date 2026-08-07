@@ -100,6 +100,11 @@ for (const template of selectedTemplates) {
   }
 }
 
+await rm(tarballPath, { force: true });
+if (!failed) {
+  await rm(tempRoot, { recursive: true, force: true });
+}
+
 if (failed) {
   process.exitCode = 1;
 } else {

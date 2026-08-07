@@ -1,0 +1,40 @@
+name: Apply Cloudflare Node compatibility
+
+on:
+  push:
+    branches:
+      - fix/vercel-sharp-exports-resolution
+    paths:
+      - scripts/apply-cloudflare-node-compat.mjs
+      - .github/workflows/apply-cloudflare-node-compat.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/vercel-sharp-exports-resolution
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Apply Cloudflare Node compatibility
+        run: node scripts/apply-cloudflare-node-compat.mjs
+
+      - name: Commit and remove temporary patch files
+        run: |
+          set -euo pipefail
+          rm scripts/apply-cloudflare-node-compat.mjs
+          rm .github/workflows/apply-cloudflare-node-compat.yml
+          git config user.name "Mahmoud Abdalrahman Mohamed"
+          git config user.email "mahnoudhouda5632@gmail.com"
+          git add src/cli.ts scripts/verify-deploy-targets.mjs scripts/apply-cloudflare-node-compat.mjs .github/workflows/apply-cloudflare-node-compat.yml
+          git commit -m "fix(cloudflare): enable Node compatibility for Nitro"
+          git push origin HEAD:fix/vercel-sharp-exports-resolution

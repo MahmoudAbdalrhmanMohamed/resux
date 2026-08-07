@@ -92,6 +92,43 @@ describe("framework audit regressions", () => {
     expect(() => addComponent("components/Outside.vue")).toThrow("outside of a module setup context");
   });
 
+  it("isolates overlapping asynchronous Resux Kit contexts", async () => {
+    const firstComponents: unknown[] = [];
+    const secondComponents: unknown[] = [];
+    const firstContext = {
+      addComponent(component: unknown) {
+        firstComponents.push(component);
+      },
+    } as unknown as ResuxModuleContext;
+    const secondContext = {
+      addComponent(component: unknown) {
+        secondComponents.push(component);
+      },
+    } as unknown as ResuxModuleContext;
+
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const secondGate = new Promise<void>((resolve) => { releaseSecond = resolve; });
+
+    const firstRun = withResuxKitContext(firstContext, async () => {
+      await firstGate;
+      addComponent("components/First.vue");
+    });
+    const secondRun = withResuxKitContext(secondContext, async () => {
+      await secondGate;
+      addComponent("components/Second.vue");
+    });
+
+    releaseSecond();
+    await secondRun;
+    releaseFirst();
+    await firstRun;
+
+    expect(firstComponents).toEqual(["components/First.vue"]);
+    expect(secondComponents).toEqual(["components/Second.vue"]);
+  });
+
   it("stops recursively queued watch jobs instead of hanging the scheduler", async () => {
     const count = ref(0);
     const stop = watch(count, () => {

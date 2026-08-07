@@ -124,6 +124,21 @@ describe("generated browser reactivity regressions", () => {
     expect(runs).toBe(3);
   });
 
+  it("notifies deep generated watchers when a new property is added as undefined", async () => {
+    const runtime = await importGeneratedRuntime();
+    const state = runtime.reactive<Record<string, unknown>>({});
+    let runs = 0;
+
+    const stop = runtime.watch(state, () => {
+      runs += 1;
+    }, { flush: "sync", deep: true });
+
+    state.added = undefined;
+    stop();
+
+    expect(runs).toBe(1);
+  });
+
   it("continues generated queued watchers after one callback throws", async () => {
     const runtime = await importGeneratedRuntime();
     const failing = runtime.ref(0);
@@ -173,6 +188,20 @@ describe("generated browser reactivity regressions", () => {
     expect(state.set.has("ready")).toBe(true);
     expect(state.regexp.test("Resux")).toBe(true);
   });
+
+  it("evicts rejected generated lazy-package promises so a later call retries", async () => {
+    const runtime = await importGeneratedRuntime();
+    let errorEvents = 0;
+    window.addEventListener("resux:package:error", () => {
+      errorEvents += 1;
+    });
+
+    const packageName = "resux-definitely-missing-generated-audit-package";
+    await expect(runtime.useLazyPackage(packageName, { mode: "clientOnly" })).rejects.toThrow();
+    await expect(runtime.useLazyPackage(packageName, { mode: "clientOnly" })).rejects.toThrow();
+
+    expect(errorEvents).toBe(2);
+  });
 });
 
 async function importGeneratedRuntime(): Promise<{
@@ -186,6 +215,7 @@ async function importGeneratedRuntime(): Promise<{
     callback: (...args: any[]) => void,
     options?: { flush?: "sync" | "post"; deep?: boolean },
   ) => () => void;
+  useLazyPackage: (name: string, options?: Record<string, unknown>) => Promise<unknown>;
 }> {
   importCounter += 1;
   const root = path.join(os.tmpdir(), `resux-generated-reactivity-${Date.now()}-${importCounter}`);
@@ -194,7 +224,7 @@ async function importGeneratedRuntime(): Promise<{
   const runtimeFile = path.join(root, "runtime-client.mjs");
   await writeFile(
     runtimeFile,
-    `${getClientRuntimeSource()}\nexport { effect, reactive, ref, toRefs, watch, nextTick };\n`,
+    `${getClientRuntimeSource()}\nexport { effect, reactive, ref, toRefs, watch, nextTick, useLazyPackage };\n`,
     "utf8",
   );
 

@@ -1,5 +1,5 @@
 import { defineComponent, h, onMounted, ref } from "vue";
-import { defineResuxModule } from "../kit/index.js";
+import type { ResuxModuleDefinition } from "../kit/index.js";
 
 export interface ResuxUiModuleOptions {
   css?: string[];
@@ -992,7 +992,7 @@ const uiPrimitiveStyles = `
 }
 `;
 
-export default defineResuxModule<ResuxUiModuleOptions>({
+const resuxUiModule = {
   defaults: {
     css: [],
     tokens: {},
@@ -1037,6 +1037,6 @@ export default defineResuxModule<ResuxUiModuleOptions>({
       }
     });
   }
-});
+} satisfies ResuxModuleDefinition<ResuxUiModuleOptions>;
 
-
+export default resuxUiModule;

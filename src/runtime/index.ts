@@ -2617,12 +2617,25 @@ function serializeFetchRequestBody(body: BodyInit | null | undefined): unknown {
     return ["blob", file.name ?? "", body.size, body.type, file.lastModified ?? 0];
   }
   if (body instanceof ArrayBuffer) {
-    return ["array-buffer", ...new Uint8Array(body)];
+    const bytes = new Uint8Array(body);
+    return ["array-buffer", bytes.byteLength, hashFetchBytes(bytes)];
   }
   if (ArrayBuffer.isView(body)) {
-    return ["array-buffer-view", ...new Uint8Array(body.buffer, body.byteOffset, body.byteLength)];
+    const bytes = new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+    return ["array-buffer-view", bytes.byteLength, hashFetchBytes(bytes)];
   }
   return ["body", Object.prototype.toString.call(body)];
+}
+
+function hashFetchBytes(bytes: Uint8Array): string {
+  let first = 2166136261;
+  let second = 2246822519;
+  for (const byte of bytes) {
+    first = Math.imul(first ^ byte, 16777619);
+    second = Math.imul(second ^ byte, 3266489917);
+  }
+  return (first >>> 0).toString(16).padStart(8, "0")
+    + (second >>> 0).toString(16).padStart(8, "0");
 }
 
 function hashFetchIdentity(value: string): string {
@@ -2894,20 +2907,32 @@ export function createServerSetupContext(
     }
   };
 
-  (globalThis as any).$t = (key: string, params?: Record<string, unknown>): string => {
-    const app = useResuxApp();
-    const normalizedI18n = normalizeI18nRuntimeConfig(app.$config.public?.i18n);
-    if (!normalizedI18n) return key;
-    const locale = resolveI18nRoute(app.route.path, normalizedI18n).locale.code;
-    return translateText(normalizedI18n, locale, key, params as any);
-  };
-  (globalThis as any).$tm = (key: string): unknown => {
-    const app = useResuxApp();
-    const normalizedI18n = normalizeI18nRuntimeConfig(app.$config.public?.i18n);
-    if (!normalizedI18n) return key;
-    const locale = resolveI18nRoute(app.route.path, normalizedI18n).locale.code;
-    return translateRaw(normalizedI18n, locale, key);
-  };
+  const runtimeGlobals = globalThis as any;
+  if (runtimeGlobals.__RESUX_SERVER_I18N_GLOBALS__ !== true) {
+    runtimeGlobals.$t = (key: string, params?: Record<string, unknown>): string => {
+      try {
+        const app = useResuxApp();
+        const normalizedI18n = normalizeI18nRuntimeConfig(app.$config.public?.i18n);
+        if (!normalizedI18n) return key;
+        const locale = resolveI18nRoute(app.route.path, normalizedI18n).locale.code;
+        return translateText(normalizedI18n, locale, key, params as any);
+      } catch {
+        return key;
+      }
+    };
+    runtimeGlobals.$tm = (key: string): unknown => {
+      try {
+        const app = useResuxApp();
+        const normalizedI18n = normalizeI18nRuntimeConfig(app.$config.public?.i18n);
+        if (!normalizedI18n) return key;
+        const locale = resolveI18nRoute(app.route.path, normalizedI18n).locale.code;
+        return translateRaw(normalizedI18n, locale, key);
+      } catch {
+        return key;
+      }
+    };
+    runtimeGlobals.__RESUX_SERVER_I18N_GLOBALS__ = true;
+  }
 
   return ctx;
 }
@@ -8219,6 +8244,11 @@ async function useLazyPackage(name, options = {}) {
   })();
 
   resuxLazyPackageCache.set(key, loader);
+  void loader.catch(() => {
+    if (resuxLazyPackageCache.get(key) === loader) {
+      resuxLazyPackageCache.delete(key);
+    }
+  });
   return loader;
 }
 
@@ -9010,7 +9040,7 @@ function __rxCreateReactiveObject(target, isReadonlyValue, proxyMap, isShallow) 
       const oldValue = Reflect.get(rawTarget, key, receiver);
       const oldLength = Array.isArray(rawTarget) ? rawTarget.length : 0;
       const success = Reflect.set(rawTarget, key, value, receiver);
-      if (success && __rxHasChanged(value, oldValue)) {
+      if (success && (!hadKey || __rxHasChanged(value, oldValue))) {
         __rxTrigger(rawTarget, key, hadKey ? "set" : "add");
         if (
           Array.isArray(rawTarget)
@@ -9998,12 +10028,25 @@ function serializeFetchRequestBody(body) {
     return ["blob", body.name ?? "", body.size, body.type, body.lastModified ?? 0];
   }
   if (body instanceof ArrayBuffer) {
-    return ["array-buffer", ...new Uint8Array(body)];
+    const bytes = new Uint8Array(body);
+    return ["array-buffer", bytes.byteLength, hashFetchBytes(bytes)];
   }
   if (ArrayBuffer.isView(body)) {
-    return ["array-buffer-view", ...new Uint8Array(body.buffer, body.byteOffset, body.byteLength)];
+    const bytes = new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+    return ["array-buffer-view", bytes.byteLength, hashFetchBytes(bytes)];
   }
   return ["body", Object.prototype.toString.call(body)];
+}
+
+function hashFetchBytes(bytes) {
+  let first = 2166136261;
+  let second = 2246822519;
+  for (const byte of bytes) {
+    first = Math.imul(first ^ byte, 16777619);
+    second = Math.imul(second ^ byte, 3266489917);
+  }
+  return (first >>> 0).toString(16).padStart(8, "0")
+    + (second >>> 0).toString(16).padStart(8, "0");
 }
 
 function hashFetchIdentity(value) {

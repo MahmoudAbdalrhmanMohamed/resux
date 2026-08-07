@@ -367,13 +367,40 @@ export function assertSafeCreateTarget(root: string, cwd: string, force: boolean
   }
 }
 
+async function assertCreatePathHasNoSymlinkComponents(target: string): Promise<void> {
+  const absoluteTarget = path.resolve(target);
+  const filesystemRoot = path.parse(absoluteTarget).root;
+  const relativeTarget = path.relative(filesystemRoot, absoluteTarget);
+  const segments = relativeTarget.split(path.sep).filter(Boolean);
+  let current = filesystemRoot;
+
+  for (const segment of segments) {
+    current = path.join(current, segment);
+    const info = await lstat(current).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") {
+        return null;
+      }
+      throw error;
+    });
+    if (!info) {
+      break;
+    }
+    if (info.isSymbolicLink()) {
+      throw new Error(`Refusing to create a Resux project through symbolic link component "${current}". Choose a real directory instead.`);
+    }
+  }
+}
+
 async function prepareTarget(root: string, force: boolean): Promise<void> {
-  const existing = await lstat(root).catch(() => null);
-  if (existing?.isSymbolicLink()) {
-    throw new Error(`Refusing to create a Resux project through symbolic link "${root}". Choose a real directory instead.`);
+  await assertCreatePathHasNoSymlinkComponents(root);
+  await mkdir(root, { recursive: true });
+  await assertCreatePathHasNoSymlinkComponents(root);
+
+  const rootIdentity = await lstat(root);
+  if (!rootIdentity.isDirectory()) {
+    throw new Error(`Target "${root}" is not a directory.`);
   }
 
-  await mkdir(root, { recursive: true });
   const entries = await readdir(root);
 
   if (entries.length === 0) {
@@ -385,6 +412,11 @@ async function prepareTarget(root: string, force: boolean): Promise<void> {
   }
 
   for (const entry of entries) {
+    await assertCreatePathHasNoSymlinkComponents(root);
+    const currentIdentity = await lstat(root);
+    if (currentIdentity.dev !== rootIdentity.dev || currentIdentity.ino !== rootIdentity.ino) {
+      throw new Error(`Refusing to continue because target directory "${root}" changed during --force cleanup.`);
+    }
     await rm(path.join(root, entry), { recursive: true, force: true });
   }
 }

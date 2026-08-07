@@ -12,87 +12,20 @@ jobs:
   patch-readme:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: docs/update-fonts-readme
           fetch-depth: 0
 
-      - name: Replace old Fonts example
-        shell: python
+      - name: Update README
+        run: python .github/scripts/update-fonts-readme.py
+
+      - name: Commit README update
         run: |
-          from pathlib import Path
-
-          path = Path("README.md")
-          text = path.read_text()
-
-          old = '''## Fonts (`resuxjs/fonts`)
-
-The `resuxjs/fonts` module manages preconnect optimizations, Google Fonts URL building, font loading priority strategies (`lazy`, `preload`, `eager`), and post-onload deferral.
-
-```ts
-export default defineResuxConfig({
-  modules: [
-    ["resuxjs/fonts", {
-      preconnect: true,
-      strategy: "lazy",
-      deferUntilPageLoad: true,
-      google: [
-        { name: "Inter", weights: [400, 500, 600, 700, 800], display: "swap" },
-        { name: "Alexandria", weights: [300, 400, 500, 600, 700], display: "swap" }
-      ]
-    }]
-  ]
-})
-```
-'''
-
-          new = '''## Fonts (`resuxjs/fonts`)
-
-The `resuxjs/fonts` module builds Google Fonts stylesheet URLs, adds optional preconnect hints, and lets you control loading globally or per font family.
-
-The default strategy is `eager`. Use `preload` for fonts that are critical to the first render and `lazy` for families that can wait until after the page finishes loading.
-
-```ts
-export default defineResuxConfig({
-  modules: [
-    ["resuxjs/fonts", {
-      preconnect: true,
-      strategy: "eager",
-      google: [
-        {
-          name: "Inter",
-          weights: ["100..900"],
-          display: "swap",
-          strategy: "preload"
-        },
-        {
-          name: "Alexandria",
-          weights: [300, 400, 500, 600, 700],
-          display: "swap",
-          strategy: "lazy"
-        }
-      ]
-    }]
-  ]
-})
-```
-
-In this example, `Inter` is preloaded and also attached as a stylesheet, while `Alexandria` is deferred until page load. A family-level `strategy` overrides the module-level strategy. `strategy: "lazy"` already enables page-load deferral, so `deferUntilPageLoad: true` is not needed alongside it.
-'''
-
-          if text.count(old) != 1:
-              raise SystemExit(f"Expected one old Fonts block, found {text.count(old)}")
-
-          path.write_text(text.replace(old, new))
-
-      - name: Commit README update and remove helper
-        shell: bash
-        run: |
-          set -euo pipefail
           rm .github/workflows/apply-fonts-readme-update.yml
+          rm .github/scripts/update-fonts-readme.py
           git config user.name "Mahmoud Abdalrahman Mohamed"
           git config user.email "mahnoudhouda5632@gmail.com"
-          git add README.md .github/workflows/apply-fonts-readme-update.yml
+          git add README.md .github/workflows/apply-fonts-readme-update.yml .github/scripts/update-fonts-readme.py
           git commit -m "docs(fonts): refresh README loading strategy"
           git push origin HEAD:docs/update-fonts-readme

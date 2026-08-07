@@ -224,7 +224,7 @@ async function importGeneratedRuntime(): Promise<{
   const runtimeFile = path.join(root, "runtime-client.mjs");
   await writeFile(
     runtimeFile,
-    `${getClientRuntimeSource()}\nexport { effect, reactive, ref, toRefs, watch, nextTick, useLazyPackage };\n`,
+    `${getClientRuntimeSource()}\nexport { effect, reactive, ref, toRefs, watch, nextTick };\n`,
     "utf8",
   );
 

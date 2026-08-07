@@ -190,17 +190,25 @@ export function resolveI18nRoute(pathname: string, config: ResuxI18nRuntimeConfi
   const first = segments[0];
   const candidate = first ? resolveLocaleByCode(config.locales, first) : null;
 
-  if (candidate) {
-    const prefixed = isLocalePrefixedForStrategy(config.strategy, candidate.code, config.defaultLocale);
-    if (prefixed) {
-      const remainder = segments.slice(1);
-      const basePath = remainder.length ? `/${remainder.join("/")}` : "/";
-      return {
-        locale: candidate,
-        basePath,
-        localizedPath: normalizedPath
-      };
-    }
+  // For prefixed strategies, always consume a recognized locale segment. In
+  // prefix_except_default the default-locale prefix is non-canonical, but it
+  // still needs to be stripped so locale switching never produces paths such
+  // as /fr/en/about.
+  if (candidate && config.strategy !== "no_prefix") {
+    const remainder = segments.slice(1);
+    const basePath = remainder.length ? `/${remainder.join("/")}` : "/";
+    const localizedPath = isLocalePrefixedForStrategy(
+      config.strategy,
+      candidate.code,
+      config.defaultLocale,
+    )
+      ? normalizedPath
+      : basePath;
+    return {
+      locale: candidate,
+      basePath,
+      localizedPath
+    };
   }
 
   const fallbackLocale = config.locales[0];

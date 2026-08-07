@@ -126,7 +126,7 @@
     "verify:vercel-output": "npm run build && node scripts/verify-vercel-output.mjs",
     "verify:deploy-targets": "npm run build && node scripts/verify-deploy-targets.mjs",
     "create:local": "npm run build && node dist/cli.js init",
-    "pack:check": "npm run build && npm test && npm pack --dry-run"
+    "pack:check": "npm run build && npm test && npm pack --dry-run && npm pack --dry-run ./packages/create-resuxjs"
   },
   "engines": {
     "node": ">=20.19.0"

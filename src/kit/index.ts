@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type {
   PagesExtender,
   ResuxComponentInput,
@@ -24,28 +25,10 @@ export interface ResuxModuleDefinition<TOptions = Record<string, unknown>> {
   setup: (options: TOptions, resux: ResuxModuleContext) => void | Promise<void>;
 }
 
-let activeContext: ResuxModuleContext | null = null;
+const kitContextStorage = new AsyncLocalStorage<ResuxModuleContext>();
 
 export function withResuxKitContext<T>(context: ResuxModuleContext, run: () => Promise<T> | T): Promise<T> | T {
-  const previous = activeContext;
-  activeContext = context;
-
-  let result: Promise<T> | T;
-  try {
-    result = run();
-  } catch (error) {
-    activeContext = previous;
-    throw error;
-  }
-
-  if (isPromiseLike(result)) {
-    return Promise.resolve(result as PromiseLike<T>).finally(() => {
-      activeContext = previous;
-    });
-  }
-
-  activeContext = previous;
-  return result;
+  return kitContextStorage.run(context, run);
 }
 
 export function defineResuxModule<TOptions = Record<string, unknown>>(module: ResuxModuleDefinition<TOptions>): ResuxModuleDefinition<TOptions> {
@@ -121,16 +104,9 @@ export function addPrerenderRoutes(route: string | string[]): void {
 }
 
 function useContext(api: string): ResuxModuleContext {
-  if (!activeContext) {
+  const context = kitContextStorage.getStore();
+  if (!context) {
     throw new Error(`Resux Kit "${api}" was called outside of a module setup context.`);
   }
-  return activeContext;
-}
-
-function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
-  return Boolean(
-    value
-      && (typeof value === "object" || typeof value === "function")
-      && typeof (value as PromiseLike<unknown>).then === "function"
-  );
+  return context;
 }

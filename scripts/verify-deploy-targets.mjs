@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const cliPath = path.join(rootDir, "dist", "cli.js");
+const cliPath = path.join(rootDir, "dist", "bin.js");
 const fixtureSigningSecret = "resux-deploy-verification-secret-not-for-production-use";
 const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
 const frameworkPackage = JSON.parse(await readFile(path.join(rootDir, "package.json"), "utf8"));

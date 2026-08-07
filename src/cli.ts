@@ -255,13 +255,6 @@ export function createResuxNodeHandler(options: ResuxNodeHandlerOptions = {}) {
   };
 }
 
-if (isMainModule()) {
-  void runResuxCli(process.argv.slice(2)).catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-  });
-}
-
 export async function runResuxCli(args: string[]): Promise<void> {
   const command = readCommand(args);
   const commandArgs = command === args[0] ? args.slice(1) : args;

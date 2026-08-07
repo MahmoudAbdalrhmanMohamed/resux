@@ -2,6 +2,8 @@
 
 Resux is an experimental web framework with a custom resumable runtime.
 
+📖 **Documentation**: [https://mahmoudabdalrhmanmohamed.github.io/resux-docs/](https://mahmoudabdalrhmanmohamed.github.io/resux-docs/)
+
 It uses familiar `.vue` files and `pages/` routing, but normal Resux components do not use Vue hydration or the Vue runtime. The compiler parses a small Vue-like SFC subset, renders HTML on the server, serializes route and component state, then loads client code only when an event is triggered. Vue runtime is available as an opt-in island escape hatch for complex client widgets.
 
 The v1 release line treats the documented compiler, SSR renderer, resume runtime, routing, and CLI commands as the stable core. Advanced Vue compatibility, Vue islands, Nitro adapter behavior, and unsupported Vue SFC syntax are still experimental and should fail loudly instead of silently falling back to hydration.

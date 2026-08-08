@@ -6,6 +6,7 @@ import {
   ensureResuxServerPayload,
   pathExists,
 } from "./common.js";
+import { ensureRuntimeDependencyTrees } from "./runtime-dependencies.js";
 import type {
   DeployBuildContext,
   DeployDetectionContext,
@@ -50,6 +51,12 @@ async function postBuild(context: DeployBuildContext): Promise<void> {
     path.join(functionRoot, ".resux", "server")
   );
   await ensureResuxServerPayload(context.appRoot, payloadTargets);
+  await ensureRuntimeDependencyTrees(
+    context.appRoot,
+    functionRoots,
+    "sharp",
+    "Resux Netlify image optimizer",
+  );
   await assertRuntimeClientAsset(path.join(context.appRoot, "dist"));
 }
 

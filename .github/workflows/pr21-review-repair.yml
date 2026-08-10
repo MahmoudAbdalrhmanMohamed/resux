@@ -25,11 +25,16 @@ jobs:
 
           file = Path("src/cli.ts")
           source = file.read_text(encoding="utf-8")
-          needle = '''  if (updated !== source) {
-            await writeFile(nitroConfigFile, updated, "utf8");
-          }
-          '''
-          replacement = '''  const cloudflareNodeCompatPattern = /(\\bcloudflare\\s*:\\s*\\{[\\s\\S]*?\\bnodeCompat\\s*:\\s*)(?:true|false)/;
+          function_anchor = "async function upgradeNitroConfigForResux"
+          write_anchor = '  if (updated !== source) {'
+          function_index = source.find(function_anchor)
+          if function_index < 0:
+              raise SystemExit("upgradeNitroConfigForResux not found")
+          insert_index = source.find(write_anchor, function_index)
+          if insert_index < 0:
+              raise SystemExit("upgradeNitroConfigForResux write anchor not found")
+
+          insertion = '''  const cloudflareNodeCompatPattern = /(\\bcloudflare\\s*:\\s*\\{[\\s\\S]*?\\bnodeCompat\\s*:\\s*)(?:true|false)/;
           if (cloudflareNodeCompatPattern.test(updated)) {
             updated = updated.replace(cloudflareNodeCompatPattern, "$1true");
           } else if (/\\bcloudflare\\s*:\\s*\\{/.test(updated)) {
@@ -44,13 +49,10 @@ jobs:
             );
           }
 
-          if (updated !== source) {
-            await writeFile(nitroConfigFile, updated, "utf8");
-          }
           '''
-          if needle not in source:
-              raise SystemExit("upgradeNitroConfigForResux insertion point not found")
-          source = source.replace(needle, replacement, 1)
+          if "cloudflareNodeCompatPattern" in source[function_index:insert_index]:
+              raise SystemExit("Cloudflare nodeCompat upgrader already present")
+          source = source[:insert_index] + insertion + source[insert_index:]
           file.write_text(source, encoding="utf-8")
           PY
       - name: Remove temporary workflow and commit fix

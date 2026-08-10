@@ -1919,23 +1919,19 @@ async function upgradeNitroConfigForResux(configFile: string): Promise<void> {
   }
 
   const cloudflareNodeCompatPattern = /(\bcloudflare\s*:\s*\{[\s\S]*?\bnodeCompat\s*:\s*)(?:true|false)/;
-if (cloudflareNodeCompatPattern.test(updated)) {
-  updated = updated.replace(cloudflareNodeCompatPattern, "$1true");
-} else if (/\bcloudflare\s*:\s*\{/.test(updated)) {
-  updated = updated.replace(
-    /\bcloudflare\s*:\s*\{/,
-    (match) => `${match}
-    nodeCompat: true,`,
-  );
-} else {
-  updated = updated.replace(
-    /export\s+default\s+defineNitroConfig\s*\(\s*\{/,
-    (match) => `${match}
-  cloudflare: {
-    nodeCompat: true
-  },`,
-  );
-}
+  if (cloudflareNodeCompatPattern.test(updated)) {
+    updated = updated.replace(cloudflareNodeCompatPattern, "$1true");
+  } else if (/\bcloudflare\s*:\s*\{/.test(updated)) {
+    updated = updated.replace(
+      /\bcloudflare\s*:\s*\{/,
+      (match) => `${match}\n    nodeCompat: true,`,
+    );
+  } else {
+    updated = updated.replace(
+      /export\s+default\s+defineNitroConfig\s*\(\s*\{/,
+      (match) => `${match}\n  cloudflare: {\n    nodeCompat: true\n  },`,
+    );
+  }
 
   if (updated === source) {
     return;

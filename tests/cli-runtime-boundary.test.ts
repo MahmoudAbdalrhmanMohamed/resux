@@ -25,4 +25,19 @@ describe("CLI runtime boundary", () => {
     expect(deploySource).toContain('path.join(rootDir, "dist", "bin.js")');
     expect(packageSource).toContain("node dist/bin.js init");
   });
+
+  it("keeps build-only and native modules runtime-lazy for edge bundlers", async () => {
+    const cliSource = await readFile(path.join(root, "src", "cli.ts"), "utf8");
+
+    expect(cliSource).toContain("async function importRuntimeModule<T>(specifier: string)");
+    expect(cliSource).toContain('importRuntimeModule<typeof import("./compiler/index.js")>("./compiler/index.js")');
+    expect(cliSource).toContain('importRuntimeModule<typeof import("vite")>("vite")');
+    expect(cliSource).toContain('importRuntimeModule<typeof import("@vitejs/plugin-vue")>("@vitejs/plugin-vue")');
+    expect(cliSource).toContain('importRuntimeModule<typeof import("sharp")>("sharp")');
+
+    expect(cliSource).not.toContain('await import("./compiler/index.js")');
+    expect(cliSource).not.toContain('await import("vite")');
+    expect(cliSource).not.toContain('await import("@vitejs/plugin-vue")');
+    expect(cliSource).not.toContain('await import("sharp")');
+  });
 });

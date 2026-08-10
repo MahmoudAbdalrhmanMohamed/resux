@@ -109,6 +109,23 @@ describe("cli generated directory bootstrap", () => {
     expect(nitroConfig).toContain('wrangler: { configPath: "./wrangler.jsonc" }');
     expect(nitroConfig).toContain('customFlag: "keep-me"');
   }, 120000);
+
+  it("adds the Cloudflare compatibility block when an existing Nitro config has none", async () => {
+    const root = await createMinimalProject("resux-missing-cloudflare-config");
+    const nitroConfigFile = path.join(root, "nitro.config.ts");
+    await writeFile(
+      nitroConfigFile,
+      `import { defineNitroConfig } from "nitropack/config";\n\nexport default defineNitroConfig({\n  compatibilityDate: "2026-05-02",\n  customFlag: "keep-me",\n  prerender: { crawlLinks: false, routes: [] }\n});\n`,
+      "utf8",
+    );
+
+    await runResuxCli(["prepare", root]);
+
+    const nitroConfig = await readFile(nitroConfigFile, "utf8");
+    expect(nitroConfig).toContain("cloudflare: {");
+    expect(nitroConfig).toContain("nodeCompat: true");
+    expect(nitroConfig).toContain('customFlag: "keep-me"');
+  }, 120000);
 });
 
 async function createMinimalProject(prefix: string): Promise<string> {

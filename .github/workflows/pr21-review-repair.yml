@@ -26,13 +26,13 @@ jobs:
           file = Path("src/cli.ts")
           source = file.read_text(encoding="utf-8")
           function_anchor = "async function upgradeNitroConfigForResux"
-          write_anchor = '  if (updated !== source) {'
+          write_anchor = '  if (updated === source) {'
           function_index = source.find(function_anchor)
           if function_index < 0:
               raise SystemExit("upgradeNitroConfigForResux not found")
           insert_index = source.find(write_anchor, function_index)
           if insert_index < 0:
-              raise SystemExit("upgradeNitroConfigForResux write anchor not found")
+              raise SystemExit("upgradeNitroConfigForResux write guard not found")
 
           insertion = '''  const cloudflareNodeCompatPattern = /(\\bcloudflare\\s*:\\s*\\{[\\s\\S]*?\\bnodeCompat\\s*:\\s*)(?:true|false)/;
           if (cloudflareNodeCompatPattern.test(updated)) {

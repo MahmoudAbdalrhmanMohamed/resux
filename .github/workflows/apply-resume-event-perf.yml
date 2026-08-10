@@ -20,22 +20,23 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path('src/runtime/index.ts')
           source = path.read_text()
-          old = '''  for (const eventName of ["input", "change", "submit", "keydown", "keyup", "keypress", "mousedown", "mouseup", "blur", "focusout"]) {
-            registerDelegatedEvent(eventName, false);
-          }
-          for (const eventName of ["load", "error", "loadstart", "loadedmetadata", "loadeddata", "canplay", "lazy-load-start", "lazy-load-complete"]) {
-            registerDelegatedEvent(eventName, true);
-          }
-          registerDelegatedEventsFromDom(document);
-          '''
-          new = '''  registerDelegatedEventsFromDom(document);
-          '''
-          if old not in source:
-              raise SystemExit('expected eager delegated-event block was not found')
-          path.write_text(source.replace(old, new, 1))
+          pattern = re.compile(
+              r'  for \(const eventName of \["input", "change", "submit", "keydown", "keyup", "keypress", "mousedown", "mouseup", "blur", "focusout"\]\) \{\n'
+              r'    registerDelegatedEvent\(eventName, false\);\n'
+              r'  \}\n'
+              r'  for \(const eventName of \["load", "error", "loadstart", "loadedmetadata", "loadeddata", "canplay", "lazy-load-start", "lazy-load-complete"\]\) \{\n'
+              r'    registerDelegatedEvent\(eventName, true\);\n'
+              r'  \}\n'
+              r'  registerDelegatedEventsFromDom\(document\);\n'
+          )
+          updated, count = pattern.subn('  registerDelegatedEventsFromDom(document);\n', source, count=1)
+          if count != 1:
+              raise SystemExit(f'expected one eager delegated-event block, found {count}')
+          path.write_text(updated)
           PY
       - name: Commit runtime patch
         run: |

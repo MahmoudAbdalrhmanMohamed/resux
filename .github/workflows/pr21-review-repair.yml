@@ -1,0 +1,63 @@
+name: Finalize PR 21 Nitro review repair
+
+on:
+  push:
+    branches:
+      - fix/vercel-sharp-exports-resolution
+    paths:
+      - .github/workflows/pr21-review-repair.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/vercel-sharp-exports-resolution
+      - name: Finalize Nitro upgrader block
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          file = Path("src/cli.ts")
+          source = file.read_text(encoding="utf-8")
+          function_index = source.find("async function upgradeNitroConfigForResux")
+          start = source.find("  const cloudflareNodeCompatPattern =", function_index)
+          end = source.find("  if (updated === source) {", start)
+          if start < 0 or end < 0:
+              raise SystemExit("Cloudflare upgrader block not found")
+
+          lines = [
+              '  const cloudflareNodeCompatPattern = /(\\bcloudflare\\s*:\\s*\\{[\\s\\S]*?\\bnodeCompat\\s*:\\s*)(?:true|false)/;',
+              '  if (cloudflareNodeCompatPattern.test(updated)) {',
+              '    updated = updated.replace(cloudflareNodeCompatPattern, "$1true");',
+              '  } else if (/\\bcloudflare\\s*:\\s*\\{/.test(updated)) {',
+              '    updated = updated.replace(',
+              '      /\\bcloudflare\\s*:\\s*\\{/,',
+              '      (match) => `${match}\\n    nodeCompat: true,`,',
+              '    );',
+              '  } else {',
+              '    updated = updated.replace(',
+              '      /export\\s+default\\s+defineNitroConfig\\s*\\(\\s*\\{/,',
+              '      (match) => `${match}\\n  cloudflare: {\\n    nodeCompat: true\\n  },`,',
+              '    );',
+              '  }',
+              '',
+          ]
+          block = "\n".join(lines) + "\n"
+          source = source[:start] + block + source[end:]
+          file.write_text(source, encoding="utf-8")
+          PY
+      - name: Remove temporary workflow and commit
+        shell: bash
+        run: |
+          rm .github/workflows/pr21-review-repair.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/cli.ts .github/workflows/pr21-review-repair.yml
+          git commit -m "style(cli): finalize Nitro upgrader formatting"
+          git push origin HEAD:fix/vercel-sharp-exports-resolution

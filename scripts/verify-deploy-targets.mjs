@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,6 +54,84 @@ function runProcess(command, args, options) {
   });
 }
 
+const sharpSmokeScript = String.raw`
+const sharpModule = await import("sharp");
+const sharp = sharpModule.default ?? sharpModule;
+if (typeof sharp !== "function") {
+  throw new Error("sharp did not expose a callable factory");
+}
+const source = Buffer.from(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="black"/></svg>'
+);
+const output = await sharp(source).resize(2, 2).png().toBuffer();
+if (!Buffer.isBuffer(output) || output.length < 8) {
+  throw new Error("sharp resize produced no image bytes");
+}
+`;
+
+async function runSharpSmoke(cwd, label) {
+  await runProcess(process.execPath, ["--input-type=module", "-e", sharpSmokeScript], {
+    cwd,
+    label: `${label} sharp runtime smoke`,
+  });
+}
+
+async function runIsolatedSharpSmoke(sourceRoot, label) {
+  const sandboxRoot = await mkdtemp(path.join(os.tmpdir(), "resux-sharp-runtime-"));
+  const snapshotRoot = path.join(sandboxRoot, "function");
+  try {
+    await cp(sourceRoot, snapshotRoot, {
+      recursive: true,
+      force: true,
+    });
+    await runSharpSmoke(snapshotRoot, `${label} isolated`);
+  } finally {
+    await rm(sandboxRoot, { recursive: true, force: true });
+  }
+}
+
+async function collectJavaScriptFiles(root) {
+  if (!(await exists(root))) {
+    return [];
+  }
+
+  const files = [];
+  const pending = [root];
+  while (pending.length) {
+    const current = pending.pop();
+    const entries = await readdir(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const absolute = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules") {
+          continue;
+        }
+        pending.push(absolute);
+        continue;
+      }
+      if (entry.isFile() && /\.(?:c|m)?js$/i.test(entry.name)) {
+        files.push(absolute);
+      }
+    }
+  }
+  return files;
+}
+
+async function assertNoSharpImports(root, label) {
+  const files = await collectJavaScriptFiles(root);
+  if (!files.length) {
+    fail(`${label} emitted no JavaScript files to inspect.`);
+  }
+
+  const sharpImportPattern = /(?:from\s*["']sharp["']|import\(\s*["']sharp["']\s*\)|require\(\s*["']sharp["']\s*\))/;
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    if (sharpImportPattern.test(source)) {
+      fail(`${label} leaked a Node-only sharp import into ${path.relative(root, file)}.`);
+    }
+  }
+}
+
 async function runBuild(appRoot, deployTarget) {
   console.log(`[verify:deploy-targets] building ${deployTarget}`);
   await runProcess(process.execPath, [cliPath, "build", "."], {
@@ -105,9 +182,6 @@ async function createFixtureApp(appRoot, deployTarget) {
 
 export default defineNitroConfig({
   compatibilityDate: "2026-05-02",
-  cloudflare: {
-    nodeCompat: true
-  },
   ignore: ["plugins/**", "modules/**", "middleware/**"],
   scanDirs: [".resux-nitro"],
   publicAssets: [
@@ -122,9 +196,13 @@ export default defineNitroConfig({
     "utf8",
   );
   await mkdir(path.join(appRoot, ".resux-nitro"), { recursive: true });
-  await writeFile(
-    path.join(appRoot, ".resux-nitro", "handler.ts"),
-    `import { fromNodeMiddleware } from "h3";
+
+  const nitroHandler = deployTarget === "cloudflare"
+    ? `import { eventHandler } from "h3";
+
+export default eventHandler(() => "<main>Cloudflare Resux fixture</main>");
+`
+    : `import { fromNodeMiddleware } from "h3";
 import { createResuxNodeHandler } from "resuxjs/node";
 
 const resuxHandler = createResuxNodeHandler();
@@ -145,7 +223,11 @@ export default fromNodeMiddleware((req, res, next) => {
   res.once("finish", done);
   res.once("close", done);
 });
-`,
+`;
+
+  await writeFile(
+    path.join(appRoot, ".resux-nitro", "handler.ts"),
+    nitroHandler,
     "utf8",
   );
 
@@ -156,64 +238,25 @@ export default fromNodeMiddleware((req, res, next) => {
   );
 }
 
-function assertPackageResolvable(appRoot, packageName) {
-  const appRequire = createRequire(path.join(appRoot, "package.json"));
-  try {
-    appRequire.resolve(packageName);
-  } catch (error) {
-    fail(
-      `${packageName} must be resolvable for the server image optimizer: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
-async function assertNoSharpRuntimeLeak(root, targetName) {
-  if (!(await exists(root))) {
-    return;
-  }
-
-  const pending = [root];
-  const sharpImportPattern = /(?:from\s+["']sharp["']|import\(\s*["']sharp["']\s*\)|require\(\s*["']sharp["']\s*\))/;
-
-  while (pending.length) {
-    const current = pending.pop();
-    const entries = await readdir(current, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      const absolute = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        if (entry.name === "node_modules") {
-          if (await exists(path.join(absolute, "sharp"))) {
-            fail(`${targetName} output must not package the Node-only sharp runtime.`);
-          }
-          continue;
-        }
-        pending.push(absolute);
-        continue;
-      }
-      if (!entry.isFile() || !/\.(?:mjs|cjs|js)$/.test(entry.name)) {
-        continue;
-      }
-      const source = await readFile(absolute, "utf8").catch(() => "");
-      if (sharpImportPattern.test(source)) {
-        fail(`${targetName} output contains a runtime import of Node-only sharp in ${path.relative(root, absolute)}.`);
-      }
-    }
-  }
-}
-
 async function assertNodeOutput(appRoot) {
   await assertPaths(appRoot, "node", [
     ".output/public/__resux/runtime-client.mjs",
     ".output/server/index.mjs",
   ]);
-  assertPackageResolvable(appRoot, "sharp");
+
+  await runSharpSmoke(path.join(appRoot, ".output", "server"), "node deployment");
 }
 
 async function assertStaticOutput(appRoot) {
+  const runtimeClient = path.join(appRoot, ".output", "public", "__resux", "runtime-client.mjs");
   await assertPaths(appRoot, "static", [
     ".output/public/__resux/runtime-client.mjs",
   ]);
-  await assertNoSharpRuntimeLeak(path.join(appRoot, ".output"), "static");
+
+  const source = await readFile(runtimeClient, "utf8");
+  if (/\bsharp\b/.test(source) || /["']node:/.test(source)) {
+    fail("static client runtime contains a server-only sharp or node: dependency reference.");
+  }
 }
 
 async function assertNetlifyOutput(appRoot) {
@@ -221,7 +264,6 @@ async function assertNetlifyOutput(appRoot) {
     "dist/__resux/runtime-client.mjs",
     ".netlify/functions-internal",
   ]);
-  assertPackageResolvable(appRoot, "sharp");
 
   const functionsRoot = path.join(appRoot, ".netlify", "functions-internal");
   const functions = await readdir(functionsRoot, { withFileTypes: true });
@@ -232,6 +274,7 @@ async function assertNetlifyOutput(appRoot) {
 
   const manifests = await Promise.all(functionDirectories.map(async (entry) => ({
     name: entry.name,
+    root: path.join(functionsRoot, entry.name),
     present: await exists(path.join(
       functionsRoot,
       entry.name,
@@ -240,11 +283,16 @@ async function assertNetlifyOutput(appRoot) {
       "manifest.mjs",
     )),
   })));
-  if (!manifests.some((entry) => entry.present)) {
+  const resuxFunctions = manifests.filter((entry) => entry.present);
+  if (!resuxFunctions.length) {
     fail(
       "netlify target functions are missing .resux/server/manifest.mjs; emitted directories: "
       + functionDirectories.map((entry) => entry.name).join(", "),
     );
+  }
+
+  for (const entry of resuxFunctions) {
+    await runIsolatedSharpSmoke(entry.root, `netlify function ${entry.name}`);
   }
 }
 
@@ -292,36 +340,52 @@ async function assertVercelOutput(appRoot) {
     fail("vercel target emitted no function directories.");
   }
 
-  let sharpPackaged = false;
   for (const fn of emittedFunctions) {
     const functionRoot = path.join(functionsRoot, fn.name);
     await assertPaths(functionRoot, `vercel function ${fn.name}`, [
       ".vc-config.json",
       ".resux/server/manifest.mjs",
     ]);
-    if (await exists(path.join(functionRoot, "node_modules", "sharp", "package.json"))) {
-      sharpPackaged = true;
-    }
-  }
-
-  if (!sharpPackaged) {
-    fail("vercel functions are missing the sharp runtime required by the Resux image optimizer.");
+    await runIsolatedSharpSmoke(functionRoot, `vercel function ${fn.name}`);
   }
 }
 
 async function assertCloudflareOutput(appRoot) {
-  const outputCandidates = [
+  const runtimeCandidates = [
     path.join(appRoot, ".output", "public", "__resux", "runtime-client.mjs"),
     path.join(appRoot, "dist", "__resux", "runtime-client.mjs"),
   ];
-  const hasClientRuntime = (await Promise.all(outputCandidates.map((candidate) => exists(candidate))))
-    .some(Boolean);
-  if (!hasClientRuntime) {
-    fail("cloudflare target is missing the Resux client runtime in .output/public or dist.");
+  let resolvedRuntimeClient = null;
+  for (const candidate of runtimeCandidates) {
+    if (await exists(candidate)) {
+      resolvedRuntimeClient = candidate;
+      break;
+    }
+  }
+  if (!resolvedRuntimeClient) {
+    fail("cloudflare target is missing the __resux/runtime-client.mjs asset.");
   }
 
-  await assertNoSharpRuntimeLeak(path.join(appRoot, ".output"), "cloudflare");
-  await assertNoSharpRuntimeLeak(path.join(appRoot, "dist"), "cloudflare");
+  const outputRoots = [
+    path.join(appRoot, ".output", "server"),
+    path.join(appRoot, "dist"),
+  ];
+  const existingRoots = [];
+  for (const root of outputRoots) {
+    if (await exists(root)) {
+      existingRoots.push(root);
+    }
+  }
+  if (!existingRoots.length) {
+    fail("cloudflare target emitted no worker/server JavaScript output.");
+  }
+
+  for (const root of existingRoots) {
+    await assertNoSharpImports(root, "cloudflare worker output");
+    if (await exists(path.join(root, "node_modules", "sharp"))) {
+      fail("cloudflare worker output must not package the Node-only sharp runtime.");
+    }
+  }
 }
 
 async function assertPaths(root, targetName, relativePaths) {
@@ -364,7 +428,7 @@ function selectedTargets() {
 
 async function main() {
   if (!(await exists(cliPath))) {
-    fail("dist/cli.js not found. Run `npm run build` first.");
+    fail("dist/bin.js not found. Run `npm run build` first.");
   }
 
   for (const [deployTarget, assertOutput] of selectedTargets()) {

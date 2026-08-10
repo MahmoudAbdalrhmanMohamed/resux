@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
 import { cp, lstat, mkdir, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import path from "node:path";
 import {
   assertRuntimeClientAsset,
@@ -10,6 +9,7 @@ import {
   readJsonRecord,
   writeJson,
 } from "./common.js";
+import { ensureRuntimeDependencyTrees } from "./runtime-dependencies.js";
 import type {
   DeployBuildContext,
   DeployDetectionContext,
@@ -23,12 +23,6 @@ type BuildOutputRoute = Record<string, unknown>;
 interface BuildOutputConfig extends Record<string, unknown> {
   version?: unknown;
   routes?: unknown;
-}
-
-interface PackageRecord extends Record<string, unknown> {
-  name?: unknown;
-  dependencies?: unknown;
-  optionalDependencies?: unknown;
 }
 
 function parseMajorNodeVersion(version: string): number {
@@ -81,192 +75,6 @@ function normalizeBuildOutputConfig(value: unknown): BuildOutputConfig {
     return {};
   }
   return value;
-}
-
-function runtimeDependencyNames(value: unknown): string[] {
-  if (!isRecord(value)) {
-    return [];
-  }
-  return Object.keys(value).filter((name) => name.trim().length > 0);
-}
-
-function dependencyTargetPath(functionRoot: string, packageName: string): string {
-  return path.join(functionRoot, "node_modules", ...packageName.split("/"));
-}
-
-function resolveResuxPackageRequire(
-  appRequire: ReturnType<typeof createRequire>,
-): ReturnType<typeof createRequire> | null {
-  for (const packageName of ["resuxjs", "resux"]) {
-    try {
-      const packageEntryPath = appRequire.resolve(packageName);
-      return createRequire(packageEntryPath);
-    } catch {
-      try {
-        const packageJsonPath = appRequire.resolve(`${packageName}/package.json`);
-        return createRequire(packageJsonPath);
-      } catch {
-        // Keep trying known package names.
-      }
-    }
-  }
-  return null;
-}
-
-function formatResolutionError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-async function findPackageJsonFromEntry(
-  dependency: string,
-  entryPath: string,
-): Promise<string | null> {
-  let currentDirectory = path.dirname(entryPath);
-
-  while (true) {
-    const candidate = path.join(currentDirectory, "package.json");
-    const packageJson = (await readJsonRecord(candidate)) as PackageRecord | null;
-    if (packageJson?.name === dependency) {
-      return candidate;
-    }
-
-    const parentDirectory = path.dirname(currentDirectory);
-    if (parentDirectory === currentDirectory) {
-      return null;
-    }
-    currentDirectory = parentDirectory;
-  }
-}
-
-async function resolveDependencyPackageJsonPath(
-  dependency: string,
-  resolver: ReturnType<typeof createRequire>,
-  resolutionErrors?: string[],
-): Promise<string | null> {
-  let entryResolutionError: unknown = null;
-  try {
-    const entryPath = resolver.resolve(dependency);
-    const packageJsonPath = await findPackageJsonFromEntry(dependency, entryPath);
-    if (packageJsonPath) {
-      return packageJsonPath;
-    }
-    entryResolutionError = new Error(
-      `Resolved "${dependency}" to ${entryPath}, but its package root could not be located.`,
-    );
-  } catch (error) {
-    entryResolutionError = error;
-  }
-
-  // Legacy packages may expose package.json directly but have no resolvable root entry.
-  // Keep this as a fallback only: modern packages such as sharp intentionally do not
-  // export ./package.json and should resolve through their public entry point instead.
-  try {
-    return resolver.resolve(`${dependency}/package.json`);
-  } catch (packageJsonError) {
-    resolutionErrors?.push(
-      `${formatResolutionError(entryResolutionError)} | ${formatResolutionError(packageJsonError)}`,
-    );
-    return null;
-  }
-}
-
-async function copyRuntimeDependencyTree(
-  appRoot: string,
-  functionRoot: string,
-  rootDependency: string,
-): Promise<void> {
-  const appRequire = createRequire(path.join(appRoot, "package.json"));
-  const resuxPackageRequire = resolveResuxPackageRequire(appRequire);
-  const rootResolvers = [appRequire, ...(resuxPackageRequire ? [resuxPackageRequire] : [])];
-  const resolutionErrors: string[] = [];
-  let rootDependencyPackageJsonPath: string | null = null;
-  for (const resolver of rootResolvers) {
-    rootDependencyPackageJsonPath = await resolveDependencyPackageJsonPath(
-      rootDependency,
-      resolver,
-      resolutionErrors,
-    );
-    if (rootDependencyPackageJsonPath) {
-      break;
-    }
-  }
-  if (!rootDependencyPackageJsonPath) {
-    throw new Error(
-      `Resux Vercel image optimizer requires "${rootDependency}" but it could not be resolved from app or framework dependencies. (${resolutionErrors.join(" | ")})`,
-    );
-  }
-
-  const pending = [{
-    dependency: rootDependency,
-    packageJsonPath: rootDependencyPackageJsonPath,
-  }];
-  const copied = new Set<string>();
-
-  while (pending.length > 0) {
-    const next = pending.shift();
-    if (!next || copied.has(next.dependency)) {
-      continue;
-    }
-    copied.add(next.dependency);
-
-    const sourcePackageJsonPath = next.packageJsonPath;
-    const sourcePackageRoot = path.dirname(sourcePackageJsonPath);
-    const targetPackageRoot = dependencyTargetPath(functionRoot, next.dependency);
-    await rm(targetPackageRoot, { recursive: true, force: true });
-    await mkdir(path.dirname(targetPackageRoot), { recursive: true });
-    await cp(sourcePackageRoot, targetPackageRoot, {
-      recursive: true,
-      force: true,
-    });
-
-    const packageJson = (await readJsonRecord(sourcePackageJsonPath)) as PackageRecord | null;
-    if (!packageJson) {
-      continue;
-    }
-
-    const dependencyResolver = createRequire(sourcePackageJsonPath);
-    for (const dependency of runtimeDependencyNames(packageJson.dependencies)) {
-      const dependencyPackageJsonPath = await resolveDependencyPackageJsonPath(
-        dependency,
-        dependencyResolver,
-      );
-      if (!dependencyPackageJsonPath) {
-        throw new Error(
-          `Resux Vercel image optimizer dependency "${next.dependency}" is missing required package "${dependency}".`,
-        );
-      }
-      pending.push({ dependency, packageJsonPath: dependencyPackageJsonPath });
-    }
-    for (const dependency of runtimeDependencyNames(packageJson.optionalDependencies)) {
-      const dependencyPackageJsonPath = await resolveDependencyPackageJsonPath(
-        dependency,
-        dependencyResolver,
-      );
-      if (!dependencyPackageJsonPath) {
-        continue;
-      }
-      pending.push({ dependency, packageJsonPath: dependencyPackageJsonPath });
-    }
-  }
-
-  const requiredDependencyPath = path.join(
-    dependencyTargetPath(functionRoot, rootDependency),
-    "package.json",
-  );
-  if (!(await pathExists(requiredDependencyPath))) {
-    throw new Error(
-      `Resux Vercel deployment could not prepare "${rootDependency}" for ${functionRoot}.`,
-    );
-  }
-}
-
-async function ensureFunctionImageOptimizerDependencies(
-  appRoot: string,
-  functionRoots: string[],
-): Promise<void> {
-  for (const functionRoot of functionRoots) {
-    await copyRuntimeDependencyTree(appRoot, functionRoot, "sharp");
-  }
 }
 
 function isHeaderOnlyRoute(route: BuildOutputRoute): boolean {
@@ -411,7 +219,12 @@ async function postBuild(context: DeployBuildContext): Promise<void> {
       target: path.join(root, ".resux", "client"),
     })),
   );
-  await ensureFunctionImageOptimizerDependencies(context.appRoot, functionRoots);
+  await ensureRuntimeDependencyTrees(
+    context.appRoot,
+    functionRoots,
+    "sharp",
+    "Resux Vercel image optimizer",
+  );
   for (const functionRoot of functionRoots) {
     const manifestPath = path.join(functionRoot, ".resux", "server", "manifest.mjs");
     if (!(await pathExists(manifestPath))) {

@@ -1,0 +1,49 @@
+name: Apply resume event delegation patch
+
+on:
+  push:
+    branches:
+      - perf/resume-on-demand-events
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply focused runtime patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/runtime/index.ts')
+          source = path.read_text()
+          old = '''  for (const eventName of ["input", "change", "submit", "keydown", "keyup", "keypress", "mousedown", "mouseup", "blur", "focusout"]) {
+            registerDelegatedEvent(eventName, false);
+          }
+          for (const eventName of ["load", "error", "loadstart", "loadedmetadata", "loadeddata", "canplay", "lazy-load-start", "lazy-load-complete"]) {
+            registerDelegatedEvent(eventName, true);
+          }
+          registerDelegatedEventsFromDom(document);
+          '''
+          new = '''  registerDelegatedEventsFromDom(document);
+          '''
+          if old not in source:
+              raise SystemExit('expected eager delegated-event block was not found')
+          path.write_text(source.replace(old, new, 1))
+          PY
+      - name: Commit runtime patch
+        run: |
+          if git diff --quiet -- src/runtime/index.ts; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/runtime/index.ts
+          git commit -m "perf(runtime): register resumable events on demand"
+          git push

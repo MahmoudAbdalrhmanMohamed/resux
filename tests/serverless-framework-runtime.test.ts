@@ -13,7 +13,7 @@ async function createTempApp(prefix: string): Promise<string> {
       name: "resux-serverless-framework-runtime-test",
       private: true,
       type: "module",
-      dependencies: { resuxjs: "1.0.0", sharp: "1.0.0" },
+      dependencies: { resuxjs: "1.0.0", sharp: "1.0.0", marked: "1.0.0" },
     }, null, 2),
     "utf8",
   );
@@ -46,6 +46,11 @@ async function scaffoldResuxOutput(root: string): Promise<void> {
   await writeFile(
     path.join(root, ".resux", "server", "m6.mjs"),
     'import "resuxjs"; export default {};\n',
+    "utf8",
+  );
+  await writeFile(
+    path.join(root, ".resux", "server", "m32.mjs"),
+    'import { marked } from "marked"; import path from "node:path"; export default marked(path.basename("demo.md"));\n',
     "utf8",
   );
   await writeFile(
@@ -88,14 +93,49 @@ async function scaffoldSharp(root: string): Promise<void> {
   await writeFile(path.join(packageRoot, "index.js"), "export default function sharp() {}\n", "utf8");
 }
 
+async function scaffoldMarked(root: string): Promise<void> {
+  const packageRoot = path.join(root, "node_modules", "marked");
+  const helperRoot = path.join(root, "node_modules", "marked-helper");
+  await mkdir(packageRoot, { recursive: true });
+  await mkdir(helperRoot, { recursive: true });
+  await writeFile(
+    path.join(packageRoot, "package.json"),
+    JSON.stringify({
+      name: "marked",
+      version: "1.0.0",
+      type: "module",
+      exports: "./index.js",
+      dependencies: { "marked-helper": "1.0.0" },
+    }, null, 2),
+    "utf8",
+  );
+  await writeFile(
+    path.join(packageRoot, "index.js"),
+    'import { helper } from "marked-helper"; export const marked = (value) => helper(value);\n',
+    "utf8",
+  );
+  await writeFile(
+    path.join(helperRoot, "package.json"),
+    JSON.stringify({
+      name: "marked-helper",
+      version: "1.0.0",
+      type: "module",
+      exports: "./index.js",
+    }, null, 2),
+    "utf8",
+  );
+  await writeFile(path.join(helperRoot, "index.js"), "export const helper = (value) => value;\n", "utf8");
+}
+
 async function scaffoldAppRuntime(root: string): Promise<void> {
   await scaffoldResuxOutput(root);
   await scaffoldFrameworkPackage(root);
   await scaffoldSharp(root);
+  await scaffoldMarked(root);
 }
 
 describe("serverless framework runtime packaging", () => {
-  it("packages resuxjs dist into every Vercel function", async () => {
+  it("packages resuxjs and imported app dependencies into every Vercel function", async () => {
     const root = await createTempApp("resux-vercel-framework-runtime");
     await scaffoldAppRuntime(root);
 
@@ -114,9 +154,12 @@ describe("serverless framework runtime packaging", () => {
     expect(await exists(path.join(functionRoot, "node_modules", "resuxjs", "package.json"))).toBe(true);
     expect(await exists(path.join(functionRoot, "node_modules", "resuxjs", "dist", "index.js"))).toBe(true);
     expect(await exists(path.join(functionRoot, "node_modules", "resuxjs", "dist", "node.js"))).toBe(true);
+    expect(await exists(path.join(functionRoot, "node_modules", "marked", "package.json"))).toBe(true);
+    expect(await exists(path.join(functionRoot, "node_modules", "marked-helper", "package.json"))).toBe(true);
+    expect(await exists(path.join(functionRoot, "node_modules", "node:path"))).toBe(false);
   });
 
-  it("packages resuxjs dist into every Netlify function", async () => {
+  it("packages resuxjs and imported app dependencies into every Netlify function", async () => {
     const root = await createTempApp("resux-netlify-framework-runtime");
     await scaffoldAppRuntime(root);
 
@@ -136,5 +179,7 @@ describe("serverless framework runtime packaging", () => {
     expect(await exists(path.join(functionRoot, "node_modules", "resuxjs", "package.json"))).toBe(true);
     expect(await exists(path.join(functionRoot, "node_modules", "resuxjs", "dist", "index.js"))).toBe(true);
     expect(await exists(path.join(functionRoot, "node_modules", "resuxjs", "dist", "node.js"))).toBe(true);
+    expect(await exists(path.join(functionRoot, "node_modules", "marked", "package.json"))).toBe(true);
+    expect(await exists(path.join(functionRoot, "node_modules", "marked-helper", "package.json"))).toBe(true);
   });
 });

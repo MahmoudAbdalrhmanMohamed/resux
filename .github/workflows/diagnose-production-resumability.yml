@@ -43,6 +43,7 @@ jobs:
             cd /tmp/resux-lab
             npm install --ignore-scripts
             npm install --no-save "$GITHUB_WORKSPACE"
+            export RESUX_HALAL_REPORT_SIGNING_SECRET='resux-diagnostic-signing-secret-2026-08-11'
             echo '=== production build ==='
             node "$GITHUB_WORKSPACE/dist/bin.js" build .
             build_status=$?
@@ -94,6 +95,7 @@ jobs:
           log="$GITHUB_WORKSPACE/resux-lab-diagnostic.log"
           cd /tmp/resux-lab 2>/dev/null || exit 0
           if [ ! -f .resux/manifest.json ]; then exit 0; fi
+          export RESUX_HALAL_REPORT_SIGNING_SECRET='resux-diagnostic-signing-secret-2026-08-11'
           node "$GITHUB_WORKSPACE/dist/bin.js" preview . --port 4010 >> "$log" 2>&1 &
           server_pid=$!
           for attempt in $(seq 1 30); do
@@ -114,5 +116,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add resux-lab-diagnostic.log
-          git commit -m "chore: capture resux-lab production diagnostics"
+          git commit -m "chore: capture resux-lab production diagnostics" || true
           git push origin HEAD:agent/fix-production-resumability

@@ -2,6 +2,9 @@ import type { ResuxHooks, ResuxHookName, ResuxHookPayloads } from "./hooks.js";
 
 export type ResuxSupportMode = "all" | "server" | "client";
 
+export const RESUX_RUNTIME_CLIENT_PATH = "/__resux/runtime-client.mjs";
+export const RESUX_RUNTIME_CLIENT_CACHE_CONTROL = "no-cache, no-store, must-revalidate";
+
 export interface ResuxTemplateInput {
   filename: string;
   getContents: () => string | Promise<string>;
@@ -154,14 +157,7 @@ export class ResuxModuleContainer {
         }
         const routeRules = isObject(config.routeRules) ? config.routeRules : {};
         const current = isObject(routeRules[path]) ? routeRules[path] : {};
-        const merged = {
-          ...current,
-          ...rule,
-          headers: {
-            ...(isObject(current.headers) ? current.headers : {}),
-            ...(isObject(rule.headers) ? rule.headers : {})
-          }
-        };
+        const merged = mergeRouteRule(path, current, rule);
         routeRules[path] = merged;
         config.routeRules = routeRules;
         this.contributions.routeRules.push({ path, rule: merged });
@@ -235,6 +231,38 @@ export class ResuxModuleContainer {
       }
     };
   }
+}
+
+function mergeRouteRule(
+  routePath: string,
+  current: Record<string, unknown>,
+  next: Record<string, unknown>,
+): Record<string, unknown> {
+  const headers: Record<string, unknown> = {
+    ...(isObject(current.headers) ? current.headers : {}),
+    ...(isObject(next.headers) ? next.headers : {}),
+  };
+
+  if (routePath === RESUX_RUNTIME_CLIENT_PATH) {
+    for (const key of Object.keys(headers)) {
+      if (key.toLowerCase() === "cache-control") {
+        delete headers[key];
+      }
+    }
+    headers["cache-control"] = RESUX_RUNTIME_CLIENT_CACHE_CONTROL;
+    return {
+      ...current,
+      ...next,
+      cache: false,
+      headers,
+    };
+  }
+
+  return {
+    ...current,
+    ...next,
+    headers,
+  };
 }
 
 function mergeHead(current: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {

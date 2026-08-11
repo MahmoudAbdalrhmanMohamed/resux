@@ -1040,7 +1040,7 @@ defineClientEnhancement("imported-helper", async (target) => {
     expect(manifest.routeRules["/__resux/route"].cache).toBe(false);
     expect(manifest.runtimeConfig.public.securityHeaders).toBe(true);
     expect(manifest.runtimeConfig.public.performanceModule.assetMaxAge).toBe(120);
-    expect(manifestJson.routeRules["/__resux/runtime-client.mjs"].cache).toEqual({ maxAge: 120 });
+    expect(manifestJson.routeRules["/__resux/runtime-client.mjs"].cache).toBe(false);
   }, 20000);
 
   it("runs tree-shakable UI, icon, and font module subpaths", async () => {

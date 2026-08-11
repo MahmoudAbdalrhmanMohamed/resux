@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { ResuxHooks } from "../src/core/hooks.js";
 import {
+  RESUX_HANDLER_MODULES_PATH,
   RESUX_RUNTIME_CLIENT_CACHE_CONTROL,
   RESUX_RUNTIME_CLIENT_PATH,
+  RESUX_VUE_ISLAND_MODULES_PATH,
   ResuxModuleContainer,
 } from "../src/core/module-container.js";
 
@@ -15,12 +17,16 @@ function createModuleContext(config: Record<string, unknown>) {
   );
 }
 
-describe("runtime client cache coherence", () => {
-  it("prevents modules from long-caching the stable runtime-client URL", () => {
+describe("resumability client asset cache coherence", () => {
+  it.each([
+    RESUX_RUNTIME_CLIENT_PATH,
+    RESUX_HANDLER_MODULES_PATH,
+    RESUX_VUE_ISLAND_MODULES_PATH,
+  ])("prevents modules from long-caching stable resumability asset %s", (assetPath) => {
     const config: Record<string, unknown> = {};
     const context = createModuleContext(config);
 
-    context.addRouteRule(RESUX_RUNTIME_CLIENT_PATH, {
+    context.addRouteRule(assetPath, {
       cache: { maxAge: 31_536_000 },
       headers: {
         "Cache-Control": "public, max-age=31536000, immutable",
@@ -29,7 +35,7 @@ describe("runtime client cache coherence", () => {
     });
 
     const routeRules = config.routeRules as Record<string, Record<string, unknown>>;
-    const rule = routeRules[RESUX_RUNTIME_CLIENT_PATH];
+    const rule = routeRules[assetPath];
     expect(rule?.cache).toBe(false);
     expect(rule?.headers).toEqual({
       "x-resux-test": "preserved",
@@ -37,15 +43,15 @@ describe("runtime client cache coherence", () => {
     });
   });
 
-  it("keeps cache policies for other generated assets unchanged", () => {
+  it("keeps cache policies for independently cacheable generated assets unchanged", () => {
     const config: Record<string, unknown> = {};
     const context = createModuleContext(config);
 
-    context.addRouteRule("/__resux/handlers/**", {
+    context.addRouteRule("/__resux/image", {
       cache: { maxAge: 31_536_000 },
     });
 
     const routeRules = config.routeRules as Record<string, Record<string, unknown>>;
-    expect(routeRules["/__resux/handlers/**"]?.cache).toEqual({ maxAge: 31_536_000 });
+    expect(routeRules["/__resux/image"]?.cache).toEqual({ maxAge: 31_536_000 });
   });
 });

@@ -61,7 +61,44 @@ runtime = replaceExact(
 );
 await writeFile(runtimePath, runtime, "utf8");
 
-const testSource = `import { readFile } from "node:fs/promises";\nimport { describe, expect, it } from "vitest";\nimport { renderDocument, type RenderResult } from "resuxjs/runtime";\n\ndescribe("client asset cache regressions", () => {\n  it("bootstraps the runtime with the resumability cache revision", () => {\n    const result: RenderResult = {\n      html: "<main>ok</main>",\n      payload: {\n        route: { path: "/", params: {}, query: {} },\n        scopes: {},\n        modules: {}\n      },\n      head: {}\n    };\n\n    const html = renderDocument(result);\n    expect(html).toContain('/__resux/runtime-client.mjs?v=20260811-1');\n  });\n\n  it("rewrites generated client imports and handler URLs to the same revision", async () => {\n    const compilerSource = await readFile(new URL("../src/compiler/index.ts", import.meta.url), "utf8");\n    expect(compilerSource).toContain('CLIENT_RUNTIME_IMPORT = \\`/__resux/runtime-client.mjs?v=\\${CLIENT_ASSET_CACHE_REVISION}\\`');\n    expect(compilerSource).toContain('paths: (id: string) => id === "/__resux/runtime-client.mjs" ? CLIENT_RUNTIME_IMPORT : id');\n    expect(compilerSource).toContain('revisionClientAsset(\\`/__resux/handlers/\\${component.id}.mjs\\`)');\n  });\n\n  it("does not immutable-cache stable resumability JavaScript endpoints", async () => {\n    const compilerSource = await readFile(new URL("../src/compiler/index.ts", import.meta.url), "utf8");\n    expect(compilerSource).toContain('resux.addRouteRule("/__resux/runtime-client.mjs", { cache: false })');\n    expect(compilerSource).toContain('resux.addRouteRule("/__resux/handlers/**", { cache: false })');\n    expect(compilerSource).toContain('resux.addRouteRule("/__resux/vue-islands/**", { cache: false })');\n  });\n});\n`;
+const testSource = [
+  'import { readFile } from "node:fs/promises";',
+  'import { describe, expect, it } from "vitest";',
+  'import { renderDocument, type RenderResult } from "resuxjs/runtime";',
+  '',
+  'describe("client asset cache regressions", () => {',
+  '  it("bootstraps the runtime with the resumability cache revision", () => {',
+  '    const result: RenderResult = {',
+  '      html: "<main>ok</main>",',
+  '      payload: {',
+  '        route: { path: "/", params: {}, query: {} },',
+  '        scopes: {},',
+  '        modules: {}',
+  '      },',
+  '      head: {}',
+  '    };',
+  '',
+  '    const html = renderDocument(result);',
+  '    expect(html).toContain("/__resux/runtime-client.mjs?v=20260811-1");',
+  '  });',
+  '',
+  '  it("rewrites generated client imports and handler URLs to the same revision", async () => {',
+  '    const compilerSource = await readFile(new URL("../src/compiler/index.ts", import.meta.url), "utf8");',
+  '    expect(compilerSource).toContain("CLIENT_RUNTIME_IMPORT");',
+  '    expect(compilerSource).toContain("paths: (id: string) => id === \\"/__resux/runtime-client.mjs\\" ? CLIENT_RUNTIME_IMPORT : id");',
+  '    expect(compilerSource).toContain("revisionClientAsset(");',
+  '    expect(compilerSource).toContain("/__resux/handlers/");',
+  '  });',
+  '',
+  '  it("does not immutable-cache stable resumability JavaScript endpoints", async () => {',
+  '    const compilerSource = await readFile(new URL("../src/compiler/index.ts", import.meta.url), "utf8");',
+  '    expect(compilerSource).toContain("resux.addRouteRule(\\\"/__resux/runtime-client.mjs\\\", { cache: false })");',
+  '    expect(compilerSource).toContain("resux.addRouteRule(\\\"/__resux/handlers/**\\\", { cache: false })");',
+  '    expect(compilerSource).toContain("resux.addRouteRule(\\\"/__resux/vue-islands/**\\\", { cache: false })");',
+  '  });',
+  '});',
+  ''
+].join("\n");
 await writeFile(testPath, testSource, "utf8");
 
 console.log("Applied production resumability cache fix.");

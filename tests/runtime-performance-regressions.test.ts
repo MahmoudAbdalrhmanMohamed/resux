@@ -50,4 +50,14 @@ describe("runtime performance regressions", () => {
     expect(source).toContain("routePayloadRequests.get(routePath) === request");
     expect(uncachedSource).not.toContain("routePayloadCache.set(routePath");
   });
+
+  it("scans client enhancements once per page-finish lifecycle instead of repeatedly during boot", () => {
+    const source = getClientRuntimeSource();
+    const documentScans = source.match(/void scanClientEnhancements\(document\);/g) ?? [];
+
+    expect(source).toContain('document.addEventListener("resux:page:finish", () => {');
+    expect(documentScans).toHaveLength(1);
+    expect(source).not.toContain("void scanClientEnhancements(root);");
+    expect(source).not.toContain("queueMicrotask(() => {\n    void scanClientEnhancements(document);");
+  });
 });

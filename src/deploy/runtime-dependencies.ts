@@ -1,5 +1,5 @@
-import { cp, mkdir, rm } from "node:fs/promises";
-import { createRequire } from "node:module";
+import { cp, mkdir, readFile, readdir, rm } from "node:fs/promises";
+import { builtinModules, createRequire } from "node:module";
 import path from "node:path";
 import { pathExists, readJsonRecord } from "./common.js";
 
@@ -8,6 +8,13 @@ interface PackageRecord extends Record<string, unknown> {
   dependencies?: unknown;
   optionalDependencies?: unknown;
 }
+
+const nodeBuiltins = new Set(
+  builtinModules.flatMap((name) => [
+    name,
+    name.startsWith("node:") ? name.slice(5) : `node:${name}`,
+  ]),
+);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -22,6 +29,76 @@ function runtimeDependencyNames(value: unknown): string[] {
 
 function dependencyTargetPath(runtimeRoot: string, packageName: string): string {
   return path.join(runtimeRoot, "node_modules", ...packageName.split("/"));
+}
+
+function packageNameFromSpecifier(specifier: string): string | null {
+  if (
+    !specifier
+    || specifier.startsWith(".")
+    || specifier.startsWith("/")
+    || specifier.startsWith("#")
+    || specifier.startsWith("data:")
+    || specifier.startsWith("file:")
+    || nodeBuiltins.has(specifier)
+  ) {
+    return null;
+  }
+
+  if (specifier.startsWith("@")) {
+    const [scope, name] = specifier.split("/");
+    return scope && name ? `${scope}/${name}` : null;
+  }
+
+  const packageName = specifier.split("/")[0] ?? "";
+  return packageName && !nodeBuiltins.has(packageName) ? packageName : null;
+}
+
+async function walkRuntimeModuleFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+  const files: string[] = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await walkRuntimeModuleFiles(fullPath)));
+      continue;
+    }
+    if (entry.isFile() && /\.(?:mjs|cjs|js)$/.test(entry.name)) {
+      files.push(fullPath);
+    }
+  }
+
+  return files;
+}
+
+export async function collectServerRuntimeDependencyNames(
+  serverRoot: string,
+): Promise<string[]> {
+  if (!(await pathExists(serverRoot))) {
+    return [];
+  }
+
+  const dependencyNames = new Set<string>();
+  const patterns = [
+    /\b(?:import|export)\s+[\s\S]*?\sfrom\s*["']([^"']+)["']/g,
+    /\bimport\s*["']([^"']+)["']/g,
+    /\bimport\(\s*["']([^"']+)["']\s*\)/g,
+  ];
+
+  for (const file of await walkRuntimeModuleFiles(serverRoot)) {
+    const source = await readFile(file, "utf8");
+    for (const pattern of patterns) {
+      pattern.lastIndex = 0;
+      for (let match = pattern.exec(source); match; match = pattern.exec(source)) {
+        const packageName = packageNameFromSpecifier(match[1] ?? "");
+        if (packageName && packageName !== "resuxjs" && packageName !== "resux") {
+          dependencyNames.add(packageName);
+        }
+      }
+    }
+  }
+
+  return [...dependencyNames].sort();
 }
 
 function resolveResuxPackageRequire(
@@ -234,4 +311,22 @@ export async function ensureRuntimeDependencyTrees(
       consumerLabel,
     );
   }
+}
+
+export async function ensureServerRuntimeDependencyTrees(
+  appRoot: string,
+  serverRoot: string,
+  runtimeRoots: string[],
+  consumerLabel: string,
+): Promise<string[]> {
+  const dependencies = await collectServerRuntimeDependencyNames(serverRoot);
+  for (const dependency of dependencies) {
+    await ensureRuntimeDependencyTrees(
+      appRoot,
+      runtimeRoots,
+      dependency,
+      `${consumerLabel} server runtime`,
+    );
+  }
+  return dependencies;
 }

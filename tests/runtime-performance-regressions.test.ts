@@ -25,4 +25,29 @@ describe("runtime performance regressions", () => {
       expect(source).toContain(`eventName === "${eventName}"`);
     }
   });
+
+  it("shares an in-flight route payload request across prefetch and navigation", () => {
+    const source = getClientRuntimeSource();
+
+    expect(source).toContain("const routePayloadRequests = new Map();");
+    expect(source).toContain("routePayloadRequests.has(routePath)");
+    expect(source).toContain("routePayloadRequests.set(routePath, request);");
+    expect(source).toContain("routePayloadRequests.delete(routePath);");
+    expect(source).toContain("return routePayloadRequests.get(routePath);");
+  });
+
+  it("does not let stale in-flight payloads repopulate the cache after dev invalidation", () => {
+    const source = getClientRuntimeSource();
+    const uncachedStart = source.indexOf("async function fetchRoutePayloadUncached(routePath)");
+    const uncachedEnd = source.indexOf("function applyHtmlAttrs(attrs)", uncachedStart);
+    const uncachedSource = source.slice(uncachedStart, uncachedEnd);
+
+    expect(source).toContain("let routePayloadGeneration = 0;");
+    expect(source).toContain("routePayloadGeneration += 1;");
+    expect(source).toContain("routePayloadRequests.clear();");
+    expect(source).toContain("const generation = routePayloadGeneration;");
+    expect(source).toContain("generation !== routePayloadGeneration");
+    expect(source).toContain("routePayloadRequests.get(routePath) === request");
+    expect(uncachedSource).not.toContain("routePayloadCache.set(routePath");
+  });
 });

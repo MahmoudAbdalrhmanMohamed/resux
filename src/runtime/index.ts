@@ -7600,6 +7600,8 @@ if (typeof globalThis !== "undefined") {
 }
 
 const routePayloadCache = new Map();
+const routePayloadRequests = new Map();
+let routePayloadGeneration = 0;
 const mountedVueIslands = new Map();
 const pendingAsyncDataControllers = globalThis.__RESUX_PENDING_ASYNC_DATA_CONTROLLERS__ ||= new Set();
 let devImportRevision = 0;
@@ -13307,7 +13309,9 @@ function clearScopeCacheExcept(preservedScopeIds) {
 
 async function applyDevUpdate(payload = {}) {
   devImportRevision = Number(payload.revision ?? Date.now());
+  routePayloadGeneration += 1;
   routePayloadCache.clear();
+  routePayloadRequests.clear();
   await hotUpdateActiveScopes();
 }
 
@@ -13410,7 +13414,7 @@ async function prefetchNavigationTarget(event) {
     ? event.target.closest("a[href]")
     : null;
   const routePath = getPrefetchPath(anchor, event.target);
-  if (!routePath || routePayloadCache.has(routePath)) {
+  if (!routePath || routePayloadCache.has(routePath) || routePayloadRequests.has(routePath)) {
     return;
   }
 
@@ -13460,7 +13464,31 @@ async function fetchRoutePayload(routePath) {
   if (routePayloadCache.has(routePath)) {
     return routePayloadCache.get(routePath);
   }
+  if (routePayloadRequests.has(routePath)) {
+    return routePayloadRequests.get(routePath);
+  }
 
+  const generation = routePayloadGeneration;
+  const request = fetchRoutePayloadUncached(routePath);
+  routePayloadRequests.set(routePath, request);
+  try {
+    const result = await request;
+    if (generation !== routePayloadGeneration) {
+      if (routePayloadRequests.get(routePath) === request) {
+        routePayloadRequests.delete(routePath);
+      }
+      return fetchRoutePayload(routePath);
+    }
+    routePayloadCache.set(routePath, result);
+    return result;
+  } finally {
+    if (routePayloadRequests.get(routePath) === request) {
+      routePayloadRequests.delete(routePath);
+    }
+  }
+}
+
+async function fetchRoutePayloadUncached(routePath) {
   const isStatic = typeof window !== "undefined" && window["__RESUX_STATIC__"];
   const url = isStatic
     ? "/__resux/route/payloads" + (routePath === "/" ? "/index.json" : routePath.replace(/\/$/, "") + ".json")
@@ -13476,9 +13504,7 @@ async function fetchRoutePayload(routePath) {
     throw new Error("Route payload request failed: " + response.status);
   }
 
-  const result = await response.json();
-  routePayloadCache.set(routePath, result);
-  return result;
+  return response.json();
 }
 
 function applyHtmlAttrs(attrs) {

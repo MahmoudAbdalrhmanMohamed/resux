@@ -1036,7 +1036,7 @@ defineClientEnhancement("imported-helper", async (target) => {
 
     expect(manifest.routeRules["/**"].headers["x-app"]).toBe("resux");
     expect(manifest.routeRules["/**"].headers["content-security-policy"]).toBe("default-src 'self'");
-    expect(manifest.routeRules["/__resux/handlers/**"].cache).toEqual({ maxAge: 120 });
+    expect(manifest.routeRules["/__resux/handlers/**"].cache).toBe(false);
     expect(manifest.routeRules["/__resux/route"].cache).toBe(false);
     expect(manifest.runtimeConfig.public.securityHeaders).toBe(true);
     expect(manifest.runtimeConfig.public.performanceModule.assetMaxAge).toBe(120);

@@ -3,7 +3,15 @@ import type { ResuxHooks, ResuxHookName, ResuxHookPayloads } from "./hooks.js";
 export type ResuxSupportMode = "all" | "server" | "client";
 
 export const RESUX_RUNTIME_CLIENT_PATH = "/__resux/runtime-client.mjs";
+export const RESUX_HANDLER_MODULES_PATH = "/__resux/handlers/**";
+export const RESUX_VUE_ISLAND_MODULES_PATH = "/__resux/vue-islands/**";
 export const RESUX_RUNTIME_CLIENT_CACHE_CONTROL = "no-cache, no-store, must-revalidate";
+
+const RESUX_STABLE_RESUMABILITY_ASSET_PATHS = new Set([
+  RESUX_RUNTIME_CLIENT_PATH,
+  RESUX_HANDLER_MODULES_PATH,
+  RESUX_VUE_ISLAND_MODULES_PATH,
+]);
 
 export interface ResuxTemplateInput {
   filename: string;
@@ -243,7 +251,7 @@ function mergeRouteRule(
     ...(isObject(next.headers) ? next.headers : {}),
   };
 
-  if (routePath === RESUX_RUNTIME_CLIENT_PATH) {
+  if (RESUX_STABLE_RESUMABILITY_ASSET_PATHS.has(routePath)) {
     for (const key of Object.keys(headers)) {
       if (key.toLowerCase() === "cache-control") {
         delete headers[key];

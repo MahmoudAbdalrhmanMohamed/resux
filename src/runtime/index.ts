@@ -10277,6 +10277,12 @@ function shouldCaptureDelegatedEvent(eventName) {
     || eventName === "pointerleave"
     || eventName === "load"
     || eventName === "error"
+    || eventName === "loadstart"
+    || eventName === "loadedmetadata"
+    || eventName === "loadeddata"
+    || eventName === "canplay"
+    || eventName === "lazy-load-start"
+    || eventName === "lazy-load-complete"
     || eventName === "invalid"
   );
 }
@@ -10347,12 +10353,6 @@ function installResux() {
   document.addEventListener("canplay", handleManagedVideoReady, true);
   document.addEventListener("play", handleManagedVideoPlaybackState, true);
   document.addEventListener("pause", handleManagedVideoPlaybackState, true);
-  for (const eventName of ["input", "change", "submit", "keydown", "keyup", "keypress", "mousedown", "mouseup", "blur", "focusout"]) {
-    registerDelegatedEvent(eventName, false);
-  }
-  for (const eventName of ["load", "error", "loadstart", "loadedmetadata", "loadeddata", "canplay", "lazy-load-start", "lazy-load-complete"]) {
-    registerDelegatedEvent(eventName, true);
-  }
   registerDelegatedEventsFromDom(document);
   document.addEventListener("resux:page:finish", () => {
     void scanClientEnhancements(document);

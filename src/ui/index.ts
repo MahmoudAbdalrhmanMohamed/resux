@@ -11,7 +11,7 @@ export interface ResuxUiModuleOptions {
   };
 }
 
-export function defineUiTokens(tokens: Record<string, unknown>): Record<string, unknown> {
+export function defineUiTokens<T extends Record<string, unknown>>(tokens: T): T {
   return tokens;
 }
 
@@ -34,7 +34,11 @@ export function useAnimate(
   target: { value: HTMLElement | null } | HTMLElement | null,
   options: AnimateOptions = {}
 ) {
-  const element = target && "value" in target ? target.value : target;
+  const element = target && "animate" in target && typeof target.animate === "function"
+    ? target
+    : target && "value" in target
+      ? target.value
+      : null;
   if (!element || typeof window === "undefined") return null;
 
   if (isReducedMotion()) return null;

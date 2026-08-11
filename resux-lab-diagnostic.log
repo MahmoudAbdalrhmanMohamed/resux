@@ -2,7 +2,7 @@
 Cloning into '/tmp/resux-lab'...
 npm warn deprecated glob@10.5.0: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
 
-added 431 packages, and audited 433 packages in 6s
+added 431 packages, and audited 433 packages in 8s
 
 94 packages are looking for funding
   run `npm fund` for details
@@ -17,7 +17,7 @@ To address all issues (including breaking changes), run:
 
 Run `npm audit` for details.
 
-removed 299 packages, changed 1 package, and audited 135 packages in 601ms
+removed 299 packages, changed 1 package, and audited 135 packages in 776ms
 
 33 packages are looking for funding
   run `npm fund` for details
@@ -36,7 +36,7 @@ Browserslist: caniuse-lite is outdated. Please run:
 
 Rebuilding...
 
-Done in 393ms.
+Done in 480ms.
 Tailwind build (minified) assets/css/tailwind.css -> public/tailwind.css
 resux build client viteConfig: {
   "root": "/tmp/resux-lab",
@@ -270,7 +270,7 @@ Resux preview server running at http://localhost:4010
 {"html":"<div class=\"min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.18),_transparent_32rem),radial-gradient(circle_at_top_right,_rgba(168,85,247,0.18),_transparent_30rem)]\"><header class=\"shell py-6\"><nav class=\"panel flex flex-wrap items-center justify-between gap-3 px-5 py-4\"><a href=\"/\" class=\"flex items-center gap-3 font-bold text-white\"><span class=\"flex h-10 w-10 items-center justify-center rounded-2xl bg-cyan-300 text-slate-950\">R</span><span>Resux Lab Bench</span></a><div class=\"flex flex-wrap gap-2 text-sm\"><a href=\"/state\" class=\"badge hover:bg-white/20\">State</a><a href=\"/forms\" class=\"badge hover:bg-white/20\">Forms</a><a href=\"/async\" class=\"badge hover:bg-white/20\">Async</a><a href=\"/routes\" class=\"badge hover:bg-white/20\">Routes</a><a href=\"/media\" class=\"badge hover:bg-white/20\">Media</a><a href=\"/swiper\" class=\"badge hover:bg-white/20\">Swiper</a><a href=\"/performance\" class=\"badge hover:bg-white/20\">Performance</a></div></nav></header><div data-rx-loading-indicator=\"true\" hidden data-state=\"idle\" aria-live=\"polite\" aria-busy=\"false\" data-duration=\"1700\" data-throttle=\"0\" data-estimated-progress=\"default\" style=\"--resux-loader-height: 4px; --resux-loader-color: #22d3ee; --resux-loader-error-color: #f97316\"><div class=\"rx-loading-bar\" role=\"progressbar\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"0\" aria-valuetext=\"Idle\"><span class=\"rx-loading-progress\"></span></div></div><main class=\"shell pb-16\"><span data-rx-page=\"\"><section class=\"grid gap-6 lg:grid-cols-[1fr_22rem]\"><div class=\"panel p-8\"><p class=\"text-sm font-bold uppercase tracking-[0.35em] text-cyan-200\">Resumable state</p><h1 class=\"mt-4 text-4xl font-black text-white\">Counter: <span data-rx-text=\"s1:b0\">0</span></h1><p class=\"mt-3 text-slate-300\">Step: <span data-rx-text=\"s1:b1\">1</span>. <span data-rx-text=\"s1:b2\">First click loads this page handler chunk.</span></p><div class=\"mt-8 flex flex-wrap gap-3\"><button class=\"btn-primary\" data-rx-on-click=\"s1:m44:increment\">Increment</button><button class=\"btn-secondary\" data-rx-on-click=\"s1:m44:decrement\">Decrement</button><button class=\"btn-secondary\" data-rx-on-click=\"s1:m44:biggerStep\">Bigger step</button><button class=\"btn-secondary\" data-rx-on-click=\"s1:m44:reset\">Reset</button></div></div><article class=\"panel p-5\"><div class=\"flex items-start justify-between gap-4\"><div><p class=\"text-xs font-semibold uppercase tracking-[0.25em] text-cyan-200\"><span data-rx-text=\"s2:b0\">Manual QA</span></p><h3 class=\"mt-2 text-xl font-bold text-white\"><span data-rx-text=\"s2:b1\">What to inspect</span></h3></div><span class=\"badge\"><span data-rx-text=\"s2:b2\">interactive</span></span></div><p class=\"mt-4 text-sm leading-7 text-slate-300\">Open DevTools Network. On first interaction, Resux should load the handler chunk lazily, then patch only marked bindings.</p></article></section></span></main></div>","payload":{"route":{"path":"/state","params":{},"query":{},"origin":"http://127.0.0.1:4010","userAgent":"curl/8.5.0"},"scopes":{"s0":{"id":"s0","moduleId":"m48","props":{},"state":{},"globalStateKeys":[],"asyncData":{}},"s1":{"id":"s1","moduleId":"m44","props":{},"state":{"lab-count":0,"lab-step":1,"lab-message":"First click loads this page handler chunk."},"globalStateKeys":[],"asyncData":{}},"s2":{"id":"s2","moduleId":"m1","props":{"title":"What to inspect","label":"Manual QA","status":"interactive"},"state":{},"globalStateKeys":[],"asyncData":{}}},"globalState":{},"modules":{"m0":"/__resux/handlers/m0.mjs","m1":"/__resux/handlers/m1.mjs","m2":"/__resux/handlers/m2.mjs","m3":"/__resux/handlers/m3.mjs","m4":"/__resux/handlers/m4.mjs","m5":"/__resux/handlers/m5.mjs","m6":"/__resux/handlers/m6.mjs","m7":"/__resux/handlers/m7.mjs","m8":"/__resux/handlers/m8.mjs","m9":"/__resux/handlers/m9.mjs","m10":"/__resux/handlers/m10.mjs","m11":"/__resux/handlers/m11.mjs","m12":"/__resux/handlers/m12.mjs","m13":"/__resux/handlers/m13.mjs","m14":"/__resux/handlers/m14.mjs","m15":"/__resux/handlers/m15.mjs","m16":"/__resux/handlers/m16.mjs","m17":"/__resux/handlers/m17.mjs","m18":"/__resux/handlers/m18.mjs","m19":"/__resux/handlers/m19.mjs","m20":"/__resux/handlers/m20.mjs","m21":"/__resux/handlers/m21.mjs","m22":"/__resux/handlers/m22.mjs","m23":"/__resux/handlers/m23.mjs","m24":"/__resux/handlers/m24.mjs","m25":"/__resux/handlers/m25.mjs","m26":"/__resux/handlers/m26.mjs","m27":"/__resux/handlers/m27.mjs","m28":"/__resux/handlers/m28.mjs","m29":"/__resux/handlers/m29.mjs","m30":"/__resux/handlers/m30.mjs","m31":"/__resux/handlers/m31.mjs","m32":"/__resux/handlers/m32.mjs","m33":"/__resux/handlers/m33.mjs","m34":"/__resux/handlers/m34.mjs","m35":"/__resux/handlers/m35.mjs","m36":"/__resux/handlers/m36.mjs","m37":"/__resux/handlers/m37.mjs","m38":"/__resux/handlers/m38.mjs","m39":"/__resux/handlers/m39.mjs","m40":"/__resux/handlers/m40.mjs","m4
 === /__resux/route?path=%2Fmedia ===
 Request failed: ReferenceError: entry is not defined
-    at Object.__rx_expr_6 (file:///tmp/resux-lab/.resux/server-bundle/index.mjs?t=1786452007871.34:1:193359)
+    at Object.__rx_expr_6 (file:///tmp/resux-lab/.resux/server-bundle/index.mjs?t=1786452459978.7393:1:193359)
     at evaluateExpression (file:///home/runner/work/resux/resux/dist/runtime/index.js:5455:50)
     at renderTemplateNodeAsync (file:///home/runner/work/resux/resux/dist/runtime/index.js:2664:26)
     at renderTemplateNodesAsync (file:///home/runner/work/resux/resux/dist/runtime/index.js:2642:23)

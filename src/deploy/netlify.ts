@@ -6,6 +6,7 @@ import {
   ensureResuxServerPayload,
   pathExists,
 } from "./common.js";
+import { ensureResuxProductionReport } from "./production-report.js";
 import { ensureRuntimeDependencyTrees } from "./runtime-dependencies.js";
 import type {
   DeployBuildContext,
@@ -51,6 +52,7 @@ async function postBuild(context: DeployBuildContext): Promise<void> {
     path.join(functionRoot, ".resux", "server")
   );
   await ensureResuxServerPayload(context.appRoot, payloadTargets);
+  await ensureResuxProductionReport(context.appRoot, functionRoots);
   await ensureRuntimeDependencyTrees(
     context.appRoot,
     functionRoots,

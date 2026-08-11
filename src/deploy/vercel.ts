@@ -11,7 +11,10 @@ import {
 } from "./common.js";
 import { ensureResuxFrameworkRuntime } from "./framework-runtime.js";
 import { ensureResuxProductionReport } from "./production-report.js";
-import { ensureRuntimeDependencyTrees } from "./runtime-dependencies.js";
+import {
+  ensureRuntimeDependencyTrees,
+  ensureServerRuntimeDependencyTrees,
+} from "./runtime-dependencies.js";
 import type {
   DeployBuildContext,
   DeployDetectionContext,
@@ -223,6 +226,12 @@ async function postBuild(context: DeployBuildContext): Promise<void> {
   );
   await ensureResuxProductionReport(context.appRoot, functionRoots);
   await ensureResuxFrameworkRuntime(context.appRoot, functionRoots);
+  await ensureServerRuntimeDependencyTrees(
+    context.appRoot,
+    path.join(context.appRoot, ".resux", "server"),
+    functionRoots,
+    "Resux Vercel",
+  );
   await ensureRuntimeDependencyTrees(
     context.appRoot,
     functionRoots,

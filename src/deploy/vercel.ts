@@ -9,6 +9,7 @@ import {
   readJsonRecord,
   writeJson,
 } from "./common.js";
+import { ensureResuxProductionReport } from "./production-report.js";
 import { ensureRuntimeDependencyTrees } from "./runtime-dependencies.js";
 import type {
   DeployBuildContext,
@@ -219,6 +220,7 @@ async function postBuild(context: DeployBuildContext): Promise<void> {
       target: path.join(root, ".resux", "client"),
     })),
   );
+  await ensureResuxProductionReport(context.appRoot, functionRoots);
   await ensureRuntimeDependencyTrees(
     context.appRoot,
     functionRoots,

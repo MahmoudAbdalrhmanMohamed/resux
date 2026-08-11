@@ -22,18 +22,22 @@ jobs:
 
           path = Path("src/runtime/index.ts")
           source = path.read_text()
-          old = '''    || eventName === "load"
-    || eventName === "error"
-    || eventName === "invalid"'''
-          new = '''    || eventName === "load"
-    || eventName === "error"
-    || eventName === "loadstart"
-    || eventName === "loadedmetadata"
-    || eventName === "loadeddata"
-    || eventName === "canplay"
-    || eventName === "lazy-load-start"
-    || eventName === "lazy-load-complete"
-    || eventName === "invalid"'''
+          old = (
+              '    || eventName === "load"\n'
+              '    || eventName === "error"\n'
+              '    || eventName === "invalid"'
+          )
+          new = (
+              '    || eventName === "load"\n'
+              '    || eventName === "error"\n'
+              '    || eventName === "loadstart"\n'
+              '    || eventName === "loadedmetadata"\n'
+              '    || eventName === "loadeddata"\n'
+              '    || eventName === "canplay"\n'
+              '    || eventName === "lazy-load-start"\n'
+              '    || eventName === "lazy-load-complete"\n'
+              '    || eventName === "invalid"'
+          )
           if old not in source:
               raise SystemExit("delegated capture anchor not found")
           path.write_text(source.replace(old, new, 1))
@@ -46,5 +50,3 @@ jobs:
           git add src/runtime/index.ts .github/workflows/fix-pr23-delegated-capture.yml
           git commit -m "fix(runtime): preserve delegated media capture semantics"
           git push
-
-# retrigger

@@ -24,6 +24,28 @@ async function fileExists(file: string): Promise<boolean> {
   }
 }
 
+async function scaffoldMinimalResuxRuntime(root: string): Promise<void> {
+  const frameworkRoot = path.join(root, "node_modules", "resuxjs");
+  await mkdir(path.join(frameworkRoot, "dist"), { recursive: true });
+  await writeFile(
+    path.join(frameworkRoot, "package.json"),
+    JSON.stringify({
+      name: "resuxjs",
+      version: "1.0.0",
+      type: "module",
+      main: "./dist/index.js",
+      exports: {
+        ".": "./dist/index.js",
+        "./node": "./dist/node.js",
+        "./package.json": "./package.json",
+      },
+    }, null, 2),
+    "utf8",
+  );
+  await writeFile(path.join(frameworkRoot, "dist", "index.js"), "export const runtime = true;\n", "utf8");
+  await writeFile(path.join(frameworkRoot, "dist", "node.js"), "export const nodeRuntime = true;\n", "utf8");
+}
+
 async function scaffoldVercelBuildLayout(root: string): Promise<string> {
   const functionRoot = path.join(root, ".vercel", "output", "functions", "[...].func");
   await mkdir(path.join(root, ".vercel", "output", "static"), { recursive: true });
@@ -39,6 +61,7 @@ async function scaffoldVercelBuildLayout(root: string): Promise<string> {
     JSON.stringify({ status: "pass", signature: "hmac-sha256:test" }, null, 2),
     "utf8",
   );
+  await scaffoldMinimalResuxRuntime(root);
 
   return functionRoot;
 }

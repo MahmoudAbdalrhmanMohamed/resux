@@ -9,6 +9,7 @@ import {
   readJsonRecord,
   writeJson,
 } from "./common.js";
+import { ensureResuxFrameworkRuntime } from "./framework-runtime.js";
 import { ensureResuxProductionReport } from "./production-report.js";
 import { ensureRuntimeDependencyTrees } from "./runtime-dependencies.js";
 import type {
@@ -221,6 +222,7 @@ async function postBuild(context: DeployBuildContext): Promise<void> {
     })),
   );
   await ensureResuxProductionReport(context.appRoot, functionRoots);
+  await ensureResuxFrameworkRuntime(context.appRoot, functionRoots);
   await ensureRuntimeDependencyTrees(
     context.appRoot,
     functionRoots,

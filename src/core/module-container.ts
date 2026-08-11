@@ -100,7 +100,7 @@ export interface ResuxModuleContext {
   addServerPlugin(plugin: string): void;
   addTemplate(template: ResuxTemplateInput): void;
   addTypeTemplate(template: ResuxTypeTemplateInput): void;
-  extendPages(extender: (pages: Array<Record<string, unknown>>) => void | Promise<void>): void;
+  extendPages(extender: PagesExtender): void;
   extendViteConfig(extender: ViteConfigExtender): void;
   extendNitroConfig(extender: NitroConfigExtender): void;
   addVitePlugin(plugin: unknown): void;
@@ -170,7 +170,7 @@ export class ResuxModuleContainer {
       hook: (name, handler) => hooks.hook(name, handler),
       addComponent: (component) => {
         if (typeof component === "string") {
-          this.contributions.components.push({ file: component, mode: "all" });
+          this.contributions.components.push({ file: component });
           return;
         }
         this.contributions.components.push(component);

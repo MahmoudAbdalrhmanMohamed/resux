@@ -1,16 +1,1397 @@
-file:///home/runner/work/resux/resux/scripts/apply-production-resumability-cache-fix.mjs:64
-const testSource = `import { readFile } from "node:fs/promises";\nimport { describe, expect, it } from "vitest";\nimport { renderDocument, type RenderResult } from "resuxjs/runtime";\n\ndescribe("client asset cache regressions", () => {\n  it("bootstraps the runtime with the resumability cache revision", () => {\n    const result: RenderResult = {\n      html: "<main>ok</main>",\n      payload: {\n        route: { path: "/", params: {}, query: {} },\n        scopes: {},\n        modules: {}\n      },\n      head: {}\n    };\n\n    const html = renderDocument(result);\n    expect(html).toContain('/__resux/runtime-client.mjs?v=20260811-1');\n  });\n\n  it("rewrites generated client imports and handler URLs to the same revision", async () => {\n    const compilerSource = await readFile(new URL("../src/compiler/index.ts", import.meta.url), "utf8");\n    expect(compilerSource).toContain('CLIENT_RUNTIME_IMPORT = \\`/__resux/runtime-client.mjs?v=\\${CLIENT_ASSET_CACHE_REVISION}\\`');\n    expect(compilerSource).toContain('paths: (id: string) => id === "/__resux/runtime-client.mjs" ? CLIENT_RUNTIME_IMPORT : id');\n    expect(compilerSource).toContain('revisionClientAsset(\\`/__resux/handlers/\\${component.id}.mjs\\`)');\n  });\n\n  it("does not immutable-cache stable resumability JavaScript endpoints", async () => {\n    const compilerSource = await readFile(new URL("../src/compiler/index.ts", import.meta.url), "utf8");\n    expect(compilerSource).toContain('resux.addRouteRule("/__resux/runtime-client.mjs", { cache: false })');\n    expect(compilerSource).toContain('resux.addRouteRule("/__resux/handlers/**", { cache: false })');\n    expect(compilerSource).toContain('resux.addRouteRule("/__resux/vue-islands/**", { cache: false })');\n  });\n});\n`;
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ^
+Applied production resumability cache fix.
 
-SyntaxError: Invalid or unexpected token
-    at compileSourceTextModule (node:internal/modules/esm/utils:346:16)
-    at ModuleLoader.moduleStrategy (node:internal/modules/esm/translators:110:18)
-    at #translate (node:internal/modules/esm/loader:559:20)
-    at afterLoad (node:internal/modules/esm/loader:612:29)
-    at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:617:12)
-    at #createModuleJob (node:internal/modules/esm/loader:640:36)
-    at #getJobFromResolveResult (node:internal/modules/esm/loader:353:34)
-    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:321:41)
-    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:680:25)
+> resuxjs@0.3.5 typecheck
+> tsc -b && node scripts/prepare-compiler-entry.mjs
 
-Node.js v22.23.1
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.5 [39m[90m/home/runner/work/resux/resux[39m
+
+ [32m✓[39m tests/client-asset-cache-regressions.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mkeeps apiURL relative in browser/client scopes
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mkeeps apiURL relative in browser/client scopes
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mkeeps apiURL relative in browser/client scopes
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible client enhancements immediately when the target is already visible
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible client enhancements immediately when the target is already visible
+[22m[39m[resux:enhancement] registered swiper-carousel
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible client enhancements immediately when the target is already visible
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible client enhancements immediately when the target is already visible
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] found element swiper-carousel trigger=visible
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible client enhancements immediately when the target is already visible
+[22m[39m[resux:enhancement] trigger fired swiper-carousel
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible client enhancements immediately when the target is already visible
+[22m[39m[resux:enhancement] setup complete
+[resux:enhancement] cleanup registered
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports enhancement alias attributes and executes cleanup disposers
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports enhancement alias attributes and executes cleanup disposers
+[22m[39m[resux:enhancement] registered alias-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports enhancement alias attributes and executes cleanup disposers
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports enhancement alias attributes and executes cleanup disposers
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] found element alias-demo trigger=visible
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports enhancement alias attributes and executes cleanup disposers
+[22m[39m[resux:enhancement] trigger fired alias-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports enhancement alias attributes and executes cleanup disposers
+[22m[39m[resux:enhancement] setup complete
+[resux:enhancement] cleanup registered
+
+[90mstdout[2m | tests/compiler.test.ts[2m > [22m[2mroute manifest[2m > [22m[2mmatches catch-all route params from generated manifests
+[22m[39mresux build client viteConfig: {
+  "root": "/tmp/resux-catch-all-1786452853646",
+  "configFile": false,
+  "publicDir": false,
+  "base": "/__resux/",
+  "appType": "custom",
+  "clearScreen": false,
+  "logLevel": "warn",
+  "plugins": [
+    {
+      "name": "vite:vue",
+      "api": {
+        "options": {
+          "isProduction": false,
+          "compiler": null,
+          "customElement": {},
+          "root": "/home/runner/work/resux/resux",
+          "sourceMap": true,
+          "cssDevSourcemap": false
+        },
+        "include": {},
+        "version": "6.0.6"
+      },
+      "resolveId": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "load": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "transform": {}
+    }
+  ],
+  "resolve": {
+    "alias": {
+      "vue": "/home/runner/work/resux/resux/node_modules/vue/dist/vue.cjs.js",
+      "@": "/tmp/resux-catch-all-1786452853646",
+      "~": "/tmp/resux-catch-all-1786452853646"
+    }
+  },
+  "build": {
+    "outDir": "/tmp/resux-catch-all-1786452853646/.resux/client",
+    "emptyOutDir": false,
+    "minify": "oxc",
+    "sourcemap": false,
+    "manifest": false,
+    "rollupOptions": {
+      "input": {
+        "runtime-client": "/tmp/resux-catch-all-1786452853646/.resux/vite-client/runtime-client.mjs",
+        "handlers/m0": "/tmp/resux-catch-all-1786452853646/.resux/vite-client/handlers/m0.mjs"
+      },
+      "preserveEntrySignatures": "strict",
+      "output": {
+        "format": "es",
+        "entryFileNames": "[name].mjs",
+        "chunkFileNames": "chunks/[name]-[hash].mjs",
+        "assetFileNames": "assets/[name]-[hash][extname]"
+      }
+    }
+  }
+}
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible enhancements after IntersectionObserver reports intersection
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible enhancements after IntersectionObserver reports intersection
+[22m[39m[resux:enhancement] registered observed-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible enhancements after IntersectionObserver reports intersection
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible enhancements after IntersectionObserver reports intersection
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] found element observed-demo trigger=visible
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible enhancements after IntersectionObserver reports intersection
+[22m[39m[resux:enhancement] observing visible trigger observed-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible enhancements after IntersectionObserver reports intersection
+[22m[39m[resux:enhancement] trigger fired observed-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible enhancements after IntersectionObserver reports intersection
+[22m[39m[resux:enhancement] setup complete
+
+[90mstdout[2m | tests/compiler.test.ts[2m > [22m[2mroute manifest[2m > [22m[2mgenerates localized routes only when i18n module is enabled
+[22m[39mresux build client viteConfig: {
+  "root": "/tmp/resux-i18n-routes-1786452853952",
+  "configFile": false,
+  "publicDir": false,
+  "base": "/__resux/",
+  "appType": "custom",
+  "clearScreen": false,
+  "logLevel": "warn",
+  "plugins": [
+    {
+      "name": "vite:vue",
+      "api": {
+        "options": {
+          "isProduction": false,
+          "compiler": null,
+          "customElement": {},
+          "root": "/home/runner/work/resux/resux",
+          "sourceMap": true,
+          "cssDevSourcemap": false
+        },
+        "include": {},
+        "version": "6.0.6"
+      },
+      "resolveId": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "load": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "transform": {}
+    }
+  ],
+  "resolve": {
+    "alias": {
+      "vue": "/home/runner/work/resux/resux/node_modules/vue/dist/vue.cjs.js",
+      "@": "/tmp/resux-i18n-routes-1786452853952",
+      "~": "/tmp/resux-i18n-routes-1786452853952"
+    }
+  },
+  "build": {
+    "outDir": "/tmp/resux-i18n-routes-1786452853952/.resux/client",
+    "emptyOutDir": false,
+    "minify": "oxc",
+    "sourcemap": false,
+    "manifest": false,
+    "rollupOptions": {
+      "input": {
+        "runtime-client": "/tmp/resux-i18n-routes-1786452853952/.resux/vite-client/runtime-client.mjs",
+        "handlers/m0": "/tmp/resux-i18n-routes-1786452853952/.resux/vite-client/handlers/m0.mjs",
+        "handlers/m1": "/tmp/resux-i18n-routes-1786452853952/.resux/vite-client/handlers/m1.mjs"
+      },
+      "preserveEntrySignatures": "strict",
+      "output": {
+        "format": "es",
+        "entryFileNames": "[name].mjs",
+        "chunkFileNames": "chunks/[name]-[hash].mjs",
+        "assetFileNames": "assets/[name]-[hash][extname]"
+      }
+    }
+  }
+}
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible enhancements when visibility polling detects an already-visible element
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible enhancements when visibility polling detects an already-visible element
+[22m[39m[resux:enhancement] registered poll-visible-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible enhancements when visibility polling detects an already-visible element
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible enhancements when visibility polling detects an already-visible element
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] found element poll-visible-demo trigger=visible
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible enhancements when visibility polling detects an already-visible element
+[22m[39m[resux:enhancement] observing visible trigger poll-visible-demo
+
+[90mstdout[2m | tests/compiler.test.ts[2m > [22m[2mproject build manifest[2m > [22m[2mdiscovers layouts, middleware, plugins, server handlers, public config, and page meta
+[22m[39mresux build client viteConfig: {
+  "root": "/tmp/resux-build-1786452854592",
+  "configFile": false,
+  "publicDir": false,
+  "base": "/__resux/",
+  "appType": "custom",
+  "clearScreen": false,
+  "logLevel": "warn",
+  "plugins": [
+    {
+      "name": "vite:vue",
+      "api": {
+        "options": {
+          "isProduction": false,
+          "compiler": null,
+          "customElement": {},
+          "root": "/home/runner/work/resux/resux",
+          "sourceMap": true,
+          "cssDevSourcemap": false
+        },
+        "include": {},
+        "version": "6.0.6"
+      },
+      "resolveId": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "load": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "transform": {}
+    }
+  ],
+  "resolve": {
+    "alias": {
+      "vue": "/home/runner/work/resux/resux/node_modules/vue/dist/vue.cjs.js",
+      "@": "/tmp/resux-build-1786452854592",
+      "~": "/tmp/resux-build-1786452854592"
+    }
+  },
+  "build": {
+    "outDir": "/tmp/resux-build-1786452854592/.resux/client",
+    "emptyOutDir": false,
+    "minify": "oxc",
+    "sourcemap": false,
+    "manifest": false,
+    "rollupOptions": {
+      "input": {
+        "runtime-client": "/tmp/resux-build-1786452854592/.resux/vite-client/runtime-client.mjs",
+        "handlers/m0": "/tmp/resux-build-1786452854592/.resux/vite-client/handlers/m0.mjs",
+        "handlers/m1": "/tmp/resux-build-1786452854592/.resux/vite-client/handlers/m1.mjs",
+        "handlers/m2": "/tmp/resux-build-1786452854592/.resux/vite-client/handlers/m2.mjs",
+        "plugins/p0": "/tmp/resux-build-1786452854592/.resux/vite-client/plugins/p0.mjs",
+        "middleware/w0": "/tmp/resux-build-1786452854592/.resux/vite-client/middleware/w0.mjs"
+      },
+      "preserveEntrySignatures": "strict",
+      "output": {
+        "format": "es",
+        "entryFileNames": "[name].mjs",
+        "chunkFileNames": "chunks/[name]-[hash].mjs",
+        "assetFileNames": "assets/[name]-[hash][extname]"
+      }
+    }
+  }
+}
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible enhancements when visibility polling detects an already-visible element
+[22m[39m[resux:enhancement] trigger fired poll-visible-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mactivates visible enhancements when visibility polling detects an already-visible element
+[22m[39m[resux:enhancement] setup complete
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports immediate client enhancement trigger
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports immediate client enhancement trigger
+[22m[39m[resux:enhancement] registered immediate-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports immediate client enhancement trigger
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports immediate client enhancement trigger
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] found element immediate-demo trigger=immediate
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports immediate client enhancement trigger
+[22m[39m[resux:enhancement] trigger fired immediate-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports immediate client enhancement trigger
+[22m[39m[resux:enhancement] setup complete
+
+[90mstdout[2m | tests/compiler.test.ts[2m > [22m[2mproject build manifest[2m > [22m[2mdiscovers plugins and route middleware recursively with stable mode-aware outputs
+[22m[39mresux build client viteConfig: {
+  "root": "/tmp/resux-support-files-1786452854953",
+  "configFile": false,
+  "publicDir": false,
+  "base": "/__resux/",
+  "appType": "custom",
+  "clearScreen": false,
+  "logLevel": "warn",
+  "plugins": [
+    {
+      "name": "vite:vue",
+      "api": {
+        "options": {
+          "isProduction": false,
+          "compiler": null,
+          "customElement": {},
+          "root": "/home/runner/work/resux/resux",
+          "sourceMap": true,
+          "cssDevSourcemap": false
+        },
+        "include": {},
+        "version": "6.0.6"
+      },
+      "resolveId": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "load": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "transform": {}
+    }
+  ],
+  "resolve": {
+    "alias": {
+      "vue": "/home/runner/work/resux/resux/node_modules/vue/dist/vue.cjs.js",
+      "@": "/tmp/resux-support-files-1786452854953",
+      "~": "/tmp/resux-support-files-1786452854953"
+    }
+  },
+  "build": {
+    "outDir": "/tmp/resux-support-files-1786452854953/.resux/client",
+    "emptyOutDir": false,
+    "minify": "oxc",
+    "sourcemap": false,
+    "manifest": false,
+    "rollupOptions": {
+      "input": {
+        "runtime-client": "/tmp/resux-support-files-1786452854953/.resux/vite-client/runtime-client.mjs",
+        "handlers/m0": "/tmp/resux-support-files-1786452854953/.resux/vite-client/handlers/m0.mjs",
+        "plugins/p0": "/tmp/resux-support-files-1786452854953/.resux/vite-client/plugins/p0.mjs",
+        "plugins/p1": "/tmp/resux-support-files-1786452854953/.resux/vite-client/plugins/p1.mjs",
+        "plugins/p2": "/tmp/resux-support-files-1786452854953/.resux/vite-client/plugins/p2.mjs",
+        "plugins/p3": "/tmp/resux-support-files-1786452854953/.resux/vite-client/plugins/p3.mjs",
+        "middleware/w0": "/tmp/resux-support-files-1786452854953/.resux/vite-client/middleware/w0.mjs",
+        "middleware/w1": "/tmp/resux-support-files-1786452854953/.resux/vite-client/middleware/w1.mjs",
+        "middleware/w2": "/tmp/resux-support-files-1786452854953/.resux/vite-client/middleware/w2.mjs"
+      },
+      "preserveEntrySignatures": "strict",
+      "output": {
+        "format": "es",
+        "entryFileNames": "[name].mjs",
+        "chunkFileNames": "chunks/[name]-[hash].mjs",
+        "assetFileNames": "assets/[name]-[hash][extname]"
+      }
+    }
+  }
+}
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports page-load client enhancement trigger after window load
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports page-load client enhancement trigger after window load
+[22m[39m[resux:enhancement] registered page-load-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports page-load client enhancement trigger after window load
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports page-load client enhancement trigger after window load
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] found element page-load-demo trigger=page-load
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports page-load client enhancement trigger after window load
+[22m[39m[resux:enhancement] trigger fired page-load-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports page-load client enhancement trigger after window load
+[22m[39m[resux:enhancement] setup complete
+[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/compiler.test.ts[2m > [22m[2mproject build manifest[2m > [22m[2mbuilds client enhancement chunks with __resux asset base paths for preview serving
+[22m[39mresux build client viteConfig: {
+  "root": "/tmp/resux-enhancement-preview-base-1786452855346",
+  "configFile": false,
+  "publicDir": false,
+  "base": "/__resux/",
+  "appType": "custom",
+  "clearScreen": false,
+  "logLevel": "warn",
+  "plugins": [
+    {
+      "name": "vite:vue",
+      "api": {
+        "options": {
+          "isProduction": false,
+          "compiler": null,
+          "customElement": {},
+          "root": "/home/runner/work/resux/resux",
+          "sourceMap": true,
+          "cssDevSourcemap": false
+        },
+        "include": {},
+        "version": "6.0.6"
+      },
+      "resolveId": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "load": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "transform": {}
+    }
+  ],
+  "resolve": {
+    "alias": {
+      "vue": "/home/runner/work/resux/resux/node_modules/vue/dist/vue.cjs.js",
+      "@": "/tmp/resux-enhancement-preview-base-1786452855346",
+      "~": "/tmp/resux-enhancement-preview-base-1786452855346"
+    }
+  },
+  "build": {
+    "outDir": "/tmp/resux-enhancement-preview-base-1786452855346/.resux/client",
+    "emptyOutDir": false,
+    "minify": "oxc",
+    "sourcemap": false,
+    "manifest": false,
+    "rollupOptions": {
+      "input": {
+        "runtime-client": "/tmp/resux-enhancement-preview-base-1786452855346/.resux/vite-client/runtime-client.mjs",
+        "handlers/m0": "/tmp/resux-enhancement-preview-base-1786452855346/.resux/vite-client/handlers/m0.mjs",
+        "plugins/p0": "/tmp/resux-enhancement-preview-base-1786452855346/.resux/vite-client/plugins/p0.mjs"
+      },
+      "preserveEntrySignatures": "strict",
+      "output": {
+        "format": "es",
+        "entryFileNames": "[name].mjs",
+        "chunkFileNames": "chunks/[name]-[hash].mjs",
+        "assetFileNames": "assets/[name]-[hash][extname]"
+      }
+    }
+  }
+}
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mpasses parsed data-resux-options to client enhancements
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mpasses parsed data-resux-options to client enhancements
+[22m[39m[resux:enhancement] registered options-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mpasses parsed data-resux-options to client enhancements
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mpasses parsed data-resux-options to client enhancements
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] found element options-demo trigger=immediate
+
+[90mstdout[2m | tests/compiler.test.ts[2m > [22m[2mproject build manifest[2m > [22m[2mkeeps Resux plugins separate from Nitro plugin auto-discovery folders
+[22m[39mresux build client viteConfig: {
+  "root": "/tmp/resux-nitro-separation-1786452855578",
+  "configFile": false,
+  "publicDir": false,
+  "base": "/__resux/",
+  "appType": "custom",
+  "clearScreen": false,
+  "logLevel": "warn",
+  "plugins": [
+    {
+      "name": "vite:vue",
+      "api": {
+        "options": {
+          "isProduction": false,
+          "compiler": null,
+          "customElement": {},
+          "root": "/home/runner/work/resux/resux",
+          "sourceMap": true,
+          "cssDevSourcemap": false
+        },
+        "include": {},
+        "version": "6.0.6"
+      },
+      "resolveId": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "load": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "transform": {}
+    }
+  ],
+  "resolve": {
+    "alias": {
+      "vue": "/home/runner/work/resux/resux/node_modules/vue/dist/vue.cjs.js",
+      "@": "/tmp/resux-nitro-separation-1786452855578",
+      "~": "/tmp/resux-nitro-separation-1786452855578"
+    }
+  },
+  "build": {
+    "outDir": "/tmp/resux-nitro-separation-1786452855578/.resux/client",
+    "emptyOutDir": false,
+    "minify": "oxc",
+    "sourcemap": false,
+    "manifest": false,
+    "rollupOptions": {
+      "input": {
+        "runtime-client": "/tmp/resux-nitro-separation-1786452855578/.resux/vite-client/runtime-client.mjs",
+        "handlers/m0": "/tmp/resux-nitro-separation-1786452855578/.resux/vite-client/handlers/m0.mjs",
+        "plugins/p0": "/tmp/resux-nitro-separation-1786452855578/.resux/vite-client/plugins/p0.mjs"
+      },
+      "preserveEntrySignatures": "strict",
+      "output": {
+        "format": "es",
+        "entryFileNames": "[name].mjs",
+        "chunkFileNames": "chunks/[name]-[hash].mjs",
+        "assetFileNames": "assets/[name]-[hash][extname]"
+      }
+    }
+  }
+}
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mpasses parsed data-resux-options to client enhancements
+[22m[39m[resux:enhancement] trigger fired options-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mpasses parsed data-resux-options to client enhancements
+[22m[39m[resux:enhancement] setup complete
+
+[90mstdout[2m | tests/compiler.test.ts[2m > [22m[2mproject build manifest[2m > [22m[2mruns configured modules and emits route rules
+[22m[39mresux build client viteConfig: {
+  "root": "/tmp/resux-modules-1786452855696",
+  "configFile": false,
+  "publicDir": false,
+  "base": "/__resux/",
+  "appType": "custom",
+  "clearScreen": false,
+  "logLevel": "warn",
+  "plugins": [
+    {
+      "name": "vite:vue",
+      "api": {
+        "options": {
+          "isProduction": false,
+          "compiler": null,
+          "customElement": {},
+          "root": "/home/runner/work/resux/resux",
+          "sourceMap": true,
+          "cssDevSourcemap": false
+        },
+        "include": {},
+        "version": "6.0.6"
+      },
+      "resolveId": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "load": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "transform": {}
+    }
+  ],
+  "resolve": {
+    "alias": {
+      "vue": "/home/runner/work/resux/resux/node_modules/vue/dist/vue.cjs.js",
+      "@": "/tmp/resux-modules-1786452855696",
+      "~": "/tmp/resux-modules-1786452855696"
+    }
+  },
+  "build": {
+    "outDir": "/tmp/resux-modules-1786452855696/.resux/client",
+    "emptyOutDir": false,
+    "minify": "oxc",
+    "sourcemap": false,
+    "manifest": false,
+    "rollupOptions": {
+      "input": {
+        "runtime-client": "/tmp/resux-modules-1786452855696/.resux/vite-client/runtime-client.mjs",
+        "handlers/m0": "/tmp/resux-modules-1786452855696/.resux/vite-client/handlers/m0.mjs"
+      },
+      "preserveEntrySignatures": "strict",
+      "output": {
+        "format": "es",
+        "entryFileNames": "[name].mjs",
+        "chunkFileNames": "chunks/[name]-[hash].mjs",
+        "assetFileNames": "assets/[name]-[hash][extname]"
+      }
+    }
+  }
+}
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mreports parse errors when data-resux-options contains invalid JSON
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mreports parse errors when data-resux-options contains invalid JSON
+[22m[39m[resux:enhancement] registered options-error-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mreports parse errors when data-resux-options contains invalid JSON
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mreports parse errors when data-resux-options contains invalid JSON
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/compiler.test.ts[2m > [22m[2mproject build manifest[2m > [22m[2mruns built-in module presets
+[22m[39mresux build client viteConfig: {
+  "root": "/tmp/resux-builtin-modules-1786452855962",
+  "configFile": false,
+  "publicDir": false,
+  "base": "/__resux/",
+  "appType": "custom",
+  "clearScreen": false,
+  "logLevel": "warn",
+  "plugins": [
+    {
+      "name": "vite:vue",
+      "api": {
+        "options": {
+          "isProduction": false,
+          "compiler": null,
+          "customElement": {},
+          "root": "/home/runner/work/resux/resux",
+          "sourceMap": true,
+          "cssDevSourcemap": false
+        },
+        "include": {},
+        "version": "6.0.6"
+      },
+      "resolveId": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "load": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "transform": {}
+    }
+  ],
+  "resolve": {
+    "alias": {
+      "vue": "/home/runner/work/resux/resux/node_modules/vue/dist/vue.cjs.js",
+      "@": "/tmp/resux-builtin-modules-1786452855962",
+      "~": "/tmp/resux-builtin-modules-1786452855962"
+    }
+  },
+  "build": {
+    "outDir": "/tmp/resux-builtin-modules-1786452855962/.resux/client",
+    "emptyOutDir": false,
+    "minify": "oxc",
+    "sourcemap": false,
+    "manifest": false,
+    "rollupOptions": {
+      "input": {
+        "runtime-client": "/tmp/resux-builtin-modules-1786452855962/.resux/vite-client/runtime-client.mjs",
+        "handlers/m0": "/tmp/resux-builtin-modules-1786452855962/.resux/vite-client/handlers/m0.mjs"
+      },
+      "preserveEntrySignatures": "strict",
+      "output": {
+        "format": "es",
+        "entryFileNames": "[name].mjs",
+        "chunkFileNames": "chunks/[name]-[hash].mjs",
+        "assetFileNames": "assets/[name]-[hash][extname]"
+      }
+    }
+  }
+}
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mmarks missing client enhancements with friendly errors instead of staying pending
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mmarks missing client enhancements with friendly errors instead of staying pending
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mmarks missing client enhancements with friendly errors instead of staying pending
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] found element missing-enhancement trigger=visible
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports keyboard interaction trigger for client enhancements
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports keyboard interaction trigger for client enhancements
+[22m[39m[resux:enhancement] registered interaction-keyboard-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports keyboard interaction trigger for client enhancements
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports keyboard interaction trigger for client enhancements
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] found element interaction-keyboard-demo trigger=interaction
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports keyboard interaction trigger for client enhancements
+[22m[39m[resux:enhancement] trigger fired interaction-keyboard-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2msupports keyboard interaction trigger for client enhancements
+[22m[39m[resux:enhancement] setup complete
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2memits package loading/loaded/css events when a client package enhancement resolves
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2memits package loading/loaded/css events when a client package enhancement resolves
+[22m[39m[resux:enhancement] registered package-events-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2memits package loading/loaded/css events when a client package enhancement resolves
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2memits package loading/loaded/css events when a client package enhancement resolves
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] found element package-events-demo trigger=immediate
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2memits package loading/loaded/css events when a client package enhancement resolves
+[22m[39m[resux:enhancement] trigger fired package-events-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2memits package loading/loaded/css events when a client package enhancement resolves
+[22m[39m[resux:enhancement] setup complete
+
+[90mstdout[2m | tests/compiler.test.ts[2m > [22m[2mproject build manifest[2m > [22m[2mruns tree-shakable UI, icon, and font module subpaths
+[22m[39mresux build client viteConfig: {
+  "root": "/tmp/resux-ui-modules-1786452856361",
+  "configFile": false,
+  "publicDir": false,
+  "base": "/__resux/",
+  "appType": "custom",
+  "clearScreen": false,
+  "logLevel": "warn",
+  "plugins": [
+    {
+      "name": "vite:vue",
+      "api": {
+        "options": {
+          "isProduction": false,
+          "compiler": null,
+          "customElement": {},
+          "root": "/home/runner/work/resux/resux",
+          "sourceMap": true,
+          "cssDevSourcemap": false
+        },
+        "include": {},
+        "version": "6.0.6"
+      },
+      "resolveId": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "load": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "transform": {}
+    }
+  ],
+  "resolve": {
+    "alias": {
+      "vue": "/home/runner/work/resux/resux/node_modules/vue/dist/vue.cjs.js",
+      "@": "/tmp/resux-ui-modules-1786452856361",
+      "~": "/tmp/resux-ui-modules-1786452856361"
+    }
+  },
+  "build": {
+    "outDir": "/tmp/resux-ui-modules-1786452856361/.resux/client",
+    "emptyOutDir": false,
+    "minify": "oxc",
+    "sourcemap": false,
+    "manifest": false,
+    "rollupOptions": {
+      "input": {
+        "runtime-client": "/tmp/resux-ui-modules-1786452856361/.resux/vite-client/runtime-client.mjs",
+        "handlers/m0": "/tmp/resux-ui-modules-1786452856361/.resux/vite-client/handlers/m0.mjs"
+      },
+      "preserveEntrySignatures": "strict",
+      "output": {
+        "format": "es",
+        "entryFileNames": "[name].mjs",
+        "chunkFileNames": "chunks/[name]-[hash].mjs",
+        "assetFileNames": "assets/[name]-[hash][extname]"
+      }
+    }
+  }
+}
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2memits package error events when a configured client package is missing from the generated registry
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2memits package error events when a configured client package is missing from the generated registry
+[22m[39m[resux:enhancement] registered package-error-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2memits package error events when a configured client package is missing from the generated registry
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2memits package error events when a configured client package is missing from the generated registry
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] found element package-error-demo trigger=immediate
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2memits package error events when a configured client package is missing from the generated registry
+[22m[39m[resux:enhancement] trigger fired package-error-demo
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mignores same-route link clicks without refetching route payloads
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mignores same-route link clicks without refetching route payloads
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mignores same-route link clicks without refetching route payloads
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/compiler.test.ts[2m > [22m[2mproject build manifest[2m > [22m[2mdiscovers and bundles Vue islands
+[22m[39mresux build client viteConfig: {
+  "root": "/tmp/resux-vue-islands-1786452857558",
+  "configFile": false,
+  "publicDir": false,
+  "base": "/__resux/",
+  "appType": "custom",
+  "clearScreen": false,
+  "logLevel": "warn",
+  "plugins": [
+    {
+      "name": "vite:vue",
+      "api": {
+        "options": {
+          "isProduction": false,
+          "compiler": null,
+          "customElement": {},
+          "root": "/home/runner/work/resux/resux",
+          "sourceMap": true,
+          "cssDevSourcemap": false
+        },
+        "include": {},
+        "version": "6.0.6"
+      },
+      "resolveId": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "load": {
+        "filter": {
+          "id": [
+            {},
+            {}
+          ]
+        }
+      },
+      "transform": {}
+    }
+  ],
+  "resolve": {
+    "alias": {
+      "vue": "/home/runner/work/resux/resux/node_modules/vue/dist/vue.cjs.js",
+      "@": "/tmp/resux-vue-islands-1786452857558",
+      "~": "/tmp/resux-vue-islands-1786452857558"
+    }
+  },
+  "build": {
+    "outDir": "/tmp/resux-vue-islands-1786452857558/.resux/client",
+    "emptyOutDir": false,
+    "minify": "oxc",
+    "sourcemap": false,
+    "manifest": false,
+    "rollupOptions": {
+      "input": {
+        "runtime-client": "/tmp/resux-vue-islands-1786452857558/.resux/vite-client/runtime-client.mjs",
+        "handlers/m0": "/tmp/resux-vue-islands-1786452857558/.resux/vite-client/handlers/m0.mjs",
+        "vue-islands/CounterIsland": "/tmp/resux-vue-islands-1786452857558/.resux/vite-client/vue-islands/CounterIsland.mjs"
+      },
+      "preserveEntrySignatures": "strict",
+      "output": {
+        "format": "es",
+        "entryFileNames": "[name].mjs",
+        "chunkFileNames": "chunks/[name]-[hash].mjs",
+        "assetFileNames": "assets/[name]-[hash][extname]"
+      }
+    }
+  }
+}
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mresumes pending async data and patches skeleton blocks
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mresumes pending async data and patches skeleton blocks
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mresumes pending async data and patches skeleton blocks
+[22m[39m[resux:enhancement] scanning DOM
+
+ [31m❯[39m tests/compiler.test.ts [2m([22m[2m45 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[33m 4366[2mms[22m[39m
+     [32m✓[39m creates Resux-style routes with dynamic params[32m 3[2mms[22m[39m
+     [33m[2m✓[22m[39m matches catch-all route params from generated manifests [33m 306[2mms[22m[39m
+     [32m✓[39m generates localized routes only when i18n module is enabled[32m 172[2mms[22m[39m
+     [32m✓[39m keeps incremental dev builds stable without wiping generated directories[32m 85[2mms[22m[39m
+     [32m✓[39m compiles the supported Resux template and script subset[32m 59[2mms[22m[39m
+     [32m✓[39m compiles v-if / v-else-if / v-else chains[32m 24[2mms[22m[39m
+     [32m✓[39m rejects orphaned v-else and v-else-if directives[32m 4[2mms[22m[39m
+     [32m✓[39m compiles unrecognized/custom directives as attributes[32m 33[2mms[22m[39m
+     [32m✓[39m compiles event handlers capturing top-level helper functions and imports[32m 21[2mms[22m[39m
+     [32m✓[39m compiles template loop variable captures inside event handlers[32m 29[2mms[22m[39m
+     [32m✓[39m compiles event handlers capturing top-level primitive constants[32m 11[2mms[22m[39m
+     [32m✓[39m compiles event handlers capturing destructured properties from resumable initializers[32m 7[2mms[22m[39m
+     [32m✓[39m compiles plain and scoped style blocks from Resux SFCs[32m 21[2mms[22m[39m
+     [32m✓[39m rejects unsupported SFC style languages[32m 1[2mms[22m[39m
+     [32m✓[39m compiles inline event expressions into resumable handlers[32m 7[2mms[22m[39m
+     [32m✓[39m compiles resumability-safe event modifiers and v-show[32m 28[2mms[22m[39m
+     [32m✓[39m compiles v-text into a resumable text binding[32m 12[2mms[22m[39m
+     [32m✓[39m auto-unwraps setup refs in template expressions[32m 28[2mms[22m[39m
+     [32m✓[39m auto-unwraps awaited useAsyncData refs in template expressions[32m 15[2mms[22m[39m
+     [32m✓[39m compiles advanced event modifiers[32m 5[2mms[22m[39m
+     [32m✓[39m compiles sanitized v-html and resumable v-model bindings[32m 17[2mms[22m[39m
+     [32m✓[39m rejects handler captures outside resumable state[32m 1[2mms[22m[39m
+     [32m✓[39m allows browser globals in resumable handlers[32m 10[2mms[22m[39m
+     [32m✓[39m extracts page meta and keeps definePageMeta out of setup code[32m 11[2mms[22m[39m
+     [32m✓[39m exposes useSeoMeta to compiled setup code[32m 5[2mms[22m[39m
+     [32m✓[39m exposes useRouter to compiled setup code and resumable handlers[32m 4[2mms[22m[39m
+     [32m✓[39m allows calling useRouter directly inside resumable handlers[32m 5[2mms[22m[39m
+     [32m✓[39m exposes apiURL to compiled setup code[32m 7[2mms[22m[39m
+     [32m✓[39m compiles defineProps for reusable components[32m 15[2mms[22m[39m
+     [33m[2m✓[22m[39m discovers layouts, middleware, plugins, server handlers, public config, and page meta [33m 361[2mms[22m[39m
+     [32m✓[39m discovers plugins and route middleware recursively with stable mode-aware outputs[32m 291[2mms[22m[39m
+     [32m✓[39m auto-discovers client enhancement files and injects runtime helper imports[32m 41[2mms[22m[39m
+     [32m✓[39m injects definePackageAdapter from runtime client helpers for enhancement adapters[32m 28[2mms[22m[39m
+     [32m✓[39m rewrites resuxjs imports in client enhancement files to runtime-client helpers[32m 32[2mms[22m[39m
+     [32m✓[39m builds client enhancement chunks with __resux asset base paths for preview serving[32m 214[2mms[22m[39m
+     [32m✓[39m generates an empty client enhancement manifest when no enhancement files are present[32m 18[2mms[22m[39m
+     [32m✓[39m keeps Resux plugins separate from Nitro plugin auto-discovery folders[32m 118[2mms[22m[39m
+     [32m✓[39m runs configured modules and emits route rules[32m 266[2mms[22m[39m
+[31m     [31m×[31m runs built-in module presets[39m[33m 399[2mms[22m[39m
+     [33m[2m✓[22m[39m runs tree-shakable UI, icon, and font module subpaths [33m 1045[2mms[22m[39m
+     [32m✓[39m can emit Vite dev client inputs without production bundling[32m 37[2mms[22m[39m
+     [32m✓[39m generates a static client package importer registry without raw import(packageName)[32m 45[2mms[22m[39m
+     [32m✓[39m detects package API calls that use const string identifiers[32m 37[2mms[22m[39m
+     [32m✓[39m registers package subpath specifiers used by package APIs[32m 33[2mms[22m[39m
+[31m     [31m×[31m discovers and bundles Vue islands[39m[33m 449[2mms[22m[39m
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mresumes pending async data and patches skeleton blocks
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mclears pending async-data skeletons and renders an error when fetch fails
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mclears pending async-data skeletons and renders an error when fetch fails
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mclears pending async-data skeletons and renders an error when fetch fails
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mclears pending async-data skeletons and renders an error when fetch fails
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mrenders successful async data when another pending request fails
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mrenders successful async data when another pending request fails
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mrenders successful async data when another pending request fails
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mrenders successful async data when another pending request fails
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mimports the handler chunk on interaction and reuses the resumed scope
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mimports the handler chunk on interaction and reuses the resumed scope
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mimports the handler chunk on interaction and reuses the resumed scope
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mnavigates programmatically with useRouter from a resumed handler
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mnavigates programmatically with useRouter from a resumed handler
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mnavigates programmatically with useRouter from a resumed handler
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mnavigates programmatically with useRouter from a resumed handler
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mapplies resumable event modifiers before running handlers
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mapplies resumable event modifiers before running handlers
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mapplies resumable event modifiers before running handlers
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mresumes v-model handlers and mounted callbacks on first interaction
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mresumes v-model handlers and mounted callbacks on first interaction
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mresumes v-model handlers and mounted callbacks on first interaction
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mintercepts internal links and swaps the route payload without a document reload
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mnormalizes preload head links on client navigation updates
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mnormalizes preload head links on client navigation updates
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mnormalizes preload head links on client navigation updates
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mnormalizes preload head links on client navigation updates
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mnormalizes preload head links on client navigation updates
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mignores same-route link clicks without fetching or rerendering
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mignores same-route link clicks without fetching or rerendering
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mignores same-route link clicks without fetching or rerendering
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mswaps route payloads on browser history navigation after the URL already changed
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mswaps route payloads on browser history navigation after the URL already changed
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mswaps route payloads on browser history navigation after the URL already changed
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mrenders ResuxImg to native img markup during client block patches
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mrenders ResuxImg to native img markup during client block patches
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mrenders ResuxImg to native img markup during client block patches
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mrenders ResuxImg to native img markup during client block patches
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mruns client route middleware during client-side navigation
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2maborts pending async data when leaving the current route
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2maborts pending async data when leaving the current route
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2maborts pending async data when leaving the current route
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2maborts pending async data when leaving the current route
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2maborts pending async data when leaving the current route
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2maborts pending async data when leaving the current route
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2maborts pending async data when leaving the current route
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mpreserves loaded global styles while navigating between routes
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mpreserves loaded global styles while navigating between routes
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mpreserves loaded global styles while navigating between routes
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mpreserves loaded global styles while navigating between routes
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mupdates route style tags while navigating between routes
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mupdates route style tags while navigating between routes
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mupdates route style tags while navigating between routes
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mreports route transition phases with progress and accessibility state
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mreports route transition phases with progress and accessibility state
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mreports route transition phases with progress and accessibility state
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mreveals deferred lazy images only after intersection events
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mkeeps image placeholders until decode settles
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mkeeps image placeholders until decode settles
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mkeeps image placeholders until decode settles
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mhandles lazy picture failures once and switches to fallback without reusing failed sources
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mhandles lazy picture failures once and switches to fallback without reusing failed sources
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mhandles lazy picture failures once and switches to fallback without reusing failed sources
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mreveals lazy videos once and clears failed sources without retrying
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mreveals lazy videos once and clears failed sources without retrying
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mreveals lazy videos once and clears failed sources without retrying
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mapplies video click zones, skip actions, and control-safe interactions
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mapplies video click zones, skip actions, and control-safe interactions
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mapplies video click zones, skip actions, and control-safe interactions
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mapplies video click zones, skip actions, and control-safe interactions
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mapplies video click zones, skip actions, and control-safe interactions
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mpreserves playback state when switching managed video quality options
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mwaits for page-ready before revealing defer-until-page-ready videos
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mwaits for page-ready before revealing defer-until-page-ready videos
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mwaits for page-ready before revealing defer-until-page-ready videos
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mblocks managed media anchor navigation to generated assets
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mblocks managed media anchor navigation to generated assets
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mblocks managed media anchor navigation to generated assets
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mblocks managed media anchor navigation for generated video assets
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mblocks managed media anchor navigation for generated video assets
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mblocks managed media anchor navigation for generated video assets
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mignores router interception for media control targets inside anchors
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mignores router interception for media control targets inside anchors
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mignores router interception for media control targets inside anchors
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mignores prefetch for media/static links
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mignores prefetch for media/static links
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mignores prefetch for media/static links
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mpreserves the active layout across client-side navigation
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mpreserves the active layout across client-side navigation
+[22m[39m[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mpreserves the active layout across client-side navigation
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mpreserves the active layout across client-side navigation
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mpreserves the active layout across client-side navigation
+[22m[39m[resux:enhancement] scanning DOM
+[resux:enhancement] scanning DOM
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mhot-updates active component scopes in dev without reloading the document
+[22m[39m[resux:enhancement] runtime loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mhot-updates active component scopes in dev without reloading the document
+[22m[39m[resux:enhancement] manifest loaded
+
+[90mstdout[2m | tests/runtime.test.ts[2m > [22m[2mclient resume loader[2m > [22m[2mhot-updates active component scopes in dev without reloading the document
+[22m[39m[resux:enhancement] scanning DOM
+
+ [32m✓[39m tests/runtime.test.ts [2m([22m[2m80 tests[22m[2m)[22m[33m 16784[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps apiURL relative in browser/client scopes [33m 701[2mms[22m[39m
+     [33m[2m✓[22m[39m activates visible enhancements after IntersectionObserver reports intersection [33m 316[2mms[22m[39m
+     [33m[2m✓[22m[39m activates visible enhancements when visibility polling detects an already-visible element [33m 743[2mms[22m[39m
+     [33m[2m✓[22m[39m passes parsed data-resux-options to client enhancements [33m 337[2mms[22m[39m
+     [33m[2m✓[22m[39m emits package loading/loaded/css events when a client package enhancement resolves [33m 454[2mms[22m[39m
+     [33m[2m✓[22m[39m ignores same-route link clicks without refetching route payloads [33m 318[2mms[22m[39m
+     [33m[2m✓[22m[39m resumes pending async data and patches skeleton blocks [33m 610[2mms[22m[39m
+     [33m[2m✓[22m[39m clears pending async-data skeletons and renders an error when fetch fails [33m 536[2mms[22m[39m
+     [33m[2m✓[22m[39m renders successful async data when another pending request fails [33m 478[2mms[22m[39m
+     [33m[2m✓[22m[39m imports the handler chunk on interaction and reuses the resumed scope [33m 503[2mms[22m[39m
+     [33m[2m✓[22m[39m navigates programmatically with useRouter from a resumed handler [33m 477[2mms[22m[39m
+     [33m[2m✓[22m[39m applies resumable event modifiers before running handlers [33m 464[2mms[22m[39m
+     [33m[2m✓[22m[39m resumes v-model handlers and mounted callbacks on first interaction [33m 462[2mms[22m[39m
+     [33m[2m✓[22m[39m renders ResuxImg to native img markup during client block patches [33m 425[2mms[22m[39m
+     [33m[2m✓[22m[39m runs client route middleware during client-side navigation [33m 449[2mms[22m[39m
+     [33m[2m✓[22m[39m aborts pending async data when leaving the current route [33m 447[2mms[22m[39m
+     [33m[2m✓[22m[39m applies video click zones, skip actions, and control-safe interactions [33m 703[2mms[22m[39m
+     [33m[2m✓[22m[39m hot-updates active component scopes in dev without reloading the document [33m 1966[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m tests/compiler.test.ts[2m > [22mproject build manifest[2m > [22mruns built-in module presets
+[31m[1mAssertionError[22m: expected false to deeply equal { maxAge: 120 }[39m
+
+[32m- Expected:[39m
+{
+  "maxAge": 120,
+}
+
+[31m+ Received:[39m
+false
+
+[36m [2m❯[22m tests/compiler.test.ts:[2m1039:63[22m[39m
+    [90m1037|[39m     [34mexpect[39m(manifest[33m.[39mrouteRules[[32m"/**"[39m][33m.[39mheaders[[32m"x-app"[39m])[33m.[39m[34mtoBe[39m([32m"resux"[39m)[33m;[39m
+    [90m1038|[39m     expect(manifest.routeRules["/**"].headers["content-security-policy…
+    [90m1039|[39m     expect(manifest.routeRules["/__resux/handlers/**"].cache).toEqual(…
+    [90m   |[39m                                                               [31m^[39m
+    [90m1040|[39m     [34mexpect[39m(manifest[33m.[39mrouteRules[[32m"/__resux/route"[39m][33m.[39mcache)[33m.[39m[34mtoBe[39m([35mfalse[39m)[33m;[39m
+    [90m1041|[39m     [34mexpect[39m(manifest[33m.[39mruntimeConfig[33m.[39m[35mpublic[39m[33m.[39msecurityHeaders)[33m.[39m[34mtoBe[39m([35mtrue[39m)[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m tests/compiler.test.ts[2m > [22mproject build manifest[2m > [22mdiscovers and bundles Vue islands
+[31m[1mAssertionError[22m: expected '/__resux/vue-islands/CounterIsland.mj…' to be '/__resux/vue-islands/CounterIsland.mjs' // Object.is equality[39m
+
+Expected: [32m"/__resux/vue-islands/CounterIsland.mjs"[39m
+Received: [31m"/__resux/vue-islands/CounterIsland.mjs[7m?v=20260811-1[27m"[39m
+
+[36m [2m❯[22m tests/compiler.test.ts:[2m1182:47[22m[39m
+    [90m1180|[39m
+    [90m1181|[39m     expect(result.vueIslands).toEqual([{ name: "CounterIsland", file: …
+    [90m1182|[39m     expect(manifest.vueIslands.CounterIsland).toBe("/__resux/vue-islan…
+    [90m   |[39m                                               [31m^[39m
+    [90m1183|[39m     [34mexpect[39m(html)[33m.[39m[34mtoContain[39m([32m"VueIsland"[39m)[33m;[39m
+    [90m1184|[39m     await readFile(path.join(root, ".resux", "client", "vue-islands", …
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m2 passed[39m[22m[90m (3)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m126 passed[39m[22m[90m (128)[39m
+[2m   Start at [22m 12:54:11
+[2m   Duration [22m 18.10s[2m (transform 15.29s, setup 1.27s, import 3.43s, tests 21.16s, environment 0ms)[22m
+
+
+::error file=/home/runner/work/resux/resux/tests/compiler.test.ts,title=tests/compiler.test.ts > project build manifest > runs built-in module presets,line=1039,column=63::AssertionError: expected false to deeply equal { maxAge: 120 }%0A%0A- Expected:%0A{%0A  "maxAge": 120,%0A}%0A%0A+ Received:%0Afalse%0A%0A ❯ tests/compiler.test.ts:1039:63%0A%0A
+
+::error file=/home/runner/work/resux/resux/tests/compiler.test.ts,title=tests/compiler.test.ts > project build manifest > discovers and bundles Vue islands,line=1182,column=47::AssertionError: expected '/__resux/vue-islands/CounterIsland.mj…' to be '/__resux/vue-islands/CounterIsland.mjs' // Object.is equality%0A%0AExpected: "/__resux/vue-islands/CounterIsland.mjs"%0AReceived: "/__resux/vue-islands/CounterIsland.mjs?v=20260811-1"%0A%0A ❯ tests/compiler.test.ts:1182:47%0A%0A

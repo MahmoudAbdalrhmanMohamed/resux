@@ -30,13 +30,16 @@ jobs:
         run: npm ci
 
       - name: Apply source patch
-        run: node scripts/apply-production-resumability-cache-fix.mjs
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/apply-production-resumability-cache-fix.mjs 2>&1 | tee /tmp/apply-production-fix.log
 
       - name: Typecheck and targeted regressions
         shell: bash
         run: |
           set -o pipefail
-          npm run typecheck 2>&1 | tee /tmp/apply-production-fix.log
+          npm run typecheck 2>&1 | tee -a /tmp/apply-production-fix.log
           npx vitest run tests/client-asset-cache-regressions.test.ts tests/compiler.test.ts tests/runtime.test.ts 2>&1 | tee -a /tmp/apply-production-fix.log
 
       - name: Verify production handler/runtime pairing with resux-lab
@@ -64,14 +67,20 @@ jobs:
               throw new Error(`${file} does not import the revision-aligned runtime`);
             }
           }
-          const serverCandidates = [
-            '.resux/server/manifest.mjs',
-            '.resux/server-bundle/manifest.mjs',
-            '.resux/server-bundle/index.mjs'
-          ].filter((file) => fs.existsSync(file));
-          const combined = serverCandidates.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+          const candidates = [];
+          const walk = (dir) => {
+            if (!fs.existsSync(dir)) return;
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const file = path.join(dir, entry.name);
+              if (entry.isDirectory()) walk(file);
+              else if (/\.(?:mjs|js|json)$/.test(entry.name)) candidates.push(file);
+            }
+          };
+          walk('.resux/server');
+          walk('.resux/server-bundle');
+          const combined = candidates.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
           if (!combined.includes('/__resux/handlers/m8.mjs?v=20260811-1')) {
-            throw new Error('Server payload manifest does not revision handler URLs');
+            throw new Error('Server payload output does not revision handler URLs');
           }
           console.log('Verified revision-aligned runtime imports and handler URLs.');
           NODE

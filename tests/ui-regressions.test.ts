@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { RxDatePicker, vAnime } from "../src/ui/index.js";
+import { RxDatePicker, useAnimate, vAnime } from "../src/ui/index.js";
 
 const originalWindow = globalThis.window;
 const originalIntersectionObserver = globalThis.IntersectionObserver;
@@ -18,6 +18,28 @@ afterEach(() => {
 });
 
 describe("UI regressions", () => {
+  it("animates direct form elements instead of mistaking their value property for a ref", () => {
+    Object.assign(globalThis, {
+      window: {
+        matchMedia() {
+          return { matches: false };
+        },
+      },
+    });
+    let calls = 0;
+    const animation = { cancel() {} } as unknown as Animation;
+    const element = {
+      value: "hello",
+      animate() {
+        calls += 1;
+        return animation;
+      },
+    } as unknown as HTMLElement;
+
+    expect(useAnimate(element)).toBe(animation);
+    expect(calls).toBe(1);
+  });
+
   it("does not permanently hide directive targets when Web Animations are unavailable", () => {
     Object.assign(globalThis, {
       window: {},

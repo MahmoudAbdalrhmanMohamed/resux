@@ -10277,6 +10277,12 @@ function shouldCaptureDelegatedEvent(eventName) {
     || eventName === "pointerleave"
     || eventName === "load"
     || eventName === "error"
+    || eventName === "loadstart"
+    || eventName === "loadedmetadata"
+    || eventName === "loadeddata"
+    || eventName === "canplay"
+    || eventName === "lazy-load-start"
+    || eventName === "lazy-load-complete"
     || eventName === "invalid"
   );
 }

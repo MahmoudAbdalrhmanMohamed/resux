@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 
 const compilerPath = new URL("../src/compiler/index.ts", import.meta.url);
 const runtimePath = new URL("../src/runtime/index.ts", import.meta.url);
+const compilerTestPath = new URL("../tests/compiler.test.ts", import.meta.url);
 const testPath = new URL("../tests/client-asset-cache-regressions.test.ts", import.meta.url);
 
 function replaceExact(source, before, after, label) {
@@ -60,6 +61,21 @@ runtime = replaceExact(
   "renderDocument runtime URL"
 );
 await writeFile(runtimePath, runtime, "utf8");
+
+let compilerTests = await readFile(compilerTestPath, "utf8");
+compilerTests = replaceExact(
+  compilerTests,
+  '    expect(manifest.routeRules["/__resux/handlers/**"].cache).toEqual({ maxAge: 120 });',
+  '    expect(manifest.routeRules["/__resux/handlers/**"].cache).toBe(false);',
+  "performance preset handler cache expectation"
+);
+compilerTests = replaceExact(
+  compilerTests,
+  '    expect(manifest.vueIslands.CounterIsland).toBe("/__resux/vue-islands/CounterIsland.mjs");',
+  '    expect(manifest.vueIslands.CounterIsland).toBe("/__resux/vue-islands/CounterIsland.mjs?v=20260811-1");',
+  "versioned vue island expectation"
+);
+await writeFile(compilerTestPath, compilerTests, "utf8");
 
 const testSource = [
   'import { readFile } from "node:fs/promises";',

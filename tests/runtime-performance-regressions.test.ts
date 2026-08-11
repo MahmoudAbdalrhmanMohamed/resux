@@ -10,4 +10,19 @@ describe("runtime performance regressions", () => {
     expect(source).not.toContain('for (const eventName of ["input", "change", "submit", "keydown", "keyup", "keypress", "mousedown", "mouseup", "blur", "focusout"])');
     expect(source).not.toContain('for (const eventName of ["load", "error", "loadstart", "loadedmetadata", "loadeddata", "canplay", "lazy-load-start", "lazy-load-complete"])');
   });
+
+  it("preserves capture mode for non-bubbling resumable media events", () => {
+    const source = getClientRuntimeSource();
+
+    for (const eventName of [
+      "loadstart",
+      "loadedmetadata",
+      "loadeddata",
+      "canplay",
+      "lazy-load-start",
+      "lazy-load-complete",
+    ]) {
+      expect(source).toContain(`eventName === "${eventName}"`);
+    }
+  });
 });

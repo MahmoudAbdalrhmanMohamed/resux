@@ -34,6 +34,11 @@ async function scaffoldVercelBuildLayout(root: string): Promise<string> {
 
   await mkdir(path.join(root, ".resux", "server"), { recursive: true });
   await writeFile(path.join(root, ".resux", "server", "manifest.mjs"), "export {};\n", "utf8");
+  await writeFile(
+    path.join(root, ".resux", "halal-report.json"),
+    JSON.stringify({ status: "pass", signature: "hmac-sha256:test" }, null, 2),
+    "utf8",
+  );
 
   return functionRoot;
 }

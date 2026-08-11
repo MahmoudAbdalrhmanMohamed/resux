@@ -27,6 +27,12 @@ import {
 
 const require = createRequire(import.meta.url);
 
+const CLIENT_ASSET_CACHE_REVISION = "20260811-1";
+const CLIENT_RUNTIME_IMPORT = `/__resux/runtime-client.mjs?v=${CLIENT_ASSET_CACHE_REVISION}`;
+function revisionClientAsset(url: string): string {
+  return `${url}?v=${CLIENT_ASSET_CACHE_REVISION}`;
+}
+
 export interface CompileErrorLocation {
   file: string;
   line: number;
@@ -852,6 +858,7 @@ async function buildClientAssets(
           external: (id: string) => id === "/__resux/runtime-client.mjs",
           output: {
             format: "es",
+            paths: (id: string) => id === "/__resux/runtime-client.mjs" ? CLIENT_RUNTIME_IMPORT : id,
             entryFileNames: "[name].mjs",
             chunkFileNames: "chunks/[name]-[hash].mjs",
             assetFileNames: "assets/[name]-[hash][extname]"
@@ -2724,10 +2731,10 @@ function createServerManifestSource(
   const componentEntries = components.map((component) => `${JSON.stringify(component.name)}: ${component.id}`).join(",\n");
   const layoutEntries = layouts.map((layout) => `${JSON.stringify(layoutNameFromFile(layout.file))}: ${layout.id}`).join(",\n");
   const moduleEntries = components
-    .map((component) => `${JSON.stringify(component.id)}: ${JSON.stringify(`/__resux/handlers/${component.id}.mjs`)}`)
+    .map((component) => `${JSON.stringify(component.id)}: ${JSON.stringify(revisionClientAsset(`/__resux/handlers/${component.id}.mjs`))}`)
     .join(",\n");
   const vueIslandEntries = vueIslands
-    .map((island) => `${JSON.stringify(island.name)}: ${JSON.stringify(`/__resux/vue-islands/${island.name}.mjs`)}`)
+    .map((island) => `${JSON.stringify(island.name)}: ${JSON.stringify(revisionClientAsset(`/__resux/vue-islands/${island.name}.mjs`))}`)
     .join(",\n");
   const pluginEntries = serverPlugins
     .map((plugin) => plugin.id)
@@ -3489,9 +3496,11 @@ const builtinModules: Record<string, BuiltinResuxModule> = {
       const input = isPlainObject(options) ? options : {};
       const maxAge = Number.isFinite(input.assetMaxAge) ? Math.max(0, Math.floor(input.assetMaxAge as number)) : 31536000;
       const assetCache = { maxAge };
-      resux.addRouteRule("/__resux/runtime-client.mjs", { cache: assetCache });
-      resux.addRouteRule("/__resux/handlers/**", { cache: assetCache });
-      resux.addRouteRule("/__resux/vue-islands/**", { cache: assetCache });
+      // These JavaScript endpoints use stable filenames. Never mark them immutable: a stale
+      // runtime paired with newly generated handlers breaks the resumability contract.
+      resux.addRouteRule("/__resux/runtime-client.mjs", { cache: false });
+      resux.addRouteRule("/__resux/handlers/**", { cache: false });
+      resux.addRouteRule("/__resux/vue-islands/**", { cache: false });
       resux.addRouteRule("/__resux/image", { cache: assetCache });
       resux.addRouteRule("/__resux/video", { cache: assetCache });
 

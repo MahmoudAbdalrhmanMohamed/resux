@@ -22,6 +22,9 @@ import {
 } from "../reactivity/index.js";
 import type { ComputedRef, Ref, WatchCallback, WatchOptions, WatchSource, WatchStopHandle } from "../reactivity/index.js";
 
+const RESUX_CLIENT_ASSET_REVISION = "20260811-1";
+const RESUX_CLIENT_RUNTIME_URL = `/__resux/runtime-client.mjs?v=${RESUX_CLIENT_ASSET_REVISION}`;
+
 export type JsonValue =
   | null
   | boolean
@@ -2417,7 +2420,7 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
       ? `<script>window.__RESUX__=${payload};window.__RESUX_STATIC__=true;</script>`
       : `<script>window.__RESUX__=${payload}</script>`,
     options.devReload ? getDevReloadScript() : "",
-    '<script type="module" src="/__resux/runtime-client.mjs"></script>',
+    `<script type="module" src="${RESUX_CLIENT_RUNTIME_URL}"></script>`,
     "</body>",
     "</html>"
   ].join("");

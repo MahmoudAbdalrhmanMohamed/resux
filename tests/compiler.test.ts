@@ -1036,7 +1036,7 @@ defineClientEnhancement("imported-helper", async (target) => {
 
     expect(manifest.routeRules["/**"].headers["x-app"]).toBe("resux");
     expect(manifest.routeRules["/**"].headers["content-security-policy"]).toBe("default-src 'self'");
-    expect(manifest.routeRules["/__resux/handlers/**"].cache).toEqual({ maxAge: 120 });
+    expect(manifest.routeRules["/__resux/handlers/**"].cache).toBe(false);
     expect(manifest.routeRules["/__resux/route"].cache).toBe(false);
     expect(manifest.runtimeConfig.public.securityHeaders).toBe(true);
     expect(manifest.runtimeConfig.public.performanceModule.assetMaxAge).toBe(120);
@@ -1179,7 +1179,7 @@ void loadCompilerDom
     const html = result.components[0].serverSource;
 
     expect(result.vueIslands).toEqual([{ name: "CounterIsland", file: path.join(root, "islands", "vue", "CounterIsland.vue") }]);
-    expect(manifest.vueIslands.CounterIsland).toBe("/__resux/vue-islands/CounterIsland.mjs");
+    expect(manifest.vueIslands.CounterIsland).toBe("/__resux/vue-islands/CounterIsland.mjs?v=20260811-1");
     expect(html).toContain("VueIsland");
     await readFile(path.join(root, ".resux", "client", "vue-islands", "CounterIsland.mjs"), "utf8");
   }, 20000);

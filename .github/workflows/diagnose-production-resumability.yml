@@ -1,0 +1,101 @@
+name: Diagnose production resumability
+
+on:
+  push:
+    branches:
+      - agent/fix-production-resumability
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout Resux
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Build Resux
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build resux-lab with this framework checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth=1 https://github.com/MahmoudAbdalrhmanMohamed/resux-lab.git /tmp/resux-lab
+          cd /tmp/resux-lab
+          npm install --ignore-scripts
+          npm install --no-save "$GITHUB_WORKSPACE"
+          node "$GITHUB_WORKSPACE/dist/bin.js" build .
+
+      - name: Inspect generated production handlers
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/resux-lab
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const manifest = JSON.parse(fs.readFileSync('.resux/manifest.json', 'utf8'));
+          const targets = ['/features/reactivity', '/features/i18n', '/features/errors', '/state', '/media'];
+          for (const routePath of targets) {
+            const route = manifest.routes.find((entry) => entry.path === routePath);
+            console.log(`ROUTE ${routePath}:`, route ?? 'missing');
+            if (!route) continue;
+            const id = route.componentId;
+            for (const rel of [`.resux/vite-client/handlers/${id}.mjs`, `.resux/client/handlers/${id}.mjs`]) {
+              if (!fs.existsSync(rel)) {
+                console.log(`  ${rel}: missing`);
+                continue;
+              }
+              const source = fs.readFileSync(rel, 'utf8');
+              console.log(`  ${rel}: bytes=${source.length}`);
+              for (const needle of ['__rx_expressions', '__rx_expr_0', 'increment', 'setLocale', 'triggerLocalError', 'createClientComponent']) {
+                console.log(`    ${needle}: ${source.includes(needle)}`);
+              }
+              if (routePath === '/features/errors') {
+                console.log(`    errors preview: ${source.slice(0, 3500)}`);
+              }
+              if (routePath === '/features/reactivity' || routePath === '/state' || routePath === '/features/i18n') {
+                const exprAt = source.indexOf('__rx_expr_0');
+                if (exprAt >= 0) console.log(`    expr context: ${source.slice(Math.max(0, exprAt - 500), exprAt + 1400)}`);
+              }
+            }
+          }
+          NODE
+
+      - name: Probe production route payloads locally
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/resux-lab
+          node "$GITHUB_WORKSPACE/dist/bin.js" preview . --port 4010 > /tmp/resux-preview.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:4010/ >/dev/null 2>&1; then break; fi
+            sleep 0.5
+          done
+          for target in \
+            '/__resux/route?path=%2Ffeatures%2Freactivity' \
+            '/__resux/route?path=%2Ffeatures%2Fi18n' \
+            '/__resux/route?path=%2Ffeatures%2Ferrors' \
+            '/__resux/route?path=%2Fstate' \
+            '/__resux/route?path=%2Fmedia'; do
+            echo "=== $target ==="
+            status=$(curl -sS -o /tmp/route-response.txt -w '%{http_code}' "http://127.0.0.1:4010$target" || true)
+            echo "status=$status"
+            head -c 1200 /tmp/route-response.txt || true
+            echo
+          done
+          echo '=== preview log ==='
+          cat /tmp/resux-preview.log

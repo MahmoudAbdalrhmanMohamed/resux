@@ -10369,7 +10369,6 @@ function installResux() {
       window.addEventListener("load", () => {
         managedPageLoadReady = true;
         activateDeferredLazyMedia();
-        void scanClientEnhancements(document);
       }, { once: true });
     }
     window.addEventListener("popstate", () => {
@@ -10406,21 +10405,16 @@ async function initializeClientRuntime() {
   void resumePendingAsyncData();
   void mountVueIslands();
   activateDeferredLazyMedia();
-  void scanClientEnhancements(document);
   applyManagedVideoDefaultSpeeds();
   applyReducedMotionVideoPreference();
   initializeManagedVideoControls();
   registerDelegatedEventsFromDom(document);
-  queueMicrotask(() => {
-    void scanClientEnhancements(document);
-  });
 }
 
 function activateDeferredLazyMedia(root = document) {
   cleanupDetachedLazyMedia();
   activateDeferredLazyImages(root);
   activateDeferredLazyVideos(root);
-  void scanClientEnhancements(root);
   if (isManagedMediaDebugEnabled()) {
     const lazyImages = root?.querySelectorAll ? root.querySelectorAll("img[data-rx-lazy-image='true']").length : 0;
     const lazyVideos = root?.querySelectorAll ? root.querySelectorAll("video[data-rx-lazy-video='true']").length : 0;

@@ -1,0 +1,104 @@
+name: Apply production resumability fix
+
+on:
+  push:
+    branches:
+      - agent/fix-production-resumability
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout fix branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/fix-production-resumability
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply source patch
+        run: node scripts/apply-production-resumability-cache-fix.mjs
+
+      - name: Typecheck and targeted regressions
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck 2>&1 | tee /tmp/apply-production-fix.log
+          npx vitest run tests/client-asset-cache-regressions.test.ts tests/compiler.test.ts tests/runtime.test.ts 2>&1 | tee -a /tmp/apply-production-fix.log
+
+      - name: Verify production handler/runtime pairing with resux-lab
+        shell: bash
+        run: |
+          set -o pipefail
+          git clone --depth=1 https://github.com/MahmoudAbdalrhmanMohamed/resux-lab.git /tmp/resux-lab
+          cd /tmp/resux-lab
+          npm install --ignore-scripts
+          npm install --no-save "$GITHUB_WORKSPACE"
+          export RESUX_HALAL_REPORT_SIGNING_SECRET='resux-production-fix-verification-secret-2026'
+          set +e
+          node "$GITHUB_WORKSPACE/dist/bin.js" build . 2>&1 | tee -a /tmp/apply-production-fix.log
+          set -e
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const expected = '/__resux/runtime-client.mjs?v=20260811-1';
+          const handlers = ['m8', 'm9', 'm10', 'm44'];
+          for (const id of handlers) {
+            const file = path.join('.resux', 'client', 'handlers', `${id}.mjs`);
+            if (!fs.existsSync(file)) throw new Error(`Missing production handler ${file}`);
+            const source = fs.readFileSync(file, 'utf8');
+            if (!source.includes(expected)) {
+              throw new Error(`${file} does not import the revision-aligned runtime`);
+            }
+          }
+          const serverCandidates = [
+            '.resux/server/manifest.mjs',
+            '.resux/server-bundle/manifest.mjs',
+            '.resux/server-bundle/index.mjs'
+          ].filter((file) => fs.existsSync(file));
+          const combined = serverCandidates.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+          if (!combined.includes('/__resux/handlers/m8.mjs?v=20260811-1')) {
+            throw new Error('Server payload manifest does not revision handler URLs');
+          }
+          console.log('Verified revision-aligned runtime imports and handler URLs.');
+          NODE
+
+      - name: Check patch cleanliness
+        run: git diff --check
+
+      - name: Remove one-time tooling and commit fix
+        shell: bash
+        run: |
+          rm -f scripts/apply-production-resumability-cache-fix.mjs
+          rm -f .github/workflows/apply-production-resumability-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git status --short
+          git commit -m "fix(runtime): keep resumability assets version-aligned"
+          git push origin HEAD:agent/fix-production-resumability
+
+      - name: Save failure diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          if [ ! -f /tmp/apply-production-fix.log ]; then exit 0; fi
+          cp /tmp/apply-production-fix.log apply-production-fix.log
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apply-production-fix.log
+          git commit -m "chore: capture resumability fix failure" || true
+          git push origin HEAD:agent/fix-production-resumability || true

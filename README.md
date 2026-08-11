@@ -1,5 +1,7 @@
 # Resux
 
+**Resux** stands for **Resumability + User Experience (UX)**.
+
 Resux is an experimental web framework with a custom resumable runtime.
 
 📖 **Documentation**: [https://mahmoudabdalrhmanmohamed.github.io/resux-docs/](https://mahmoudabdalrhmanmohamed.github.io/resux-docs/)

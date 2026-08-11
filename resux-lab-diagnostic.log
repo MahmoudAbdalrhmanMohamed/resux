@@ -1,0 +1,43 @@
+=== clone and install ===
+Cloning into '/tmp/resux-lab'...
+npm warn deprecated glob@10.5.0: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+
+added 431 packages, and audited 433 packages in 9s
+
+94 packages are looking for funding
+  run `npm fund` for details
+
+7 vulnerabilities (1 low, 3 moderate, 1 high, 2 critical)
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+
+removed 299 packages, changed 1 package, and audited 135 packages in 758ms
+
+33 packages are looking for funding
+  run `npm fund` for details
+
+2 critical severity vulnerabilities
+
+To address all issues, run:
+  npm audit fix
+
+Run `npm audit` for details.
+=== production build ===
+Updated nitro.config.ts with Resux compatibility defaults.
+Error: RESUX_HALAL_REPORT_SIGNING_SECRET must be configured with at least 32 characters before creating authenticated signatures.
+    at resolveIntegritySecret (file:///home/runner/work/resux/resux/dist/halal-core/crypto/integrity.js:51:19)
+    at createIntegritySignature (file:///home/runner/work/resux/resux/dist/halal-core/crypto/integrity.js:4:20)
+    at generateReportSignature (file:///home/runner/work/resux/resux/dist/halal-core/report/signReport.js:4:12)
+    at generateHalalReport (file:///home/runner/work/resux/resux/dist/halal-core/report/generateHalalReport.js:13:11)
+    at enforceBuildGuard (file:///home/runner/work/resux/resux/dist/halal-core/enforce.js:56:20)
+    at async runResuxCli (file:///home/runner/work/resux/resux/dist/cli.js:187:13)
+    at async file:///home/runner/work/resux/resux/dist/bin.js:3:1
+BUILD_STATUS=1
+=== generated handlers ===
+manifest missing

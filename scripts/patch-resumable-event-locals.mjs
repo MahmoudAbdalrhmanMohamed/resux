@@ -60,7 +60,12 @@ const localsHelper = `function readEventLocals(target, eventName) {\n  const enc
 if (!runtime.includes(modifiersAnchor)) throw new Error("readEventModifiers anchor not found");
 runtime = runtime.replace(modifiersAnchor, localsHelper + modifiersAnchor);
 
-const clientMarkerLine = `    attrs.push('data-rx-on-' + event.name + '=\\":' + event.handler + '\\"');`;
+const clientMarkerPrefix = "    attrs.push('data-rx-on-' + event.name + ";
+const clientMarkerStart = runtime.indexOf(clientMarkerPrefix);
+if (clientMarkerStart < 0) throw new Error("client event render marker prefix not found");
+const clientMarkerEnd = runtime.indexOf("\n", clientMarkerStart);
+if (clientMarkerEnd < 0) throw new Error("client event render marker line end not found");
+const clientMarkerLine = runtime.slice(clientMarkerStart, clientMarkerEnd);
 const clientMarkerWithLocals = [
   clientMarkerLine,
   '    if (event.locals && event.locals.length) {',
@@ -71,8 +76,7 @@ const clientMarkerWithLocals = [
   `      attrs.push('data-rx-locals-' + event.name + '=\\"' + escapeAttribute(JSON.stringify(eventLocals)) + '\\"');`,
   '    }',
 ].join("\n");
-if (!runtime.includes(clientMarkerLine)) throw new Error("client event render marker not found");
-runtime = runtime.replace(clientMarkerLine, clientMarkerWithLocals);
+runtime = runtime.slice(0, clientMarkerStart) + clientMarkerWithLocals + runtime.slice(clientMarkerEnd);
 
 await writeFile(runtimePath, runtime, "utf8");
 console.log(`Patched resumable event locals (server render markers: ${serverCount}).`);

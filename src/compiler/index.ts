@@ -1495,13 +1495,17 @@ function compileTemplateNode(
         throw new ResuxCompileError("Events need an argument and expression.", locationFromVueNode(state.file, prop));
       }
       const isSimpleIdentifier = /^[A-Za-z_$][\w$]*$/.test(expression);
-      const handler = (isSimpleIdentifier && !state.activeLocals.includes(expression))
-        ? expression
-        : createInlineEventHandler(expression, state, prop);
-      const event = {
+      const usesInlineHandler = !(isSimpleIdentifier && !state.activeLocals.includes(expression));
+      const handler = usesInlineHandler
+        ? createInlineEventHandler(expression, state, prop)
+        : expression;
+      const event: TemplateEvent = {
         name: arg,
         handler,
-        modifiers
+        modifiers,
+        ...(usesInlineHandler && state.activeLocals.length > 0
+          ? { locals: [...state.activeLocals] }
+          : {})
       };
       events.push(event);
       state.handlers.push(event);
@@ -1598,10 +1602,11 @@ function compileTemplateNode(
         value: registerTemplateExpression(model.value, state.templateRefBindings, state.file, prop, state),
         bindingId: nextBindingId(state)
       });
-      const event = {
+      const event: TemplateEvent = {
         name: model.event,
         handler: model.handler,
-        modifiers: []
+        modifiers: [],
+        ...(state.activeLocals.length > 0 ? { locals: [...state.activeLocals] } : {})
       };
       events.push(event);
       state.handlers.push(event);
@@ -1656,9 +1661,12 @@ function compileTemplateNode(
 function createInlineEventHandler(expression: string, state: CompileTemplateState, node?: VueCompilerNode): string {
   const name = nextInlineHandlerName(state);
   const transformed = transformTemplateExpressionCode(expression, state.templateRefBindings, state.file, node ?? ({} as any)).transformed;
+  const localBindings = state.activeLocals
+    .map((local) => `const ${local} = __rx_event_locals[${JSON.stringify(local)}];`)
+    .join("\n");
   state.inlineHandlers.push({
     name,
-    source: `function ${name}($event) {\n${transformed}\n}`,
+    source: `function ${name}($event, __rx_event_locals = {}) {\n${localBindings}${localBindings ? "\n" : ""}${transformed}\n}`,
     locals: [...state.activeLocals]
   });
   return name;

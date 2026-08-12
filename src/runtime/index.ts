@@ -467,6 +467,8 @@ export interface TemplateEvent {
   name: string;
   handler: string;
   modifiers?: string[];
+  /** Template-local bindings captured by an inline resumable handler. */
+  locals?: string[];
 }
 
 export interface IfDirective {
@@ -3800,6 +3802,15 @@ function renderNativeElement(node: ElementTemplateNode, context: RenderTemplateC
 
   for (const event of node.events) {
     attrs.push(`data-rx-on-${event.name}="${context.scopeId}:${context.moduleId}:${event.handler}"`);
+    if (event.locals?.length) {
+      const eventLocals: Record<string, unknown> = {};
+      for (const name of event.locals) {
+        if (!Object.prototype.hasOwnProperty.call(locals, name)) continue;
+        assertJsonSerializable(locals[name], `event local "${name}"`);
+        eventLocals[name] = JSON.parse(JSON.stringify(locals[name]));
+      }
+      attrs.push(`data-rx-locals-${event.name}="${escapeAttribute(JSON.stringify(eventLocals))}"`);
+    }
     if (event.modifiers?.length) {
       attrs.push(`data-rx-mod-${event.name}="${escapeAttribute(event.modifiers.join(","))}"`);
     }
@@ -4004,6 +4015,15 @@ async function renderNativeElementAsync(
 
   for (const event of node.events) {
     attrs.push(`data-rx-on-${event.name}="${context.scopeId}:${context.moduleId}:${event.handler}"`);
+    if (event.locals?.length) {
+      const eventLocals: Record<string, unknown> = {};
+      for (const name of event.locals) {
+        if (!Object.prototype.hasOwnProperty.call(locals, name)) continue;
+        assertJsonSerializable(locals[name], `event local "${name}"`);
+        eventLocals[name] = JSON.parse(JSON.stringify(locals[name]));
+      }
+      attrs.push(`data-rx-locals-${event.name}="${escapeAttribute(JSON.stringify(eventLocals))}"`);
+    }
     if (event.modifiers?.length) {
       attrs.push(`data-rx-mod-${event.name}="${escapeAttribute(event.modifiers.join(","))}"`);
     }
@@ -10411,12 +10431,12 @@ export function createClientComponent(definition) {
       await Promise.allSettled(mountedCallbacks.map((callback) => callback()));
       return { scope, props, stateRefs, globalStateKeys, asyncDataRefs, pendingCompletions };
     },
-    async run(scopeRecord, handlerName, event) {
+    async run(scopeRecord, handlerName, event, eventLocals = {}) {
       const handler = scopeRecord.scope[handlerName];
       if (typeof handler !== "function") {
         throw new Error("Missing resumable handler " + handlerName + ".");
       }
-      await handler(event);
+      await handler(event, eventLocals);
       return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId);
     },
     render(scopeRecord) {
@@ -14131,7 +14151,7 @@ async function handleDelegatedEvent(eventName, event) {
       scopeRecord = await component.createScope(payload.scopes[scopeId], payload.route);
       scopeCache.set(scopeId, scopeRecord);
     }
-    const patches = await component.run(scopeRecord, handlerName, event);
+    const patches = await component.run(scopeRecord, handlerName, event, readEventLocals(target, eventName));
     const serialized = component.serialize(scopeRecord);
     payload.scopes[scopeId].props = serialized.props;
     payload.scopes[scopeId].state = serialized.state;
@@ -14144,6 +14164,17 @@ async function handleDelegatedEvent(eventName, event) {
       handler: handlerName,
       message: error instanceof Error ? error.message : String(error)
     });
+  }
+}
+
+function readEventLocals(target, eventName) {
+  const encoded = target.getAttribute("data-rx-locals-" + eventName);
+  if (!encoded) return {};
+  try {
+    const parsed = JSON.parse(encoded);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
   }
 }
 
@@ -14359,6 +14390,13 @@ function renderElement(node, scope, locals, styleScopeId) {
   }
   for (const event of node.events) {
     attrs.push('data-rx-on-' + event.name + '=":' + event.handler + '"');
+    if (event.locals && event.locals.length) {
+      const eventLocals = {};
+      for (const name of event.locals) {
+        if (Object.prototype.hasOwnProperty.call(locals, name)) eventLocals[name] = locals[name];
+      }
+      attrs.push('data-rx-locals-' + event.name + '=\"' + escapeAttribute(JSON.stringify(eventLocals)) + '\"');
+    }
     if (event.modifiers && event.modifiers.length) {
       attrs.push('data-rx-mod-' + event.name + '="' + escapeAttribute(event.modifiers.join(",")) + '"');
     }

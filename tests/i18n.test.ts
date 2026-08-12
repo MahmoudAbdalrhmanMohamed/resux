@@ -158,6 +158,58 @@ describe("i18n runtime integration", () => {
     expect(result.html).toContain(">/ar/about</span>");
   });
 
+  it("keeps no_prefix URLs unprefixed while setLocale updates per-app locale state", async () => {
+    const runtimeConfig = createRuntimeConfig();
+    (runtimeConfig.public.i18n as Record<string, unknown>).strategy = "no_prefix";
+
+    const page: ComponentDefinition = defineComponent({
+      id: "m-i18n-no-prefix",
+      name: "I18nNoPrefix",
+      file: "I18nNoPrefix.vue",
+      handlers: [],
+      async script() {
+        const { useI18n } = await import("resuxjs/i18n");
+        const i18n = useI18n();
+        const before = i18n.locale.value;
+        i18n.setLocale("ar");
+        return {
+          before,
+          after: i18n.locale.value,
+          translated: i18n.t("demo.welcome", { name: "Ada" }),
+          path: i18n.switchLocalePath("ar", "/about?tab=1#part"),
+        };
+      },
+      template: [
+        {
+          type: "element",
+          tag: "main",
+          attrs: [],
+          events: [],
+          children: [
+            { type: "interpolation", expression: "before", bindingId: "b0" },
+            { type: "text", value: "|" },
+            { type: "interpolation", expression: "after", bindingId: "b1" },
+            { type: "text", value: "|" },
+            { type: "interpolation", expression: "translated", bindingId: "b2" },
+            { type: "text", value: "|" },
+            { type: "interpolation", expression: "path", bindingId: "b3" },
+          ],
+        },
+      ],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/about", params: {}, query: {} },
+      runtimeConfig,
+    });
+
+    expect(result.html).toContain(">en</span>");
+    expect(result.html).toContain(">ar</span>");
+    expect(result.html).toContain("مرحبا Ada");
+    expect(result.html).toContain(">/about?tab=1#part</span>");
+  });
+
   it("sets localized html attrs, localized title, and hreflang links in head output", async () => {
     const page: ComponentDefinition = defineComponent({
       id: "m-i18n-head",

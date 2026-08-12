@@ -1,7 +1,10 @@
 import { getQuery as h3GetQuery, readBody as h3ReadBody, setHeader as h3SetHeader } from "h3";
 import {
+  buildLocalePath,
   normalizeI18nRuntimeConfig,
   resolveI18nRoute,
+  resolveLocaleDirection,
+  resolveLocalizedValue,
   translateRaw,
   translateText
 } from "../i18n/shared.js";
@@ -2650,6 +2653,54 @@ function hashFetchIdentity(value: string): string {
     + (second >>> 0).toString(16).padStart(8, "0");
 }
 
+function createServerI18nContext(route: RouteContext, runtimeConfig: RuntimeConfig): any {
+  const config = normalizeI18nRuntimeConfig(runtimeConfig.public?.i18n);
+  if (!config) {
+    return {
+      locale: ref("en"),
+      dir: ref("ltr"),
+      locales: [],
+      defaultLocale: "en",
+      fallbackLocale: "en",
+      strategy: "prefix_except_default",
+      t: (key: string) => key,
+      tm: (key: string) => key,
+      resolveLocalized: (value: unknown) => typeof value === "string" ? value : null,
+      localePath: (to: string) => to,
+      switchLocalePath: (_localeCode: string, to?: string) => to ?? route.path,
+      setLocale: () => {}
+    };
+  }
+
+  const resolved = resolveI18nRoute(route.path, config);
+  const locale = ref(resolved.locale.code);
+  const dir = ref(resolveLocaleDirection(config, resolved.locale.code));
+  return {
+    locale,
+    dir,
+    locales: config.locales,
+    defaultLocale: config.defaultLocale,
+    fallbackLocale: config.fallbackLocale,
+    strategy: config.strategy,
+    t(key: string, params: Record<string, string | number | boolean | null | undefined> = {}): string {
+      return translateText(config, locale.value, key, params);
+    },
+    tm(key: string): unknown {
+      return translateRaw(config, locale.value, key);
+    },
+    resolveLocalized(value: unknown): string | null {
+      return resolveLocalizedValue(value, locale.value, config.fallbackLocale);
+    },
+    localePath(to: string, localeCode?: string): string {
+      return buildLocalePath(to, localeCode ?? locale.value, config);
+    },
+    switchLocalePath(localeCode: string, to?: string): string {
+      return buildLocalePath(to ?? route.path, localeCode, config);
+    },
+    setLocale: () => {}
+  };
+}
+
 export function createServerSetupContext(
   route: RouteContext,
   props: ComponentProps,
@@ -2865,23 +2916,13 @@ export function createServerSetupContext(
       // Page meta is compiled statically in Resux.
     },
     useI18n(): any {
-      return (globalThis as any).__RESUX_USE_I18N__ ? (globalThis as any).__RESUX_USE_I18N__() : {
-        locale: ref("en"),
-        dir: ref("ltr"),
-        locales: [],
-        t: (k: string) => k,
-        tm: (k: string) => k,
-        resolveLocalized: (v: any) => v,
-        localePath: (to: string) => to,
-        switchLocalePath: (to: string) => to,
-        setLocale: () => {}
-      };
+      return createServerI18nContext(route, runtimeConfig);
     },
     useLocalePath(): any {
-      return (globalThis as any).__RESUX_USE_LOCALE_PATH__ ? (globalThis as any).__RESUX_USE_LOCALE_PATH__() : (to: string) => to;
+      return createServerI18nContext(route, runtimeConfig).localePath;
     },
     useSwitchLocalePath(): any {
-      return (globalThis as any).__RESUX_USE_SWITCH_LOCALE_PATH__ ? (globalThis as any).__RESUX_USE_SWITCH_LOCALE_PATH__() : (to: string) => to;
+      return createServerI18nContext(route, runtimeConfig).switchLocalePath;
     },
     useDevice(): DeviceInfo {
       return parseUserAgent(route.userAgent);

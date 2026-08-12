@@ -185,7 +185,11 @@ export function normalizeI18nRuntimeConfig(value: unknown): ResuxI18nRuntimeConf
 }
 
 export function resolveI18nRoute(pathname: string, config: ResuxI18nRuntimeConfig): ResuxI18nResolvedRoute {
-  const normalizedPath = normalizePathname(pathname);
+  // Route identity is pathname-only. Query strings and hashes belong to
+  // navigation state and must not be mistaken for a route segment or leak into
+  // canonical/hreflang URLs.
+  const { pathname: rawPathname } = splitPathSuffix(pathname);
+  const normalizedPath = normalizePathname(rawPathname);
   const segments = normalizedPath === "/" ? [] : normalizedPath.slice(1).split("/");
   const first = segments[0];
   const candidate = first ? resolveLocaleByCode(config.locales, first) : null;
@@ -329,6 +333,13 @@ export function createI18nHead(
     dir: resolveLocaleDirection(config, resolved.locale.code)
   };
   const link: Array<Record<string, string>> = [];
+
+  const canonicalPath = buildLocalePath(resolved.basePath, resolved.locale.code, config);
+  const canonicalHref = routeOrigin ? new URL(canonicalPath, routeOrigin).toString() : canonicalPath;
+  link.push({
+    rel: "canonical",
+    href: canonicalHref
+  });
 
   if (includeHreflang) {
     for (const locale of config.locales) {

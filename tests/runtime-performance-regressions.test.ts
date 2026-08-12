@@ -30,10 +30,11 @@ describe("runtime performance regressions", () => {
     const source = getClientRuntimeSource();
 
     expect(source).toContain("const routePayloadRequests = new Map();");
-    expect(source).toContain("routePayloadRequests.has(routePath)");
-    expect(source).toContain("routePayloadRequests.set(routePath, request);");
-    expect(source).toContain("routePayloadRequests.delete(routePath);");
-    expect(source).toContain("return routePayloadRequests.get(routePath);");
+    expect(source).toContain("const routePayloadRequests = new Map();");
+    expect(source).toContain("const entry = { promise, reason };");
+    expect(source).toContain("routePayloadRequests.set(key, entry);");
+    expect(source).toContain("return await pending.promise;");
+    expect(source).toContain("routePayloadRequests.delete(key);");
   });
 
   it("does not let stale in-flight payloads repopulate the cache after dev invalidation", () => {
@@ -45,10 +46,52 @@ describe("runtime performance regressions", () => {
     expect(source).toContain("let routePayloadGeneration = 0;");
     expect(source).toContain("routePayloadGeneration += 1;");
     expect(source).toContain("routePayloadRequests.clear();");
+    expect(source).toContain("routePayloadFailures.clear();");
     expect(source).toContain("const generation = routePayloadGeneration;");
     expect(source).toContain("generation !== routePayloadGeneration");
-    expect(source).toContain("routePayloadRequests.get(routePath) === request");
+    expect(source).toContain("routePayloadRequests.get(key) === entry");
     expect(uncachedSource).not.toContain("routePayloadCache.set(routePath");
+  });
+
+  it("uses one canonical route loader for prefetch and navigation with failure cooldown and recovery", () => {
+    const source = getClientRuntimeSource();
+
+    expect(source).toContain("const routePayloadFailures = new Map();");
+    expect(source).toContain("const ROUTE_PREFETCH_FAILURE_COOLDOWN_MS = 5000;");
+    expect(source).toContain("async function loadRoute(routePath, options = {})");
+    expect(source).toContain('reason: "prefetch"');
+    expect(source).toContain('reason: "navigation"');
+    expect(source).toContain('pending.reason === "prefetch"');
+    expect(source).toContain('return loadRoute(key, { reason: "navigation", force: true });');
+    expect(source).toContain("routePayloadFailures.set(key");
+  });
+
+  it("normalizes route payload keys and keeps query while excluding hash and trailing slash", () => {
+    const source = getClientRuntimeSource();
+
+    expect(source).toContain("function normalizeRoutePayloadKey(routePath)");
+    expect(source).toContain('target.pathname.replace(/\\/+$/, "")');
+    expect(source).toContain("return pathname + target.search;");
+    expect(source).not.toContain("return pathname + target.search + target.hash;");
+  });
+
+  it("does not route-prefetch API or framework-internal links", () => {
+    const source = getClientRuntimeSource();
+
+    expect(source).toContain("function isRouterManagedPagePath(pathname)");
+    expect(source).toContain('normalized.startsWith("/api/")');
+    expect(source).toContain('normalized.startsWith("/__resux/")');
+    expect(source).toContain('normalized.startsWith("/_resux/")');
+    expect(source).toContain('reason: "non-page-route"');
+  });
+
+  it("bounds shared route requests so they cannot remain pending forever", () => {
+    const source = getClientRuntimeSource();
+
+    expect(source).toContain("const ROUTE_PAYLOAD_TIMEOUT_MS = 30000;");
+    expect(source).toContain("new AbortController()");
+    expect(source).toContain("controller?.abort();");
+    expect(source).toContain("clearTimeout(timeout);");
   });
 
   it("scans client enhancements once per page-finish lifecycle instead of repeatedly during boot", () => {

@@ -7601,6 +7601,9 @@ if (typeof globalThis !== "undefined") {
 
 const routePayloadCache = new Map();
 const routePayloadRequests = new Map();
+const routePayloadFailures = new Map();
+const ROUTE_PREFETCH_FAILURE_COOLDOWN_MS = 5000;
+const ROUTE_PAYLOAD_TIMEOUT_MS = 30000;
 let routePayloadGeneration = 0;
 const mountedVueIslands = new Map();
 const pendingAsyncDataControllers = globalThis.__RESUX_PENDING_ASYNC_DATA_CONTROLLERS__ ||= new Set();
@@ -13088,6 +13091,9 @@ function resolveSameOriginAnchorTarget(anchor) {
   if (target.origin !== location.origin) {
     return { url: null, reason: "external-origin" };
   }
+  if (!isRouterManagedPagePath(target.pathname)) {
+    return { url: null, reason: "non-page-route" };
+  }
   return { url: target, reason: null };
 }
 
@@ -13111,7 +13117,11 @@ function isManagedMediaAssetPath(pathname) {
 
 async function navigateTo(target, options = {}) {
   const nextUrl = new URL(target, location.href);
-  const routePath = nextUrl.pathname + nextUrl.search;
+  const routePath = normalizeRoutePayloadKey(nextUrl.pathname + nextUrl.search);
+  if (!isRouterManagedPagePath(nextUrl.pathname)) {
+    location.assign(nextUrl.href);
+    return;
+  }
   if (isManagedMediaAssetPath(nextUrl.pathname)) {
     warnManagedMediaDebug("router-navigation-blocked-media-path", {
       routePath,
@@ -13136,7 +13146,10 @@ async function navigateTo(target, options = {}) {
 
   try {
     setRouteTransition("fetching", { path: routePath });
-    const result = await fetchRoutePayload(routePath);
+    const result = await loadRoute(routePath, {
+      reason: "navigation",
+      force: options.force === true
+    });
     if (transitionToken !== routeTransitionToken) {
       return;
     }
@@ -13303,9 +13316,7 @@ function clearScopeCacheExcept(preservedScopeIds) {
 
 async function applyDevUpdate(payload = {}) {
   devImportRevision = Number(payload.revision ?? Date.now());
-  routePayloadGeneration += 1;
-  routePayloadCache.clear();
-  routePayloadRequests.clear();
+  invalidateAllRoutePayloads();
   await hotUpdateActiveScopes();
 }
 
@@ -13411,11 +13422,17 @@ async function prefetchNavigationTarget(event) {
   if (!routePath || routePayloadCache.has(routePath) || routePayloadRequests.has(routePath)) {
     return;
   }
+  if (isRoutePrefetchCoolingDown(routePath)) {
+    return;
+  }
 
   try {
-    routePayloadCache.set(routePath, await fetchRoutePayload(routePath));
-  } catch {
-    routePayloadCache.delete(routePath);
+    await loadRoute(routePath, { reason: "prefetch" });
+  } catch (error) {
+    logManagedMediaDebug("router-prefetch-failed", {
+      path: routePath,
+      message: error instanceof Error ? error.message : String(error)
+    });
   }
 }
 
@@ -13447,39 +13464,129 @@ function getPrefetchPath(anchor, eventTarget = null) {
     return null;
   }
 
-  const routePath = target.pathname + target.search;
-  if (routePath === location.pathname + location.search) {
+  const routePath = normalizeRoutePayloadKey(target.pathname + target.search);
+  if (routePath === normalizeRoutePayloadKey(location.pathname + location.search)) {
     return null;
   }
   return routePath;
 }
 
-async function fetchRoutePayload(routePath) {
-  if (routePayloadCache.has(routePath)) {
-    return routePayloadCache.get(routePath);
+function isRouterManagedPagePath(pathname) {
+  const normalized = String(pathname || "").toLowerCase();
+  if (!normalized) {
+    return false;
   }
-  if (routePayloadRequests.has(routePath)) {
-    return routePayloadRequests.get(routePath);
+  return !(
+    normalized === "/api"
+    || normalized.startsWith("/api/")
+    || normalized === "/__resux"
+    || normalized.startsWith("/__resux/")
+    || normalized === "/_resux"
+    || normalized.startsWith("/_resux/")
+  );
+}
+
+function normalizeRoutePayloadKey(routePath) {
+  const base = typeof location !== "undefined" && location.href
+    ? location.href
+    : "http://resux.local/";
+  const target = new URL(String(routePath || "/"), base);
+  const pathname = target.pathname === "/"
+    ? "/"
+    : target.pathname.replace(/\/+$/, "") || "/";
+  return pathname + target.search;
+}
+
+function isRoutePrefetchCoolingDown(routePath, now = Date.now()) {
+  const key = normalizeRoutePayloadKey(routePath);
+  const failure = routePayloadFailures.get(key);
+  if (!failure) {
+    return false;
+  }
+  if ((now - failure.failedAt) >= ROUTE_PREFETCH_FAILURE_COOLDOWN_MS) {
+    routePayloadFailures.delete(key);
+    return false;
+  }
+  return true;
+}
+
+function invalidateRoutePayload(routePath) {
+  const key = normalizeRoutePayloadKey(routePath);
+  routePayloadCache.delete(key);
+  routePayloadFailures.delete(key);
+}
+
+function invalidateAllRoutePayloads() {
+  routePayloadGeneration += 1;
+  routePayloadCache.clear();
+  routePayloadRequests.clear();
+  routePayloadFailures.clear();
+}
+
+async function loadRoute(routePath, options = {}) {
+  const key = normalizeRoutePayloadKey(routePath);
+  const reason = options.reason === "prefetch" ? "prefetch" : "navigation";
+  const force = options.force === true;
+
+  if (force) {
+    invalidateRoutePayload(key);
+  } else if (routePayloadCache.has(key)) {
+    return routePayloadCache.get(key);
+  }
+
+  if (reason === "prefetch" && !force && isRoutePrefetchCoolingDown(key)) {
+    const failure = routePayloadFailures.get(key);
+    throw failure?.error ?? new Error("Route prefetch is cooling down after a recent failure.");
+  }
+
+  const pending = routePayloadRequests.get(key);
+  if (pending) {
+    try {
+      return await pending.promise;
+    } catch (error) {
+      if (reason === "navigation" && pending.reason === "prefetch") {
+        if (routePayloadRequests.get(key) === pending) {
+          routePayloadRequests.delete(key);
+        }
+        routePayloadFailures.delete(key);
+        return loadRoute(key, { reason: "navigation", force: true });
+      }
+      throw error;
+    }
   }
 
   const generation = routePayloadGeneration;
-  const request = fetchRoutePayloadUncached(routePath);
-  routePayloadRequests.set(routePath, request);
+  const promise = fetchRoutePayloadUncached(key);
+  const entry = { promise, reason };
+  routePayloadRequests.set(key, entry);
+
   try {
-    const result = await request;
+    const result = await promise;
     if (generation !== routePayloadGeneration) {
-      if (routePayloadRequests.get(routePath) === request) {
-        routePayloadRequests.delete(routePath);
+      if (routePayloadRequests.get(key) === entry) {
+        routePayloadRequests.delete(key);
       }
-      return fetchRoutePayload(routePath);
+      return loadRoute(key, { reason, force: false });
     }
-    routePayloadCache.set(routePath, result);
+    routePayloadFailures.delete(key);
+    routePayloadCache.set(key, result);
     return result;
+  } catch (error) {
+    routePayloadFailures.set(key, {
+      status: "failed",
+      error,
+      failedAt: Date.now()
+    });
+    throw error;
   } finally {
-    if (routePayloadRequests.get(routePath) === request) {
-      routePayloadRequests.delete(routePath);
+    if (routePayloadRequests.get(key) === entry) {
+      routePayloadRequests.delete(key);
     }
   }
+}
+
+async function fetchRoutePayload(routePath) {
+  return loadRoute(routePath, { reason: "navigation" });
 }
 
 async function fetchRoutePayloadUncached(routePath) {
@@ -13487,18 +13594,32 @@ async function fetchRoutePayloadUncached(routePath) {
   const url = isStatic
     ? "/__resux/route/payloads" + (routePath === "/" ? "/index.json" : routePath.replace(/\/$/, "") + ".json")
     : "/__resux/route?path=" + encodeURIComponent(routePath);
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const timeout = setTimeout(() => {
+    controller?.abort();
+  }, ROUTE_PAYLOAD_TIMEOUT_MS);
 
-  const response = await fetch(url, {
-    headers: {
-      accept: "application/json"
+  try {
+    const response = await fetch(url, {
+      headers: {
+        accept: "application/json"
+      },
+      ...(controller ? { signal: controller.signal } : {})
+    });
+
+    if (!response.ok) {
+      throw new Error("Route payload request failed: " + response.status);
     }
-  });
 
-  if (!response.ok) {
-    throw new Error("Route payload request failed: " + response.status);
+    return await response.json();
+  } catch (error) {
+    if (controller?.signal.aborted) {
+      throw new Error("Route payload request timed out after " + ROUTE_PAYLOAD_TIMEOUT_MS + "ms.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return response.json();
 }
 
 function applyHtmlAttrs(attrs) {

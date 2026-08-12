@@ -13007,6 +13007,14 @@ function handleNavigationClick(event) {
     return false;
   }
 
+  if (!isRouterManagedPagePath(target.pathname)) {
+    logManagedMediaDebug("router-ignore", {
+      reason: "non-page-route",
+      href: target.href
+    });
+    return false;
+  }
+
   if (shouldIgnoreNavigationTarget(event.target, anchor)) {
     logManagedMediaDebug("router-ignore", {
       reason: "ignored-event-target",
@@ -13090,9 +13098,6 @@ function resolveSameOriginAnchorTarget(anchor) {
   }
   if (target.origin !== location.origin) {
     return { url: null, reason: "external-origin" };
-  }
-  if (!isRouterManagedPagePath(target.pathname)) {
-    return { url: null, reason: "non-page-route" };
   }
   return { url: target, reason: null };
 }
@@ -13459,6 +13464,14 @@ function getPrefetchPath(anchor, eventTarget = null) {
     });
     return null;
   }
+  if (!isRouterManagedPagePath(target.pathname)) {
+    logManagedMediaDebug("router-prefetch-ignore", {
+      reason: "non-page-route",
+      href: target.href
+    });
+    return null;
+  }
+
   if (shouldIgnoreNavigationTarget(eventTarget, anchor)) {
     logManagedMediaDebug("router-prefetch-ignore", {
       reason: "ignored-event-target",

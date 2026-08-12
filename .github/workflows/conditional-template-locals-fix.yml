@@ -1,0 +1,35 @@
+name: Apply conditional template local fix
+
+on:
+  push:
+    branches:
+      - agent/i18n-router-runtime-hardening
+    paths:
+      - scripts/patch-conditional-template-locals.mjs
+      - .github/workflows/conditional-template-locals-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/i18n-router-runtime-hardening
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: node scripts/patch-conditional-template-locals.mjs
+      - run: |
+          rm scripts/patch-conditional-template-locals.mjs
+          rm .github/workflows/conditional-template-locals-fix.yml
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/compiler/index.ts scripts/patch-conditional-template-locals.mjs .github/workflows/conditional-template-locals-fix.yml
+          git commit -m "fix(compiler): capture conditional template locals"
+          git push origin HEAD:agent/i18n-router-runtime-hardening

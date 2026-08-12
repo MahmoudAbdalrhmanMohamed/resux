@@ -6,7 +6,10 @@ import { buildProject } from "resuxjs/compiler";
 
 describe("conditional template expression locals", () => {
   it("captures a v-for alias used by a nested v-if expression", async () => {
-    const root = path.join(os.tmpdir(), `resux-conditional-local-${Date.now()}`);
+    const root = path.join(
+      os.tmpdir(),
+      `resux-conditional-local-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
     const page = path.join(root, "pages", "index.vue");
     await mkdir(path.dirname(page), { recursive: true });
     await writeFile(

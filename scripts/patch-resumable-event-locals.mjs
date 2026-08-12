@@ -29,11 +29,21 @@ const typeAfter = `export interface TemplateEvent {\n  name: string;\n  handler:
 if (!runtime.includes(typeBefore)) throw new Error("TemplateEvent type anchor not found");
 runtime = runtime.replace(typeBefore, typeAfter);
 
-const serverEventBefore = `  for (const event of node.events) {\n    attrs.push(\`data-rx-on-\${event.name}=\\"\${context.scopeId}:\${context.moduleId}:\${event.handler}\\"\`);\n    if (event.modifiers?.length) {\n      attrs.push(\`data-rx-mod-\${event.name}=\\"\${escapeAttribute(event.modifiers.join(","))}\\"\`);\n    }\n  }`;
-const serverEventAfter = `  for (const event of node.events) {\n    attrs.push(\`data-rx-on-\${event.name}=\\"\${context.scopeId}:\${context.moduleId}:\${event.handler}\\"\`);\n    if (event.locals?.length) {\n      const eventLocals: Record<string, unknown> = {};\n      for (const name of event.locals) {\n        if (!Object.prototype.hasOwnProperty.call(locals, name)) continue;\n        eventLocals[name] = cloneJsonSerializable(locals[name], \`event local \\\"\${name}\\\"\`);\n      }\n      attrs.push(\`data-rx-locals-\${event.name}=\\"\${escapeAttribute(JSON.stringify(eventLocals))}\\"\`);\n    }\n    if (event.modifiers?.length) {\n      attrs.push(\`data-rx-mod-\${event.name}=\\"\${escapeAttribute(event.modifiers.join(","))}\\"\`);\n    }\n  }`;
-const serverCount = runtime.split(serverEventBefore).length - 1;
-if (serverCount < 1) throw new Error("server event render anchor not found");
-runtime = runtime.split(serverEventBefore).join(serverEventAfter);
+const serverMarkerLine = '    attrs.push(`data-rx-on-${event.name}="${context.scopeId}:${context.moduleId}:${event.handler}"`);';
+const serverMarkerWithLocals = [
+  serverMarkerLine,
+  '    if (event.locals?.length) {',
+  '      const eventLocals: Record<string, unknown> = {};',
+  '      for (const name of event.locals) {',
+  '        if (!Object.prototype.hasOwnProperty.call(locals, name)) continue;',
+  '        eventLocals[name] = cloneJsonSerializable(locals[name], `event local "${name}"`);',
+  '      }',
+  '      attrs.push(`data-rx-locals-${event.name}="${escapeAttribute(JSON.stringify(eventLocals))}"`);',
+  '    }',
+].join("\n");
+const serverCount = runtime.split(serverMarkerLine).length - 1;
+if (serverCount < 1) throw new Error("server event render marker not found");
+runtime = runtime.split(serverMarkerLine).join(serverMarkerWithLocals);
 
 const runBefore = `    async run(scopeRecord, handlerName, event) {\n      const handler = scopeRecord.scope[handlerName];\n      if (typeof handler !== \"function\") {\n        throw new Error(\"Missing resumable handler \" + handlerName + \".\");\n      }\n      await handler(event);`;
 const runAfter = `    async run(scopeRecord, handlerName, event, eventLocals = {}) {\n      const handler = scopeRecord.scope[handlerName];\n      if (typeof handler !== \"function\") {\n        throw new Error(\"Missing resumable handler \" + handlerName + \".\");\n      }\n      await handler(event, eventLocals);`;
@@ -50,10 +60,19 @@ const localsHelper = `function readEventLocals(target, eventName) {\n  const enc
 if (!runtime.includes(modifiersAnchor)) throw new Error("readEventModifiers anchor not found");
 runtime = runtime.replace(modifiersAnchor, localsHelper + modifiersAnchor);
 
-const clientEventBefore = `  for (const event of node.events) {\n    attrs.push('data-rx-on-' + event.name + '=\":' + event.handler + '\"');\n    if (event.modifiers && event.modifiers.length) {\n      attrs.push('data-rx-mod-' + event.name + '=\"' + escapeAttribute(event.modifiers.join(\",\")) + '\"');\n    }\n  }`;
-const clientEventAfter = `  for (const event of node.events) {\n    attrs.push('data-rx-on-' + event.name + '=\":' + event.handler + '\"');\n    if (event.locals && event.locals.length) {\n      const eventLocals = {};\n      for (const name of event.locals) {\n        if (Object.prototype.hasOwnProperty.call(locals, name)) eventLocals[name] = locals[name];\n      }\n      attrs.push('data-rx-locals-' + event.name + '=\"' + escapeAttribute(JSON.stringify(eventLocals)) + '\"');\n    }\n    if (event.modifiers && event.modifiers.length) {\n      attrs.push('data-rx-mod-' + event.name + '=\"' + escapeAttribute(event.modifiers.join(\",\")) + '\"');\n    }\n  }`;
-if (!runtime.includes(clientEventBefore)) throw new Error("client event render anchor not found");
-runtime = runtime.replace(clientEventBefore, clientEventAfter);
+const clientMarkerLine = `    attrs.push('data-rx-on-' + event.name + '=\\":' + event.handler + '\\"');`;
+const clientMarkerWithLocals = [
+  clientMarkerLine,
+  '    if (event.locals && event.locals.length) {',
+  '      const eventLocals = {};',
+  '      for (const name of event.locals) {',
+  '        if (Object.prototype.hasOwnProperty.call(locals, name)) eventLocals[name] = locals[name];',
+  '      }',
+  `      attrs.push('data-rx-locals-' + event.name + '=\\"' + escapeAttribute(JSON.stringify(eventLocals)) + '\\"');`,
+  '    }',
+].join("\n");
+if (!runtime.includes(clientMarkerLine)) throw new Error("client event render marker not found");
+runtime = runtime.replace(clientMarkerLine, clientMarkerWithLocals);
 
 await writeFile(runtimePath, runtime, "utf8");
-console.log(`Patched resumable event locals (server render blocks: ${serverCount}).`);
+console.log(`Patched resumable event locals (server render markers: ${serverCount}).`);

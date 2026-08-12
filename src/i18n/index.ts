@@ -423,7 +423,7 @@ export default defineResuxModule<ResuxI18nModuleOptions>({
 });
 
 if (typeof globalThis !== "undefined") {
-  (globalThis as any).__RESUX_USE_I18N__ = useI18n;
-  (globalThis as any).__RESUX_USE_LOCALE_PATH__ = useLocalePath;
-  (globalThis as any).__RESUX_USE_SWITCH_LOCALE_PATH__ = useSwitchLocalePath;
+  (globalThis as any).__RESUX_USE_I18N__ ??= useI18n;
+  (globalThis as any).__RESUX_USE_LOCALE_PATH__ ??= useLocalePath;
+  (globalThis as any).__RESUX_USE_SWITCH_LOCALE_PATH__ ??= useSwitchLocalePath;
 }

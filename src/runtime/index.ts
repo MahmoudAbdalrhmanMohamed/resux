@@ -7568,7 +7568,7 @@ if (typeof globalThis !== "undefined") {
   defineProp("$t", () => {
     return (key, params) => {
       try {
-        return globalThis.__RESUX_USE_I18N__ ? globalThis.__RESUX_USE_I18N__().t(key, params) : key;
+        return useClientI18n().t(key, params);
       } catch (e) {
         return key;
       }
@@ -10352,23 +10352,13 @@ export function createClientComponent(definition) {
           // Page meta is compiled statically in Resux.
         },
         useI18n() {
-          return globalThis.__RESUX_USE_I18N__ ? globalThis.__RESUX_USE_I18N__() : {
-            locale: ref("en"),
-            dir: ref("ltr"),
-            locales: [],
-            t: (k) => k,
-            tm: (k) => k,
-            resolveLocalized: (v) => v,
-            localePath: (to) => to,
-            switchLocalePath: (to) => to,
-            setLocale: () => {}
-          };
+          return useClientI18n(route);
         },
         useLocalePath() {
-          return globalThis.__RESUX_USE_LOCALE_PATH__ ? globalThis.__RESUX_USE_LOCALE_PATH__() : (to) => to;
+          return useClientI18n(route).localePath;
         },
         useSwitchLocalePath() {
-          return globalThis.__RESUX_USE_SWITCH_LOCALE_PATH__ ? globalThis.__RESUX_USE_SWITCH_LOCALE_PATH__() : (to) => to;
+          return useClientI18n(route).switchLocalePath;
         },
         useDevice() {
           return useDevice();
@@ -10464,9 +10454,9 @@ function registerDelegatedEventsFromDom(root = document) {
 }
 
 function installResux() {
-  globalThis.__RESUX_USE_I18N__ ||= () => useClientI18n();
-  globalThis.__RESUX_USE_LOCALE_PATH__ ||= () => useClientI18n().localePath;
-  globalThis.__RESUX_USE_SWITCH_LOCALE_PATH__ ||= () => useClientI18n().switchLocalePath;
+  globalThis.__RESUX_USE_I18N__ = () => useClientI18n();
+  globalThis.__RESUX_USE_LOCALE_PATH__ = () => useClientI18n().localePath;
+  globalThis.__RESUX_USE_SWITCH_LOCALE_PATH__ = () => useClientI18n().switchLocalePath;
   if (globalThis.__RESUX_INSTALLED__) {
     return;
   }

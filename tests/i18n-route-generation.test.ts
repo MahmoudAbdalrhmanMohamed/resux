@@ -34,7 +34,7 @@ async function createFixture(strategy: "prefix" | "prefix_except_default" | "no_
 
   await buildProject(root);
   const publicManifest = JSON.parse(await readFile(path.join(root, ".resux", "manifest.json"), "utf8")) as {
-    routes: Array<{ path: string; id: string; params: string[] }>;
+    routes: Array<{ path: string; id: string; params: string[]; componentId: string; file: string }>;
   };
   const serverManifest = await import(
     `${pathToFileURL(path.join(root, ".resux", "server", "manifest.mjs")).href}?t=${Date.now()}-${Math.random()}`
@@ -101,13 +101,15 @@ describe("i18n route generation", () => {
     expect(serverManifest.matchRoute("/ar/products/9")).toBeNull();
   }, 30000);
 
-  it("reuses the same compiled page module id across localized route records without duplicating page source", async () => {
+  it("reuses the same compiled page module across localized route records while keeping route ids unique", async () => {
     const { publicManifest } = await createFixture("prefix");
     const english = publicManifest.routes.find((route) => route.path === "/en/about");
     const arabic = publicManifest.routes.find((route) => route.path === "/ar/about");
 
     expect(english).toBeTruthy();
     expect(arabic).toBeTruthy();
-    expect(english?.id).toBe(arabic?.id);
+    expect(english?.id).not.toBe(arabic?.id);
+    expect(english?.componentId).toBe(arabic?.componentId);
+    expect(english?.file).toBe(arabic?.file);
   }, 30000);
 });

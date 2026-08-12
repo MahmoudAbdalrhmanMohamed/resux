@@ -94,6 +94,15 @@ describe("runtime performance regressions", () => {
     expect(source).toContain("clearTimeout(timeout);");
   });
 
+  it("hydrates i18n from public route payload config without module side effects", () => {
+    const source = getClientRuntimeSource();
+    expect(source).toContain("function useClientI18n(routeOverride)");
+    expect(source).toContain("runtimeConfig?.public?.i18n");
+    expect(source).toContain("globalThis.__RESUX_USE_I18N__ ||= () => useClientI18n()");
+    expect(source).toContain("readClientTranslation(config.messages, locale.value, key)");
+    expect(source).toContain("createClientRouter().push(buildClientLocalePath");
+  });
+
   it("reloads safely when a route payload belongs to a different build", () => {
     const source = getClientRuntimeSource();
 

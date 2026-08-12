@@ -9358,6 +9358,135 @@ export function useResuxImage() {
   return createClientImageBuilder(app.route, app.$config);
 }
 
+let clientNoPrefixLocaleRef = null;
+
+function readClientI18nConfig() {
+  const runtimeConfig = getClientResuxApp().$config;
+  const raw = runtimeConfig?.public?.i18n;
+  if (!raw || typeof raw !== "object" || !Array.isArray(raw.locales) || raw.locales.length === 0) {
+    return null;
+  }
+  const locales = raw.locales
+    .map((entry) => ({
+      code: String(entry?.code || "").trim().toLowerCase(),
+      name: typeof entry?.name === "string" ? entry.name : undefined,
+      dir: entry?.dir === "rtl" ? "rtl" : "ltr"
+    }))
+    .filter((entry) => entry.code);
+  if (!locales.length) return null;
+  const defaultLocale = locales.some((entry) => entry.code === String(raw.defaultLocale || "").toLowerCase())
+    ? String(raw.defaultLocale).toLowerCase()
+    : locales[0].code;
+  const fallbackLocale = locales.some((entry) => entry.code === String(raw.fallbackLocale || "").toLowerCase())
+    ? String(raw.fallbackLocale).toLowerCase()
+    : defaultLocale;
+  const strategy = raw.strategy === "prefix" || raw.strategy === "no_prefix"
+    ? raw.strategy
+    : "prefix_except_default";
+  return { locales, defaultLocale, fallbackLocale, strategy, messages: raw.messages || {} };
+}
+
+function splitClientI18nTarget(to) {
+  const base = typeof location !== "undefined" ? location.href : "http://resux.local/";
+  const url = new URL(String(to || "/"), base);
+  return { pathname: url.pathname || "/", search: url.search, hash: url.hash };
+}
+
+function clientI18nLogicalPath(pathname, config) {
+  const normalized = pathname === "/" ? "/" : pathname.replace(/\/+$/, "") || "/";
+  const segments = normalized.split("/").filter(Boolean);
+  const first = segments[0]?.toLowerCase();
+  const locale = config.locales.find((entry) => entry.code === first);
+  if (!locale || config.strategy === "no_prefix") return normalized;
+  const rest = segments.slice(1).join("/");
+  return rest ? "/" + rest : "/";
+}
+
+function resolveClientI18nLocaleCode(config, routePath) {
+  if (config.strategy === "no_prefix") {
+    clientNoPrefixLocaleRef ||= ref(config.defaultLocale);
+    return clientNoPrefixLocaleRef.value;
+  }
+  const { pathname } = splitClientI18nTarget(routePath || getClientResuxApp().route?.path || "/");
+  const first = pathname.split("/").filter(Boolean)[0]?.toLowerCase();
+  return config.locales.some((entry) => entry.code === first) ? first : config.defaultLocale;
+}
+
+function readClientTranslation(messages, localeCode, key) {
+  const forbidden = new Set(["__proto__", "prototype", "constructor"]);
+  let current = messages?.[localeCode];
+  for (const part of String(key || "").split(".")) {
+    if (!part || forbidden.has(part) || !current || typeof current !== "object" || !Object.prototype.hasOwnProperty.call(current, part)) {
+      return undefined;
+    }
+    current = current[part];
+  }
+  return current;
+}
+
+function interpolateClientTranslation(value, params = {}) {
+  if (typeof value !== "string") return value;
+  return value.replace(/\{([^{}]+)\}/g, (match, key) => Object.prototype.hasOwnProperty.call(params, key) ? String(params[key]) : match);
+}
+
+function buildClientLocalePath(to, localeCode, config) {
+  const targetLocale = config.locales.find((entry) => entry.code === String(localeCode || "").toLowerCase());
+  if (!targetLocale) return String(to || "/");
+  const { pathname, search, hash } = splitClientI18nTarget(to);
+  const logical = clientI18nLogicalPath(pathname, config);
+  let localized = logical;
+  if (config.strategy === "prefix" || (config.strategy === "prefix_except_default" && targetLocale.code !== config.defaultLocale)) {
+    localized = logical === "/" ? "/" + targetLocale.code : "/" + targetLocale.code + logical;
+  }
+  return localized + search + hash;
+}
+
+function useClientI18n(routeOverride) {
+  const config = readClientI18nConfig();
+  if (!config) {
+    return {
+      locale: ref("en"), dir: ref("ltr"), locales: [], defaultLocale: "en", fallbackLocale: "en", strategy: "prefix_except_default",
+      t: (key) => key, tm: (key) => key, resolveLocalized: (value) => value,
+      localePath: (to) => to, switchLocalePath: (_locale, to) => to || getClientResuxApp().route?.path || "/", setLocale: () => {}
+    };
+  }
+  const routePath = routeOverride?.path || getClientResuxApp().route?.path || (typeof location !== "undefined" ? location.pathname + location.search + location.hash : "/");
+  const locale = computed(() => resolveClientI18nLocaleCode(config, routeOverride?.path || getClientResuxApp().route?.path || routePath));
+  const dir = computed(() => config.locales.find((entry) => entry.code === locale.value)?.dir || "ltr");
+  const t = (key, params = {}) => {
+    const value = readClientTranslation(config.messages, locale.value, key) ?? readClientTranslation(config.messages, config.fallbackLocale, key);
+    return typeof value === "string" ? interpolateClientTranslation(value, params) : String(key);
+  };
+  const tm = (key) => readClientTranslation(config.messages, locale.value, key) ?? readClientTranslation(config.messages, config.fallbackLocale, key) ?? key;
+  return {
+    locale, dir, locales: config.locales, defaultLocale: config.defaultLocale, fallbackLocale: config.fallbackLocale, strategy: config.strategy, t, tm,
+    resolveLocalized(value) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return value == null ? null : String(value);
+      return value[locale.value] ?? value[config.fallbackLocale] ?? value[config.defaultLocale] ?? null;
+    },
+    localePath(to, localeCode = locale.value) { return buildClientLocalePath(to, localeCode, config); },
+    switchLocalePath(localeCode, to) {
+      const current = to || (typeof location !== "undefined" ? location.pathname + location.search + location.hash : routePath);
+      return buildClientLocalePath(current, localeCode, config);
+    },
+    setLocale(localeCode, to) {
+      const targetLocale = config.locales.find((entry) => entry.code === String(localeCode || "").toLowerCase());
+      if (!targetLocale) return;
+      if (config.strategy === "no_prefix") {
+        clientNoPrefixLocaleRef ||= ref(config.defaultLocale);
+        clientNoPrefixLocaleRef.value = targetLocale.code;
+        if (typeof document !== "undefined") {
+          document.documentElement?.setAttribute("lang", targetLocale.code);
+          document.documentElement?.setAttribute("dir", targetLocale.dir);
+        }
+        return;
+      }
+      const current = to || (typeof location !== "undefined" ? location.pathname + location.search + location.hash : routePath);
+      return createClientRouter().push(buildClientLocalePath(current, targetLocale.code, config));
+    }
+  };
+}
+
 function getClientResuxApp(routeOverride) {
   const payload = globalThis.__RESUX__ ?? {
     route: routeOverride ?? { path: "/", params: {}, query: {} },
@@ -10335,6 +10464,9 @@ function registerDelegatedEventsFromDom(root = document) {
 }
 
 function installResux() {
+  globalThis.__RESUX_USE_I18N__ ||= () => useClientI18n();
+  globalThis.__RESUX_USE_LOCALE_PATH__ ||= () => useClientI18n().localePath;
+  globalThis.__RESUX_USE_SWITCH_LOCALE_PATH__ ||= () => useClientI18n().switchLocalePath;
   if (globalThis.__RESUX_INSTALLED__) {
     return;
   }

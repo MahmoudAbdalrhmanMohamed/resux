@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -614,6 +615,17 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
       readConfiguredPackages(runtimeConfig),
       packageDiagnostics,
     );
+    const buildCompatibilityId = createBuildCompatibilityId({
+      runtimeConfig,
+      routes,
+      components,
+      plugins,
+      middleware,
+      serverMiddleware,
+      serverHandlers,
+      packages: packageDiagnostics,
+    });
+    injectRuntimeBuildCompatibilityId(runtimeConfig, buildCompatibilityId);
 
     if (buildOptions.vite === "dev") {
       await writeViteClientRuntime(absoluteOut, packageRegistry);
@@ -698,6 +710,62 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
     await hooks.callHook("build:error", { appRoot: absoluteRoot, outDir: absoluteOut, mode, error });
     throw error;
   }
+}
+
+function createBuildCompatibilityId(input: {
+  runtimeConfig: Record<string, unknown>;
+  routes: RouteManifestRecord[];
+  components: CompiledComponent[];
+  plugins: CompiledPlugin[];
+  middleware: CompiledMiddleware[];
+  serverMiddleware: CompiledServerMiddleware[];
+  serverHandlers: ServerHandlerRecord[];
+  packages: PackageManifestEntry[];
+}): string {
+  const hash = createHash("sha256");
+  hash.update("resux-build-compatibility-v1\0");
+  hash.update(getClientRuntimeSource());
+  hash.update(JSON.stringify(input.runtimeConfig));
+  hash.update(JSON.stringify(input.routes.map(({ id, path: routePath, params, componentId, meta }) => ({ id, path: routePath, params, componentId, meta }))));
+  for (const component of input.components) {
+    hash.update(component.id);
+    hash.update(component.serverSource);
+    hash.update(component.clientSource);
+  }
+  for (const plugin of input.plugins) {
+    hash.update(plugin.id);
+    hash.update(plugin.serverSource);
+    hash.update(plugin.clientSource);
+  }
+  for (const entry of input.middleware) {
+    hash.update(entry.id);
+    hash.update(entry.serverSource);
+    hash.update(entry.clientSource);
+  }
+  for (const entry of input.serverMiddleware) {
+    hash.update(entry.id);
+    hash.update(entry.source);
+  }
+  for (const entry of input.serverHandlers) {
+    hash.update(entry.id);
+    hash.update(entry.source);
+  }
+  hash.update(JSON.stringify(input.packages));
+  return hash.digest("hex").slice(0, 24);
+}
+
+function injectRuntimeBuildCompatibilityId(runtimeConfig: Record<string, unknown>, buildId: string): void {
+  const configuredRuntime = isPlainObject(runtimeConfig.runtimeConfig)
+    ? runtimeConfig.runtimeConfig
+    : {};
+  const publicConfig = isPlainObject(configuredRuntime.public)
+    ? configuredRuntime.public
+    : {};
+  configuredRuntime.public = {
+    ...publicConfig,
+    __resuxBuildId: buildId,
+  };
+  runtimeConfig.runtimeConfig = configuredRuntime;
 }
 
 async function cleanGeneratedOutput(outDir: string): Promise<void> {

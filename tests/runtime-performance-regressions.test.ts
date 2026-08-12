@@ -94,6 +94,16 @@ describe("runtime performance regressions", () => {
     expect(source).toContain("clearTimeout(timeout);");
   });
 
+  it("reloads safely when a route payload belongs to a different build", () => {
+    const source = getClientRuntimeSource();
+
+    expect(source).toContain("function ensureRoutePayloadBuildCompatibility(result)");
+    expect(source).toContain("currentBuildId === nextBuildId");
+    expect(source).toContain('dispatchManagedEvent(document, "resux:build-mismatch"');
+    expect(source).toContain("location.reload();");
+    expect(source).toContain("invalidateAllRoutePayloads();");
+  });
+
   it("scans client enhancements once per page-finish lifecycle instead of repeatedly during boot", () => {
     const source = getClientRuntimeSource();
     const documentScans = source.match(/void scanClientEnhancements\(document\);/g) ?? [];

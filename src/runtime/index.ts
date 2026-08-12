@@ -13150,6 +13150,9 @@ async function navigateTo(target, options = {}) {
       reason: "navigation",
       force: options.force === true
     });
+    if (!ensureRoutePayloadBuildCompatibility(result)) {
+      return;
+    }
     if (transitionToken !== routeTransitionToken) {
       return;
     }
@@ -13620,6 +13623,27 @@ async function fetchRoutePayloadUncached(routePath) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function readRoutePayloadBuildId(payload) {
+  const value = payload?.config?.public?.__resuxBuildId;
+  return typeof value === "string" && value ? value : null;
+}
+
+function ensureRoutePayloadBuildCompatibility(result) {
+  const currentBuildId = readRoutePayloadBuildId(globalThis.__RESUX__);
+  const nextBuildId = readRoutePayloadBuildId(result?.payload);
+  if (!currentBuildId || !nextBuildId || currentBuildId === nextBuildId) {
+    return true;
+  }
+
+  invalidateAllRoutePayloads();
+  dispatchManagedEvent(document, "resux:build-mismatch", {
+    currentBuildId,
+    nextBuildId
+  });
+  location.reload();
+  return false;
 }
 
 function applyHtmlAttrs(attrs) {

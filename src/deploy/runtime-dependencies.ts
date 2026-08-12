@@ -7,6 +7,8 @@ interface PackageRecord extends Record<string, unknown> {
   name?: unknown;
   dependencies?: unknown;
   optionalDependencies?: unknown;
+  peerDependencies?: unknown;
+  peerDependenciesMeta?: unknown;
 }
 
 const nodeBuiltins = new Set(
@@ -275,6 +277,22 @@ export async function copyRuntimeDependencyTree(
     }
 
     for (const dependency of runtimeDependencyNames(packageJson.optionalDependencies)) {
+      const dependencyPackageJsonPath = await resolveDependencyPackageJsonPath(
+        dependency,
+        dependencyResolver,
+      );
+      if (!dependencyPackageJsonPath) {
+        continue;
+      }
+      pending.push({ dependency, packageJsonPath: dependencyPackageJsonPath });
+    }
+
+    // Peer dependencies are runtime requirements supplied by the consuming app
+    // rather than nested package dependencies. Include installed peers in the
+    // serverless closure, but do not fail packaging when an optional/uninstalled
+    // peer is intentionally absent. This mirrors Node's runtime resolution model
+    // without treating peer declarations as unconditional npm package imports.
+    for (const dependency of runtimeDependencyNames(packageJson.peerDependencies)) {
       const dependencyPackageJsonPath = await resolveDependencyPackageJsonPath(
         dependency,
         dependencyResolver,

@@ -3,8 +3,10 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   computed,
+  ref,
   defineResuxModule,
   type ResuxModuleContext,
+  type Ref,
   useResuxApp,
   type ResuxRouter,
   type RuntimeConfig
@@ -262,6 +264,38 @@ function readRuntimeI18nConfig(): ResuxI18nRuntimeConfig | null {
   return normalizeI18nRuntimeConfig(publicConfig.i18n);
 }
 
+const I18N_LOCALE_STATE_KEY = "__resux_i18n_locale_state";
+
+function resolveConfiguredLocale(config: ResuxI18nRuntimeConfig, localeCode: string): ResuxI18nLocale | null {
+  const normalized = String(localeCode || "").trim().toLowerCase();
+  return config.locales.find((locale) => locale.code === normalized) ?? null;
+}
+
+function useI18nLocaleState(config: ResuxI18nRuntimeConfig): Ref<string> {
+  const app = useResuxApp();
+  const existing = app.provides[I18N_LOCALE_STATE_KEY];
+  if (isRecord(existing) && typeof existing.value === "string") {
+    return existing as unknown as Ref<string>;
+  }
+
+  const initialLocale = resolveI18nRoute(readCurrentRoutePath(), config).locale.code;
+  const state = ref(initialLocale);
+  app.provide(I18N_LOCALE_STATE_KEY, state);
+  return state;
+}
+
+function applyNoPrefixDocumentLocale(config: ResuxI18nRuntimeConfig, localeCode: string): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+  const html = document.documentElement;
+  if (!html) {
+    return;
+  }
+  html.setAttribute("lang", localeCode);
+  html.setAttribute("dir", resolveLocaleDirection(config, localeCode));
+}
+
 function fallbackI18nConfig(): ResuxI18nRuntimeConfig {
   return {
     defaultLocale: "en",
@@ -274,7 +308,10 @@ function fallbackI18nConfig(): ResuxI18nRuntimeConfig {
 
 export function useI18n(): UseI18nResult {
   const runtimeI18n = readRuntimeI18nConfig() ?? fallbackI18nConfig();
-  const locale = computed(() => resolveI18nRoute(readCurrentRoutePath(), runtimeI18n).locale.code);
+  const localeState = useI18nLocaleState(runtimeI18n);
+  const locale = computed(() => runtimeI18n.strategy === "no_prefix"
+    ? localeState.value
+    : resolveI18nRoute(readCurrentRoutePath(), runtimeI18n).locale.code);
   const dir = computed(() => resolveLocaleDirection(runtimeI18n, locale.value));
 
   return {
@@ -300,7 +337,17 @@ export function useI18n(): UseI18nResult {
       return buildLocalePath(to ?? readCurrentRoutePath(), localeCode, runtimeI18n);
     },
     setLocale(localeCode: string, to?: string): Promise<void> | void {
-      const target = buildLocalePath(to ?? readCurrentRoutePath(), localeCode, runtimeI18n);
+      const targetLocale = resolveConfiguredLocale(runtimeI18n, localeCode);
+      if (!targetLocale) {
+        return;
+      }
+      if (runtimeI18n.strategy === "no_prefix") {
+        localeState.value = targetLocale.code;
+        applyNoPrefixDocumentLocale(runtimeI18n, targetLocale.code);
+        return;
+      }
+
+      const target = buildLocalePath(to ?? readCurrentRoutePath(), targetLocale.code, runtimeI18n);
       const router = readClientRouter();
       if (router) {
         return router.push(target);

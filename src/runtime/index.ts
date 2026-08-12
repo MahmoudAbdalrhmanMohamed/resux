@@ -7601,6 +7601,9 @@ if (typeof globalThis !== "undefined") {
 
 const routePayloadCache = new Map();
 const routePayloadRequests = new Map();
+const routePayloadFailures = new Map();
+const ROUTE_PREFETCH_FAILURE_COOLDOWN_MS = 5000;
+const ROUTE_PAYLOAD_TIMEOUT_MS = 30000;
 let routePayloadGeneration = 0;
 const mountedVueIslands = new Map();
 const pendingAsyncDataControllers = globalThis.__RESUX_PENDING_ASYNC_DATA_CONTROLLERS__ ||= new Set();
@@ -9355,6 +9358,135 @@ export function useResuxImage() {
   return createClientImageBuilder(app.route, app.$config);
 }
 
+let clientNoPrefixLocaleRef = null;
+
+function readClientI18nConfig() {
+  const runtimeConfig = getClientResuxApp().$config;
+  const raw = runtimeConfig?.public?.i18n;
+  if (!raw || typeof raw !== "object" || !Array.isArray(raw.locales) || raw.locales.length === 0) {
+    return null;
+  }
+  const locales = raw.locales
+    .map((entry) => ({
+      code: String(entry?.code || "").trim().toLowerCase(),
+      name: typeof entry?.name === "string" ? entry.name : undefined,
+      dir: entry?.dir === "rtl" ? "rtl" : "ltr"
+    }))
+    .filter((entry) => entry.code);
+  if (!locales.length) return null;
+  const defaultLocale = locales.some((entry) => entry.code === String(raw.defaultLocale || "").toLowerCase())
+    ? String(raw.defaultLocale).toLowerCase()
+    : locales[0].code;
+  const fallbackLocale = locales.some((entry) => entry.code === String(raw.fallbackLocale || "").toLowerCase())
+    ? String(raw.fallbackLocale).toLowerCase()
+    : defaultLocale;
+  const strategy = raw.strategy === "prefix" || raw.strategy === "no_prefix"
+    ? raw.strategy
+    : "prefix_except_default";
+  return { locales, defaultLocale, fallbackLocale, strategy, messages: raw.messages || {} };
+}
+
+function splitClientI18nTarget(to) {
+  const base = typeof location !== "undefined" ? location.href : "http://resux.local/";
+  const url = new URL(String(to || "/"), base);
+  return { pathname: url.pathname || "/", search: url.search, hash: url.hash };
+}
+
+function clientI18nLogicalPath(pathname, config) {
+  const normalized = pathname === "/" ? "/" : pathname.replace(/\/+$/, "") || "/";
+  const segments = normalized.split("/").filter(Boolean);
+  const first = segments[0]?.toLowerCase();
+  const locale = config.locales.find((entry) => entry.code === first);
+  if (!locale || config.strategy === "no_prefix") return normalized;
+  const rest = segments.slice(1).join("/");
+  return rest ? "/" + rest : "/";
+}
+
+function resolveClientI18nLocaleCode(config, routePath) {
+  if (config.strategy === "no_prefix") {
+    clientNoPrefixLocaleRef ||= ref(config.defaultLocale);
+    return clientNoPrefixLocaleRef.value;
+  }
+  const { pathname } = splitClientI18nTarget(routePath || getClientResuxApp().route?.path || "/");
+  const first = pathname.split("/").filter(Boolean)[0]?.toLowerCase();
+  return config.locales.some((entry) => entry.code === first) ? first : config.defaultLocale;
+}
+
+function readClientTranslation(messages, localeCode, key) {
+  const forbidden = new Set(["__proto__", "prototype", "constructor"]);
+  let current = messages?.[localeCode];
+  for (const part of String(key || "").split(".")) {
+    if (!part || forbidden.has(part) || !current || typeof current !== "object" || !Object.prototype.hasOwnProperty.call(current, part)) {
+      return undefined;
+    }
+    current = current[part];
+  }
+  return current;
+}
+
+function interpolateClientTranslation(value, params = {}) {
+  if (typeof value !== "string") return value;
+  return value.replace(/\{([^{}]+)\}/g, (match, key) => Object.prototype.hasOwnProperty.call(params, key) ? String(params[key]) : match);
+}
+
+function buildClientLocalePath(to, localeCode, config) {
+  const targetLocale = config.locales.find((entry) => entry.code === String(localeCode || "").toLowerCase());
+  if (!targetLocale) return String(to || "/");
+  const { pathname, search, hash } = splitClientI18nTarget(to);
+  const logical = clientI18nLogicalPath(pathname, config);
+  let localized = logical;
+  if (config.strategy === "prefix" || (config.strategy === "prefix_except_default" && targetLocale.code !== config.defaultLocale)) {
+    localized = logical === "/" ? "/" + targetLocale.code : "/" + targetLocale.code + logical;
+  }
+  return localized + search + hash;
+}
+
+function useClientI18n(routeOverride) {
+  const config = readClientI18nConfig();
+  if (!config) {
+    return {
+      locale: ref("en"), dir: ref("ltr"), locales: [], defaultLocale: "en", fallbackLocale: "en", strategy: "prefix_except_default",
+      t: (key) => key, tm: (key) => key, resolveLocalized: (value) => value,
+      localePath: (to) => to, switchLocalePath: (_locale, to) => to || getClientResuxApp().route?.path || "/", setLocale: () => {}
+    };
+  }
+  const routePath = routeOverride?.path || getClientResuxApp().route?.path || (typeof location !== "undefined" ? location.pathname + location.search + location.hash : "/");
+  const locale = computed(() => resolveClientI18nLocaleCode(config, routeOverride?.path || getClientResuxApp().route?.path || routePath));
+  const dir = computed(() => config.locales.find((entry) => entry.code === locale.value)?.dir || "ltr");
+  const t = (key, params = {}) => {
+    const value = readClientTranslation(config.messages, locale.value, key) ?? readClientTranslation(config.messages, config.fallbackLocale, key);
+    return typeof value === "string" ? interpolateClientTranslation(value, params) : String(key);
+  };
+  const tm = (key) => readClientTranslation(config.messages, locale.value, key) ?? readClientTranslation(config.messages, config.fallbackLocale, key) ?? key;
+  return {
+    locale, dir, locales: config.locales, defaultLocale: config.defaultLocale, fallbackLocale: config.fallbackLocale, strategy: config.strategy, t, tm,
+    resolveLocalized(value) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return value == null ? null : String(value);
+      return value[locale.value] ?? value[config.fallbackLocale] ?? value[config.defaultLocale] ?? null;
+    },
+    localePath(to, localeCode = locale.value) { return buildClientLocalePath(to, localeCode, config); },
+    switchLocalePath(localeCode, to) {
+      const current = to || (typeof location !== "undefined" ? location.pathname + location.search + location.hash : routePath);
+      return buildClientLocalePath(current, localeCode, config);
+    },
+    setLocale(localeCode, to) {
+      const targetLocale = config.locales.find((entry) => entry.code === String(localeCode || "").toLowerCase());
+      if (!targetLocale) return;
+      if (config.strategy === "no_prefix") {
+        clientNoPrefixLocaleRef ||= ref(config.defaultLocale);
+        clientNoPrefixLocaleRef.value = targetLocale.code;
+        if (typeof document !== "undefined") {
+          document.documentElement?.setAttribute("lang", targetLocale.code);
+          document.documentElement?.setAttribute("dir", targetLocale.dir);
+        }
+        return;
+      }
+      const current = to || (typeof location !== "undefined" ? location.pathname + location.search + location.hash : routePath);
+      return createClientRouter().push(buildClientLocalePath(current, targetLocale.code, config));
+    }
+  };
+}
+
 function getClientResuxApp(routeOverride) {
   const payload = globalThis.__RESUX__ ?? {
     route: routeOverride ?? { path: "/", params: {}, query: {} },
@@ -10332,6 +10464,9 @@ function registerDelegatedEventsFromDom(root = document) {
 }
 
 function installResux() {
+  globalThis.__RESUX_USE_I18N__ ||= () => useClientI18n();
+  globalThis.__RESUX_USE_LOCALE_PATH__ ||= () => useClientI18n().localePath;
+  globalThis.__RESUX_USE_SWITCH_LOCALE_PATH__ ||= () => useClientI18n().switchLocalePath;
   if (globalThis.__RESUX_INSTALLED__) {
     return;
   }
@@ -13004,6 +13139,14 @@ function handleNavigationClick(event) {
     return false;
   }
 
+  if (!isRouterManagedPagePath(target.pathname)) {
+    logManagedMediaDebug("router-ignore", {
+      reason: "non-page-route",
+      href: target.href
+    });
+    return false;
+  }
+
   if (shouldIgnoreNavigationTarget(event.target, anchor)) {
     logManagedMediaDebug("router-ignore", {
       reason: "ignored-event-target",
@@ -13111,7 +13254,11 @@ function isManagedMediaAssetPath(pathname) {
 
 async function navigateTo(target, options = {}) {
   const nextUrl = new URL(target, location.href);
-  const routePath = nextUrl.pathname + nextUrl.search;
+  const routePath = normalizeRoutePayloadKey(nextUrl.pathname + nextUrl.search);
+  if (!isRouterManagedPagePath(nextUrl.pathname)) {
+    location.assign(nextUrl.href);
+    return;
+  }
   if (isManagedMediaAssetPath(nextUrl.pathname)) {
     warnManagedMediaDebug("router-navigation-blocked-media-path", {
       routePath,
@@ -13136,7 +13283,13 @@ async function navigateTo(target, options = {}) {
 
   try {
     setRouteTransition("fetching", { path: routePath });
-    const result = await fetchRoutePayload(routePath);
+    const result = await loadRoute(routePath, {
+      reason: "navigation",
+      force: options.force === true
+    });
+    if (!ensureRoutePayloadBuildCompatibility(result)) {
+      return;
+    }
     if (transitionToken !== routeTransitionToken) {
       return;
     }
@@ -13303,9 +13456,7 @@ function clearScopeCacheExcept(preservedScopeIds) {
 
 async function applyDevUpdate(payload = {}) {
   devImportRevision = Number(payload.revision ?? Date.now());
-  routePayloadGeneration += 1;
-  routePayloadCache.clear();
-  routePayloadRequests.clear();
+  invalidateAllRoutePayloads();
   await hotUpdateActiveScopes();
 }
 
@@ -13411,11 +13562,17 @@ async function prefetchNavigationTarget(event) {
   if (!routePath || routePayloadCache.has(routePath) || routePayloadRequests.has(routePath)) {
     return;
   }
+  if (isRoutePrefetchCoolingDown(routePath)) {
+    return;
+  }
 
   try {
-    routePayloadCache.set(routePath, await fetchRoutePayload(routePath));
-  } catch {
-    routePayloadCache.delete(routePath);
+    await loadRoute(routePath, { reason: "prefetch" });
+  } catch (error) {
+    logManagedMediaDebug("router-prefetch-failed", {
+      path: routePath,
+      message: error instanceof Error ? error.message : String(error)
+    });
   }
 }
 
@@ -13439,6 +13596,14 @@ function getPrefetchPath(anchor, eventTarget = null) {
     });
     return null;
   }
+  if (!isRouterManagedPagePath(target.pathname)) {
+    logManagedMediaDebug("router-prefetch-ignore", {
+      reason: "non-page-route",
+      href: target.href
+    });
+    return null;
+  }
+
   if (shouldIgnoreNavigationTarget(eventTarget, anchor)) {
     logManagedMediaDebug("router-prefetch-ignore", {
       reason: "ignored-event-target",
@@ -13447,39 +13612,129 @@ function getPrefetchPath(anchor, eventTarget = null) {
     return null;
   }
 
-  const routePath = target.pathname + target.search;
-  if (routePath === location.pathname + location.search) {
+  const routePath = normalizeRoutePayloadKey(target.pathname + target.search);
+  if (routePath === normalizeRoutePayloadKey(location.pathname + location.search)) {
     return null;
   }
   return routePath;
 }
 
-async function fetchRoutePayload(routePath) {
-  if (routePayloadCache.has(routePath)) {
-    return routePayloadCache.get(routePath);
+function isRouterManagedPagePath(pathname) {
+  const normalized = String(pathname || "").toLowerCase();
+  if (!normalized) {
+    return false;
   }
-  if (routePayloadRequests.has(routePath)) {
-    return routePayloadRequests.get(routePath);
+  return !(
+    normalized === "/api"
+    || normalized.startsWith("/api/")
+    || normalized === "/__resux"
+    || normalized.startsWith("/__resux/")
+    || normalized === "/_resux"
+    || normalized.startsWith("/_resux/")
+  );
+}
+
+function normalizeRoutePayloadKey(routePath) {
+  const base = typeof location !== "undefined" && location.href
+    ? location.href
+    : "http://resux.local/";
+  const target = new URL(String(routePath || "/"), base);
+  const pathname = target.pathname === "/"
+    ? "/"
+    : target.pathname.replace(/\/+$/, "") || "/";
+  return pathname + target.search;
+}
+
+function isRoutePrefetchCoolingDown(routePath, now = Date.now()) {
+  const key = normalizeRoutePayloadKey(routePath);
+  const failure = routePayloadFailures.get(key);
+  if (!failure) {
+    return false;
+  }
+  if ((now - failure.failedAt) >= ROUTE_PREFETCH_FAILURE_COOLDOWN_MS) {
+    routePayloadFailures.delete(key);
+    return false;
+  }
+  return true;
+}
+
+function invalidateRoutePayload(routePath) {
+  const key = normalizeRoutePayloadKey(routePath);
+  routePayloadCache.delete(key);
+  routePayloadFailures.delete(key);
+}
+
+function invalidateAllRoutePayloads() {
+  routePayloadGeneration += 1;
+  routePayloadCache.clear();
+  routePayloadRequests.clear();
+  routePayloadFailures.clear();
+}
+
+async function loadRoute(routePath, options = {}) {
+  const key = normalizeRoutePayloadKey(routePath);
+  const reason = options.reason === "prefetch" ? "prefetch" : "navigation";
+  const force = options.force === true;
+
+  if (force) {
+    invalidateRoutePayload(key);
+  } else if (routePayloadCache.has(key)) {
+    return routePayloadCache.get(key);
+  }
+
+  if (reason === "prefetch" && !force && isRoutePrefetchCoolingDown(key)) {
+    const failure = routePayloadFailures.get(key);
+    throw failure?.error ?? new Error("Route prefetch is cooling down after a recent failure.");
+  }
+
+  const pending = routePayloadRequests.get(key);
+  if (pending) {
+    try {
+      return await pending.promise;
+    } catch (error) {
+      if (reason === "navigation" && pending.reason === "prefetch") {
+        if (routePayloadRequests.get(key) === pending) {
+          routePayloadRequests.delete(key);
+        }
+        routePayloadFailures.delete(key);
+        return loadRoute(key, { reason: "navigation", force: true });
+      }
+      throw error;
+    }
   }
 
   const generation = routePayloadGeneration;
-  const request = fetchRoutePayloadUncached(routePath);
-  routePayloadRequests.set(routePath, request);
+  const promise = fetchRoutePayloadUncached(key);
+  const entry = { promise, reason };
+  routePayloadRequests.set(key, entry);
+
   try {
-    const result = await request;
+    const result = await promise;
     if (generation !== routePayloadGeneration) {
-      if (routePayloadRequests.get(routePath) === request) {
-        routePayloadRequests.delete(routePath);
+      if (routePayloadRequests.get(key) === entry) {
+        routePayloadRequests.delete(key);
       }
-      return fetchRoutePayload(routePath);
+      return loadRoute(key, { reason, force: false });
     }
-    routePayloadCache.set(routePath, result);
+    routePayloadFailures.delete(key);
+    routePayloadCache.set(key, result);
     return result;
+  } catch (error) {
+    routePayloadFailures.set(key, {
+      status: "failed",
+      error,
+      failedAt: Date.now()
+    });
+    throw error;
   } finally {
-    if (routePayloadRequests.get(routePath) === request) {
-      routePayloadRequests.delete(routePath);
+    if (routePayloadRequests.get(key) === entry) {
+      routePayloadRequests.delete(key);
     }
   }
+}
+
+async function fetchRoutePayload(routePath) {
+  return loadRoute(routePath, { reason: "navigation" });
 }
 
 async function fetchRoutePayloadUncached(routePath) {
@@ -13487,18 +13742,53 @@ async function fetchRoutePayloadUncached(routePath) {
   const url = isStatic
     ? "/__resux/route/payloads" + (routePath === "/" ? "/index.json" : routePath.replace(/\/$/, "") + ".json")
     : "/__resux/route?path=" + encodeURIComponent(routePath);
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const timeout = setTimeout(() => {
+    controller?.abort();
+  }, ROUTE_PAYLOAD_TIMEOUT_MS);
 
-  const response = await fetch(url, {
-    headers: {
-      accept: "application/json"
+  try {
+    const response = await fetch(url, {
+      headers: {
+        accept: "application/json"
+      },
+      ...(controller ? { signal: controller.signal } : {})
+    });
+
+    if (!response.ok) {
+      throw new Error("Route payload request failed: " + response.status);
     }
-  });
 
-  if (!response.ok) {
-    throw new Error("Route payload request failed: " + response.status);
+    return await response.json();
+  } catch (error) {
+    if (controller?.signal.aborted) {
+      throw new Error("Route payload request timed out after " + ROUTE_PAYLOAD_TIMEOUT_MS + "ms.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function readRoutePayloadBuildId(payload) {
+  const value = payload?.config?.public?.__resuxBuildId;
+  return typeof value === "string" && value ? value : null;
+}
+
+function ensureRoutePayloadBuildCompatibility(result) {
+  const currentBuildId = readRoutePayloadBuildId(globalThis.__RESUX__);
+  const nextBuildId = readRoutePayloadBuildId(result?.payload);
+  if (!currentBuildId || !nextBuildId || currentBuildId === nextBuildId) {
+    return true;
   }
 
-  return response.json();
+  invalidateAllRoutePayloads();
+  dispatchManagedEvent(document, "resux:build-mismatch", {
+    currentBuildId,
+    nextBuildId
+  });
+  location.reload();
+  return false;
 }
 
 function applyHtmlAttrs(attrs) {

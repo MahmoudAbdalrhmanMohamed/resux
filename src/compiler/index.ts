@@ -1629,8 +1629,19 @@ function compileTemplateNode(
   }
 
   if (options.ifExpressionOverride) {
+    const conditionalExpression = transformTemplateExpressionCode(
+      options.ifExpressionOverride,
+      state.templateRefBindings,
+      state.file,
+      node,
+    );
     element.if = {
-      expression: registerRawTemplateExpression(options.ifExpressionOverride, options.ifExpressionOverride, [], state),
+      expression: registerRawTemplateExpression(
+        conditionalExpression.transformed,
+        options.ifExpressionOverride,
+        conditionalExpression.identifiers,
+        state,
+      ),
       blockId: nextBindingId(state),
     };
   }

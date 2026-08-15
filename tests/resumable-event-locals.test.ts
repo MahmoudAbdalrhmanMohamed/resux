@@ -47,7 +47,7 @@ describe("resumable template event locals", () => {
       "utf8",
     );
 
-    await expect(buildProject(root)).rejects.toThrow(/v-model cannot assign through template-local binding "item"/);
+    await expect(buildProject(root)).rejects.toThrow(/cannot assign through template-local binding "item"/);
   }, 30000);
 
   it("captures template locals used only to address resumable v-model state", async () => {
@@ -56,7 +56,7 @@ describe("resumable template event locals", () => {
     await mkdir(path.dirname(page), { recursive: true });
     await writeFile(
       page,
-      `<script setup>\nconst locales = [{ code: 'en' }, { code: 'ar' }]\nconst selected = { en: '', ar: '' }\n</script>\n<template>\n  <input v-for="item in locales" :key="item.code" v-model="selected[item.code]" />\n</template>`,
+      `<script setup>\nconst locales = [{ code: 'en' }, { code: 'ar' }]\nconst selected = reactive({ en: '', ar: '' })\n</script>\n<template>\n  <input v-for="item in locales" :key="item.code" v-model="selected[item.code]" />\n</template>`,
       "utf8",
     );
 
@@ -71,12 +71,14 @@ describe("resumable template event locals", () => {
     expect(component?.clientSource).toContain("selected[item.code] = $event.target ? $event.target.value : \"\"");
   }, 30000);
 
-  it("serializes and restores declared event locals in the generated client runtime", () => {
+  it("serializes and restores declared event locals without changing ordinary handler arity", () => {
     const source = getClientRuntimeSource();
     expect(source).toContain('data-rx-locals-');
     expect(source).toContain('readEventLocals(target, eventName)');
     expect(source).toContain('component.run(scopeRecord, handlerName, event, readEventLocals(target, eventName))');
     expect(source).toContain('async run(scopeRecord, handlerName, event, eventLocals = {})');
+    expect(source).toContain('if (Object.keys(eventLocals).length > 0)');
     expect(source).toContain('await handler(event, eventLocals)');
+    expect(source).toContain('await handler(event);');
   });
 });

@@ -19,5 +19,11 @@ await replaceOnce(
   `function isAssignableExpression(expression: string): boolean {\n  return /^[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*|\\[[^\\]]+\\])*$/.test(expression.trim());\n}\n\nfunction assignableExpressionRoot(expression: string): string | undefined {\n  return /^([A-Za-z_$][\\w$]*)/.exec(expression.trim())?.[1];\n}\n`
 );
 
+await replaceOnce(
+  "src/runtime/index.ts",
+  `      await handler(event, eventLocals);\n      return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId);`,
+  `      if (Object.keys(eventLocals).length > 0) {\n        await handler(event, eventLocals);\n      } else {\n        await handler(event);\n      }\n      return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId);`
+);
+
 await rm("scripts/pr36-vmodel-guard.mjs");
 await rm(".github/workflows/pr36-vmodel-guard.yml");

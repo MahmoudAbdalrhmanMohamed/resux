@@ -3,7 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildProject } from "resuxjs/compiler";
-import { getClientRuntimeSource, type ElementTemplateNode, type TemplateNode } from "../src/runtime/index.js";
+import {
+  getClientRuntimeSource,
+  renderTemplateNodesAsync,
+  type ElementTemplateNode,
+  type TemplateNode,
+} from "../src/runtime/index.js";
 
 function findElement(nodes: TemplateNode[], tag: string): ElementTemplateNode | undefined {
   for (const node of nodes) {
@@ -36,6 +41,19 @@ describe("resumable template event locals", () => {
     expect(component?.clientSource).toContain('const item = __rx_event_locals["item"]');
     expect(component?.clientSource).toContain("setLocale(item.code)");
     expect(component?.clientSource).not.toContain('const index = __rx_event_locals["index"]');
+  }, 30000);
+
+  it("rejects direct template-local callbacks that cannot be serialized for resume", async () => {
+    const root = path.join(os.tmpdir(), `resux-event-local-callback-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const page = path.join(root, "pages", "index.vue");
+    await mkdir(path.dirname(page), { recursive: true });
+    await writeFile(
+      page,
+      `<script setup>\nconst callbacks = [() => 'one', () => 'two']\n</script>\n<template>\n  <button v-for="callback in callbacks" @click="callback">Run</button>\n</template>`,
+      "utf8",
+    );
+
+    await expect(buildProject(root)).rejects.toThrow(/direct template-local event handler "callback" cannot be resumed/i);
   }, 30000);
 
   it("auto-unwraps computed refs destructured from useI18n while preserving plain members", async () => {
@@ -92,6 +110,32 @@ describe("resumable template event locals", () => {
     expect(component?.clientSource).toContain('const item = __rx_event_locals["item"]');
     expect(component?.clientSource).toContain("selected[item.code] = $event.target ? $event.target.value : \"\"");
   }, 30000);
+
+  it("omits undefined event-local values during async SSR instead of failing serialization", async () => {
+    const node: ElementTemplateNode = {
+      type: "element",
+      tag: "button",
+      attrs: [],
+      events: [{ name: "click", handler: "select", locals: ["item"] }],
+      children: [{ type: "text", value: "Select" }],
+    };
+    const html = await renderTemplateNodesAsync(
+      [node],
+      {
+        scope: {},
+        scopeId: "s0",
+        moduleId: "m0",
+        route: { path: "/", params: {}, query: {} },
+        runtimeConfig: { public: {} },
+        components: {},
+        layouts: {},
+        pageMeta: {},
+      } as any,
+      async () => "",
+      { item: undefined },
+    );
+    expect(html).toContain('data-rx-locals-click="{}"');
+  });
 
   it("serializes and restores declared event locals without changing ordinary handler arity", () => {
     const source = getClientRuntimeSource();

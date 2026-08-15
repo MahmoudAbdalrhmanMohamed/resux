@@ -32,12 +32,19 @@ await replaceOnce(
   `      return key;`
 );
 
-await replaceExactly(
-  "src/runtime/index.ts",
-  `        if (!Object.prototype.hasOwnProperty.call(locals, name)) continue;\n        assertJsonSerializable(locals[name], \`event local \\\"\${name}\\\"\`);\n        eventLocals[name] = JSON.parse(JSON.stringify(locals[name]));`,
-  `        if (!Object.prototype.hasOwnProperty.call(locals, name)) continue;\n        const value = locals[name];\n        if (value === undefined) continue;\n        assertJsonSerializable(value, \`event local \\\"\${name}\\\"\`);\n        eventLocals[name] = JSON.parse(JSON.stringify(value));`,
-  2,
-);
+const undefinedLocalBefore = [
+  '        if (!Object.prototype.hasOwnProperty.call(locals, name)) continue;',
+  '        assertJsonSerializable(locals[name], `event local "${name}"`);',
+  '        eventLocals[name] = JSON.parse(JSON.stringify(locals[name]));',
+].join("\n");
+const undefinedLocalAfter = [
+  '        if (!Object.prototype.hasOwnProperty.call(locals, name)) continue;',
+  '        const value = locals[name];',
+  '        if (value === undefined) continue;',
+  '        assertJsonSerializable(value, `event local "${name}"`);',
+  '        eventLocals[name] = JSON.parse(JSON.stringify(value));',
+].join("\n");
+await replaceExactly("src/runtime/index.ts", undefinedLocalBefore, undefinedLocalAfter, 2);
 
 await rm("scripts/pr36-final-review-fixes.mjs");
 await rm(".github/workflows/pr36-final-review-fixes.yml");

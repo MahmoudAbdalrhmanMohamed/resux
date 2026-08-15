@@ -2467,7 +2467,7 @@ function inferTemplateRefBindings(script: string, file: string): Set<string> {
           const propertyName = element.propertyName && ts.isIdentifier(element.propertyName)
             ? element.propertyName.text
             : element.name.text;
-          if (calleeName === "toRefs" || ["data", "pending", "error", "value"].includes(propertyName)) {
+          if (isObjectTemplateRefBinding(calleeName, propertyName)) {
             bindings.add(element.name.text);
           }
         }
@@ -2491,7 +2491,17 @@ function isAsyncDataFactory(name: string): boolean {
 }
 
 function isObjectTemplateRefFactory(name: string): boolean {
-  return isAsyncDataFactory(name) || name === "toRefs";
+  return isAsyncDataFactory(name) || name === "toRefs" || name === "useI18n";
+}
+
+function isObjectTemplateRefBinding(factory: string, property: string): boolean {
+  if (factory === "toRefs") {
+    return true;
+  }
+  if (factory === "useI18n") {
+    return property === "locale" || property === "dir";
+  }
+  return ["data", "pending", "error", "value"].includes(property);
 }
 
 function isDefinePageMetaStatement(statement: ts.Statement): boolean {

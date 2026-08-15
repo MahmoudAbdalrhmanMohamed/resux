@@ -10436,7 +10436,11 @@ export function createClientComponent(definition) {
       if (typeof handler !== "function") {
         throw new Error("Missing resumable handler " + handlerName + ".");
       }
-      await handler(event, eventLocals);
+      if (Object.keys(eventLocals).length > 0) {
+        await handler(event, eventLocals);
+      } else {
+        await handler(event);
+      }
       return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId);
     },
     render(scopeRecord) {

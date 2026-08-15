@@ -1594,6 +1594,13 @@ function compileTemplateNode(
       if (!isAssignableExpression(expression)) {
         throw new ResuxCompileError("v-model needs an assignable expression like \"message.value\".", locationFromVueNode(state.file, prop));
       }
+      const assignmentRoot = assignableExpressionRoot(expression);
+      if (assignmentRoot && state.activeLocals.includes(assignmentRoot)) {
+        throw new ResuxCompileError(
+          `v-model cannot assign through template-local binding "${assignmentRoot}" because resumed event locals are serialized by value. Bind v-model to resumable component state instead.`,
+          locationFromVueNode(state.file, prop),
+        );
+      }
       const model = createModelBinding(node.tag, node.props, expression, state, prop);
       attrs.push({
         kind: "dynamic",
@@ -1856,6 +1863,10 @@ function shouldAutoUnwrapTemplateIdentifier(node: ts.Identifier): boolean {
 
 function isAssignableExpression(expression: string): boolean {
   return /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[[^\]]+\])*$/.test(expression.trim());
+}
+
+function assignableExpressionRoot(expression: string): string | undefined {
+  return /^([A-Za-z_$][\w$]*)/.exec(expression.trim())?.[1];
 }
 
 function normalizeEventModifiers(modifiers: SimpleExpressionNode[], file: string, node: VueCompilerNode): string[] {

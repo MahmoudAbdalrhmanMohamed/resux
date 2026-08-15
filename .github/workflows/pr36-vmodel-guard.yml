@@ -24,16 +24,16 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Apply v-model guard
+      - name: Apply v-model and handler compatibility guards
         run: node scripts/pr36-vmodel-guard.mjs
       - name: Typecheck
         run: npm run typecheck
       - name: Targeted regressions
         run: npx vitest run tests/compiler.test.ts tests/resumable-event-locals.test.ts tests/runtime-performance-regressions.test.ts tests/server-i18n-setup-context.test.ts
-      - name: Commit verified guard
+      - name: Commit verified guards
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "fix(compiler): guard template-local v-model mutation"
+          git commit -m "fix(runtime): harden resumable event local semantics"
           git push origin HEAD:fix/i18n-resume-authority

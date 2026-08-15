@@ -1496,16 +1496,15 @@ function compileTemplateNode(
       }
       const isSimpleIdentifier = /^[A-Za-z_$][\w$]*$/.test(expression);
       const usesInlineHandler = !(isSimpleIdentifier && !state.activeLocals.includes(expression));
-      const handler = usesInlineHandler
+      const inlineHandler = usesInlineHandler
         ? createInlineEventHandler(expression, state, prop)
-        : expression;
+        : null;
+      const handler = inlineHandler?.name ?? expression;
       const event: TemplateEvent = {
         name: arg,
         handler,
         modifiers,
-        ...(usesInlineHandler && state.activeLocals.length > 0
-          ? { locals: [...state.activeLocals] }
-          : {})
+        ...(inlineHandler?.locals.length ? { locals: inlineHandler.locals } : {})
       };
       events.push(event);
       state.handlers.push(event);
@@ -1595,7 +1594,7 @@ function compileTemplateNode(
       if (!isAssignableExpression(expression)) {
         throw new ResuxCompileError("v-model needs an assignable expression like \"message.value\".", locationFromVueNode(state.file, prop));
       }
-      const model = createModelBinding(node.tag, node.props, expression, state);
+      const model = createModelBinding(node.tag, node.props, expression, state, prop);
       attrs.push({
         kind: "dynamic",
         name: model.attribute,
@@ -1606,7 +1605,7 @@ function compileTemplateNode(
         name: model.event,
         handler: model.handler,
         modifiers: [],
-        ...(state.activeLocals.length > 0 ? { locals: [...state.activeLocals] } : {})
+        ...(model.locals.length > 0 ? { locals: model.locals } : {})
       };
       events.push(event);
       state.handlers.push(event);
@@ -1658,26 +1657,50 @@ function compileTemplateNode(
   return element;
 }
 
-function createInlineEventHandler(expression: string, state: CompileTemplateState, node?: VueCompilerNode): string {
+function selectReferencedActiveLocals(activeLocals: string[], identifiers: string[]): string[] {
+  const referenced = new Set(identifiers);
+  const seen = new Set<string>();
+  const selected: string[] = [];
+  for (let index = activeLocals.length - 1; index >= 0; index -= 1) {
+    const local = activeLocals[index];
+    if (!referenced.has(local) || seen.has(local)) continue;
+    seen.add(local);
+    selected.unshift(local);
+  }
+  return selected;
+}
+
+function createInlineEventHandler(
+  expression: string,
+  state: CompileTemplateState,
+  node?: VueCompilerNode
+): { name: string; locals: string[] } {
   const name = nextInlineHandlerName(state);
-  const transformed = transformTemplateExpressionCode(expression, state.templateRefBindings, state.file, node ?? ({} as any)).transformed;
-  const localBindings = state.activeLocals
+  const transformed = transformTemplateExpressionCode(
+    expression,
+    state.templateRefBindings,
+    state.file,
+    node ?? ({} as any)
+  );
+  const capturedLocals = selectReferencedActiveLocals(state.activeLocals, transformed.identifiers);
+  const localBindings = capturedLocals
     .map((local) => `const ${local} = __rx_event_locals[${JSON.stringify(local)}];`)
     .join("\n");
   state.inlineHandlers.push({
     name,
-    source: `function ${name}($event, __rx_event_locals = {}) {\n${localBindings}${localBindings ? "\n" : ""}${transformed}\n}`,
-    locals: [...state.activeLocals]
+    source: `function ${name}($event, __rx_event_locals = {}) {\n${localBindings}${localBindings ? "\n" : ""}${transformed.transformed}\n}`,
+    locals: capturedLocals
   });
-  return name;
+  return { name, locals: capturedLocals };
 }
 
 function createModelBinding(
   tag: string,
   props: Array<AttributeNode | DirectiveNode>,
   expression: string,
-  state: CompileTemplateState
-): { attribute: string; value: string; event: string; handler: string } {
+  state: CompileTemplateState,
+  node?: VueCompilerNode
+): { attribute: string; value: string; event: string; handler: string; locals: string[] } {
   const normalizedTag = tag.toLowerCase();
   const inputType = normalizedTag === "input" ? staticAttributeValue(props, "type")?.toLowerCase() : undefined;
   const isCheckbox = inputType === "checkbox";
@@ -1687,18 +1710,29 @@ function createModelBinding(
   const assignment = isCheckbox
     ? `${assignmentExpression} = Boolean(${target} && ${target}.checked)`
     : `${assignmentExpression} = ${target} ? ${target}.value : ""`;
+  const identifiers = transformTemplateExpressionCode(
+    expression,
+    state.templateRefBindings,
+    state.file,
+    node ?? ({} as any)
+  ).identifiers;
+  const capturedLocals = selectReferencedActiveLocals(state.activeLocals, identifiers);
+  const localBindings = capturedLocals
+    .map((local) => `const ${local} = __rx_event_locals[${JSON.stringify(local)}];`)
+    .join("\n");
 
   state.inlineHandlers.push({
     name: handler,
-    source: `function ${handler}($event) {\n${assignment}\n}`,
-    locals: [...state.activeLocals]
+    source: `function ${handler}($event, __rx_event_locals = {}) {\n${localBindings}${localBindings ? "\n" : ""}${assignment}\n}`,
+    locals: capturedLocals
   });
 
   return {
     attribute: isCheckbox ? "checked" : "value",
     value: expression,
     event: isCheckbox || normalizedTag === "select" ? "change" : "input",
-    handler
+    handler,
+    locals: capturedLocals
   };
 }
 

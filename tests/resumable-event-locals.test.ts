@@ -22,7 +22,7 @@ describe("resumable template event locals", () => {
     await mkdir(path.dirname(page), { recursive: true });
     await writeFile(
       page,
-      `<script setup>\nconst locales = [{ code: 'en' }, { code: 'ar' }]\nfunction setLocale(code) { return code }\n</script>\n<template>\n  <button v-for="item in locales" :key="item.code" @click="setLocale(item.code)">{{ item.code }}</button>\n</template>`,
+      `<script setup>\nconst locales = [{ code: 'en' }, { code: 'ar' }]\nfunction setLocale(code) { return code }\n</script>\n<template>\n  <button v-for="(item, index) in locales" :key="item.code" @click="setLocale(item.code)">{{ index }}: {{ item.code }}</button>\n</template>`,
       "utf8",
     );
 
@@ -34,6 +34,7 @@ describe("resumable template event locals", () => {
     expect(button?.events[0]?.locals).toEqual(["item"]);
     expect(component?.clientSource).toContain("function __rx_inline_0($event, __rx_event_locals = {})");
     expect(component?.clientSource).toContain('const item = __rx_event_locals["item"]');
+    expect(component?.clientSource).not.toContain('const index = __rx_event_locals["index"]');
   }, 30000);
 
   it("captures v-for aliases for generated v-model handlers", async () => {
@@ -52,6 +53,9 @@ describe("resumable template event locals", () => {
     const input = findElement(component?.template ?? [], "input");
     expect(input).toBeTruthy();
     expect(input?.events[0]?.locals).toEqual(["item"]);
+    expect(component?.clientSource).toContain("function __rx_inline_0($event, __rx_event_locals = {})");
+    expect(component?.clientSource).toContain('const item = __rx_event_locals["item"]');
+    expect(component?.clientSource).toContain("item.code = $event.target ? $event.target.value : \"\"");
   }, 30000);
 
   it("serializes and restores declared event locals in the generated client runtime", () => {

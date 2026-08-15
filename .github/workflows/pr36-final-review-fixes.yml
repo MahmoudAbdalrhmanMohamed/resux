@@ -24,7 +24,7 @@ jobs:
           node-version: 22
           package-manager-cache: false
       - run: npm ci --no-audit --no-fund
-      - name: Apply review fixes
+      - name: Apply corrected review fixes
         run: node scripts/pr36-final-review-fixes.mjs
       - name: Typecheck
         run: npm run typecheck

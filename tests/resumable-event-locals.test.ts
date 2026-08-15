@@ -34,7 +34,29 @@ describe("resumable template event locals", () => {
     expect(button?.events[0]?.locals).toEqual(["item"]);
     expect(component?.clientSource).toContain("function __rx_inline_0($event, __rx_event_locals = {})");
     expect(component?.clientSource).toContain('const item = __rx_event_locals["item"]');
+    expect(component?.clientSource).toContain("setLocale(item.code)");
     expect(component?.clientSource).not.toContain('const index = __rx_event_locals["index"]');
+  }, 30000);
+
+  it("auto-unwraps computed refs destructured from useI18n while preserving plain members", async () => {
+    const root = path.join(os.tmpdir(), `resux-i18n-template-refs-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const page = path.join(root, "pages", "index.vue");
+    await mkdir(path.dirname(page), { recursive: true });
+    await writeFile(
+      page,
+      `<script setup>\nconst { locale, dir, locales, setLocale } = useI18n()\n</script>\n<template>\n  <p>{{ locale }} {{ dir }}</p>\n  <button v-for="item in locales" :key="item.code" @click="setLocale(item.code)">{{ item.code }}</button>\n</template>`,
+      "utf8",
+    );
+
+    const result = await buildProject(root);
+    const component = result.components.find((entry) => entry.file === page);
+    expect(component).toBeTruthy();
+    const expressions = new Map((component?.expressions ?? []).map((entry) => [entry.original, entry.transformed]));
+    expect(expressions.get("locale")).toBe("locale.value");
+    expect(expressions.get("dir")).toBe("dir.value");
+    expect(component?.clientSource).toContain("setLocale(item.code)");
+    expect(component?.clientSource).not.toContain("locales.value");
+    expect(component?.clientSource).not.toContain("setLocale.value");
   }, 30000);
 
   it("rejects v-model assignments that mutate a deserialized template-local alias", async () => {

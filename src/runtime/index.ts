@@ -2937,7 +2937,7 @@ export function createServerSetupContext(
         const currentLocaleCode = resolveI18nRoute(route.path, normalizedI18n).locale.code;
         return translateText(normalizedI18n, currentLocaleCode, key, params as any);
       }
-      return (globalThis as any).__RESUX_USE_I18N__ ? (globalThis as any).__RESUX_USE_I18N__().t(key, params) : key;
+      return key;
     },
     $tm(key: string): unknown {
       const i18nCandidate = runtimeConfig.public?.i18n;
@@ -2946,7 +2946,7 @@ export function createServerSetupContext(
         const currentLocaleCode = resolveI18nRoute(route.path, normalizedI18n).locale.code;
         return translateRaw(normalizedI18n, currentLocaleCode, key);
       }
-      return (globalThis as any).__RESUX_USE_I18N__ ? (globalThis as any).__RESUX_USE_I18N__().tm(key) : key;
+      return key;
     }
   };
 
@@ -3806,8 +3806,10 @@ function renderNativeElement(node: ElementTemplateNode, context: RenderTemplateC
       const eventLocals: Record<string, unknown> = {};
       for (const name of event.locals) {
         if (!Object.prototype.hasOwnProperty.call(locals, name)) continue;
-        assertJsonSerializable(locals[name], `event local "${name}"`);
-        eventLocals[name] = JSON.parse(JSON.stringify(locals[name]));
+        const value = locals[name];
+        if (value === undefined) continue;
+        assertJsonSerializable(value, `event local "${name}"`);
+        eventLocals[name] = JSON.parse(JSON.stringify(value));
       }
       attrs.push(`data-rx-locals-${event.name}="${escapeAttribute(JSON.stringify(eventLocals))}"`);
     }
@@ -4019,8 +4021,10 @@ async function renderNativeElementAsync(
       const eventLocals: Record<string, unknown> = {};
       for (const name of event.locals) {
         if (!Object.prototype.hasOwnProperty.call(locals, name)) continue;
-        assertJsonSerializable(locals[name], `event local "${name}"`);
-        eventLocals[name] = JSON.parse(JSON.stringify(locals[name]));
+        const value = locals[name];
+        if (value === undefined) continue;
+        assertJsonSerializable(value, `event local "${name}"`);
+        eventLocals[name] = JSON.parse(JSON.stringify(value));
       }
       attrs.push(`data-rx-locals-${event.name}="${escapeAttribute(JSON.stringify(eventLocals))}"`);
     }

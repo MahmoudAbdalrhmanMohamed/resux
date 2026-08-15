@@ -1495,7 +1495,13 @@ function compileTemplateNode(
         throw new ResuxCompileError("Events need an argument and expression.", locationFromVueNode(state.file, prop));
       }
       const isSimpleIdentifier = /^[A-Za-z_$][\w$]*$/.test(expression);
-      const usesInlineHandler = !(isSimpleIdentifier && !state.activeLocals.includes(expression));
+      if (isSimpleIdentifier && state.activeLocals.includes(expression)) {
+        throw new ResuxCompileError(
+          `Direct template-local event handler "${expression}" cannot be resumed because template locals are serialized by value. Call a top-level handler with serializable local data instead.`,
+          locationFromVueNode(state.file, prop),
+        );
+      }
+      const usesInlineHandler = !isSimpleIdentifier;
       const inlineHandler = usesInlineHandler
         ? createInlineEventHandler(expression, state, prop)
         : null;

@@ -1,0 +1,91 @@
+name: PR 37 active route authority fix
+
+on:
+  push:
+    branches: [fix/i18n-history-resume]
+    paths:
+      - .github/workflows/pr37-route-authority-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/i18n-history-resume
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Patch active-route i18n authority and commit-bound revision
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/runtime/index.ts')
+          source = path.read_text()
+          replacements = [
+              (
+                  '  const routePath = routeOverride?.path || getClientResuxApp().route?.path || (typeof location !== "undefined" ? location.pathname + location.search + location.hash : "/");',
+                  '  const routePath = getClientResuxApp().route?.path || routeOverride?.path || (typeof location !== "undefined" ? location.pathname + location.search + location.hash : "/");',
+              ),
+              (
+                  '    return resolveClientI18nLocaleCode(config, routeOverride?.path || getClientResuxApp().route?.path || routePath);',
+                  '    return resolveClientI18nLocaleCode(config, getClientResuxApp().route?.path || routePath);',
+              ),
+              (
+                  '''  } else {\n    const previousRoutePath = app.route?.path;\n    app.route = route;\n    app.payload = payload;\n    app.$config = config;\n    app.provides = clientProvides;\n    if (previousRoutePath !== route?.path) {\n      getClientRouteRevision().value += 1;\n    }\n  }''',
+                  '''  } else {\n    app.route = route;\n    app.payload = payload;\n    app.$config = config;\n    app.provides = clientProvides;\n  }''',
+              ),
+              ('          return useClientI18n(route);', '          return useClientI18n();'),
+              ('          return useClientI18n(route).localePath;', '          return useClientI18n().localePath;'),
+              ('          return useClientI18n(route).switchLocalePath;', '          return useClientI18n().switchLocalePath;'),
+              (
+                  '''    globalThis.__RESUX__ = mergeClientGlobalState(\n      mergePersistentLayoutPayload(previousPayload, nextPayload, preserved.scopeIds)\n    );\n    getClientResuxApp(globalThis.__RESUX__.route);''',
+                  '''    globalThis.__RESUX__ = mergeClientGlobalState(\n      mergePersistentLayoutPayload(previousPayload, nextPayload, preserved.scopeIds)\n    );\n    const committedRoutePath = globalThis.__RESUX__.route?.path;\n    getClientResuxApp(globalThis.__RESUX__.route);\n    if (previousPayload?.route?.path !== committedRoutePath) {\n      getClientRouteRevision().value += 1;\n    }''',
+              ),
+          ]
+          for old, new in replacements:
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f'Expected one occurrence, found {count}: {old[:120]!r}')
+              source = source.replace(old, new, 1)
+          path.write_text(source)
+
+          test_path = Path('tests/runtime-performance-regressions.test.ts')
+          test_source = test_path.read_text()
+          old = '''    expect(source).toContain("getClientRouteRevision().value;");\n    expect(source).toContain("const previousRoutePath = app.route?.path;");\n    expect(source).toContain("previousRoutePath !== route?.path");\n    expect(source).toContain("getClientRouteRevision().value += 1;");'''
+          new = '''    expect(source).toContain("getClientRouteRevision().value;");\n    expect(source).toContain("resolveClientI18nLocaleCode(config, getClientResuxApp().route?.path || routePath)");\n    expect(source).not.toContain("resolveClientI18nLocaleCode(config, routeOverride?.path || getClientResuxApp().route?.path || routePath)");\n    expect(source).not.toContain("const previousRoutePath = app.route?.path;");\n    const navigationStart = source.indexOf("async function navigateTo(target, options = {})");\n    const navigationEnd = source.indexOf("function abortPendingAsyncData()", navigationStart);\n    const navigationSource = source.slice(navigationStart, navigationEnd);\n    expect(navigationSource).toContain("const committedRoutePath = globalThis.__RESUX__.route?.path;");\n    expect(navigationSource).toContain("getClientRouteRevision().value += 1;");\n    expect(navigationSource.indexOf("globalThis.__RESUX__ = mergeClientGlobalState")).toBeLessThan(\n      navigationSource.indexOf("getClientRouteRevision().value += 1;")\n    );'''
+          if test_source.count(old) != 1:
+              raise SystemExit('Expected current PR37 regression assertion block exactly once.')
+          test_path.write_text(test_source.replace(old, new, 1))
+          PY
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Focused runtime and i18n regressions
+        run: npx vitest run tests/runtime-performance-regressions.test.ts tests/runtime.test.ts tests/server-i18n-setup-context.test.ts tests/resumable-event-locals.test.ts
+
+      - name: Full test suite
+        run: npm test
+
+      - name: Commit verified fix and remove temporary workflow
+        run: |
+          set -euo pipefail
+          rm .github/workflows/pr37-route-authority-fix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/runtime/index.ts tests/runtime-performance-regressions.test.ts .github/workflows/pr37-route-authority-fix.yml
+          git commit -m 'fix(i18n): derive resumed locale from committed route'
+          git push origin HEAD:fix/i18n-history-resume

@@ -1,8 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 
 const runtimePath = "src/runtime/index.ts";
-const testsPath = "tests/resumable-event-locals.test.ts";
-
 let runtime = await readFile(runtimePath, "utf8");
 
 const syncStart = runtime.indexOf("function renderNativeElement(");
@@ -103,42 +101,3 @@ const asyncRenderer = `async function renderNativeElementAsync(
 
 runtime = runtime.slice(0, asyncStart) + asyncRenderer + runtime.slice(asyncEnd);
 await writeFile(runtimePath, runtime);
-
-let tests = await readFile(testsPath, "utf8");
-tests = tests.replace(
-  "  getClientRuntimeSource,\n  renderTemplateNodesAsync,",
-  "  getClientRuntimeSource,\n  renderTemplateNodes,\n  renderTemplateNodesAsync,",
-);
-
-const asyncTestAnchor = `  it("omits undefined event-local values during async SSR instead of failing serialization", async () => {`;
-if (!tests.includes(asyncTestAnchor)) {
-  throw new Error("Could not locate event-local async SSR regression test");
-}
-const syncTest = `  it("omits undefined event-local values during sync SSR instead of failing serialization", () => {
-    const node: ElementTemplateNode = {
-      type: "element",
-      tag: "button",
-      attrs: [],
-      events: [{ name: "click", handler: "select", locals: ["item"] }],
-      children: [{ type: "text", value: "Select" }],
-    };
-    const html = renderTemplateNodes(
-      [node],
-      {
-        scope: {},
-        scopeId: "s0",
-        moduleId: "m0",
-        route: { path: "/", params: {}, query: {} },
-        runtimeConfig: { public: {} },
-        components: {},
-        layouts: {},
-        pageMeta: {},
-      } as any,
-      { item: undefined },
-    );
-    expect(html).toContain('data-rx-locals-click="{}"');
-  });
-
-`;
-tests = tests.replace(asyncTestAnchor, syncTest + asyncTestAnchor);
-await writeFile(testsPath, tests);

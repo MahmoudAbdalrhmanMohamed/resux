@@ -3780,9 +3780,37 @@ function renderElement(node: ElementTemplateNode, context: RenderTemplateContext
   return renderNativeElement(node, context, locals);
 }
 
-function renderNativeElement(node: ElementTemplateNode, context: RenderTemplateContext, locals: Record<string, unknown>): string {
+function appendNativeEventAttributes(
+  attrs: string[],
+  event: ElementTemplateNode["events"][number],
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+): void {
+  attrs.push(`data-rx-on-${event.name}="${context.scopeId}:${context.moduleId}:${event.handler}"`);
+
+  if (event.locals?.length) {
+    const eventLocals: Record<string, unknown> = {};
+    for (const name of event.locals) {
+      if (!Object.hasOwn(locals, name)) continue;
+      const value = locals[name];
+      if (value === undefined) continue;
+      assertJsonSerializable(value, `event local "${name}"`);
+      eventLocals[name] = value;
+    }
+    attrs.push(`data-rx-locals-${event.name}="${escapeAttribute(JSON.stringify(eventLocals))}"`);
+  }
+
+  if (event.modifiers?.length) {
+    attrs.push(`data-rx-mod-${event.name}="${escapeAttribute(event.modifiers.join(","))}"`);
+  }
+}
+
+function collectNativeElementAttributes(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+): string[] {
   const attrs: string[] = [];
-  const tag = nativeElementTag(node);
 
   for (const attr of node.attrs) {
     const attrName = nativeAttributeName(node, attr.name);
@@ -3792,37 +3820,26 @@ function renderNativeElement(node: ElementTemplateNode, context: RenderTemplateC
     }
 
     const value = evaluateExpression(attr.value, context.scope, locals);
-    if (value === false || value === null || value === undefined) {
-      continue;
-    }
+    if (value === false || value === null || value === undefined) continue;
 
     const marker = attr.bindingId ? ` data-rx-attr-${attr.bindingId}="${context.scopeId}:${attr.bindingId}"` : "";
     attrs.push(`${attrName}="${escapeAttribute(stringifyAttributeValue(attrName, value))}"${marker}`);
   }
 
   for (const event of node.events) {
-    attrs.push(`data-rx-on-${event.name}="${context.scopeId}:${context.moduleId}:${event.handler}"`);
-    if (event.locals?.length) {
-      const eventLocals: Record<string, unknown> = {};
-      for (const name of event.locals) {
-        if (!Object.prototype.hasOwnProperty.call(locals, name)) continue;
-        const value = locals[name];
-        if (value === undefined) continue;
-        assertJsonSerializable(value, `event local "${name}"`);
-        eventLocals[name] = JSON.parse(JSON.stringify(value));
-      }
-      attrs.push(`data-rx-locals-${event.name}="${escapeAttribute(JSON.stringify(eventLocals))}"`);
-    }
-    if (event.modifiers?.length) {
-      attrs.push(`data-rx-mod-${event.name}="${escapeAttribute(event.modifiers.join(","))}"`);
-    }
+    appendNativeEventAttributes(attrs, event, context, locals);
   }
 
   if (node.html) {
     attrs.push(`data-rx-html-${node.html.bindingId}="${context.scopeId}:${node.html.bindingId}"`);
   }
   appendStyleScopeAttribute(attrs, context.styleScopeId);
+  return attrs;
+}
 
+function renderNativeElement(node: ElementTemplateNode, context: RenderTemplateContext, locals: Record<string, unknown>): string {
+  const attrs = collectNativeElementAttributes(node, context, locals);
+  const tag = nativeElementTag(node);
   const attrText = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
   const children = node.html
     ? sanitizeHtml(evaluateExpression(node.html.expression, context.scope, locals))
@@ -3996,48 +4013,8 @@ async function renderNativeElementAsync(
   renderComponent: (component: ComponentDefinition, props?: ComponentProps, renderSlot?: () => Promise<string>) => Promise<string>,
   locals: Record<string, unknown>
 ): Promise<string> {
-  const attrs: string[] = [];
+  const attrs = collectNativeElementAttributes(node, context, locals);
   const tag = nativeElementTag(node);
-
-  for (const attr of node.attrs) {
-    const attrName = nativeAttributeName(node, attr.name);
-    if (attr.kind === "static") {
-      attrs.push(`${attrName}="${escapeAttribute(attr.value)}"`);
-      continue;
-    }
-
-    const value = evaluateExpression(attr.value, context.scope, locals);
-    if (value === false || value === null || value === undefined) {
-      continue;
-    }
-
-    const marker = attr.bindingId ? ` data-rx-attr-${attr.bindingId}="${context.scopeId}:${attr.bindingId}"` : "";
-    attrs.push(`${attrName}="${escapeAttribute(stringifyAttributeValue(attrName, value))}"${marker}`);
-  }
-
-  for (const event of node.events) {
-    attrs.push(`data-rx-on-${event.name}="${context.scopeId}:${context.moduleId}:${event.handler}"`);
-    if (event.locals?.length) {
-      const eventLocals: Record<string, unknown> = {};
-      for (const name of event.locals) {
-        if (!Object.prototype.hasOwnProperty.call(locals, name)) continue;
-        const value = locals[name];
-        if (value === undefined) continue;
-        assertJsonSerializable(value, `event local "${name}"`);
-        eventLocals[name] = JSON.parse(JSON.stringify(value));
-      }
-      attrs.push(`data-rx-locals-${event.name}="${escapeAttribute(JSON.stringify(eventLocals))}"`);
-    }
-    if (event.modifiers?.length) {
-      attrs.push(`data-rx-mod-${event.name}="${escapeAttribute(event.modifiers.join(","))}"`);
-    }
-  }
-
-  if (node.html) {
-    attrs.push(`data-rx-html-${node.html.bindingId}="${context.scopeId}:${node.html.bindingId}"`);
-  }
-  appendStyleScopeAttribute(attrs, context.styleScopeId);
-
   const attrText = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
   const children = node.html
     ? sanitizeHtml(evaluateExpression(node.html.expression, context.scope, locals))

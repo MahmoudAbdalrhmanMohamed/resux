@@ -1,0 +1,78 @@
+name: PR 37 bootstrap fix
+
+on:
+  push:
+    branches: [fix/i18n-history-resume]
+    paths:
+      - .github/workflows/pr37-bootstrap-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/i18n-history-resume
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Patch lazy route revision initialization
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/runtime/index.ts')
+          source = path.read_text()
+          replacements = {
+              'const clientRouteRevision = ref(0);': '''let clientRouteRevision;\nfunction getClientRouteRevision() {\n  clientRouteRevision ||= ref(0);\n  return clientRouteRevision;\n}''',
+              '    clientRouteRevision.value;': '    getClientRouteRevision().value;',
+              '      clientRouteRevision.value += 1;': '      getClientRouteRevision().value += 1;',
+          }
+          for old, new in replacements.items():
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f'Expected exactly one occurrence of {old!r}, found {count}')
+              source = source.replace(old, new, 1)
+          path.write_text(source)
+
+          test_path = Path('tests/runtime-performance-regressions.test.ts')
+          test_source = test_path.read_text()
+          test_source = test_source.replace(
+              'expect(source).toContain("clientRouteRevision.value;");',
+              'expect(source).toContain("getClientRouteRevision().value;");',
+          ).replace(
+              'expect(source).toContain("clientRouteRevision.value += 1;");',
+              'expect(source).toContain("getClientRouteRevision().value += 1;");',
+          )
+          test_path.write_text(test_source)
+          PY
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Focused runtime regressions
+        run: npx vitest run tests/runtime-performance-regressions.test.ts tests/runtime.test.ts tests/global-state.test.ts tests/client-enhancement-lifecycle.test.ts tests/client-enhancement-shared-target.test.ts
+
+      - name: Full test suite
+        run: npm test
+
+      - name: Commit verified fix and remove temporary workflow
+        run: |
+          set -euo pipefail
+          rm .github/workflows/pr37-bootstrap-fix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/runtime/index.ts tests/runtime-performance-regressions.test.ts .github/workflows/pr37-bootstrap-fix.yml
+          git commit -m 'fix(i18n): lazily initialize route revision signal'
+          git push origin HEAD:fix/i18n-history-resume

@@ -1,1 +1,0 @@
-Trigger full PR #36 quality gates after the verified Sonar refactor.

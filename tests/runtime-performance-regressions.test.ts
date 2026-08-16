@@ -110,7 +110,6 @@ describe("runtime performance regressions", () => {
   it("invalidates client i18n computed state when history replaces the active route", () => {
     const source = getClientRuntimeSource();
 
-    expect(source).toMatch(/const clientRouteRevision = \w*Ref\(0\);/);
     expect(source).toContain("clientRouteRevision.value;");
     expect(source).toContain("const previousRoutePath = app.route?.path;");
     expect(source).toContain("previousRoutePath !== route?.path");

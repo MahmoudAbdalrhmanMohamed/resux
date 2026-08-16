@@ -7647,6 +7647,7 @@ const routePayloadFailures = new Map();
 const ROUTE_PREFETCH_FAILURE_COOLDOWN_MS = 5000;
 const ROUTE_PAYLOAD_TIMEOUT_MS = 30000;
 let routePayloadGeneration = 0;
+const clientRouteRevision = ref(0);
 const mountedVueIslands = new Map();
 const pendingAsyncDataControllers = globalThis.__RESUX_PENDING_ASYNC_DATA_CONTROLLERS__ ||= new Set();
 let devImportRevision = 0;
@@ -9493,7 +9494,10 @@ function useClientI18n(routeOverride) {
     };
   }
   const routePath = routeOverride?.path || getClientResuxApp().route?.path || (typeof location !== "undefined" ? location.pathname + location.search + location.hash : "/");
-  const locale = computed(() => resolveClientI18nLocaleCode(config, routeOverride?.path || getClientResuxApp().route?.path || routePath));
+  const locale = computed(() => {
+    clientRouteRevision.value;
+    return resolveClientI18nLocaleCode(config, routeOverride?.path || getClientResuxApp().route?.path || routePath);
+  });
   const dir = computed(() => config.locales.find((entry) => entry.code === locale.value)?.dir || "ltr");
   const t = (key, params = {}) => {
     const value = readClientTranslation(config.messages, locale.value, key) ?? readClientTranslation(config.messages, config.fallbackLocale, key);
@@ -9577,10 +9581,14 @@ function getClientResuxApp(routeOverride) {
     }
     globalThis.__RESUX_APP__ = app;
   } else {
+    const previousRoutePath = app.route?.path;
     app.route = route;
     app.payload = payload;
     app.$config = config;
     app.provides = clientProvides;
+    if (previousRoutePath !== route?.path) {
+      clientRouteRevision.value += 1;
+    }
   }
 
   return app;

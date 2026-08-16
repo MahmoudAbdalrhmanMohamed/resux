@@ -107,6 +107,16 @@ describe("runtime performance regressions", () => {
     expect(source).toContain("createClientRouter().push(buildClientLocalePath");
   });
 
+  it("invalidates client i18n computed state when history replaces the active route", () => {
+    const source = getClientRuntimeSource();
+
+    expect(source).toContain("const clientRouteRevision = ref(0);");
+    expect(source).toContain("clientRouteRevision.value;");
+    expect(source).toContain("const previousRoutePath = app.route?.path;");
+    expect(source).toContain("previousRoutePath !== route?.path");
+    expect(source).toContain("clientRouteRevision.value += 1;");
+  });
+
   it("reloads safely when a route payload belongs to a different build", () => {
     const source = getClientRuntimeSource();
 

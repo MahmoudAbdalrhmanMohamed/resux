@@ -98,7 +98,11 @@ describe("runtime performance regressions", () => {
     const source = getClientRuntimeSource();
     expect(source).toContain("function useClientI18n(routeOverride)");
     expect(source).toContain("runtimeConfig?.public?.i18n");
-    expect(source).toContain("globalThis.__RESUX_USE_I18N__ ||= () => useClientI18n()");
+    expect(source).toContain("globalThis.__RESUX_USE_I18N__ = () => useClientI18n()");
+    expect(source).toContain("return useClientI18n(route);");
+    expect(source).toContain("return useClientI18n(route).localePath;");
+    expect(source).toContain("return useClientI18n(route).switchLocalePath;");
+    expect(source).toContain("return useClientI18n().t(key, params);");
     expect(source).toContain("readClientTranslation(config.messages, locale.value, key)");
     expect(source).toContain("createClientRouter().push(buildClientLocalePath");
   });

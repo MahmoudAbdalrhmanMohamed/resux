@@ -1495,13 +1495,22 @@ function compileTemplateNode(
         throw new ResuxCompileError("Events need an argument and expression.", locationFromVueNode(state.file, prop));
       }
       const isSimpleIdentifier = /^[A-Za-z_$][\w$]*$/.test(expression);
-      const handler = (isSimpleIdentifier && !state.activeLocals.includes(expression))
-        ? expression
-        : createInlineEventHandler(expression, state, prop);
-      const event = {
+      if (isSimpleIdentifier && state.activeLocals.includes(expression)) {
+        throw new ResuxCompileError(
+          `Direct template-local event handler "${expression}" cannot be resumed because template locals are serialized by value. Call a top-level handler with serializable local data instead.`,
+          locationFromVueNode(state.file, prop),
+        );
+      }
+      const usesInlineHandler = !isSimpleIdentifier;
+      const inlineHandler = usesInlineHandler
+        ? createInlineEventHandler(expression, state, prop)
+        : null;
+      const handler = inlineHandler?.name ?? expression;
+      const event: TemplateEvent = {
         name: arg,
         handler,
-        modifiers
+        modifiers,
+        ...(inlineHandler?.locals.length ? { locals: inlineHandler.locals } : {})
       };
       events.push(event);
       state.handlers.push(event);
@@ -1591,17 +1600,25 @@ function compileTemplateNode(
       if (!isAssignableExpression(expression)) {
         throw new ResuxCompileError("v-model needs an assignable expression like \"message.value\".", locationFromVueNode(state.file, prop));
       }
-      const model = createModelBinding(node.tag, node.props, expression, state);
+      const assignmentRoot = assignableExpressionRoot(expression);
+      if (assignmentRoot && state.activeLocals.includes(assignmentRoot)) {
+        throw new ResuxCompileError(
+          `v-model cannot assign through template-local binding "${assignmentRoot}" because resumed event locals are serialized by value. Bind v-model to resumable component state instead.`,
+          locationFromVueNode(state.file, prop),
+        );
+      }
+      const model = createModelBinding(node.tag, node.props, expression, state, prop);
       attrs.push({
         kind: "dynamic",
         name: model.attribute,
         value: registerTemplateExpression(model.value, state.templateRefBindings, state.file, prop, state),
         bindingId: nextBindingId(state)
       });
-      const event = {
+      const event: TemplateEvent = {
         name: model.event,
         handler: model.handler,
-        modifiers: []
+        modifiers: [],
+        ...(model.locals.length > 0 ? { locals: model.locals } : {})
       };
       events.push(event);
       state.handlers.push(event);
@@ -1653,23 +1670,50 @@ function compileTemplateNode(
   return element;
 }
 
-function createInlineEventHandler(expression: string, state: CompileTemplateState, node?: VueCompilerNode): string {
+function selectReferencedActiveLocals(activeLocals: string[], identifiers: string[]): string[] {
+  const referenced = new Set(identifiers);
+  const seen = new Set<string>();
+  const selected: string[] = [];
+  for (let index = activeLocals.length - 1; index >= 0; index -= 1) {
+    const local = activeLocals[index];
+    if (!referenced.has(local) || seen.has(local)) continue;
+    seen.add(local);
+    selected.unshift(local);
+  }
+  return selected;
+}
+
+function createInlineEventHandler(
+  expression: string,
+  state: CompileTemplateState,
+  node?: VueCompilerNode
+): { name: string; locals: string[] } {
   const name = nextInlineHandlerName(state);
-  const transformed = transformTemplateExpressionCode(expression, state.templateRefBindings, state.file, node ?? ({} as any)).transformed;
+  const transformed = transformTemplateExpressionCode(
+    expression,
+    state.templateRefBindings,
+    state.file,
+    node ?? ({} as any)
+  );
+  const capturedLocals = selectReferencedActiveLocals(state.activeLocals, transformed.identifiers);
+  const localBindings = capturedLocals
+    .map((local) => `const ${local} = __rx_event_locals[${JSON.stringify(local)}];`)
+    .join("\n");
   state.inlineHandlers.push({
     name,
-    source: `function ${name}($event) {\n${transformed}\n}`,
-    locals: [...state.activeLocals]
+    source: `function ${name}($event, __rx_event_locals = {}) {\n${localBindings}${localBindings ? "\n" : ""}${transformed.transformed}\n}`,
+    locals: capturedLocals
   });
-  return name;
+  return { name, locals: capturedLocals };
 }
 
 function createModelBinding(
   tag: string,
   props: Array<AttributeNode | DirectiveNode>,
   expression: string,
-  state: CompileTemplateState
-): { attribute: string; value: string; event: string; handler: string } {
+  state: CompileTemplateState,
+  node?: VueCompilerNode
+): { attribute: string; value: string; event: string; handler: string; locals: string[] } {
   const normalizedTag = tag.toLowerCase();
   const inputType = normalizedTag === "input" ? staticAttributeValue(props, "type")?.toLowerCase() : undefined;
   const isCheckbox = inputType === "checkbox";
@@ -1679,18 +1723,29 @@ function createModelBinding(
   const assignment = isCheckbox
     ? `${assignmentExpression} = Boolean(${target} && ${target}.checked)`
     : `${assignmentExpression} = ${target} ? ${target}.value : ""`;
+  const identifiers = transformTemplateExpressionCode(
+    expression,
+    state.templateRefBindings,
+    state.file,
+    node ?? ({} as any)
+  ).identifiers;
+  const capturedLocals = selectReferencedActiveLocals(state.activeLocals, identifiers);
+  const localBindings = capturedLocals
+    .map((local) => `const ${local} = __rx_event_locals[${JSON.stringify(local)}];`)
+    .join("\n");
 
   state.inlineHandlers.push({
     name: handler,
-    source: `function ${handler}($event) {\n${assignment}\n}`,
-    locals: [...state.activeLocals]
+    source: `function ${handler}($event, __rx_event_locals = {}) {\n${localBindings}${localBindings ? "\n" : ""}${assignment}\n}`,
+    locals: capturedLocals
   });
 
   return {
     attribute: isCheckbox ? "checked" : "value",
     value: expression,
     event: isCheckbox || normalizedTag === "select" ? "change" : "input",
-    handler
+    handler,
+    locals: capturedLocals
   };
 }
 
@@ -1814,6 +1869,10 @@ function shouldAutoUnwrapTemplateIdentifier(node: ts.Identifier): boolean {
 
 function isAssignableExpression(expression: string): boolean {
   return /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[[^\]]+\])*$/.test(expression.trim());
+}
+
+function assignableExpressionRoot(expression: string): string | undefined {
+  return /^([A-Za-z_$][\w$]*)/.exec(expression.trim())?.[1];
 }
 
 function normalizeEventModifiers(modifiers: SimpleExpressionNode[], file: string, node: VueCompilerNode): string[] {
@@ -2414,7 +2473,7 @@ function inferTemplateRefBindings(script: string, file: string): Set<string> {
           const propertyName = element.propertyName && ts.isIdentifier(element.propertyName)
             ? element.propertyName.text
             : element.name.text;
-          if (calleeName === "toRefs" || ["data", "pending", "error", "value"].includes(propertyName)) {
+          if (isObjectTemplateRefBinding(calleeName, propertyName)) {
             bindings.add(element.name.text);
           }
         }
@@ -2438,7 +2497,17 @@ function isAsyncDataFactory(name: string): boolean {
 }
 
 function isObjectTemplateRefFactory(name: string): boolean {
-  return isAsyncDataFactory(name) || name === "toRefs";
+  return isAsyncDataFactory(name) || name === "toRefs" || name === "useI18n";
+}
+
+function isObjectTemplateRefBinding(factory: string, property: string): boolean {
+  if (factory === "toRefs") {
+    return true;
+  }
+  if (factory === "useI18n") {
+    return property === "locale" || property === "dir";
+  }
+  return ["data", "pending", "error", "value"].includes(property);
 }
 
 function isDefinePageMetaStatement(statement: ts.Statement): boolean {

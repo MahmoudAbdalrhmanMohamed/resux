@@ -1,7 +1,10 @@
 import { getQuery as h3GetQuery, readBody as h3ReadBody, setHeader as h3SetHeader } from "h3";
 import {
+  buildLocalePath,
   normalizeI18nRuntimeConfig,
   resolveI18nRoute,
+  resolveLocaleDirection,
+  resolveLocalizedValue,
   translateRaw,
   translateText
 } from "../i18n/shared.js";
@@ -464,6 +467,8 @@ export interface TemplateEvent {
   name: string;
   handler: string;
   modifiers?: string[];
+  /** Template-local bindings captured by an inline resumable handler. */
+  locals?: string[];
 }
 
 export interface IfDirective {
@@ -2650,6 +2655,54 @@ function hashFetchIdentity(value: string): string {
     + (second >>> 0).toString(16).padStart(8, "0");
 }
 
+function createServerI18nContext(route: RouteContext, runtimeConfig: RuntimeConfig): any {
+  const config = normalizeI18nRuntimeConfig(runtimeConfig.public?.i18n);
+  if (!config) {
+    return {
+      locale: ref("en"),
+      dir: ref("ltr"),
+      locales: [],
+      defaultLocale: "en",
+      fallbackLocale: "en",
+      strategy: "prefix_except_default",
+      t: (key: string) => key,
+      tm: (key: string) => key,
+      resolveLocalized: (value: unknown) => typeof value === "string" ? value : null,
+      localePath: (to: string) => to,
+      switchLocalePath: (_localeCode: string, to?: string) => to ?? route.path,
+      setLocale: () => {}
+    };
+  }
+
+  const resolved = resolveI18nRoute(route.path, config);
+  const locale = ref(resolved.locale.code);
+  const dir = ref(resolveLocaleDirection(config, resolved.locale.code));
+  return {
+    locale,
+    dir,
+    locales: config.locales,
+    defaultLocale: config.defaultLocale,
+    fallbackLocale: config.fallbackLocale,
+    strategy: config.strategy,
+    t(key: string, params: Record<string, string | number | boolean | null | undefined> = {}): string {
+      return translateText(config, locale.value, key, params);
+    },
+    tm(key: string): unknown {
+      return translateRaw(config, locale.value, key);
+    },
+    resolveLocalized(value: unknown): string | null {
+      return resolveLocalizedValue(value, locale.value, config.fallbackLocale);
+    },
+    localePath(to: string, localeCode?: string): string {
+      return buildLocalePath(to, localeCode ?? locale.value, config);
+    },
+    switchLocalePath(localeCode: string, to?: string): string {
+      return buildLocalePath(to ?? route.path, localeCode, config);
+    },
+    setLocale: () => {}
+  };
+}
+
 export function createServerSetupContext(
   route: RouteContext,
   props: ComponentProps,
@@ -2865,23 +2918,13 @@ export function createServerSetupContext(
       // Page meta is compiled statically in Resux.
     },
     useI18n(): any {
-      return (globalThis as any).__RESUX_USE_I18N__ ? (globalThis as any).__RESUX_USE_I18N__() : {
-        locale: ref("en"),
-        dir: ref("ltr"),
-        locales: [],
-        t: (k: string) => k,
-        tm: (k: string) => k,
-        resolveLocalized: (v: any) => v,
-        localePath: (to: string) => to,
-        switchLocalePath: (to: string) => to,
-        setLocale: () => {}
-      };
+      return createServerI18nContext(route, runtimeConfig);
     },
     useLocalePath(): any {
-      return (globalThis as any).__RESUX_USE_LOCALE_PATH__ ? (globalThis as any).__RESUX_USE_LOCALE_PATH__() : (to: string) => to;
+      return createServerI18nContext(route, runtimeConfig).localePath;
     },
     useSwitchLocalePath(): any {
-      return (globalThis as any).__RESUX_USE_SWITCH_LOCALE_PATH__ ? (globalThis as any).__RESUX_USE_SWITCH_LOCALE_PATH__() : (to: string) => to;
+      return createServerI18nContext(route, runtimeConfig).switchLocalePath;
     },
     useDevice(): DeviceInfo {
       return parseUserAgent(route.userAgent);
@@ -2894,7 +2937,7 @@ export function createServerSetupContext(
         const currentLocaleCode = resolveI18nRoute(route.path, normalizedI18n).locale.code;
         return translateText(normalizedI18n, currentLocaleCode, key, params as any);
       }
-      return (globalThis as any).__RESUX_USE_I18N__ ? (globalThis as any).__RESUX_USE_I18N__().t(key, params) : key;
+      return key;
     },
     $tm(key: string): unknown {
       const i18nCandidate = runtimeConfig.public?.i18n;
@@ -2903,7 +2946,7 @@ export function createServerSetupContext(
         const currentLocaleCode = resolveI18nRoute(route.path, normalizedI18n).locale.code;
         return translateRaw(normalizedI18n, currentLocaleCode, key);
       }
-      return (globalThis as any).__RESUX_USE_I18N__ ? (globalThis as any).__RESUX_USE_I18N__().tm(key) : key;
+      return key;
     }
   };
 
@@ -3737,9 +3780,37 @@ function renderElement(node: ElementTemplateNode, context: RenderTemplateContext
   return renderNativeElement(node, context, locals);
 }
 
-function renderNativeElement(node: ElementTemplateNode, context: RenderTemplateContext, locals: Record<string, unknown>): string {
+function appendNativeEventAttributes(
+  attrs: string[],
+  event: ElementTemplateNode["events"][number],
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+): void {
+  attrs.push(`data-rx-on-${event.name}="${context.scopeId}:${context.moduleId}:${event.handler}"`);
+
+  if (event.locals?.length) {
+    const eventLocals: Record<string, unknown> = {};
+    for (const name of event.locals) {
+      if (!Object.hasOwn(locals, name)) continue;
+      const value = locals[name];
+      if (value === undefined) continue;
+      assertJsonSerializable(value, `event local "${name}"`);
+      eventLocals[name] = value;
+    }
+    attrs.push(`data-rx-locals-${event.name}="${escapeAttribute(JSON.stringify(eventLocals))}"`);
+  }
+
+  if (event.modifiers?.length) {
+    attrs.push(`data-rx-mod-${event.name}="${escapeAttribute(event.modifiers.join(","))}"`);
+  }
+}
+
+function collectNativeElementAttributes(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+): string[] {
   const attrs: string[] = [];
-  const tag = nativeElementTag(node);
 
   for (const attr of node.attrs) {
     const attrName = nativeAttributeName(node, attr.name);
@@ -3749,26 +3820,26 @@ function renderNativeElement(node: ElementTemplateNode, context: RenderTemplateC
     }
 
     const value = evaluateExpression(attr.value, context.scope, locals);
-    if (value === false || value === null || value === undefined) {
-      continue;
-    }
+    if (value === false || value === null || value === undefined) continue;
 
     const marker = attr.bindingId ? ` data-rx-attr-${attr.bindingId}="${context.scopeId}:${attr.bindingId}"` : "";
     attrs.push(`${attrName}="${escapeAttribute(stringifyAttributeValue(attrName, value))}"${marker}`);
   }
 
   for (const event of node.events) {
-    attrs.push(`data-rx-on-${event.name}="${context.scopeId}:${context.moduleId}:${event.handler}"`);
-    if (event.modifiers?.length) {
-      attrs.push(`data-rx-mod-${event.name}="${escapeAttribute(event.modifiers.join(","))}"`);
-    }
+    appendNativeEventAttributes(attrs, event, context, locals);
   }
 
   if (node.html) {
     attrs.push(`data-rx-html-${node.html.bindingId}="${context.scopeId}:${node.html.bindingId}"`);
   }
   appendStyleScopeAttribute(attrs, context.styleScopeId);
+  return attrs;
+}
 
+function renderNativeElement(node: ElementTemplateNode, context: RenderTemplateContext, locals: Record<string, unknown>): string {
+  const attrs = collectNativeElementAttributes(node, context, locals);
+  const tag = nativeElementTag(node);
   const attrText = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
   const children = node.html
     ? sanitizeHtml(evaluateExpression(node.html.expression, context.scope, locals))
@@ -3942,37 +4013,8 @@ async function renderNativeElementAsync(
   renderComponent: (component: ComponentDefinition, props?: ComponentProps, renderSlot?: () => Promise<string>) => Promise<string>,
   locals: Record<string, unknown>
 ): Promise<string> {
-  const attrs: string[] = [];
+  const attrs = collectNativeElementAttributes(node, context, locals);
   const tag = nativeElementTag(node);
-
-  for (const attr of node.attrs) {
-    const attrName = nativeAttributeName(node, attr.name);
-    if (attr.kind === "static") {
-      attrs.push(`${attrName}="${escapeAttribute(attr.value)}"`);
-      continue;
-    }
-
-    const value = evaluateExpression(attr.value, context.scope, locals);
-    if (value === false || value === null || value === undefined) {
-      continue;
-    }
-
-    const marker = attr.bindingId ? ` data-rx-attr-${attr.bindingId}="${context.scopeId}:${attr.bindingId}"` : "";
-    attrs.push(`${attrName}="${escapeAttribute(stringifyAttributeValue(attrName, value))}"${marker}`);
-  }
-
-  for (const event of node.events) {
-    attrs.push(`data-rx-on-${event.name}="${context.scopeId}:${context.moduleId}:${event.handler}"`);
-    if (event.modifiers?.length) {
-      attrs.push(`data-rx-mod-${event.name}="${escapeAttribute(event.modifiers.join(","))}"`);
-    }
-  }
-
-  if (node.html) {
-    attrs.push(`data-rx-html-${node.html.bindingId}="${context.scopeId}:${node.html.bindingId}"`);
-  }
-  appendStyleScopeAttribute(attrs, context.styleScopeId);
-
   const attrText = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
   const children = node.html
     ? sanitizeHtml(evaluateExpression(node.html.expression, context.scope, locals))
@@ -7568,7 +7610,7 @@ if (typeof globalThis !== "undefined") {
   defineProp("$t", () => {
     return (key, params) => {
       try {
-        return globalThis.__RESUX_USE_I18N__ ? globalThis.__RESUX_USE_I18N__().t(key, params) : key;
+        return useClientI18n().t(key, params);
       } catch (e) {
         return key;
       }
@@ -10352,23 +10394,13 @@ export function createClientComponent(definition) {
           // Page meta is compiled statically in Resux.
         },
         useI18n() {
-          return globalThis.__RESUX_USE_I18N__ ? globalThis.__RESUX_USE_I18N__() : {
-            locale: ref("en"),
-            dir: ref("ltr"),
-            locales: [],
-            t: (k) => k,
-            tm: (k) => k,
-            resolveLocalized: (v) => v,
-            localePath: (to) => to,
-            switchLocalePath: (to) => to,
-            setLocale: () => {}
-          };
+          return useClientI18n(route);
         },
         useLocalePath() {
-          return globalThis.__RESUX_USE_LOCALE_PATH__ ? globalThis.__RESUX_USE_LOCALE_PATH__() : (to) => to;
+          return useClientI18n(route).localePath;
         },
         useSwitchLocalePath() {
-          return globalThis.__RESUX_USE_SWITCH_LOCALE_PATH__ ? globalThis.__RESUX_USE_SWITCH_LOCALE_PATH__() : (to) => to;
+          return useClientI18n(route).switchLocalePath;
         },
         useDevice() {
           return useDevice();
@@ -10380,12 +10412,16 @@ export function createClientComponent(definition) {
       await Promise.allSettled(mountedCallbacks.map((callback) => callback()));
       return { scope, props, stateRefs, globalStateKeys, asyncDataRefs, pendingCompletions };
     },
-    async run(scopeRecord, handlerName, event) {
+    async run(scopeRecord, handlerName, event, eventLocals = {}) {
       const handler = scopeRecord.scope[handlerName];
       if (typeof handler !== "function") {
         throw new Error("Missing resumable handler " + handlerName + ".");
       }
-      await handler(event);
+      if (Object.keys(eventLocals).length > 0) {
+        await handler(event, eventLocals);
+      } else {
+        await handler(event);
+      }
       return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId);
     },
     render(scopeRecord) {
@@ -10464,9 +10500,9 @@ function registerDelegatedEventsFromDom(root = document) {
 }
 
 function installResux() {
-  globalThis.__RESUX_USE_I18N__ ||= () => useClientI18n();
-  globalThis.__RESUX_USE_LOCALE_PATH__ ||= () => useClientI18n().localePath;
-  globalThis.__RESUX_USE_SWITCH_LOCALE_PATH__ ||= () => useClientI18n().switchLocalePath;
+  globalThis.__RESUX_USE_I18N__ = () => useClientI18n();
+  globalThis.__RESUX_USE_LOCALE_PATH__ = () => useClientI18n().localePath;
+  globalThis.__RESUX_USE_SWITCH_LOCALE_PATH__ = () => useClientI18n().switchLocalePath;
   if (globalThis.__RESUX_INSTALLED__) {
     return;
   }
@@ -14100,7 +14136,7 @@ async function handleDelegatedEvent(eventName, event) {
       scopeRecord = await component.createScope(payload.scopes[scopeId], payload.route);
       scopeCache.set(scopeId, scopeRecord);
     }
-    const patches = await component.run(scopeRecord, handlerName, event);
+    const patches = await component.run(scopeRecord, handlerName, event, readEventLocals(target, eventName));
     const serialized = component.serialize(scopeRecord);
     payload.scopes[scopeId].props = serialized.props;
     payload.scopes[scopeId].state = serialized.state;
@@ -14113,6 +14149,17 @@ async function handleDelegatedEvent(eventName, event) {
       handler: handlerName,
       message: error instanceof Error ? error.message : String(error)
     });
+  }
+}
+
+function readEventLocals(target, eventName) {
+  const encoded = target.getAttribute("data-rx-locals-" + eventName);
+  if (!encoded) return {};
+  try {
+    const parsed = JSON.parse(encoded);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
   }
 }
 
@@ -14328,6 +14375,13 @@ function renderElement(node, scope, locals, styleScopeId) {
   }
   for (const event of node.events) {
     attrs.push('data-rx-on-' + event.name + '=":' + event.handler + '"');
+    if (event.locals && event.locals.length) {
+      const eventLocals = {};
+      for (const name of event.locals) {
+        if (Object.prototype.hasOwnProperty.call(locals, name)) eventLocals[name] = locals[name];
+      }
+      attrs.push('data-rx-locals-' + event.name + '=\"' + escapeAttribute(JSON.stringify(eventLocals)) + '\"');
+    }
     if (event.modifiers && event.modifiers.length) {
       attrs.push('data-rx-mod-' + event.name + '="' + escapeAttribute(event.modifiers.join(",")) + '"');
     }

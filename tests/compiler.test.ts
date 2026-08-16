@@ -348,7 +348,7 @@ const count = useState("count", () => 0)
     );
 
     expect(component.handlers).toEqual(["__rx_inline_0"]);
-    expect(component.serverSource).toContain("function __rx_inline_0($event)");
+    expect(component.serverSource).toContain("function __rx_inline_0($event, __rx_event_locals = {})");
     expect(component.serverSource).toContain("count.value++");
   });
 

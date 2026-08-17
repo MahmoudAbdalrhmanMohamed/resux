@@ -238,6 +238,7 @@ export default createClientComponent({ id: "m0", name: "LocaleLayout", file: "Lo
 
     window.history.back();
     await new Promise((resolve) => setTimeout(resolve, 0));
+    // Happy DOM can leave the URL unchanged for history traversal; keep popstate behavior deterministic.
     if (window.location.pathname !== "/ar") {
       window.history.replaceState({ __resux: true, path: "/ar" }, "", "/ar");
     }

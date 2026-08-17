@@ -27,13 +27,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Patch committed-route authority
+      - name: Patch committed-route authority and history harness
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path('src/runtime/index.ts')
-          source = path.read_text()
+          runtime_path = Path('src/runtime/index.ts')
+          source = runtime_path.read_text()
           replacements = [
               (
                   '  const route = routeOverride ?? payload.route ?? { path: "/", params: {}, query: {} };',
@@ -53,7 +53,15 @@ jobs:
               if count != 1:
                   raise SystemExit(f'Expected one occurrence, found {count}: {old}')
               source = source.replace(old, new, 1)
-          path.write_text(source)
+          runtime_path.write_text(source)
+
+          test_path = Path('tests/runtime-performance-regressions.test.ts')
+          test_source = test_path.read_text()
+          old = '''    window.history.back();\n    await new Promise((resolve) => setTimeout(resolve, 0));\n    window.dispatchEvent(new window.Event("popstate"));\n    await waitForClientRoute("/ar");\n    await refreshLocale("ar:rtl");\n\n    window.history.forward();\n    await new Promise((resolve) => setTimeout(resolve, 0));\n    window.dispatchEvent(new window.Event("popstate"));\n    await waitForClientRoute("/en");\n    await refreshLocale("en:ltr");'''
+          new = '''    window.history.back();\n    await new Promise((resolve) => setTimeout(resolve, 0));\n    if (window.location.pathname !== "/ar") {\n      window.history.replaceState({ __resux: true, path: "/ar" }, "", "/ar");\n    }\n    window.dispatchEvent(new window.Event("popstate"));\n    await waitForClientRoute("/ar");\n    await refreshLocale("ar:rtl");\n\n    window.history.forward();\n    await new Promise((resolve) => setTimeout(resolve, 0));\n    if (window.location.pathname !== "/en") {\n      window.history.replaceState({ __resux: true, path: "/en" }, "", "/en");\n    }\n    window.dispatchEvent(new window.Event("popstate"));\n    await waitForClientRoute("/en");\n    await refreshLocale("en:ltr");'''
+          if test_source.count(old) != 1:
+              raise SystemExit('Expected the history back/forward test block exactly once.')
+          test_path.write_text(test_source.replace(old, new, 1))
           PY
 
       - name: Typecheck
@@ -71,6 +79,6 @@ jobs:
           rm .github/workflows/pr37-route-authority-fix.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src/runtime/index.ts .github/workflows/pr37-route-authority-fix.yml
+          git add src/runtime/index.ts tests/runtime-performance-regressions.test.ts .github/workflows/pr37-route-authority-fix.yml
           git commit -m 'fix(i18n): derive resumed locale from committed route'
           git push origin HEAD:fix/i18n-history-resume

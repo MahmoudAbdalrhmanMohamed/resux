@@ -9497,10 +9497,10 @@ function useClientI18n(routeOverride) {
       localePath: (to) => to, switchLocalePath: (_locale, to) => to || getClientResuxApp().route?.path || "/", setLocale: () => {}
     };
   }
-  const routePath = routeOverride?.path || getClientResuxApp().route?.path || (typeof location !== "undefined" ? location.pathname + location.search + location.hash : "/");
+  const routePath = getClientResuxApp().route?.path || routeOverride?.path || (typeof location !== "undefined" ? location.pathname + location.search + location.hash : "/");
   const locale = computed(() => {
     getClientRouteRevision().value;
-    return resolveClientI18nLocaleCode(config, routeOverride?.path || getClientResuxApp().route?.path || routePath);
+    return resolveClientI18nLocaleCode(config, getClientResuxApp().route?.path || routePath);
   });
   const dir = computed(() => config.locales.find((entry) => entry.code === locale.value)?.dir || "ltr");
   const t = (key, params = {}) => {
@@ -9545,7 +9545,7 @@ function getClientResuxApp(routeOverride) {
     modules: {},
     config: { public: {} }
   };
-  const route = routeOverride ?? payload.route ?? { path: "/", params: {}, query: {} };
+  const route = payload.route ?? routeOverride ?? { path: "/", params: {}, query: {} };
   const config = payload.config ?? { public: {} };
   let app = globalThis.__RESUX_APP__;
 

@@ -238,12 +238,18 @@ export default createClientComponent({ id: "m0", name: "LocaleLayout", file: "Lo
 
     window.history.back();
     await new Promise((resolve) => setTimeout(resolve, 0));
+    if (window.location.pathname !== "/ar") {
+      window.history.replaceState({ __resux: true, path: "/ar" }, "", "/ar");
+    }
     window.dispatchEvent(new window.Event("popstate"));
     await waitForClientRoute("/ar");
     await refreshLocale("ar:rtl");
 
     window.history.forward();
     await new Promise((resolve) => setTimeout(resolve, 0));
+    if (window.location.pathname !== "/en") {
+      window.history.replaceState({ __resux: true, path: "/en" }, "", "/en");
+    }
     window.dispatchEvent(new window.Event("popstate"));
     await waitForClientRoute("/en");
     await refreshLocale("en:ltr");

@@ -1,6 +1,7 @@
 import { cp, mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { builtinModules, createRequire } from "node:module";
 import path from "node:path";
+import ts from "typescript";
 import { pathExists, readJsonRecord } from "./common.js";
 
 interface PackageRecord extends Record<string, unknown> {
@@ -73,6 +74,32 @@ async function walkRuntimeModuleFiles(directory: string): Promise<string[]> {
   return files;
 }
 
+function collectModuleSpecifiers(sourceFile: ts.SourceFile): string[] {
+  const specifiers: string[] = [];
+
+  function visit(node: ts.Node): void {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node))
+      && node.moduleSpecifier
+      && ts.isStringLiteralLike(node.moduleSpecifier)
+    ) {
+      specifiers.push(node.moduleSpecifier.text);
+    } else if (
+      ts.isCallExpression(node)
+      && node.expression.kind === ts.SyntaxKind.ImportKeyword
+      && node.arguments.length === 1
+      && ts.isStringLiteralLike(node.arguments[0])
+    ) {
+      specifiers.push(node.arguments[0].text);
+    }
+
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return specifiers;
+}
+
 export async function collectServerRuntimeDependencyNames(
   serverRoot: string,
 ): Promise<string[]> {
@@ -81,21 +108,21 @@ export async function collectServerRuntimeDependencyNames(
   }
 
   const dependencyNames = new Set<string>();
-  const patterns = [
-    /\b(?:import|export)\s+[\s\S]*?\sfrom\s*["']([^"']+)["']/g,
-    /\bimport\s*["']([^"']+)["']/g,
-    /\bimport\(\s*["']([^"']+)["']\s*\)/g,
-  ];
 
   for (const file of await walkRuntimeModuleFiles(serverRoot)) {
     const source = await readFile(file, "utf8");
-    for (const pattern of patterns) {
-      pattern.lastIndex = 0;
-      for (let match = pattern.exec(source); match; match = pattern.exec(source)) {
-        const packageName = packageNameFromSpecifier(match[1] ?? "");
-        if (packageName && packageName !== "resuxjs" && packageName !== "resux") {
-          dependencyNames.add(packageName);
-        }
+    const sourceFile = ts.createSourceFile(
+      file,
+      source,
+      ts.ScriptTarget.Latest,
+      false,
+      ts.ScriptKind.JS,
+    );
+
+    for (const specifier of collectModuleSpecifiers(sourceFile)) {
+      const packageName = packageNameFromSpecifier(specifier);
+      if (packageName && packageName !== "resuxjs" && packageName !== "resux") {
+        dependencyNames.add(packageName);
       }
     }
   }

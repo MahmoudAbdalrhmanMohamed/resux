@@ -1,0 +1,146 @@
+name: Patch Vercel runtime dependency parser
+
+on:
+  push:
+    branches:
+      - fix/vercel-runtime-dependency-parser
+    paths:
+      - .github/workflows/patch-vercel-runtime-dependency-parser.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[parser-fix-done]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Apply parser fix and regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+          const file = 'src/deploy/runtime-dependencies.ts';
+          let source = fs.readFileSync(file, 'utf8');
+          if (!source.includes('import ts from "typescript";')) {
+            source = source.replace('import path from "node:path";\n', 'import path from "node:path";\nimport ts from "typescript";\n');
+          }
+          const start = source.indexOf('export async function collectServerRuntimeDependencyNames(');
+          const end = source.indexOf('\nfunction resolveResuxPackageRequire(', start);
+          if (start < 0 || end < 0) throw new Error('Could not locate runtime dependency collector');
+          const replacement = `function collectModuleSpecifiers(sourceFile: ts.SourceFile): string[] {
+  const specifiers: string[] = [];
+
+  function visit(node: ts.Node): void {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node))
+      && node.moduleSpecifier
+      && ts.isStringLiteralLike(node.moduleSpecifier)
+    ) {
+      specifiers.push(node.moduleSpecifier.text);
+    } else if (
+      ts.isCallExpression(node)
+      && node.expression.kind === ts.SyntaxKind.ImportKeyword
+      && node.arguments.length === 1
+      && ts.isStringLiteralLike(node.arguments[0])
+    ) {
+      specifiers.push(node.arguments[0].text);
+    }
+
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return specifiers;
+}
+
+export async function collectServerRuntimeDependencyNames(
+  serverRoot: string,
+): Promise<string[]> {
+  if (!(await pathExists(serverRoot))) {
+    return [];
+  }
+
+  const dependencyNames = new Set<string>();
+
+  for (const file of await walkRuntimeModuleFiles(serverRoot)) {
+    const source = await readFile(file, "utf8");
+    const sourceFile = ts.createSourceFile(
+      file,
+      source,
+      ts.ScriptTarget.Latest,
+      false,
+      ts.ScriptKind.JS,
+    );
+
+    for (const specifier of collectModuleSpecifiers(sourceFile)) {
+      const packageName = packageNameFromSpecifier(specifier);
+      if (packageName && packageName !== "resuxjs" && packageName !== "resux") {
+        dependencyNames.add(packageName);
+      }
+    }
+  }
+
+  return [...dependencyNames].sort();
+}
+`;
+          source = source.slice(0, start) + replacement + source.slice(end);
+          fs.writeFileSync(file, source);
+
+          fs.writeFileSync('tests/runtime-dependencies.test.ts', `import { mkdir, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { expect, it } from "vitest";
+import { collectServerRuntimeDependencyNames } from "../src/deploy/runtime-dependencies.js";
+
+it("collects real runtime imports without treating import-like string content as dependencies", async () => {
+  const serverRoot = path.join(
+    os.tmpdir(),
+    \`resux-runtime-dependencies-\${Date.now()}-\${Math.random().toString(36).slice(2)}\`,
+  );
+  await mkdir(serverRoot, { recursive: true });
+  await writeFile(
+    path.join(serverRoot, "bundle.mjs"),
+    \`import "real-dep/subpath";
+import { format } from "node:util";
+export { value } from "@scope/exported/feature";
+const lazy = () => import("lazy-dep/tool");
+const diagnostic = 'Error: Resux Vercel server runtime requires "';
+const embedded = \\\`code: \\\`import { format } from "fake-package";\\\`\\\`;
+void format;
+void lazy;
+void diagnostic;
+void embedded;
+\`,
+    "utf8",
+  );
+
+  await expect(collectServerRuntimeDependencyNames(serverRoot)).resolves.toEqual([
+    "@scope/exported",
+    "lazy-dep",
+    "real-dep",
+  ]);
+});
+`);
+          NODE
+
+      - name: Validate focused regression
+        run: |
+          npm ci
+          npm run build
+          npx vitest run tests/runtime-dependencies.test.ts tests/deploy.test.ts
+
+      - name: Commit fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/deploy/runtime-dependencies.ts tests/runtime-dependencies.test.ts
+          git commit -m "fix(deploy): parse runtime imports structurally [parser-fix-done]"
+          git push origin HEAD:fix/vercel-runtime-dependency-parser

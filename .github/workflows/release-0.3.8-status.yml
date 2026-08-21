@@ -26,27 +26,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          RUNS="$(gh run list --workflow npm-publish.yml --limit 10 --json databaseId,status,conclusion,event,headBranch,createdAt,url)"
-          FRAMEWORK="$(npm view resuxjs@0.3.8 version 2>/dev/null || true)"
-          CREATE="$(npm view create-resuxjs@0.3.8 version 2>/dev/null || true)"
-          node -e 'const fs=require("fs"); fs.writeFileSync(".release-0.3.8-status.json", JSON.stringify({checkedAt:new Date().toISOString(),framework:process.env.FRAMEWORK,create:process.env.CREATE,runs:JSON.parse(process.env.RUNS)}, null, 2)+"\n")' 
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUNS: ${{ steps.invalid.outputs.runs }}
-
-      - name: Write status with shell-safe environment
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
           node <<'NODE'
           const fs = require('node:fs');
           const { execFileSync } = require('node:child_process');
-          const runs = JSON.parse(execFileSync('gh', ['run','list','--workflow','npm-publish.yml','--limit','10','--json','databaseId,status,conclusion,event,headBranch,createdAt,url'], {encoding:'utf8'}));
+          const runs = JSON.parse(execFileSync('gh', [
+            'run', 'list',
+            '--workflow', 'npm-publish.yml',
+            '--limit', '10',
+            '--json', 'databaseId,status,conclusion,event,headBranch,createdAt,url'
+          ], { encoding: 'utf8' }));
           const view = (name) => {
-            try { return execFileSync('npm', ['view', name, 'version'], {encoding:'utf8'}).trim(); }
-            catch { return ''; }
+            try {
+              return execFileSync('npm', ['view', name, 'version'], { encoding: 'utf8' }).trim();
+            } catch {
+              return '';
+            }
           };
           fs.writeFileSync('.release-0.3.8-status.json', JSON.stringify({
             checkedAt: new Date().toISOString(),

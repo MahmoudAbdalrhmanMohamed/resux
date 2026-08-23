@@ -1,0 +1,36 @@
+name: Trigger Resux 0.3.9 tag
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/publish-resux-0.3.9.yml
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Create exact release tag
+        env:
+          TARGET_SHA: 1d797eb3d74f9d0c9d7feb80d0d54f16a5d4811f
+          RELEASE_TAG: v0.3.9
+        run: |
+          set -euo pipefail
+          git fetch --tags origin
+          VERSION="$(git show "${TARGET_SHA}:package.json" | node -e "let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>console.log(JSON.parse(s).version))")"
+          test "${VERSION}" = "0.3.9"
+          if git rev-parse "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            EXISTING="$(git rev-list -n 1 "${RELEASE_TAG}")"
+            test "${EXISTING}" = "${TARGET_SHA}"
+            echo "${RELEASE_TAG} already points to ${TARGET_SHA}."
+            exit 0
+          fi
+          git push origin "${TARGET_SHA}:refs/tags/${RELEASE_TAG}"

@@ -1,0 +1,40 @@
+name: Verify resuxjs 0.3.9 publication
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/check-resux-0.3.9-published.yml
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org/
+      - name: Verify registry artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(npm view resuxjs@0.3.9 version)"
+          TARBALL="$(npm view resuxjs@0.3.9 dist.tarball)"
+          INTEGRITY="$(npm view resuxjs@0.3.9 dist.integrity)"
+          test "$VERSION" = "0.3.9"
+          test -n "$TARBALL"
+          test -n "$INTEGRITY"
+          printf 'version=%s\ntarball=%s\nintegrity=%s\n' "$VERSION" "$TARBALL" "$INTEGRITY" > .resux-0.3.9-published.txt
+      - name: Record verification
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .resux-0.3.9-published.txt
+          git commit -m 'chore(release): confirm resuxjs 0.3.9 published'
+          git push

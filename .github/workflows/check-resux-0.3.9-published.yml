@@ -12,6 +12,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,17 +21,24 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org/
-      - name: Verify registry artifact
+      - name: Wait for registry artifact
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="$(npm view resuxjs@0.3.9 version)"
-          TARBALL="$(npm view resuxjs@0.3.9 dist.tarball)"
-          INTEGRITY="$(npm view resuxjs@0.3.9 dist.integrity)"
-          test "$VERSION" = "0.3.9"
-          test -n "$TARBALL"
-          test -n "$INTEGRITY"
-          printf 'version=%s\ntarball=%s\nintegrity=%s\n' "$VERSION" "$TARBALL" "$INTEGRITY" > .resux-0.3.9-published.txt
+          for attempt in $(seq 1 120); do
+            VERSION="$(npm view resuxjs@0.3.9 version 2>/dev/null || true)"
+            if [ "$VERSION" = "0.3.9" ]; then
+              TARBALL="$(npm view resuxjs@0.3.9 dist.tarball)"
+              INTEGRITY="$(npm view resuxjs@0.3.9 dist.integrity)"
+              test -n "$TARBALL"
+              test -n "$INTEGRITY"
+              printf 'version=%s\ntarball=%s\nintegrity=%s\n' "$VERSION" "$TARBALL" "$INTEGRITY" > .resux-0.3.9-published.txt
+              exit 0
+            fi
+            sleep 5
+          done
+          echo 'Timed out waiting for resuxjs@0.3.9.'
+          exit 1
       - name: Record verification
         run: |
           git config user.name 'github-actions[bot]'
@@ -38,5 +46,3 @@ jobs:
           git add .resux-0.3.9-published.txt
           git commit -m 'chore(release): confirm resuxjs 0.3.9 published'
           git push
-
-# retry registry verification after the trusted publish workflow was triggered

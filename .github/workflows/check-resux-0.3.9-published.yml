@@ -38,3 +38,5 @@ jobs:
           git add .resux-0.3.9-published.txt
           git commit -m 'chore(release): confirm resuxjs 0.3.9 published'
           git push
+
+# retry registry verification after the trusted publish workflow was triggered

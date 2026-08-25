@@ -107,7 +107,7 @@ function withGeneratedMediaCacheHeaders(
   response: ServerResponse,
   maxAgeSeconds: number,
 ): void {
-  const originalWriteHead = response.writeHead.bind(response);
+  const originalWriteHead = response.writeHead.bind(response) as (...args: any[]) => ServerResponse;
   const cacheControl = `public, max-age=${maxAgeSeconds}, s-maxage=${maxAgeSeconds}`;
   const cdnCacheControl = `public, max-age=${maxAgeSeconds}`;
   const overrides: OutgoingHttpHeaders = {
@@ -138,7 +138,7 @@ function withGeneratedMediaCacheHeaders(
       }
     }
 
-    return originalWriteHead(statusCode, ...args as Parameters<ServerResponse["writeHead"]> extends [number, ...infer Rest] ? Rest : never);
+    return originalWriteHead(statusCode, ...args);
   }) as ServerResponse["writeHead"];
 }
 

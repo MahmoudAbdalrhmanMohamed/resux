@@ -10,43 +10,44 @@ const GENERATED_IMAGE_PREFIX = "/_resux/generated/images/";
 const GENERATED_VIDEO_PREFIX = "/_resux/generated/videos/";
 const STATELESS_IMAGE_PATH = "/__resux/image";
 const STATELESS_VIDEO_PATH = "/__resux/video";
+const CACHE_BOOLEAN_TRUE = new Set(["true", "1", "yes", "on"]);
+const CACHE_BOOLEAN_FALSE = new Set(["false", "0", "off", "no"]);
+const CACHE_UNIT_SECONDS: Record<string, number> = {
+  s: 1,
+  m: 60,
+  h: 60 * 60,
+  d: 24 * 60 * 60,
+  w: 7 * 24 * 60 * 60,
+};
+
+function positiveRoundedSeconds(value: number): number | undefined {
+  return Number.isFinite(value) && value > 0
+    ? Math.max(1, Math.round(value))
+    : undefined;
+}
 
 function parseCacheMaxAgeSeconds(value: string | null): number | undefined {
-  if (!value) {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized || CACHE_BOOLEAN_FALSE.has(normalized)) {
+    return undefined;
+  }
+  if (CACHE_BOOLEAN_TRUE.has(normalized)) {
+    return 24 * 60 * 60;
+  }
+
+  const numericSeconds = positiveRoundedSeconds(Number(normalized));
+  if (numericSeconds) {
+    return numericSeconds;
+  }
+
+  const duration = /^(\d+)\s*([smhdw])$/.exec(normalized);
+  if (!duration) {
     return undefined;
   }
 
-  const normalized = value.trim().toLowerCase();
-  if (!normalized || ["false", "0", "off", "no"].includes(normalized)) {
-    return undefined;
-  }
-  if (["true", "1", "yes", "on"].includes(normalized)) {
-    return 86400;
-  }
-
-  const directNumber = Number(normalized);
-  if (Number.isFinite(directNumber) && directNumber > 0) {
-    return Math.max(1, Math.round(directNumber));
-  }
-
-  const durationMatch = /^(\d+)\s*(s|m|h|d|w)$/.exec(normalized);
-  if (!durationMatch) {
-    return undefined;
-  }
-
-  const amount = Number(durationMatch[1]);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    return undefined;
-  }
-
-  const unit = durationMatch[2];
-  const multiplier =
-    unit === "s" ? 1
-      : unit === "m" ? 60
-        : unit === "h" ? 3600
-          : unit === "d" ? 86400
-            : 604800;
-  return Math.max(1, Math.round(amount * multiplier));
+  const amount = Number(duration[1]);
+  const unitSeconds = CACHE_UNIT_SECONDS[duration[2] ?? ""];
+  return unitSeconds ? positiveRoundedSeconds(amount * unitSeconds) : undefined;
 }
 
 function isStatelessDeploymentRuntime(): boolean {
@@ -69,7 +70,7 @@ function resolveStatelessGeneratedMediaRequest(rawUrl: string | undefined): {
 
   let requestUrl: URL;
   try {
-    requestUrl = new URL(rawUrl, "http://resux.local");
+    requestUrl = new URL(rawUrl, "https://resux.invalid");
   } catch {
     return null;
   }

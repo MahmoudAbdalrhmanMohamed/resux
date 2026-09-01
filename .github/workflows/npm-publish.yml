@@ -110,6 +110,7 @@ jobs:
           CREATE_PACKAGE_NAME="$(node -p "require('./packages/create-resuxjs/package.json').name")"
           CREATE_PACKAGE_VERSION="$(node -p "require('./packages/create-resuxjs/package.json').version")"
           CREATE_FRAMEWORK_RANGE="$(node -p "require('./packages/create-resuxjs/package.json').dependencies.resuxjs")"
+          CREATE_REPOSITORY_URL="$(node -p "require('./packages/create-resuxjs/package.json').repository.url")"
 
           test "${PACKAGE_NAME}" = "resuxjs" || {
             echo "Expected package name resuxjs, got ${PACKAGE_NAME}."
@@ -133,6 +134,11 @@ jobs:
 
           test "${CREATE_FRAMEWORK_RANGE}" = "^${PACKAGE_VERSION}" || {
             echo "create-resuxjs depends on resuxjs ${CREATE_FRAMEWORK_RANGE}; expected ^${PACKAGE_VERSION}."
+            exit 1
+          }
+
+          test "${CREATE_REPOSITORY_URL}" = "git+https://github.com/MahmoudAbdalrhmanMohamed/resux.git" || {
+            echo "create-resuxjs repository URL must match the GitHub repository used by npm Trusted Publishing."
             exit 1
           }
 
@@ -232,26 +238,18 @@ jobs:
         run: |
           if npm view "${CREATE_PACKAGE_NAME}" name >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "${CREATE_PACKAGE_NAME} already exists on npm."
+            echo "${CREATE_PACKAGE_NAME} already exists on npm and must authorize this workflow as its Trusted Publisher."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
             echo "${CREATE_PACKAGE_NAME} does not exist on npm yet."
           fi
 
-      - name: Check NPM token availability
-        id: npm_token
-        if: steps.create_published.outputs.exists == 'false'
+      - name: Fail if create package is not bootstrapped
+        if: steps.create_published.outputs.exists == 'false' && steps.create_package.outputs.exists == 'false'
         shell: bash
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          if [[ -n "${NPM_TOKEN}" ]]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-            echo "NPM_TOKEN is available as a create-resuxjs publish fallback."
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "NPM_TOKEN is not configured."
-          fi
+          echo "${CREATE_PACKAGE_NAME} must be published once by an npm maintainer before Trusted Publishing can be configured."
+          exit 1
 
       - name: Resolve npm dist-tag
         id: dist
@@ -270,21 +268,5 @@ jobs:
         run: npm publish --access public --tag "${{ steps.dist.outputs.tag }}"
 
       - name: Publish create package with Trusted Publishing
-        id: create_trusted_publish
-        if: steps.create_published.outputs.exists == 'false'
-        continue-on-error: true
+        if: steps.create_published.outputs.exists == 'false' && steps.create_package.outputs.exists == 'true'
         run: npm publish ./packages/create-resuxjs --access public --tag "${{ steps.dist.outputs.tag }}"
-
-      - name: Publish create package with NPM_TOKEN fallback
-        if: steps.create_published.outputs.exists == 'false' && steps.create_trusted_publish.outcome == 'failure' && steps.npm_token.outputs.available == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish ./packages/create-resuxjs --access public --tag "${{ steps.dist.outputs.tag }}"
-
-      - name: Fail with create package authorization guidance
-        if: steps.create_published.outputs.exists == 'false' && steps.create_trusted_publish.outcome == 'failure' && steps.npm_token.outputs.available != 'true'
-        shell: bash
-        run: |
-          echo "create-resuxjs could not be published with npm Trusted Publishing and no NPM_TOKEN fallback is configured."
-          echo "Configure the create-resuxjs npm package Trusted Publisher for GitHub owner MahmoudAbdalrhmanMohamed, repository resux, workflow npm-publish.yml, or add a repository NPM_TOKEN with publish permission."
-          exit 1

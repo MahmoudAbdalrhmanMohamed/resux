@@ -1,3 +1,4 @@
+# Main-branch releases are version-driven so validated framework fixes can publish immediately.
 name: Publish to npm
 
 on:

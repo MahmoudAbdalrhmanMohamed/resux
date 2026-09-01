@@ -4,6 +4,13 @@ on:
   push:
     tags:
       - "v*.*.*"
+    branches:
+      - main
+    paths:
+      - package.json
+      - package-lock.json
+      - packages/create-resuxjs/package.json
+      - .github/workflows/npm-publish.yml
   release:
     types: [published]
   workflow_dispatch:
@@ -14,7 +21,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 jobs:
@@ -26,19 +33,34 @@ jobs:
       cancel-in-progress: false
 
     steps:
+      - name: Checkout branch publish source
+        if: github.event_name == 'push' && github.ref_type == 'branch'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+
       - name: Resolve release tag
         id: release
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
           PUSH_TAG: ${{ github.ref_name }}
+          PUSH_REF_TYPE: ${{ github.ref_type }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           MANUAL_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
 
           case "${EVENT_NAME}" in
-            push) TAG="${PUSH_TAG}" ;;
+            push)
+              if [[ "${PUSH_REF_TYPE}" == "branch" ]]; then
+                PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+                TAG="v${PACKAGE_VERSION}"
+              else
+                TAG="${PUSH_TAG}"
+              fi
+              ;;
             release) TAG="${RELEASE_TAG}" ;;
             workflow_dispatch) TAG="${MANUAL_TAG}" ;;
             *) echo "Unsupported event: ${EVENT_NAME}"; exit 1 ;;
@@ -52,6 +74,7 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout release tag
+        if: github.event_name != 'push' || github.ref_type != 'branch'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -140,6 +163,22 @@ jobs:
           echo "PACKAGE_VERSION=${PACKAGE_VERSION}" >> "$GITHUB_ENV"
           echo "CREATE_PACKAGE_NAME=${CREATE_PACKAGE_NAME}" >> "$GITHUB_ENV"
           echo "CREATE_PACKAGE_VERSION=${CREATE_PACKAGE_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Create version tag for main publish
+        if: github.event_name == 'push' && github.ref_type == 'branch'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "${RELEASE_TAG} already exists; keeping the existing tag."
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git tag "${RELEASE_TAG}" "${GITHUB_SHA}"
+            git push origin "refs/tags/${RELEASE_TAG}"
+          fi
 
       - name: Install dependencies
         run: npm ci

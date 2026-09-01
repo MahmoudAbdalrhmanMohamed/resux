@@ -35,51 +35,49 @@ jobs:
 
           cli = Path("src/cli.ts")
           source = cli.read_text(encoding="utf-8")
-          old = '''  const deployConfig = await loadResuxDeployConfig(appRoot, outDir);
-          const isStatic = deployConfig.target === "static";
-
-          let source = await readFile(configFile, "utf8").catch(() => "");
-          '''
-          new = '''  const deployConfig = await loadResuxDeployConfig(appRoot, outDir);
-          const isStatic = deployConfig.target === "static";
-          if (!isStatic) {
-            return;
-          }
-
-          let source = await readFile(configFile, "utf8").catch(() => "");
-          '''
-          if source.count(old) != 1:
-              raise SystemExit(f"Expected exactly one prerender rewrite block, found {source.count(old)}")
-          cli.write_text(source.replace(old, new), encoding="utf-8")
+          lines = source.splitlines()
+          needle = '  const isStatic = deployConfig.target === "static";'
+          indexes = [index for index, line in enumerate(lines) if line == needle]
+          if len(indexes) != 1:
+              raise SystemExit(f"Expected exactly one isStatic line, found {len(indexes)}")
+          index = indexes[0]
+          guard = [
+              "  if (!isStatic) {",
+              "    return;",
+              "  }",
+          ]
+          if lines[index + 1:index + 4] != guard:
+              lines[index + 1:index + 1] = ["", *guard]
+          cli.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
           test_file = Path("tests/cli-generated-dirs.test.ts")
           tests = test_file.read_text(encoding="utf-8")
-          marker = '''});
+          test_name = 'preserves user prerender routes for non-static deployment targets'
+          if test_name not in tests:
+              marker = "});\n\nasync function createMinimalProject"
+              regression = '''
 
-          async function createMinimalProject'''
-          regression = '''
+  it("preserves user prerender routes for non-static deployment targets", async () => {
+    const root = await createMinimalProject("resux-preserve-prerender");
+    const nitroConfigFile = path.join(root, "nitro.config.ts");
+    await writeFile(
+      nitroConfigFile,
+      `import { defineNitroConfig } from "nitropack/config";\n\nexport default defineNitroConfig({\n  compatibilityDate: "2026-05-02",\n  customFlag: "keep-me",\n  prerender: { crawlLinks: false, routes: ["/media"] }\n});\n`,
+      "utf8",
+    );
 
-            it("preserves user prerender routes for non-static deployment targets", async () => {
-              const root = await createMinimalProject("resux-preserve-prerender");
-              const nitroConfigFile = path.join(root, "nitro.config.ts");
-              await writeFile(
-                nitroConfigFile,
-                `import { defineNitroConfig } from "nitropack/config";\n\nexport default defineNitroConfig({\n  compatibilityDate: "2026-05-02",\n  customFlag: "keep-me",\n  prerender: { crawlLinks: false, routes: ["/media"] }\n});\n`,
-                "utf8",
-              );
+    await runResuxCli(["prepare", root]);
 
-              await runResuxCli(["prepare", root]);
+    const nitroConfig = await readFile(nitroConfigFile, "utf8");
+    expect(nitroConfig).toContain('routes: ["/media"]');
+    expect(nitroConfig).toContain('customFlag: "keep-me"');
+  }, 120000);
+});
 
-              const nitroConfig = await readFile(nitroConfigFile, "utf8");
-              expect(nitroConfig).toContain('routes: ["/media"]');
-              expect(nitroConfig).toContain('customFlag: "keep-me"');
-            }, 120000);
-          });
-
-          async function createMinimalProject'''
-          if marker not in tests:
-              raise SystemExit("Could not find cli-generated-dirs describe terminator")
-          test_file.write_text(tests.replace(marker, regression, 1), encoding="utf-8")
+async function createMinimalProject'''
+              if marker not in tests:
+                  raise SystemExit("Could not find cli-generated-dirs describe terminator")
+              test_file.write_text(tests.replace(marker, regression, 1), encoding="utf-8")
 
       - name: Bump framework patch version
         shell: bash

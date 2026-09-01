@@ -1848,6 +1848,10 @@ async function updateNitroConfigPrerenderRoutes(appRoot: string, outDir: string)
   const deployConfig = await loadResuxDeployConfig(appRoot, outDir);
   const isStatic = deployConfig.target === "static";
 
+  if (!isStatic) {
+    return;
+  }
+
   let source = await readFile(configFile, "utf8").catch(() => "");
   if (!source) return;
 

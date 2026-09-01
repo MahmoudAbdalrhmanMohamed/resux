@@ -126,6 +126,22 @@ describe("cli generated directory bootstrap", () => {
     expect(nitroConfig).toContain("nodeCompat: true");
     expect(nitroConfig).toContain('customFlag: "keep-me"');
   }, 120000);
+
+  it("preserves user prerender routes for non-static deployment targets", async () => {
+    const root = await createMinimalProject("resux-preserve-prerender");
+    const nitroConfigFile = path.join(root, "nitro.config.ts");
+    await writeFile(
+      nitroConfigFile,
+      `import { defineNitroConfig } from "nitropack/config";\n\nexport default defineNitroConfig({\n  compatibilityDate: "2026-05-02",\n  customFlag: "keep-me",\n  prerender: { crawlLinks: false, routes: ["/media"] }\n});\n`,
+      "utf8",
+    );
+
+    await runResuxCli(["prepare", root]);
+
+    const nitroConfig = await readFile(nitroConfigFile, "utf8");
+    expect(nitroConfig).toContain('routes: ["/media"]');
+    expect(nitroConfig).toContain('customFlag: "keep-me"');
+  }, 120000);
 });
 
 async function createMinimalProject(prefix: string): Promise<string> {

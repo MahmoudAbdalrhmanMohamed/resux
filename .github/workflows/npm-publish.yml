@@ -203,6 +203,9 @@ jobs:
       - name: Test
         run: npm test --if-present
 
+      - name: Verify package contract
+        run: npm run verify:package
+
       - name: Verify package contents
         shell: bash
         run: |

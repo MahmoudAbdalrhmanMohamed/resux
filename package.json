@@ -44,6 +44,7 @@
     "./runtime": { "types": "./dist/runtime/index.d.ts", "import": "./dist/runtime/index.js", "default": "./dist/runtime/index.js" },
     "./reactivity": { "types": "./dist/reactivity/index.d.ts", "import": "./dist/reactivity/index.js", "default": "./dist/reactivity/index.js" },
     "./compiler": { "types": "./dist/compiler/index.d.ts", "import": "./dist/compiler/index.js", "default": "./dist/compiler/index.js" },
+    "./build": { "types": "./dist/build/index.d.ts", "import": "./dist/build/index.js", "default": "./dist/build/index.js" },
     "./create": { "types": "./dist/create.d.ts", "import": "./dist/create.js", "default": "./dist/create.js" },
     "./i18n": { "types": "./dist/i18n/index.d.ts", "import": "./dist/i18n/index.js", "default": "./dist/i18n/index.js" },
     "./ui": { "types": "./dist/ui/index.d.ts", "import": "./dist/ui/index.js", "default": "./dist/ui/index.js" },
@@ -56,7 +57,7 @@
   },
   "scripts": {
     "typecheck": "tsc -b && node scripts/prepare-compiler-entry.mjs",
-    "build": "npm run typecheck",
+    "build": "npm run typecheck && tsdown",
     "test": "vitest run",
     "test:types": "npm run typecheck",
     "test:e2e": "vitest run tests/runtime.test.ts",
@@ -71,7 +72,7 @@
     "verify:deploy-targets": "npm run build && node scripts/verify-deploy-targets.mjs",
     "verify:dependencies": "node scripts/verify-dependency-baseline.mjs",
     "verify:package": "node scripts/verify-package-contract.mjs",
-    "quality": "npm run verify:dependencies && npm run typecheck && npm test && npm run test:bundle && npm run test:fixtures && npm run verify:package",
+    "quality": "npm run verify:dependencies && npm run build && npm test && npm run test:bundle && npm run test:fixtures && npm run verify:package",
     "create:local": "npm run build && node dist/bin.js init",
     "pack:check": "npm run verify:dependencies && npm run build && npm test && npm run verify:package && npm pack --dry-run && npm pack --dry-run ./packages/create-resuxjs"
   },
@@ -92,6 +93,7 @@
   "devDependencies": {
     "@types/node": "^24.10.1",
     "happy-dom": "^20.14.0",
+    "tsdown": "^0.23.0",
     "vitest": "^4.1.11"
   }
 }

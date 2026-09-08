@@ -38,10 +38,24 @@ export function resolveResuxConfig(input: Record<string, unknown>): ResuxResolve
 }
 
 function readCompatibilityDate(value: unknown): string {
-  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return value;
+  if (typeof value !== "string") {
+    return DEFAULT_COMPATIBILITY_DATE;
   }
-  return DEFAULT_COMPATIBILITY_DATE;
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    return DEFAULT_COMPATIBILITY_DATE;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (year < 1 || month < 1 || month > 12 || day < 1) {
+    return DEFAULT_COMPATIBILITY_DATE;
+  }
+
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return day <= daysInMonth ? value : DEFAULT_COMPATIBILITY_DATE;
 }
 
 function readString(value: unknown, fallback: string): string {

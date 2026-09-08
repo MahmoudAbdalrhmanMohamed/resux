@@ -21,10 +21,7 @@ const versionFromRange = (range, name) => {
 };
 
 for (const [name, range] of Object.entries(directDependencies)) {
-  if (typeof range !== "string") fail(`${name} must use a string version range`);
-  if (/(?:^|[-.])(alpha|beta|rc|canary|next|nightly)(?:[.-]|$)/i.test(range)) {
-    fail(`${name} must not use a prerelease dependency range: ${range}`);
-  }
+  versionFromRange(range, name);
 }
 
 const vue = versionFromRange(pkg.dependencies?.vue, "vue");

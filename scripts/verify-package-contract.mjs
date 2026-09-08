@@ -1,18 +1,77 @@
-import { access, readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { readFile, stat } from "node:fs/promises";
+import { isAbsolute, relative, resolve, sep, win32 } from "node:path";
 
 const root = process.cwd();
+const createPackageRoot = resolve(root, "packages/create-resuxjs");
 const readJson = async (path) => JSON.parse(await readFile(resolve(root, path), "utf8"));
-const exists = async (path) => {
-  try {
-    await access(resolve(root, path));
-    return true;
-  } catch {
-    return false;
-  }
-};
 const fail = (message) => {
   throw new Error(`[package-contract] ${message}`);
+};
+
+const isContainedPath = (packageRoot, targetPath) => {
+  const pathFromRoot = relative(packageRoot, targetPath);
+  return Boolean(pathFromRoot)
+    && pathFromRoot !== ".."
+    && !pathFromRoot.startsWith(`..${sep}`)
+    && !isAbsolute(pathFromRoot);
+};
+
+const verifyFileTarget = async ({ packageRoot, target, kind, label }) => {
+  if (typeof target !== "string" || target.length === 0) {
+    fail(`${label} has an invalid ${kind} target`);
+  }
+  if (target.includes("\0")) {
+    fail(`${label} ${kind} target contains a null byte: ${target}`);
+  }
+  if (kind === "export" && !target.startsWith("./")) {
+    fail(`${label} export target must start with ./: ${target}`);
+  }
+  if (isAbsolute(target) || win32.isAbsolute(target)) {
+    fail(`${label} ${kind} target must be package-relative: ${target}`);
+  }
+
+  // Normalize separators before containment checks so Windows-style traversal
+  // cannot be interpreted as an in-package filename on POSIX runners.
+  const normalizedTarget = target.replaceAll("\\", "/");
+  const targetPath = resolve(packageRoot, normalizedTarget);
+  if (!isContainedPath(packageRoot, targetPath)) {
+    fail(`${label} ${kind} target escapes the package root: ${target}`);
+  }
+
+  let targetStat;
+  try {
+    targetStat = await stat(targetPath);
+  } catch {
+    fail(`${label} ${kind} target is missing: ${target}`);
+  }
+  if (!targetStat.isFile()) {
+    fail(`${label} ${kind} target must resolve to a regular file: ${target}`);
+  }
+};
+
+const collectExportTargets = (value, targets = []) => {
+  if (typeof value === "string") {
+    targets.push(value);
+    return targets;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) collectExportTargets(entry, targets);
+    return targets;
+  }
+  if (value && typeof value === "object") {
+    for (const entry of Object.values(value)) collectExportTargets(entry, targets);
+  }
+  return targets;
+};
+
+const collectBinTargets = (bin, packageName) => {
+  if (typeof bin === "string") {
+    return [[packageName, bin]];
+  }
+  if (!bin || typeof bin !== "object" || Array.isArray(bin)) {
+    fail(`${packageName} must declare a valid bin target`);
+  }
+  return Object.entries(bin);
 };
 
 const pkg = await readJson("package.json");
@@ -49,26 +108,31 @@ for (const entry of expectedFiles) {
   if (!pkg.files?.includes(entry)) fail(`package files[] must include ${entry}`);
 }
 
-const targets = new Set();
-for (const value of Object.values(pkg.bin ?? {})) targets.add(value);
-for (const entry of Object.values(pkg.exports ?? {})) {
-  if (typeof entry === "string") {
-    if (entry !== "./package.json") targets.add(entry);
-    continue;
-  }
-  if (!entry || typeof entry !== "object") continue;
-  for (const target of Object.values(entry)) {
-    if (typeof target === "string") targets.add(target);
-  }
+for (const [command, target] of collectBinTargets(pkg.bin, pkg.name)) {
+  await verifyFileTarget({
+    packageRoot: root,
+    target,
+    kind: "bin",
+    label: `${pkg.name} bin ${command}`,
+  });
 }
 
-for (const target of targets) {
-  const path = target.replace(/^\.\//, "");
-  if (!(await exists(path))) fail(`published entry point is missing: ${target}`);
+for (const target of collectExportTargets(pkg.exports)) {
+  await verifyFileTarget({
+    packageRoot: root,
+    target,
+    kind: "export",
+    label: pkg.name,
+  });
 }
 
-if (!(await exists("packages/create-resuxjs/index.js"))) {
-  fail("create-resuxjs bin entry is missing");
+for (const [command, target] of collectBinTargets(createPkg.bin, createPkg.name)) {
+  await verifyFileTarget({
+    packageRoot: createPackageRoot,
+    target,
+    kind: "bin",
+    label: `${createPkg.name} bin ${command}`,
+  });
 }
 
 console.log(`[package-contract] verified resuxjs@${pkg.version} and create-resuxjs@${createPkg.version}`);

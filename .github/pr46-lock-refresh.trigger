@@ -1,1 +1,1 @@
-refresh package-lock.json for PR #46 from scratch
+refresh package-lock.json for PR #46 with npm 11

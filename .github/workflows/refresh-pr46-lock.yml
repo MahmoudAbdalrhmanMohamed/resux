@@ -23,10 +23,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20.19.0
-          package-manager-cache: false
+
+      - name: Use npm 11 for lock generation
+        run: npm install --global npm@11
 
       - name: Regenerate package lock from scratch
         run: |
+          npm --version
           rm -f package-lock.json
           npm install --package-lock-only --ignore-scripts --no-audit --no-fund
 

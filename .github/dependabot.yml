@@ -1,0 +1,46 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Africa/Cairo
+    open-pull-requests-limit: 6
+    groups:
+      vue-vite-toolchain:
+        patterns:
+          - "vue"
+          - "@vue/*"
+          - "vite"
+          - "@vitejs/*"
+        update-types:
+          - minor
+          - patch
+      server-runtime:
+        patterns:
+          - "nitropack"
+          - "h3"
+        update-types:
+          - minor
+          - patch
+      test-tooling:
+        dependency-type: development
+        patterns:
+          - "vitest"
+          - "happy-dom"
+          - "@types/node"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3

@@ -5,28 +5,11 @@
   "description": "Resumable web framework with Vue-like SFC routing and a custom SSR/runtime pipeline.",
   "type": "module",
   "license": "MIT",
-  "keywords": [
-    "resux",
-    "resumable",
-    "framework",
-    "ssr",
-    "vite",
-    "vue",
-    "routing"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/MahmoudAbdalrhmanMohamed/resux.git"
-  },
-  "bugs": {
-    "url": "https://github.com/MahmoudAbdalrhmanMohamed/resux/issues"
-  },
+  "keywords": ["resux", "resumable", "framework", "ssr", "vite", "vue", "routing"],
+  "repository": { "type": "git", "url": "git+https://github.com/MahmoudAbdalrhmanMohamed/resux.git" },
+  "bugs": { "url": "https://github.com/MahmoudAbdalrhmanMohamed/resux/issues" },
   "homepage": "https://github.com/MahmoudAbdalrhmanMohamed/resux#readme",
-  "files": [
-    "dist",
-    "templates",
-    "README.md"
-  ],
+  "files": ["dist", "templates", "README.md"],
   "bin": {
     "resuxjs": "dist/bin.js",
     "resux": "dist/bin.js",
@@ -42,6 +25,9 @@
     "./node": { "types": "./dist/node.d.ts", "import": "./dist/node.js", "default": "./dist/node.js" },
     "./globals": { "types": "./dist/globals.d.ts", "import": "./dist/globals.js", "default": "./dist/globals.js" },
     "./runtime": { "types": "./dist/runtime/index.d.ts", "import": "./dist/runtime/index.js", "default": "./dist/runtime/index.js" },
+    "./runtime/core": { "types": "./dist/runtime/core.d.ts", "import": "./dist/runtime/core.js", "default": "./dist/runtime/core.js" },
+    "./runtime/router": { "types": "./dist/runtime/router.d.ts", "import": "./dist/runtime/router.js", "default": "./dist/runtime/router.js" },
+    "./runtime/reactivity": { "types": "./dist/runtime/reactivity.d.ts", "import": "./dist/runtime/reactivity.js", "default": "./dist/runtime/reactivity.js" },
     "./reactivity": { "types": "./dist/reactivity/index.d.ts", "import": "./dist/reactivity/index.js", "default": "./dist/reactivity/index.js" },
     "./compiler": { "types": "./dist/compiler/index.d.ts", "import": "./dist/compiler/index.js", "default": "./dist/compiler/index.js" },
     "./build": { "types": "./dist/build/index.d.ts", "import": "./dist/build/index.js", "default": "./dist/build/index.js" },
@@ -76,9 +62,7 @@
     "create:local": "npm run build && node dist/bin.js init",
     "pack:check": "npm run verify:dependencies && npm run build && npm test && npm run verify:package && npm pack --dry-run && npm pack --dry-run ./packages/create-resuxjs"
   },
-  "engines": {
-    "node": ">=20.19.0"
-  },
+  "engines": { "node": ">=20.19.0" },
   "dependencies": {
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/compiler-dom": "^3.5.42",

@@ -5,6 +5,7 @@
   "description": "Resumable web framework with Vue-like SFC routing and a custom SSR/runtime pipeline.",
   "type": "module",
   "license": "MIT",
+  "packageManager": "npm@11.19.1",
   "keywords": [
     "resux",
     "resumable",

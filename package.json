@@ -46,6 +46,7 @@
     "./runtime/core": { "types": "./dist/runtime/core.d.ts", "import": "./dist/runtime/core.js", "default": "./dist/runtime/core.js" },
     "./runtime/router": { "types": "./dist/runtime/router.d.ts", "import": "./dist/runtime/router.js", "default": "./dist/runtime/router.js" },
     "./runtime/reactivity": { "types": "./dist/runtime/reactivity.d.ts", "import": "./dist/runtime/reactivity.js", "default": "./dist/runtime/reactivity.js" },
+    "./runtime/resume": { "types": "./dist/runtime/resume.d.ts", "import": "./dist/runtime/resume.js", "default": "./dist/runtime/resume.js" },
     "./reactivity": { "types": "./dist/reactivity/index.d.ts", "import": "./dist/reactivity/index.js", "default": "./dist/reactivity/index.js" },
     "./compiler": { "types": "./dist/compiler/index.d.ts", "import": "./dist/compiler/index.js", "default": "./dist/compiler/index.js" },
     "./build": { "types": "./dist/build/index.d.ts", "import": "./dist/build/index.js", "default": "./dist/build/index.js" },

@@ -28,10 +28,17 @@ export class ResuxResumeHandlerRegistry {
     if (!entry.id) throw new Error("Resume handler id must not be empty.");
     if (!entry.exportName) throw new Error(`Resume handler ${entry.id} must declare an export name.`);
 
-    this.#entries.set(entry.id, entry);
-    this.#generations.set(entry.id, (this.#generations.get(entry.id) ?? 0) + 1);
-    this.#handlers.delete(entry.id);
-    this.#pending.delete(entry.id);
+    const storedEntry: ResuxResumeRegistration = {
+      id: entry.id,
+      module: entry.module,
+      exportName: entry.exportName,
+      load: entry.load,
+    };
+
+    this.#entries.set(storedEntry.id, storedEntry);
+    this.#generations.set(storedEntry.id, (this.#generations.get(storedEntry.id) ?? 0) + 1);
+    this.#handlers.delete(storedEntry.id);
+    this.#pending.delete(storedEntry.id);
   }
 
   /** Registers multiple resumable handler definitions in order. */
@@ -76,7 +83,9 @@ export class ResuxResumeHandlerRegistry {
       return resolved;
     });
 
-    this.#pending.set(id, pending);
+    if (this.#generations.get(id) === generation) {
+      this.#pending.set(id, pending);
+    }
     try {
       return await pending;
     } finally {

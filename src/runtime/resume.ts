@@ -18,9 +18,9 @@ export interface ResuxResumeRegistration extends ResuxResumeManifestEntry {
  * a registration invalidates both cached and in-flight state for that handler id.
  */
 export class ResuxResumeHandlerRegistry {
-  #entries = new Map<string, ResuxResumeRegistration>();
-  #handlers = new Map<string, ResuxResumeHandler>();
-  #pending = new Map<string, Promise<ResuxResumeHandler>>();
+  readonly #entries = new Map<string, ResuxResumeRegistration>();
+  readonly #handlers = new Map<string, ResuxResumeHandler>();
+  readonly #pending = new Map<string, Promise<ResuxResumeHandler>>();
 
   /** Registers or replaces one resumable handler definition. */
   register(entry: ResuxResumeRegistration): void {

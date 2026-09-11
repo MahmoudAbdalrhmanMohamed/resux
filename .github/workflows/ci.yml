@@ -27,9 +27,6 @@ jobs:
           node-version: 24
           package-manager-cache: false
 
-      - name: Use repository npm version
-        run: npm install --global npm@11.19.1 --no-audit --no-fund
-
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
@@ -72,9 +69,6 @@ jobs:
           node-version: 24
           package-manager-cache: false
 
-      - name: Use repository npm version
-        run: npm install --global npm@11.19.1 --no-audit --no-fund
-
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
@@ -116,9 +110,6 @@ jobs:
           node-version: 24
           package-manager-cache: false
 
-      - name: Use repository npm version
-        run: npm install --global npm@11.19.1 --no-audit --no-fund
-
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
@@ -156,9 +147,6 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           package-manager-cache: false
-
-      - name: Use repository npm version
-        run: npm install --global npm@11.19.1 --no-audit --no-fund
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund

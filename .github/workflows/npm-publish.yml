@@ -36,7 +36,7 @@ jobs:
     steps:
       - name: Checkout branch publish source
         if: github.event_name == 'push' && github.ref_type == 'branch'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ github.ref_name }}
@@ -76,7 +76,7 @@ jobs:
 
       - name: Checkout release tag
         if: github.event_name != 'push' || github.ref_type != 'branch'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ steps.release.outputs.tag }}

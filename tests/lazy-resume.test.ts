@@ -105,6 +105,60 @@ describe("lazy resumable handlers", () => {
     expect(await registry.run("menu:open")).toBe("new");
   });
 
+  it("snapshots registration metadata before a pending load can observe later mutation", async () => {
+    let resolveOld!: (module: Record<string, unknown>) => void;
+    const entry = {
+      id: "menu:open",
+      module: "/menu-old.js",
+      exportName: "openOld",
+      load: () => new Promise<Record<string, unknown>>((resolve) => {
+        resolveOld = resolve;
+      }),
+    };
+    const registry = createResumeHandlerRegistry([entry]);
+
+    const oldLoad = registry.load("menu:open");
+    entry.module = "/menu-new.js";
+    entry.exportName = "openNew";
+    entry.load = async () => ({ openNew: () => "new" });
+    registry.register(entry);
+
+    resolveOld({ openOld: () => "old" });
+    expect((await oldLoad)()).toBe("old");
+    expect(await registry.run("menu:open")).toBe("new");
+  });
+
+  it("does not publish an obsolete pending load after reentrant replacement", async () => {
+    let resolveOld!: (module: Record<string, unknown>) => void;
+    const registry = createResumeHandlerRegistry();
+    const newLoad = vi.fn(async () => ({ open: () => "new" }));
+    const replacement = {
+      id: "menu:open",
+      module: "/menu-new.js",
+      exportName: "open",
+      load: newLoad,
+    };
+
+    registry.register({
+      id: "menu:open",
+      module: "/menu-old.js",
+      exportName: "open",
+      load: () => new Promise<Record<string, unknown>>((resolve) => {
+        resolveOld = resolve;
+        registry.register(replacement);
+      }),
+    });
+
+    const oldLoad = registry.load("menu:open");
+    const newHandler = registry.load("menu:open");
+    resolveOld({ open: () => "old" });
+
+    expect(newLoad).toHaveBeenCalledTimes(1);
+    expect((await oldLoad)()).toBe("old");
+    expect((await newHandler)()).toBe("new");
+    expect(await registry.run("menu:open")).toBe("new");
+  });
+
   it("preloads a handler without executing it", async () => {
     const handler = vi.fn(() => "ran");
     const load = vi.fn(async () => ({ open: handler }));

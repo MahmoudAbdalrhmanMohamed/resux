@@ -1,0 +1,49 @@
+name: Apply PR53 generator quote fix
+
+on:
+  push:
+    branches:
+      - dependabot/npm_and_yarn/nitropack-2.13.4
+    paths:
+      - .github/workflows/pr53-generator-quote-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-generator-quote-fix:
+    if: github.repository == 'MahmoudAbdalrhmanMohamed/resux'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v7
+        with:
+          ref: dependabot/npm_and_yarn/nitropack-2.13.4
+          fetch-depth: 0
+
+      - name: Correct generated override syntax
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const file = 'src/create.ts';
+          let source = fs.readFileSync(file, 'utf8');
+          const bad = '        \\"rollup-plugin-visualizer\\": \\"6.0.11\\",';
+          const good = '        "rollup-plugin-visualizer": "6.0.11",';
+          if (!source.includes(bad) && source.includes(good)) process.exit(0);
+          if (!source.includes(bad)) throw new Error('escaped visualizer override not found');
+          source = source.replace(bad, good);
+          fs.writeFileSync(file, source);
+          NODE
+
+      - name: Commit syntax fix and remove one-shot workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/create.ts
+          git rm --ignore-unmatch .github/workflows/pr53-generator-quote-fix.yml
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "fix: correct generated override syntax"
+          git push origin HEAD:dependabot/npm_and_yarn/nitropack-2.13.4

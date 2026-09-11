@@ -58,7 +58,7 @@
   },
   "scripts": {
     "typecheck": "tsc -b",
-    "build": "npm run typecheck && tsdown",
+    "build": "npm run typecheck && tsdown && node scripts/prepare-compiler-entry.mjs",
     "test": "vitest run",
     "test:types": "npm run typecheck",
     "test:e2e": "vitest run tests/runtime.test.ts",

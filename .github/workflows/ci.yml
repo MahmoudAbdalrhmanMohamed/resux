@@ -137,7 +137,7 @@ jobs:
   compatibility:
     name: Node ${{ matrix.node-version }} compatibility
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     permissions:
       contents: read
     strategy:
@@ -169,6 +169,12 @@ jobs:
 
       - name: Build on supported Node runtime
         run: npm run build
+
+      - name: Verify generated Node 20 starter
+        if: matrix.node-version == '20.19.0'
+        run: npm run test:templates
+        env:
+          RESUX_TEMPLATE_FILTER: minimal
 
       - name: Test on supported Node runtime
         run: npm test

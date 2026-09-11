@@ -18,9 +18,13 @@ updates:
         update-types:
           - minor
           - patch
-      server-runtime:
+      nitro-runtime:
         patterns:
           - "nitropack"
+        update-types:
+          - patch
+      server-runtime:
+        patterns:
           - "h3"
         update-types:
           - minor

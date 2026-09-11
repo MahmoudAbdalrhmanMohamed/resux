@@ -150,8 +150,8 @@ jobs:
         if: runner.os == 'Linux'
         run: node -e "require.resolve('@rolldown/binding-linux-x64-gnu')"
 
-      - name: Typecheck
-        run: npm run typecheck
+      - name: Build on supported Node runtime
+        run: npm run build
 
-      - name: Test
+      - name: Test on supported Node runtime
         run: npm test

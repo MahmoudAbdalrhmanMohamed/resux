@@ -39,7 +39,7 @@ export class ResuxResumeHandlerRegistry {
 
   /** Returns whether the registry knows about a handler id. */
   has(id: string): boolean {
-    return this.#entries.has(id) || this.#handlers.has(id);
+    return this.#entries.has(id);
   }
 
   /**
@@ -57,8 +57,7 @@ export class ResuxResumeHandlerRegistry {
     const entry = this.#entries.get(id);
     if (!entry) throw new Error(`Unknown resumable handler ${id}.`);
 
-    let pending!: Promise<ResuxResumeHandler>;
-    pending = entry.load().then((module) => {
+    const pending = entry.load().then((module) => {
       const handler = module[entry.exportName];
       if (typeof handler !== "function") {
         throw new Error(
@@ -71,20 +70,22 @@ export class ResuxResumeHandlerRegistry {
         this.#handlers.set(id, resolved);
       }
       return resolved;
-    }).finally(() => {
-      if (this.#pending.get(id) === pending) {
-        this.#pending.delete(id);
-      }
     });
 
     this.#pending.set(id, pending);
-    return pending;
+    try {
+      return await pending;
+    } finally {
+      if (this.#pending.get(id) === pending) {
+        this.#pending.delete(id);
+      }
+    }
   }
 
   /** Loads and executes one resumable handler with the provided arguments. */
   async run(id: string, ...args: unknown[]): Promise<unknown> {
     const handler = await this.load(id);
-    return await handler(...args);
+    return handler(...args);
   }
 
   /** Loads and caches one handler without executing it. */

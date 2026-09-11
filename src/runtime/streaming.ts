@@ -13,6 +13,11 @@ export interface ResuxHtmlStreamOptions {
   signal?: AbortSignal;
 }
 
+const bodyCleanupObserver = Symbol("resux-body-cleanup-observer");
+type ResuxInternalHtmlStreamOptions = ResuxHtmlStreamOptions & {
+  [bodyCleanupObserver]?: (cleanup: Promise<void>) => void;
+};
+
 /** Returns whether a response is safe to commit through the streaming path. */
 export function shouldStreamResponse(context: ResuxStreamingDecisionContext = {}): boolean {
   if (context.enabled === false) return false;
@@ -41,10 +46,10 @@ function getBodyIterator(body: Exclude<ResuxHtmlStreamOptions["body"], string>):
   return (body as Iterable<string>)[Symbol.iterator]();
 }
 
-function closeIterator(iterator: ResuxBodyIterator): void {
+async function closeIterator(iterator: ResuxBodyIterator): Promise<void> {
   if (!iterator.return) return;
   try {
-    void Promise.resolve(iterator.return()).catch(() => undefined);
+    await iterator.return();
   } catch {
     // Closing is best-effort; the original stream error/abort remains authoritative.
   }
@@ -82,17 +87,25 @@ export async function* streamResuxHtml(options: ResuxHtmlStreamOptions): AsyncGe
     throwIfAborted(options.signal);
     if (options.body) yield options.body;
   } else {
+    const internalOptions = options as ResuxInternalHtmlStreamOptions;
     const iterator = getBodyIterator(options.body);
     let completed = false;
     let reading = false;
-    let closeRequested = false;
+    let abortedWhileReading = false;
+    let closePromise: Promise<void> | undefined;
     const requestClose = () => {
-      if (closeRequested) return;
-      closeRequested = true;
-      closeIterator(iterator);
+      if (!closePromise) {
+        closePromise = closeIterator(iterator);
+        internalOptions[bodyCleanupObserver]?.(closePromise);
+      }
+      return closePromise;
     };
     const closeWhenPaused = () => {
-      if (!reading) requestClose();
+      if (reading) {
+        abortedWhileReading = true;
+        return;
+      }
+      void requestClose();
     };
 
     options.signal?.addEventListener("abort", closeWhenPaused, { once: true });
@@ -116,7 +129,10 @@ export async function* streamResuxHtml(options: ResuxHtmlStreamOptions): AsyncGe
       }
     } finally {
       options.signal?.removeEventListener("abort", closeWhenPaused);
-      if (!completed) requestClose();
+      if (!completed) {
+        const cleanup = requestClose();
+        if (!abortedWhileReading) await cleanup;
+      }
     }
   }
 
@@ -136,19 +152,42 @@ export function createResuxHtmlReadableStream(options: ResuxHtmlStreamOptions): 
   const streamAbort = new AbortController();
   let trailingHighSurrogate = "";
   let removeParentAbort: (() => void) | undefined;
-  const iterator = streamResuxHtml({ ...options, signal: streamAbort.signal })[Symbol.asyncIterator]();
+  let bodyCleanup: Promise<void> = Promise.resolve();
+  let streamClosePromise: Promise<void> | undefined;
+  const streamOptions: ResuxInternalHtmlStreamOptions = {
+    ...options,
+    signal: streamAbort.signal,
+    [bodyCleanupObserver]: (cleanup) => {
+      bodyCleanup = cleanup;
+    },
+  };
+  const iterator = streamResuxHtml(streamOptions)[Symbol.asyncIterator]();
+
+  const cleanup = () => {
+    removeParentAbort?.();
+    removeParentAbort = undefined;
+  };
+  const closeStream = (reason?: unknown): Promise<void> => {
+    if (!streamClosePromise) {
+      streamClosePromise = (async () => {
+        streamAbort.abort(reason);
+        cleanup();
+        if (iterator.return) {
+          try {
+            await iterator.return(reason);
+          } catch {
+            // The abort remains authoritative if generator cleanup fails.
+          }
+        }
+        await bodyCleanup;
+      })();
+    }
+    return streamClosePromise;
+  };
 
   if (options.signal) {
     const forwardAbort = () => {
-      const reason = abortReason(options.signal);
-      streamAbort.abort(reason);
-      if (iterator.return) {
-        try {
-          void Promise.resolve(iterator.return(reason)).catch(() => undefined);
-        } catch {
-          // The internal abort remains authoritative if generator cleanup fails.
-        }
-      }
+      void closeStream(abortReason(options.signal));
     };
     if (options.signal.aborted) forwardAbort();
     else {
@@ -156,11 +195,6 @@ export function createResuxHtmlReadableStream(options: ResuxHtmlStreamOptions): 
       removeParentAbort = () => options.signal?.removeEventListener("abort", forwardAbort);
     }
   }
-
-  const cleanup = () => {
-    removeParentAbort?.();
-    removeParentAbort = undefined;
-  };
 
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
@@ -190,14 +224,7 @@ export function createResuxHtmlReadableStream(options: ResuxHtmlStreamOptions): 
       }
     },
     async cancel(reason) {
-      streamAbort.abort(reason);
-      cleanup();
-      if (!iterator.return) return;
-      try {
-        await iterator.return(reason);
-      } catch {
-        // Cancellation is best-effort after the abort has been propagated upstream.
-      }
+      await closeStream(reason);
     },
   });
 }

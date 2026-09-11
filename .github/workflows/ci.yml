@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   checks:
-    name: Build, Test, and Pack Check
+    name: Production Quality Gates
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -35,23 +35,8 @@ jobs:
         if: runner.os == 'Linux'
         run: node -e "require.resolve('@rolldown/binding-linux-x64-gnu')"
 
-      - name: Lint
-        run: npm run lint --if-present
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Build
-        run: npm run build
-
-      - name: Test
-        run: npm test
-
-      - name: Verify runtime bundle
-        run: npm run test:bundle
-
-      - name: Verify fixture builds
-        run: npm run test:fixtures
+      - name: Run strict framework quality gates
+        run: npm run quality
 
       - name: Package check
         run: npm run pack:check

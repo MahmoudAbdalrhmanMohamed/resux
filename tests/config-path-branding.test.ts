@@ -35,4 +35,19 @@ describe("Resux generated path branding", () => {
       ),
     ).toBe(".resux/dist/client/__resux/client-enhancements.mjs");
   });
+
+  it("accepts real compatibility dates and rejects impossible calendar dates", () => {
+    expect(resolveResuxConfig({ compatibilityDate: "2028-02-29" }).compatibilityDate).toBe(
+      "2028-02-29",
+    );
+    expect(resolveResuxConfig({ compatibilityDate: "2026-02-29" }).compatibilityDate).toBe(
+      "2026-05-20",
+    );
+    expect(resolveResuxConfig({ compatibilityDate: "2026-13-01" }).compatibilityDate).toBe(
+      "2026-05-20",
+    );
+    expect(resolveResuxConfig({ compatibilityDate: "2026-00-10" }).compatibilityDate).toBe(
+      "2026-05-20",
+    );
+  });
 });

@@ -26,6 +26,10 @@ export function normalizeResuxGeneratedPath(value: string): string {
     .replace(NUXT_CLIENT_ASSET_SEGMENT, `$1${RESUX_CLIENT_ASSET_DIR}`);
 }
 
+/**
+ * Resolves user configuration into the complete framework configuration with
+ * safe defaults for builders, generated paths, and compatibility behavior.
+ */
 export function resolveResuxConfig(input: Record<string, unknown>): ResuxResolvedConfig {
   const base = { ...input } as ResuxResolvedConfig;
   return {
@@ -37,6 +41,10 @@ export function resolveResuxConfig(input: Record<string, unknown>): ResuxResolve
   };
 }
 
+/**
+ * Returns a valid YYYY-MM-DD compatibility date or the framework default when
+ * the input is missing, malformed, or not a real calendar date.
+ */
 function readCompatibilityDate(value: unknown): string {
   if (typeof value !== "string") {
     return DEFAULT_COMPATIBILITY_DATE;
@@ -58,6 +66,9 @@ function readCompatibilityDate(value: unknown): string {
   return day <= daysInMonth ? value : DEFAULT_COMPATIBILITY_DATE;
 }
 
+/**
+ * Reads a non-empty string value and otherwise returns the supplied fallback.
+ */
 function readString(value: unknown, fallback: string): string {
   return typeof value === "string" && value.length > 0 ? value : fallback;
 }

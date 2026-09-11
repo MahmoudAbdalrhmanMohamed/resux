@@ -19,20 +19,24 @@ describe("Node engine dependency compatibility", () => {
     ) as {
       engines?: { node?: string };
       dependencies?: Record<string, string>;
+      overrides?: Record<string, Record<string, string>>;
     };
     const lock = JSON.parse(
       await readFile(path.join(root, "package-lock.json"), "utf8"),
     ) as PackageLock;
 
     expect(packageJson.engines?.node).toBe(">=20.19.0");
-    expect(packageJson.dependencies?.nitropack).toBe("~2.12.6");
+    expect(packageJson.dependencies?.nitropack).toBe("~2.13.4");
+    expect(packageJson.overrides?.nitropack?.["rollup-plugin-visualizer"]).toBe(
+      "6.0.11",
+    );
 
     const nitro = lock.packages?.["node_modules/nitropack"];
-    expect(nitro?.version).toMatch(/^2\.12\./);
+    expect(nitro?.version).toMatch(/^2\.13\./);
     expect(nitro?.engines?.node).toContain("20.19.0");
 
     const visualizer = lock.packages?.["node_modules/rollup-plugin-visualizer"];
-    expect(visualizer?.version).toMatch(/^6\./);
+    expect(visualizer?.version).toBe("6.0.11");
     expect(visualizer?.engines?.node).not.toBe(">=22");
   });
 });

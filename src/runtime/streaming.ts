@@ -41,10 +41,10 @@ function getBodyIterator(body: Exclude<ResuxHtmlStreamOptions["body"], string>):
   return (body as Iterable<string>)[Symbol.iterator]();
 }
 
-function closeIterator(iterator: ResuxBodyIterator): void {
+async function closeIterator(iterator: ResuxBodyIterator): Promise<void> {
   if (!iterator.return) return;
   try {
-    void Promise.resolve(iterator.return()).catch(() => undefined);
+    await iterator.return();
   } catch {
     // Closing is best-effort; the original stream error/abort remains authoritative.
   }
@@ -95,7 +95,7 @@ export async function* streamResuxHtml(options: ResuxHtmlStreamOptions): AsyncGe
         if (next.value) yield next.value;
       }
     } finally {
-      if (!completed) closeIterator(iterator);
+      if (!completed) await closeIterator(iterator);
     }
   }
 
@@ -158,15 +158,14 @@ export function createResuxHtmlReadableStream(options: ResuxHtmlStreamOptions): 
         controller.error(error);
       }
     },
-    cancel(reason) {
+    async cancel(reason) {
       streamAbort.abort(reason);
       cleanup();
-      if (iterator.return) {
-        try {
-          void Promise.resolve(iterator.return(reason)).catch(() => undefined);
-        } catch {
-          // Cancellation is best-effort after the abort has been propagated upstream.
-        }
+      if (!iterator.return) return;
+      try {
+        await iterator.return(reason);
+      } catch {
+        // Cancellation is best-effort after the abort has been propagated upstream.
       }
     },
   });

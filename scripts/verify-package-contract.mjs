@@ -3,11 +3,16 @@ import { isAbsolute, relative, resolve, sep, win32 } from "node:path";
 
 const root = process.cwd();
 const createPackageRoot = resolve(root, "packages/create-resuxjs");
+
+/** Reads and parses a JSON file relative to the repository root. */
 const readJson = async (path) => JSON.parse(await readFile(resolve(root, path), "utf8"));
+
+/** Fails package verification with a consistently prefixed error. */
 const fail = (message) => {
   throw new Error(`[package-contract] ${message}`);
 };
 
+/** Returns whether a resolved target stays inside its package root. */
 const isContainedPath = (packageRoot, targetPath) => {
   const pathFromRoot = relative(packageRoot, targetPath);
   return Boolean(pathFromRoot)
@@ -16,6 +21,10 @@ const isContainedPath = (packageRoot, targetPath) => {
     && !isAbsolute(pathFromRoot);
 };
 
+/**
+ * Verifies a package export or binary target is relative, contained, present,
+ * and resolves to a regular file.
+ */
 const verifyFileTarget = async ({ packageRoot, target, kind, label }) => {
   if (typeof target !== "string" || target.length === 0) {
     fail(`${label} has an invalid ${kind} target`);
@@ -49,6 +58,7 @@ const verifyFileTarget = async ({ packageRoot, target, kind, label }) => {
   }
 };
 
+/** Recursively collects every file target declared in package exports. */
 const collectExportTargets = (value, targets = []) => {
   if (typeof value === "string") {
     targets.push(value);
@@ -64,6 +74,7 @@ const collectExportTargets = (value, targets = []) => {
   return targets;
 };
 
+/** Normalizes string or object-form package bin declarations into entries. */
 const collectBinTargets = (bin, packageName) => {
   if (typeof bin === "string") {
     return [[packageName, bin]];

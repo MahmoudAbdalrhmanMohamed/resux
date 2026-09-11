@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,13 +19,18 @@ async function installCompilerEntry(extension) {
     readFile(adapterEntry, "utf8"),
   ]);
 
-  // TypeScript emits the original compiler as index.*. Preserve that output once,
-  // then expose the small rx adapter at the established public index.* path.
-  // On repeated incremental builds index.* already equals adapter.*, so the
-  // preserved implementation is intentionally left untouched.
+  // Preserve the original compiler implementation before exposing the adapter at
+  // the established public index.* path. tsdown can collapse the adapter's
+  // implementation re-export back to ./index.js, which would become a self-import
+  // after the adapter is installed as index.*. Point those generated specifiers at
+  // the preserved implementation instead.
   if (publicSource !== adapterSource) {
     await copyFile(publicEntry, implementationEntry);
   }
 
-  await copyFile(adapterEntry, publicEntry);
+  const preparedAdapterSource = adapterSource
+    .replaceAll('"./index.js"', '"./implementation.js"')
+    .replaceAll("'./index.js'", "'./implementation.js'");
+
+  await writeFile(publicEntry, preparedAdapterSource, "utf8");
 }

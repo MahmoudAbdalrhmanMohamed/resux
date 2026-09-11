@@ -32,12 +32,19 @@ describe("SSR streaming", () => {
     const controller = new AbortController();
     let closed = false;
     let resolveNext!: (result: IteratorResult<string>) => void;
+    let markBodyReadStarted!: () => void;
+    const bodyReadStarted = new Promise<void>((resolve) => {
+      markBodyReadStarted = resolve;
+    });
     const body: AsyncIterable<string> = {
       [Symbol.asyncIterator]() {
         return {
-          next: () => new Promise<IteratorResult<string>>((resolve) => {
-            resolveNext = resolve;
-          }),
+          next: () => {
+            markBodyReadStarted();
+            return new Promise<IteratorResult<string>>((resolve) => {
+              resolveNext = resolve;
+            });
+          },
           return: async () => {
             closed = true;
             return { value: undefined, done: true };
@@ -49,7 +56,7 @@ describe("SSR streaming", () => {
     const iterator = streamResuxHtml({ shell: "shell", body, signal: controller.signal });
     expect((await iterator.next()).value).toBe("shell");
     const pending = iterator.next();
-    await Promise.resolve();
+    await bodyReadStarted;
     controller.abort(new Error("request closed"));
     await expect(pending).rejects.toThrow("request closed");
     expect(closed).toBe(true);
@@ -87,12 +94,19 @@ describe("SSR streaming", () => {
   it("propagates ReadableStream cancellation to a pending body iterator", async () => {
     let closed = false;
     let resolveNext!: (result: IteratorResult<string>) => void;
+    let markBodyReadStarted!: () => void;
+    const bodyReadStarted = new Promise<void>((resolve) => {
+      markBodyReadStarted = resolve;
+    });
     const body: AsyncIterable<string> = {
       [Symbol.asyncIterator]() {
         return {
-          next: () => new Promise<IteratorResult<string>>((resolve) => {
-            resolveNext = resolve;
-          }),
+          next: () => {
+            markBodyReadStarted();
+            return new Promise<IteratorResult<string>>((resolve) => {
+              resolveNext = resolve;
+            });
+          },
           return: async () => {
             closed = true;
             return { value: undefined, done: true };
@@ -104,7 +118,7 @@ describe("SSR streaming", () => {
     const reader = createResuxHtmlReadableStream({ shell: "shell", body }).getReader();
     expect(new TextDecoder().decode((await reader.read()).value)).toBe("shell");
     const pending = reader.read();
-    await Promise.resolve();
+    await bodyReadStarted;
     await reader.cancel("client disconnected");
     expect(closed).toBe(true);
     resolveNext?.({ value: undefined, done: true });
@@ -115,6 +129,7 @@ describe("SSR streaming", () => {
     let resolveNext!: (result: IteratorResult<string>) => void;
     let releaseCleanup!: () => void;
     let markCleanupStarted!: () => void;
+    let markBodyReadStarted!: () => void;
     let cleanupFinished = false;
     const cleanupStarted = new Promise<void>((resolve) => {
       markCleanupStarted = resolve;
@@ -122,12 +137,18 @@ describe("SSR streaming", () => {
     const cleanupReleased = new Promise<void>((resolve) => {
       releaseCleanup = resolve;
     });
+    const bodyReadStarted = new Promise<void>((resolve) => {
+      markBodyReadStarted = resolve;
+    });
     const body: AsyncIterable<string> = {
       [Symbol.asyncIterator]() {
         return {
-          next: () => new Promise<IteratorResult<string>>((resolve) => {
-            resolveNext = resolve;
-          }),
+          next: () => {
+            markBodyReadStarted();
+            return new Promise<IteratorResult<string>>((resolve) => {
+              resolveNext = resolve;
+            });
+          },
           return: async () => {
             markCleanupStarted();
             await cleanupReleased;
@@ -141,7 +162,7 @@ describe("SSR streaming", () => {
     const reader = createResuxHtmlReadableStream({ shell: "shell", body }).getReader();
     expect(new TextDecoder().decode((await reader.read()).value)).toBe("shell");
     const pending = reader.read();
-    await Promise.resolve();
+    await bodyReadStarted;
     const cancellation = reader.cancel("client disconnected");
     await cleanupStarted;
     expect(cleanupFinished).toBe(false);
@@ -150,6 +171,33 @@ describe("SSR streaming", () => {
     expect(cleanupFinished).toBe(true);
     resolveNext?.({ value: undefined, done: true });
     await pending.catch(() => undefined);
+  });
+
+  it("surfaces an already-aborted parent signal as a ReadableStream error", async () => {
+    const controller = new AbortController();
+    const reason = new Error("request closed before streaming");
+    controller.abort(reason);
+
+    const reader = createResuxHtmlReadableStream({
+      shell: "shell",
+      body: "body",
+      signal: controller.signal,
+    }).getReader();
+
+    await expect(reader.read()).rejects.toBe(reason);
+  });
+
+  it("preserves explicit null abort reasons", async () => {
+    const controller = new AbortController();
+    controller.abort(null);
+
+    const reader = createResuxHtmlReadableStream({
+      shell: "shell",
+      body: "body",
+      signal: controller.signal,
+    }).getReader();
+
+    await expect(reader.read()).rejects.toBeNull();
   });
 
   it("preserves surrogate pairs split across streamed chunks", async () => {

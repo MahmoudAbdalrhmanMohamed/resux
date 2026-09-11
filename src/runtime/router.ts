@@ -7,7 +7,7 @@ export interface ResuxClientNavigationOptions {
 function getClientBase(base?: string): string {
   if (base) return base;
   if (typeof location !== "undefined") return location.href;
-  return "http://resux.local/";
+  return "https://resux.local/";
 }
 
 /**

@@ -69,28 +69,29 @@
     "check:runtime-size": "npm run build && npm run report:runtime -- --check",
     "verify:vercel-output": "npm run build && node scripts/verify-vercel-output.mjs",
     "verify:deploy-targets": "npm run build && node scripts/verify-deploy-targets.mjs",
+    "verify:dependencies": "node scripts/verify-dependency-baseline.mjs",
     "verify:package": "node scripts/verify-package-contract.mjs",
-    "quality": "npm run typecheck && npm test && npm run test:bundle && npm run test:fixtures && npm run verify:package",
+    "quality": "npm run verify:dependencies && npm run typecheck && npm test && npm run test:bundle && npm run test:fixtures && npm run verify:package",
     "create:local": "npm run build && node dist/bin.js init",
-    "pack:check": "npm run build && npm test && npm run verify:package && npm pack --dry-run && npm pack --dry-run ./packages/create-resuxjs"
+    "pack:check": "npm run verify:dependencies && npm run build && npm test && npm run verify:package && npm pack --dry-run && npm pack --dry-run ./packages/create-resuxjs"
   },
   "engines": {
     "node": ">=20.19.0"
   },
   "dependencies": {
-    "@vitejs/plugin-vue": "^6.0.6",
-    "@vue/compiler-dom": "^3.5.22",
-    "@vue/compiler-sfc": "^3.5.22",
-    "h3": "^1.15.4",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/compiler-dom": "^3.5.42",
+    "@vue/compiler-sfc": "^3.5.42",
+    "h3": "^1.15.11",
     "nitropack": "~2.12.6",
-    "sharp": "^0.35.3",
+    "sharp": "^0.35.4",
     "typescript": "^5.9.3",
-    "vite": "^8.2.0",
-    "vue": "^3.5.33"
+    "vite": "^8.2.2",
+    "vue": "^3.5.42"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
-    "happy-dom": "^20.0.10",
-    "vitest": "^4.0.8"
+    "happy-dom": "^20.14.0",
+    "vitest": "^4.1.11"
   }
 }

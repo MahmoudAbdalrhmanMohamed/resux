@@ -19,6 +19,7 @@ export interface ResuxResumeRegistration extends ResuxResumeManifestEntry {
  */
 export class ResuxResumeHandlerRegistry {
   readonly #entries = new Map<string, ResuxResumeRegistration>();
+  readonly #generations = new Map<string, number>();
   readonly #handlers = new Map<string, ResuxResumeHandler>();
   readonly #pending = new Map<string, Promise<ResuxResumeHandler>>();
 
@@ -28,6 +29,7 @@ export class ResuxResumeHandlerRegistry {
     if (!entry.exportName) throw new Error(`Resume handler ${entry.id} must declare an export name.`);
 
     this.#entries.set(entry.id, entry);
+    this.#generations.set(entry.id, (this.#generations.get(entry.id) ?? 0) + 1);
     this.#handlers.delete(entry.id);
     this.#pending.delete(entry.id);
   }
@@ -56,9 +58,11 @@ export class ResuxResumeHandlerRegistry {
 
     const entry = this.#entries.get(id);
     if (!entry) throw new Error(`Unknown resumable handler ${id}.`);
+    const generation = this.#generations.get(id);
 
     const pending = entry.load().then((module) => {
-      const handler = module[entry.exportName];
+      const hasExport = Object.hasOwn(module, entry.exportName);
+      const handler = hasExport ? module[entry.exportName] : undefined;
       if (typeof handler !== "function") {
         throw new Error(
           `Resumable handler ${id} expected function export ${entry.exportName} from ${entry.module}.`,
@@ -66,7 +70,7 @@ export class ResuxResumeHandlerRegistry {
       }
 
       const resolved = handler as ResuxResumeHandler;
-      if (this.#entries.get(id) === entry) {
+      if (this.#generations.get(id) === generation) {
         this.#handlers.set(id, resolved);
       }
       return resolved;

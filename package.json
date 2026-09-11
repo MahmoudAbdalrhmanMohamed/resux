@@ -89,7 +89,7 @@
     "@vue/compiler-dom": "^3.5.42",
     "@vue/compiler-sfc": "^3.5.42",
     "h3": "^1.15.11",
-    "nitropack": "~2.12.6",
+    "nitropack": "~2.13.4",
     "sharp": "^0.35.4",
     "typescript": "^5.9.3",
     "vite": "^8.2.2",

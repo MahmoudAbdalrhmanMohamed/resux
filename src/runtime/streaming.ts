@@ -41,10 +41,10 @@ function getBodyIterator(body: Exclude<ResuxHtmlStreamOptions["body"], string>):
   return (body as Iterable<string>)[Symbol.iterator]();
 }
 
-async function closeIterator(iterator: ResuxBodyIterator): Promise<void> {
+function closeIterator(iterator: ResuxBodyIterator): void {
   if (!iterator.return) return;
   try {
-    await iterator.return();
+    void Promise.resolve(iterator.return()).catch(() => undefined);
   } catch {
     // Closing is best-effort; the original stream error/abort remains authoritative.
   }
@@ -84,9 +84,29 @@ export async function* streamResuxHtml(options: ResuxHtmlStreamOptions): AsyncGe
   } else {
     const iterator = getBodyIterator(options.body);
     let completed = false;
+    let reading = false;
+    let closeRequested = false;
+    const requestClose = () => {
+      if (closeRequested) return;
+      closeRequested = true;
+      closeIterator(iterator);
+    };
+    const closeWhenPaused = () => {
+      if (!reading) requestClose();
+    };
+
+    options.signal?.addEventListener("abort", closeWhenPaused, { once: true });
+    if (options.signal?.aborted) closeWhenPaused();
+
     try {
       while (true) {
-        const next = await nextBodyChunk(iterator, options.signal);
+        let next: IteratorResult<string>;
+        reading = true;
+        try {
+          next = await nextBodyChunk(iterator, options.signal);
+        } finally {
+          reading = false;
+        }
         if (next.done) {
           completed = true;
           break;
@@ -95,7 +115,8 @@ export async function* streamResuxHtml(options: ResuxHtmlStreamOptions): AsyncGe
         if (next.value) yield next.value;
       }
     } finally {
-      if (!completed) await closeIterator(iterator);
+      options.signal?.removeEventListener("abort", closeWhenPaused);
+      if (!completed) requestClose();
     }
   }
 
@@ -115,9 +136,20 @@ export function createResuxHtmlReadableStream(options: ResuxHtmlStreamOptions): 
   const streamAbort = new AbortController();
   let trailingHighSurrogate = "";
   let removeParentAbort: (() => void) | undefined;
+  const iterator = streamResuxHtml({ ...options, signal: streamAbort.signal })[Symbol.asyncIterator]();
 
   if (options.signal) {
-    const forwardAbort = () => streamAbort.abort(abortReason(options.signal));
+    const forwardAbort = () => {
+      const reason = abortReason(options.signal);
+      streamAbort.abort(reason);
+      if (iterator.return) {
+        try {
+          void Promise.resolve(iterator.return(reason)).catch(() => undefined);
+        } catch {
+          // The internal abort remains authoritative if generator cleanup fails.
+        }
+      }
+    };
     if (options.signal.aborted) forwardAbort();
     else {
       options.signal.addEventListener("abort", forwardAbort, { once: true });
@@ -125,7 +157,6 @@ export function createResuxHtmlReadableStream(options: ResuxHtmlStreamOptions): 
     }
   }
 
-  const iterator = streamResuxHtml({ ...options, signal: streamAbort.signal })[Symbol.asyncIterator]();
   const cleanup = () => {
     removeParentAbort?.();
     removeParentAbort = undefined;

@@ -35,7 +35,8 @@ describe("Node engine dependency compatibility", () => {
     expect(nitro?.version).toMatch(/^2\.13\./);
     expect(nitro?.engines?.node).toContain("20.19.0");
 
-    const visualizer = lock.packages?.["node_modules/rollup-plugin-visualizer"];
+    const visualizer =
+      lock.packages?.["node_modules/nitropack/node_modules/rollup-plugin-visualizer"];
     expect(visualizer?.version).toBe("6.0.11");
     expect(visualizer?.engines?.node).not.toBe(">=22");
   });

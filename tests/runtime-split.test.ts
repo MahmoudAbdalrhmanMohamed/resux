@@ -1,7 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { scheduleBrowserEnhancement } from "../src/runtime/core.js";
-import { isLocalClientNavigation, normalizeClientPath } from "../src/runtime/router.js";
+import {
+  isLocalClientNavigation,
+  navigateClient,
+  normalizeClientPath,
+} from "../src/runtime/router.js";
 import { ref, computed, isComputed } from "../src/runtime/reactivity.js";
 
 interface LocalModuleSource {
@@ -70,6 +74,46 @@ describe("split browser runtime", () => {
     expect(normalizeClientPath("/docs?q=1#api", "https://resux.dev/docs/guide")).toBe("/docs?q=1#api");
     expect(normalizeClientPath("#api", "https://resux.dev/docs/guide?q=1")).toBe("/docs/guide?q=1#api");
     expect(normalizeClientPath("?q=2", "https://resux.dev/docs/guide?q=1#old")).toBe("/docs/guide?q=2");
+  });
+
+  it("blocks executable URL schemes before full-page navigation", () => {
+    const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+    const assigned: string[] = [];
+    const replaced: string[] = [];
+    const fakeWindow = {
+      location: {
+        href: "https://resux.dev/docs/guide",
+        assign(to: string) {
+          assigned.push(to);
+        },
+        replace(to: string) {
+          replaced.push(to);
+        },
+      },
+      history: {
+        pushState() {},
+        replaceState() {},
+      },
+      dispatchEvent() {
+        return true;
+      },
+    } as unknown as Window;
+
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      writable: true,
+      value: fakeWindow,
+    });
+
+    try {
+      navigateClient("javascript:alert(document.domain)");
+      navigateClient("javascript:alert(document.domain)", { replace: true });
+      expect(assigned).toEqual([]);
+      expect(replaced).toEqual([]);
+    } finally {
+      if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor);
+      else delete (globalThis as { window?: unknown }).window;
+    }
   });
 
   it("falls back to immediate activation when visibility observation is unavailable", async () => {

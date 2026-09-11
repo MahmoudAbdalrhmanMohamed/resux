@@ -29,7 +29,8 @@ export function shouldStreamResponse(context: ResuxStreamingDecisionContext = {}
 }
 
 function abortReason(signal?: AbortSignal): unknown {
-  return signal?.reason ?? new DOMException("Aborted", "AbortError");
+  if (!signal || signal.reason === undefined) return new DOMException("Aborted", "AbortError");
+  return signal.reason;
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -154,6 +155,9 @@ export function createResuxHtmlReadableStream(options: ResuxHtmlStreamOptions): 
   let removeParentAbort: (() => void) | undefined;
   let bodyCleanup: Promise<void> = Promise.resolve();
   let streamClosePromise: Promise<void> | undefined;
+  let readableController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let parentAborted = false;
+  let parentAbortReason: unknown;
   const streamOptions: ResuxInternalHtmlStreamOptions = {
     ...options,
     signal: streamAbort.signal,
@@ -187,7 +191,11 @@ export function createResuxHtmlReadableStream(options: ResuxHtmlStreamOptions): 
 
   if (options.signal) {
     const forwardAbort = () => {
-      void closeStream(abortReason(options.signal));
+      const reason = abortReason(options.signal);
+      parentAborted = true;
+      parentAbortReason = reason;
+      readableController?.error(reason);
+      void closeStream(reason);
     };
     if (options.signal.aborted) forwardAbort();
     else {
@@ -197,6 +205,10 @@ export function createResuxHtmlReadableStream(options: ResuxHtmlStreamOptions): 
   }
 
   return new ReadableStream<Uint8Array>({
+    start(controller) {
+      readableController = controller;
+      if (parentAborted) controller.error(parentAbortReason);
+    },
     async pull(controller) {
       try {
         while (true) {
@@ -220,7 +232,7 @@ export function createResuxHtmlReadableStream(options: ResuxHtmlStreamOptions): 
         }
       } catch (error) {
         cleanup();
-        controller.error(error);
+        if (!parentAborted) controller.error(error);
       }
     },
     async cancel(reason) {

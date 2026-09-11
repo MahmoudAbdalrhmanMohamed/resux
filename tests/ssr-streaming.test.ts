@@ -111,6 +111,47 @@ describe("SSR streaming", () => {
     await pending.catch(() => undefined);
   });
 
+  it("waits for asynchronous body cleanup before cancellation resolves", async () => {
+    let resolveNext!: (result: IteratorResult<string>) => void;
+    let releaseCleanup!: () => void;
+    let markCleanupStarted!: () => void;
+    let cleanupFinished = false;
+    const cleanupStarted = new Promise<void>((resolve) => {
+      markCleanupStarted = resolve;
+    });
+    const cleanupReleased = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    const body: AsyncIterable<string> = {
+      [Symbol.asyncIterator]() {
+        return {
+          next: () => new Promise<IteratorResult<string>>((resolve) => {
+            resolveNext = resolve;
+          }),
+          return: async () => {
+            markCleanupStarted();
+            await cleanupReleased;
+            cleanupFinished = true;
+            return { value: undefined, done: true };
+          },
+        };
+      },
+    };
+
+    const reader = createResuxHtmlReadableStream({ shell: "shell", body }).getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe("shell");
+    const pending = reader.read();
+    await Promise.resolve();
+    const cancellation = reader.cancel("client disconnected");
+    await cleanupStarted;
+    expect(cleanupFinished).toBe(false);
+    releaseCleanup();
+    await cancellation;
+    expect(cleanupFinished).toBe(true);
+    resolveNext?.({ value: undefined, done: true });
+    await pending.catch(() => undefined);
+  });
+
   it("preserves surrogate pairs split across streamed chunks", async () => {
     const options = {
       shell: "<p>",

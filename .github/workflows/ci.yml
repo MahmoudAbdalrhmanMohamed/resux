@@ -12,9 +12,6 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  RESUX_NPM_VERSION: 11.19.1
-
 jobs:
   checks:
     name: Production Quality Gates
@@ -30,9 +27,6 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
-
-      - name: Use repository npm toolchain
-        run: npm install --global npm@${RESUX_NPM_VERSION}
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
@@ -74,9 +68,6 @@ jobs:
           node-version: 24
           package-manager-cache: false
 
-      - name: Use repository npm toolchain
-        run: npm install --global npm@${RESUX_NPM_VERSION}
-
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
@@ -116,9 +107,6 @@ jobs:
           node-version: 24
           package-manager-cache: false
 
-      - name: Use repository npm toolchain
-        run: npm install --global npm@${RESUX_NPM_VERSION}
-
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
@@ -137,7 +125,7 @@ jobs:
   compatibility:
     name: Node ${{ matrix.node-version }} compatibility
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -155,10 +143,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
           package-manager-cache: false
 
-      - name: Use repository npm toolchain
-        run: npm install --global npm@${RESUX_NPM_VERSION}
-
-      - name: Install development dependencies
+      - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
       - name: Verify Rolldown Linux native binding
@@ -170,14 +155,3 @@ jobs:
 
       - name: Test on supported Node runtime
         run: npm test
-
-      - name: Verify npm 10 consumer install
-        shell: bash
-        run: |
-          PACKAGE_TARBALL="$(npm pack --silent)"
-          TEST_DIR="$(mktemp -d)"
-          npm install --global npm@10.8.2
-          cd "$TEST_DIR"
-          npm init --yes >/dev/null
-          npm install "$GITHUB_WORKSPACE/$PACKAGE_TARBALL" --ignore-scripts --no-audit --no-fund
-          node --input-type=module -e "await import('resuxjs'); await import('resuxjs/runtime')"

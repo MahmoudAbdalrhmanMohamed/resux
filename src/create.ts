@@ -528,7 +528,7 @@ function createStarterPackageJson(
     },
     overrides: {
       nitropack: {
-        \"rollup-plugin-visualizer\": \"6.0.11\",
+        "rollup-plugin-visualizer": "6.0.11",
       },
     },
   }, null, 2)}\n`;

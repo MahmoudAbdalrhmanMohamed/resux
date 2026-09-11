@@ -82,6 +82,29 @@ describe("lazy resumable handlers", () => {
     expect(await registry.run("menu:open")).toBe("new");
   });
 
+  it("invalidates an old in-flight load when the same registration object is replayed", async () => {
+    const resolvers: Array<(module: Record<string, unknown>) => void> = [];
+    const entry = {
+      id: "menu:open",
+      module: "/menu.js",
+      exportName: "open",
+      load: () => new Promise<Record<string, unknown>>((resolve) => {
+        resolvers.push(resolve);
+      }),
+    };
+    const registry = createResumeHandlerRegistry([entry]);
+
+    const oldLoad = registry.load("menu:open");
+    registry.register(entry);
+    const newLoad = registry.load("menu:open");
+
+    resolvers[1]?.({ open: () => "new" });
+    expect((await newLoad)()).toBe("new");
+    resolvers[0]?.({ open: () => "old" });
+    expect((await oldLoad)()).toBe("old");
+    expect(await registry.run("menu:open")).toBe("new");
+  });
+
   it("preloads a handler without executing it", async () => {
     const handler = vi.fn(() => "ran");
     const load = vi.fn(async () => ({ open: handler }));
@@ -116,5 +139,13 @@ describe("lazy resumable handlers", () => {
     registry.register({ id: "bad", module: "/bad.js", exportName: "missing", load: async () => ({}) });
     await expect(registry.load("unknown")).rejects.toThrow("Unknown resumable handler unknown");
     await expect(registry.load("bad")).rejects.toThrow("expected function export missing");
+  });
+
+  it("rejects inherited function names that are not module exports", async () => {
+    const registry = createResumeHandlerRegistry([
+      { id: "bad", module: "/bad.js", exportName: "constructor", load: async () => ({}) },
+    ]);
+
+    await expect(registry.load("bad")).rejects.toThrow("expected function export constructor");
   });
 });

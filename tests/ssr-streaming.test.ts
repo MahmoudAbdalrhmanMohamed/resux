@@ -56,6 +56,34 @@ describe("SSR streaming", () => {
     resolveNext?.({ value: undefined, done: true });
   });
 
+  it("closes a paused body iterator when the request aborts between pulls", async () => {
+    const controller = new AbortController();
+    let closed = false;
+    let reads = 0;
+    const body: AsyncIterable<string> = {
+      [Symbol.asyncIterator]() {
+        return {
+          next: async () => {
+            reads += 1;
+            if (reads === 1) return { value: "chunk", done: false };
+            return new Promise<IteratorResult<string>>(() => undefined);
+          },
+          return: async () => {
+            closed = true;
+            return { value: undefined, done: true };
+          },
+        };
+      },
+    };
+
+    const iterator = streamResuxHtml({ shell: "shell", body, signal: controller.signal });
+    expect((await iterator.next()).value).toBe("shell");
+    expect((await iterator.next()).value).toBe("chunk");
+    controller.abort(new Error("request closed while paused"));
+    expect(closed).toBe(true);
+    await expect(iterator.next()).rejects.toThrow("request closed while paused");
+  });
+
   it("propagates ReadableStream cancellation to a pending body iterator", async () => {
     let closed = false;
     let resolveNext!: (result: IteratorResult<string>) => void;
@@ -78,7 +106,6 @@ describe("SSR streaming", () => {
     const pending = reader.read();
     await Promise.resolve();
     await reader.cancel("client disconnected");
-    await Promise.resolve();
     expect(closed).toBe(true);
     resolveNext?.({ value: undefined, done: true });
     await pending.catch(() => undefined);

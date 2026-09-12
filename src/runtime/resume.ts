@@ -104,16 +104,13 @@ export class ResuxResumeHandlerRegistry {
   async #loadModule(id: string, entry: ResuxResumeRegistration): Promise<ResuxResumeModule> {
     const controller = new AbortController();
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    let modulePromise: Promise<ResuxResumeModule>;
 
-    // Invoke synchronously so existing/custom loaders can expose their in-flight
-    // resolver immediately. Promise.resolve still normalizes async completion,
-    // while the catch preserves a rejected-promise API for synchronous throws.
-    try {
-      modulePromise = Promise.resolve(entry.load({ signal: controller.signal }));
-    } catch (error) {
-      modulePromise = Promise.reject(error);
-    }
+    // Promise executors run synchronously. Resolving with the loader's returned
+    // promise adopts its eventual state, while a synchronous loader throw is
+    // converted into a rejection by the Promise constructor itself.
+    const modulePromise = new Promise<ResuxResumeModule>((resolve) => {
+      resolve(entry.load({ signal: controller.signal }));
+    });
 
     if (this.#loadTimeoutMs === 0) return await modulePromise;
 

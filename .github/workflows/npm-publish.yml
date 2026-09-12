@@ -4,6 +4,8 @@ on:
   release:
     types: [published]
 
+permissions: {}
+
 jobs:
   validate:
     name: Validate release artifact
@@ -72,59 +74,20 @@ jobs:
           CREATE_FRAMEWORK_RANGE="$(node -p "require('./packages/create-resuxjs/package.json').dependencies.resuxjs")"
           CREATE_REPOSITORY_URL="$(node -p "require('./packages/create-resuxjs/package.json').repository.url")"
 
-          test "${PACKAGE_NAME}" = "resuxjs" || {
-            echo "Expected package name resuxjs, got ${PACKAGE_NAME}."
-            exit 1
-          }
-
-          test "${CREATE_PACKAGE_NAME}" = "create-resuxjs" || {
-            echo "Expected package name create-resuxjs, got ${CREATE_PACKAGE_NAME}."
-            exit 1
-          }
-
-          test "${CREATE_PACKAGE_VERSION}" = "${PACKAGE_VERSION}" || {
-            echo "create-resuxjs version ${CREATE_PACKAGE_VERSION} does not match resuxjs ${PACKAGE_VERSION}."
-            exit 1
-          }
-
-          test "${CREATE_FRAMEWORK_RANGE}" = "^${PACKAGE_VERSION}" || {
-            echo "create-resuxjs depends on resuxjs ${CREATE_FRAMEWORK_RANGE}; expected ^${PACKAGE_VERSION}."
-            exit 1
-          }
-
-          test "${CREATE_REPOSITORY_URL}" = "git+https://github.com/MahmoudAbdalrhmanMohamed/resux.git" || {
-            echo "create-resuxjs repository URL must match the GitHub repository used by npm Trusted Publishing."
-            exit 1
-          }
-
-          test "${LOCKFILE_NAME}" = "${PACKAGE_NAME}" || {
-            echo "package-lock.json name ${LOCKFILE_NAME} does not match ${PACKAGE_NAME}."
-            exit 1
-          }
-
-          test "${LOCKFILE_ROOT_NAME}" = "${PACKAGE_NAME}" || {
-            echo "package-lock.json root name ${LOCKFILE_ROOT_NAME} does not match ${PACKAGE_NAME}."
-            exit 1
-          }
-
-          test "${LOCKFILE_VERSION}" = "${PACKAGE_VERSION}" || {
-            echo "package-lock.json version ${LOCKFILE_VERSION} does not match ${PACKAGE_VERSION}."
-            exit 1
-          }
-
-          test "${LOCKFILE_ROOT_VERSION}" = "${PACKAGE_VERSION}" || {
-            echo "package-lock.json root version ${LOCKFILE_ROOT_VERSION} does not match ${PACKAGE_VERSION}."
-            exit 1
-          }
+          test "${PACKAGE_NAME}" = "resuxjs" || { echo "Expected package name resuxjs, got ${PACKAGE_NAME}."; exit 1; }
+          test "${CREATE_PACKAGE_NAME}" = "create-resuxjs" || { echo "Expected package name create-resuxjs, got ${CREATE_PACKAGE_NAME}."; exit 1; }
+          test "${CREATE_PACKAGE_VERSION}" = "${PACKAGE_VERSION}" || { echo "create-resuxjs version ${CREATE_PACKAGE_VERSION} does not match resuxjs ${PACKAGE_VERSION}."; exit 1; }
+          test "${CREATE_FRAMEWORK_RANGE}" = "^${PACKAGE_VERSION}" || { echo "create-resuxjs depends on resuxjs ${CREATE_FRAMEWORK_RANGE}; expected ^${PACKAGE_VERSION}."; exit 1; }
+          test "${CREATE_REPOSITORY_URL}" = "git+https://github.com/MahmoudAbdalrhmanMohamed/resux.git" || { echo "create-resuxjs repository URL must match the GitHub repository used by npm Trusted Publishing."; exit 1; }
+          test "${LOCKFILE_NAME}" = "${PACKAGE_NAME}" || { echo "package-lock.json name ${LOCKFILE_NAME} does not match ${PACKAGE_NAME}."; exit 1; }
+          test "${LOCKFILE_ROOT_NAME}" = "${PACKAGE_NAME}" || { echo "package-lock.json root name ${LOCKFILE_ROOT_NAME} does not match ${PACKAGE_NAME}."; exit 1; }
+          test "${LOCKFILE_VERSION}" = "${PACKAGE_VERSION}" || { echo "package-lock.json version ${LOCKFILE_VERSION} does not match ${PACKAGE_VERSION}."; exit 1; }
+          test "${LOCKFILE_ROOT_VERSION}" = "${PACKAGE_VERSION}" || { echo "package-lock.json root version ${LOCKFILE_ROOT_VERSION} does not match ${PACKAGE_VERSION}."; exit 1; }
 
           node -e "const pkg=require('./package.json'); if (pkg.private) throw new Error('private:true packages cannot be published')"
           node -e "const pkg=require('./packages/create-resuxjs/package.json'); if (pkg.private) throw new Error('private:true create package cannot be published')"
 
-          if [[ "${PACKAGE_VERSION}" == *-* ]]; then
-            DIST_TAG="next"
-          else
-            DIST_TAG="latest"
-          fi
+          if [[ "${PACKAGE_VERSION}" == *-* ]]; then DIST_TAG="next"; else DIST_TAG="latest"; fi
 
           echo "package_name=${PACKAGE_NAME}" >> "$GITHUB_OUTPUT"
           echo "package_version=${PACKAGE_VERSION}" >> "$GITHUB_OUTPUT"
@@ -170,6 +133,7 @@ jobs:
         with:
           name: npm-release
           path: release-artifacts/*.tgz
+          include-hidden-files: false
           if-no-files-found: error
           retention-days: 1
 
@@ -202,14 +166,7 @@ jobs:
           const { execFileSync } = require('node:child_process');
           const version = execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim();
           const [major, minor, patch] = version.split('.').map(Number);
-          if (
-            !Number.isInteger(major) ||
-            !Number.isInteger(minor) ||
-            !Number.isInteger(patch) ||
-            major < 11 ||
-            (major === 11 && minor < 5) ||
-            (major === 11 && minor === 5 && patch < 1)
-          ) {
+          if (!Number.isInteger(major) || !Number.isInteger(minor) || !Number.isInteger(patch) || major < 11 || (major === 11 && minor < 5) || (major === 11 && minor === 5 && patch < 1)) {
             throw new Error(`npm ${version} is too old for Trusted Publishing; require >=11.5.1`);
           }
           NODE
@@ -239,12 +196,7 @@ jobs:
           PACKAGE_NAME: ${{ needs.validate.outputs.package_name }}
           PACKAGE_VERSION: ${{ needs.validate.outputs.package_version }}
         run: |
-          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is already published; skipping framework publish."
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
 
       - name: Check whether create package version already exists
         id: create_published
@@ -253,12 +205,7 @@ jobs:
           CREATE_PACKAGE_NAME: ${{ needs.validate.outputs.create_package_name }}
           CREATE_PACKAGE_VERSION: ${{ needs.validate.outputs.create_package_version }}
         run: |
-          if npm view "${CREATE_PACKAGE_NAME}@${CREATE_PACKAGE_VERSION}" version >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "${CREATE_PACKAGE_NAME}@${CREATE_PACKAGE_VERSION} is already published; skipping create package publish."
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          if npm view "${CREATE_PACKAGE_NAME}@${CREATE_PACKAGE_VERSION}" version >/dev/null 2>&1; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
 
       - name: Check whether create package exists on npm
         id: create_package
@@ -267,13 +214,7 @@ jobs:
         env:
           CREATE_PACKAGE_NAME: ${{ needs.validate.outputs.create_package_name }}
         run: |
-          if npm view "${CREATE_PACKAGE_NAME}" name >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "${CREATE_PACKAGE_NAME} already exists on npm and must authorize this workflow as its Trusted Publisher."
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "${CREATE_PACKAGE_NAME} does not exist on npm yet."
-          fi
+          if npm view "${CREATE_PACKAGE_NAME}" name >/dev/null 2>&1; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
 
       - name: Fail if create package is not bootstrapped
         if: steps.create_published.outputs.exists == 'false' && steps.create_package.outputs.exists == 'false'

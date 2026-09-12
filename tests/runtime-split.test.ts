@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { scheduleBrowserEnhancement } from "../src/runtime/core.js";
 import {
   isLocalClientNavigation,
@@ -152,6 +152,188 @@ describe("split browser runtime", () => {
     const scheduled = scheduleBrowserEnhancement(target, () => {}, { trigger: "interaction" });
     expect(registrations).toHaveLength(3);
     expect(registrations.every(({ options }) => typeof options === "object" && options.capture === true)).toBe(true);
+    scheduled.dispose();
+  });
+
+  it("supports hover intent without eagerly activating enhancements", () => {
+    const registrations: Array<{ type: string; listener: EventListener }> = [];
+    const target = {
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+        if (typeof listener === "function") registrations.push({ type, listener });
+      },
+      removeEventListener() {},
+    } as unknown as Element;
+    let activations = 0;
+
+    const scheduled = scheduleBrowserEnhancement(target, () => {
+      activations += 1;
+    }, { trigger: "hover" });
+
+    expect(registrations.map(({ type }) => type)).toEqual(["pointerenter", "focusin"]);
+    expect(activations).toBe(0);
+    registrations[0]?.listener({} as Event);
+    expect(activations).toBe(1);
+    registrations[1]?.listener({} as Event);
+    expect(activations).toBe(1);
+    scheduled.dispose();
+  });
+
+  it("supports timer activation and validates timer delays", () => {
+    vi.useFakeTimers();
+    try {
+      const target = {
+        addEventListener() {},
+        removeEventListener() {},
+      } as unknown as Element;
+      let activations = 0;
+
+      scheduleBrowserEnhancement(target, () => {
+        activations += 1;
+      }, { trigger: "timer", timerMs: 50 });
+
+      vi.advanceTimersByTime(49);
+      expect(activations).toBe(0);
+      vi.advanceTimersByTime(1);
+      expect(activations).toBe(1);
+
+      expect(() => scheduleBrowserEnhancement(target, () => {}, {
+        trigger: "timer",
+        timerMs: -1,
+      })).toThrow("timerMs must be a finite non-negative number");
+      expect(() => scheduleBrowserEnhancement(target, () => {}, {
+        trigger: "timer",
+        timerMs: 2_147_483_648,
+      })).toThrow("timerMs must be a finite non-negative number no greater than 2147483647");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses the configured idle timeout when requestIdleCallback is unavailable", () => {
+    vi.useFakeTimers();
+    const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+    let scheduledDelay: number | undefined;
+    const fakeWindow = {
+      setTimeout(callback: () => void, delay?: number) {
+        scheduledDelay = delay;
+        return globalThis.setTimeout(callback, delay) as unknown as number;
+      },
+      clearTimeout(id: number) {
+        globalThis.clearTimeout(id as unknown as ReturnType<typeof setTimeout>);
+      },
+    } as unknown as Window;
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      writable: true,
+      value: fakeWindow,
+    });
+    const target = {
+      addEventListener() {},
+      removeEventListener() {},
+    } as unknown as Element;
+    let activations = 0;
+
+    try {
+      scheduleBrowserEnhancement(target, () => {
+        activations += 1;
+      }, { trigger: "idle", idleTimeoutMs: 75 });
+
+      expect(scheduledDelay).toBe(75);
+      vi.advanceTimersByTime(74);
+      expect(activations).toBe(0);
+      vi.advanceTimersByTime(1);
+      expect(activations).toBe(1);
+    } finally {
+      if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor);
+      else delete (globalThis as { window?: unknown }).window;
+      vi.useRealTimers();
+    }
+  });
+
+  it("activates media-query enhancements only after the query matches", () => {
+    const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+    let mediaListener: ((event: MediaQueryListEvent) => void) | undefined;
+    let removed = 0;
+    const media = {
+      matches: false,
+      media: "(min-width: 60rem)",
+      onchange: null,
+      addEventListener(_type: string, listener: (event: MediaQueryListEvent) => void) {
+        mediaListener = listener;
+      },
+      removeEventListener() {
+        removed += 1;
+      },
+      addListener() {},
+      removeListener() {},
+      dispatchEvent() {
+        return true;
+      },
+    } as unknown as MediaQueryList;
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      writable: true,
+      value: { matchMedia: () => media },
+    });
+    const target = {
+      addEventListener() {},
+      removeEventListener() {},
+    } as unknown as Element;
+    let activations = 0;
+
+    try {
+      scheduleBrowserEnhancement(target, () => {
+        activations += 1;
+      }, { trigger: "media-query", mediaQuery: "(min-width: 60rem)" });
+
+      expect(activations).toBe(0);
+      mediaListener?.({ matches: true } as MediaQueryListEvent);
+      expect(activations).toBe(1);
+      expect(removed).toBe(1);
+      mediaListener?.({ matches: true } as MediaQueryListEvent);
+      expect(activations).toBe(1);
+    } finally {
+      if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor);
+      else delete (globalThis as { window?: unknown }).window;
+    }
+  });
+
+  it("validates media-query configuration before registering resources", () => {
+    const target = {
+      addEventListener() {},
+      removeEventListener() {},
+    } as unknown as Element;
+    let abortRegistrations = 0;
+    const signal = {
+      aborted: false,
+      addEventListener() {
+        abortRegistrations += 1;
+      },
+      removeEventListener() {},
+    } as unknown as AbortSignal;
+
+    expect(() => scheduleBrowserEnhancement(target, () => {}, {
+      trigger: "media-query",
+      signal,
+    })).toThrow("mediaQuery must be provided for the media-query trigger");
+    expect(abortRegistrations).toBe(0);
+  });
+
+  it("keeps never-triggered enhancements permanently static", () => {
+    const target = {
+      addEventListener() {
+        throw new Error("never must not register listeners");
+      },
+      removeEventListener() {},
+    } as unknown as Element;
+    let activations = 0;
+
+    const scheduled = scheduleBrowserEnhancement(target, () => {
+      activations += 1;
+    }, { trigger: "never" });
+
+    scheduled.trigger();
+    expect(activations).toBe(0);
     scheduled.dispose();
   });
 

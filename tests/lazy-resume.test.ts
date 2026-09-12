@@ -276,6 +276,9 @@ describe("lazy resumable handlers", () => {
     expect(() => createResumeHandlerRegistry([], { loadTimeoutMs: Number.NaN })).toThrow(
       "loadTimeoutMs must be a finite non-negative number",
     );
+    expect(() => createResumeHandlerRegistry([], { loadTimeoutMs: 2_147_483_648 })).toThrow(
+      "loadTimeoutMs must be a finite non-negative number no greater than 2147483647",
+    );
   });
 
   it("fails clearly for invalid registrations, missing handlers, or missing exports", async () => {

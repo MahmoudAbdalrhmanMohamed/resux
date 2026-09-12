@@ -17,7 +17,7 @@ jobs:
   validate:
     name: Validate release artifact
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: read
     outputs:
@@ -177,13 +177,18 @@ jobs:
 
       - name: Pack immutable release tarballs
         shell: bash
+        env:
+          PACKAGE_NAME: ${{ steps.metadata.outputs.package_name }}
+          PACKAGE_VERSION: ${{ steps.metadata.outputs.package_version }}
+          CREATE_PACKAGE_NAME: ${{ steps.metadata.outputs.create_package_name }}
+          CREATE_PACKAGE_VERSION: ${{ steps.metadata.outputs.create_package_version }}
         run: |
           set -euo pipefail
           mkdir -p release-artifacts
           npm pack --pack-destination release-artifacts
           npm pack ./packages/create-resuxjs --pack-destination release-artifacts
-          test -f "release-artifacts/${{ steps.metadata.outputs.package_name }}-${{ steps.metadata.outputs.package_version }}.tgz"
-          test -f "release-artifacts/${{ steps.metadata.outputs.create_package_name }}-${{ steps.metadata.outputs.create_package_version }}.tgz"
+          test -f "release-artifacts/${PACKAGE_NAME}-${PACKAGE_VERSION}.tgz"
+          test -f "release-artifacts/${CREATE_PACKAGE_NAME}-${CREATE_PACKAGE_VERSION}.tgz"
 
       - name: Upload release tarballs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

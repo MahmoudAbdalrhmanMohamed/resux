@@ -30,6 +30,7 @@ export interface ResuxResumeRegistryOptions {
 }
 
 const DEFAULT_RESUME_LOAD_TIMEOUT_MS = 30_000;
+const MAX_RESUME_LOAD_TIMEOUT_MS = 2_147_483_647;
 
 export class ResuxResumeLoadTimeoutError extends Error {
   readonly handlerId: string;
@@ -45,8 +46,10 @@ export class ResuxResumeLoadTimeoutError extends Error {
 
 function normalizeLoadTimeout(value: number | undefined): number {
   const timeoutMs = value ?? DEFAULT_RESUME_LOAD_TIMEOUT_MS;
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
-    throw new RangeError("loadTimeoutMs must be a finite non-negative number.");
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0 || timeoutMs > MAX_RESUME_LOAD_TIMEOUT_MS) {
+    throw new RangeError(
+      `loadTimeoutMs must be a finite non-negative number no greater than ${MAX_RESUME_LOAD_TIMEOUT_MS}.`,
+    );
   }
   return timeoutMs;
 }

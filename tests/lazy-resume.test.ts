@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createResumeHandlerRegistry } from "../src/runtime/resume.js";
+import {
+  createResumeHandlerRegistry,
+  ResuxResumeLoadTimeoutError,
+} from "../src/runtime/resume.js";
 
 describe("lazy resumable handlers", () => {
   it("loads an exact handler only on first use and reuses it", async () => {
@@ -173,6 +176,106 @@ describe("lazy resumable handlers", () => {
     expect(await registry.run("menu:open")).toBe("ran");
     expect(load).toHaveBeenCalledTimes(1);
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds a stalled handler load and aborts cooperative loaders", async () => {
+    vi.useFakeTimers();
+    try {
+      let observedSignal: AbortSignal | undefined;
+      const registry = createResumeHandlerRegistry([
+        {
+          id: "slow:open",
+          module: "/slow.js",
+          exportName: "open",
+          load: ({ signal } = { signal: new AbortController().signal }) => {
+            observedSignal = signal;
+            return new Promise<Record<string, unknown>>(() => {});
+          },
+        },
+      ], { loadTimeoutMs: 25 });
+
+      const loadPromise = registry.load("slow:open");
+      const rejection = expect(loadPromise).rejects.toMatchObject({
+        name: "ResuxResumeLoadTimeoutError",
+        handlerId: "slow:open",
+        timeoutMs: 25,
+      });
+
+      await vi.advanceTimersByTimeAsync(25);
+      await rejection;
+      expect(observedSignal?.aborted).toBe(true);
+      expect(observedSignal?.reason).toBeInstanceOf(ResuxResumeLoadTimeoutError);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries cleanly after a timeout and ignores the late obsolete module", async () => {
+    vi.useFakeTimers();
+    try {
+      const resolvers: Array<(module: Record<string, unknown>) => void> = [];
+      const registry = createResumeHandlerRegistry([
+        {
+          id: "menu:open",
+          module: "/menu.js",
+          exportName: "open",
+          load: () => new Promise<Record<string, unknown>>((resolve) => {
+            resolvers.push(resolve);
+          }),
+        },
+      ], { loadTimeoutMs: 10 });
+
+      const first = registry.load("menu:open");
+      const firstRejection = expect(first).rejects.toBeInstanceOf(ResuxResumeLoadTimeoutError);
+      await vi.advanceTimersByTimeAsync(10);
+      await firstRejection;
+
+      const second = registry.load("menu:open");
+      await Promise.resolve();
+      expect(resolvers).toHaveLength(2);
+      resolvers[1]?.({ open: () => "new" });
+      expect((await second)()).toBe("new");
+
+      resolvers[0]?.({ open: () => "old" });
+      await Promise.resolve();
+      expect(await registry.run("menu:open")).toBe("new");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("can explicitly disable the load deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveModule!: (module: Record<string, unknown>) => void;
+      const registry = createResumeHandlerRegistry([
+        {
+          id: "slow:open",
+          module: "/slow.js",
+          exportName: "open",
+          load: () => new Promise<Record<string, unknown>>((resolve) => {
+            resolveModule = resolve;
+          }),
+        },
+      ], { loadTimeoutMs: 0 });
+
+      const pending = registry.load("slow:open");
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(60_000);
+      resolveModule({ open: () => "ok" });
+      expect((await pending)()).toBe("ok");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects invalid load deadlines", () => {
+    expect(() => createResumeHandlerRegistry([], { loadTimeoutMs: -1 })).toThrow(
+      "loadTimeoutMs must be a finite non-negative number",
+    );
+    expect(() => createResumeHandlerRegistry([], { loadTimeoutMs: Number.NaN })).toThrow(
+      "loadTimeoutMs must be a finite non-negative number",
+    );
   });
 
   it("fails clearly for invalid registrations, missing handlers, or missing exports", async () => {

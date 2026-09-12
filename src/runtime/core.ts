@@ -42,10 +42,14 @@ type CompatibleMediaQueryList = MediaQueryList & {
   removeListener?: (listener: (event: MediaQueryListEvent) => void) => void;
 };
 
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 function normalizeDelay(value: number | undefined, fallback: number, optionName: string): number {
   const resolved = value ?? fallback;
-  if (!Number.isFinite(resolved) || resolved < 0) {
-    throw new RangeError(`${optionName} must be a finite non-negative number.`);
+  if (!Number.isFinite(resolved) || resolved < 0 || resolved > MAX_TIMER_DELAY_MS) {
+    throw new RangeError(
+      `${optionName} must be a finite non-negative number no greater than ${MAX_TIMER_DELAY_MS}.`,
+    );
   }
   return resolved;
 }
@@ -66,6 +70,11 @@ export function scheduleBrowserEnhancement(
 ): ResuxScheduledEnhancement {
   const trigger = options.trigger ?? "interaction";
   const disabled = trigger === "never";
+  const mediaQuery = trigger === "media-query" ? options.mediaQuery?.trim() : undefined;
+  if (trigger === "media-query" && !mediaQuery) {
+    throw new Error("mediaQuery must be provided for the media-query trigger.");
+  }
+
   let disposed = false;
   let activated = false;
   const cleanups: Array<() => void> = [];
@@ -165,7 +174,7 @@ export function scheduleBrowserEnhancement(
       const id = idleWindow.requestIdleCallback(run, { timeout: idleTimeoutMs });
       cleanups.push(() => idleWindow.cancelIdleCallback?.(id));
     } else {
-      const id = window.setTimeout(run, 1);
+      const id = window.setTimeout(run, idleTimeoutMs);
       cleanups.push(() => window.clearTimeout(id));
     }
   } else if (trigger === "timer") {
@@ -173,11 +182,7 @@ export function scheduleBrowserEnhancement(
     const id = setTimeout(run, timerMs);
     cleanups.push(() => clearTimeout(id));
   } else if (trigger === "media-query") {
-    const query = options.mediaQuery?.trim();
-    if (!query) {
-      throw new Error("mediaQuery must be provided for the media-query trigger.");
-    }
-
+    const query = mediaQuery as string;
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
       queueMicrotask(run);
     } else {

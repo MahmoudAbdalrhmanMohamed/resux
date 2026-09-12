@@ -5,9 +5,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -17,6 +14,8 @@ jobs:
     name: Production Quality Gates
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
@@ -45,6 +44,8 @@ jobs:
     name: Template ${{ matrix.template }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -87,6 +88,8 @@ jobs:
     name: Deployment ${{ matrix.target }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -125,7 +128,9 @@ jobs:
   compatibility:
     name: Node ${{ matrix.node-version }} compatibility
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -152,6 +157,12 @@ jobs:
 
       - name: Build on supported Node runtime
         run: npm run build
+
+      - name: Verify generated Node 20 starter
+        if: matrix.node-version == '20.19.0'
+        run: npm run test:templates
+        env:
+          RESUX_TEMPLATE_FILTER: minimal
 
       - name: Test on supported Node runtime
         run: npm test

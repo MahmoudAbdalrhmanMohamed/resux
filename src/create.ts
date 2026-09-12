@@ -526,6 +526,11 @@ function createStarterPackageJson(
     engines: {
       node: ">=20.19.0",
     },
+    overrides: {
+      nitropack: {
+        "rollup-plugin-visualizer": "6.0.11",
+      },
+    },
   }, null, 2)}\n`;
 }
 

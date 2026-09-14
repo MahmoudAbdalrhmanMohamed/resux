@@ -142,21 +142,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup Node
+      - name: Setup build Node
         uses: actions/setup-node@v7
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 24
           package-manager-cache: false
 
-      - name: Install dependencies
+      - name: Install build dependencies
         run: npm ci --no-audit --no-fund
 
       - name: Verify Rolldown Linux native binding
         if: runner.os == 'Linux'
         run: node -e "require.resolve('@rolldown/binding-linux-x64-gnu')"
 
-      - name: Build on supported Node runtime
+      - name: Build framework with supported tsdown runtime
         run: npm run build
+
+      - name: Setup compatibility runtime
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          package-manager-cache: false
+
+      - name: Verify selected compatibility runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+          node -e "const [major] = process.versions.node.split('.').map(Number); const expected = Number('${{ matrix.node-version }}'.split('.')[0]); if (major !== expected) process.exit(1)"
 
       - name: Verify generated Node 20 starter
         if: matrix.node-version == '20.19.0'
@@ -164,7 +178,7 @@ jobs:
         env:
           RESUX_TEMPLATE_FILTER: minimal
 
-      - name: Test on supported Node runtime
+      - name: Test built framework on supported Node runtime
         run: npm test
 
   portability:

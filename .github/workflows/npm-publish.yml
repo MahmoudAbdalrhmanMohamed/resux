@@ -35,6 +35,8 @@ jobs:
 
       - name: Verify release tag and main ancestry
         shell: bash
+        env:
+          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
 
@@ -45,6 +47,11 @@ jobs:
           fi
 
           RELEASE_TAG="v${PACKAGE_VERSION}"
+          test "${RELEASE_EVENT_TAG}" = "${RELEASE_TAG}" || {
+            echo "Published release tag ${RELEASE_EVENT_TAG} does not match package version ${PACKAGE_VERSION}."
+            exit 1
+          }
+
           TAG_COMMIT="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
           HEAD_COMMIT="$(git rev-parse HEAD)"
           test "${TAG_COMMIT}" = "${HEAD_COMMIT}" || {

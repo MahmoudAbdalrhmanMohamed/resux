@@ -37,9 +37,19 @@ const BUILD_FILES: Record<ResuxBuildModuleKey, string> = {
   routeResources: "contract/route-resources.mjs",
 };
 
+const BUILD_DIR_ROOT_PATTERN = /^([A-Za-z]:)?([\\/])[\\/]*$/;
+
+function normalizeBuildDir(buildDir: string): string {
+  const root = BUILD_DIR_ROOT_PATTERN.exec(buildDir);
+  if (root) return `${root[1] ?? ""}${root[2]}`;
+
+  return buildDir.replace(/[\\/]+$/, "");
+}
+
 function joinBuildPath(buildDir: string, file: string): string {
-  const root = buildDir.replace(/[\\/]+$/g, "");
-  return `${root}/${file}`;
+  const root = normalizeBuildDir(buildDir);
+  const separator = /[\\/]$/.test(root) ? "" : "/";
+  return `${root}${separator}${file}`;
 }
 
 export function createResuxBuildContract(buildDir = ".resux"): ResuxBuildContract {
@@ -56,7 +66,7 @@ export function createResuxBuildContract(buildDir = ".resux"): ResuxBuildContrac
 
   return {
     version: RESUX_BUILD_CONTRACT_VERSION,
-    buildDir: buildDir.replace(/[\\/]+$/g, ""),
+    buildDir: normalizeBuildDir(buildDir),
     artifacts,
   };
 }

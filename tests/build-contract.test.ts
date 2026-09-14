@@ -15,4 +15,14 @@ describe("Resux build contract", () => {
     expect(contract.artifacts.routeResources.specifier).toBe("resux/route-resources");
     expect(contract.artifacts.routeResources.file).toBe(".resux/contract/route-resources.mjs");
   });
+
+  it("preserves filesystem roots when building artifact paths", () => {
+    const posixRoot = createResuxBuildContract("/");
+    expect(posixRoot.buildDir).toBe("/");
+    expect(posixRoot.artifacts.serverEntry.file).toBe("/contract/server-entry.mjs");
+
+    const windowsDriveRoot = createResuxBuildContract("C:\\");
+    expect(windowsDriveRoot.buildDir).toBe("C:\\");
+    expect(windowsDriveRoot.artifacts.serverEntry.file).toBe("C:\\contract/server-entry.mjs");
+  });
 });

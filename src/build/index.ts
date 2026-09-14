@@ -37,14 +37,13 @@ const BUILD_FILES: Record<ResuxBuildModuleKey, string> = {
   routeResources: "contract/route-resources.mjs",
 };
 
+const BUILD_DIR_ROOT_PATTERN = /^([A-Za-z]:)?([\\/])[\\/]*$/;
+
 function normalizeBuildDir(buildDir: string): string {
-  const separatorRoot = buildDir.match(/^([\\/])[\\/]*$/);
-  if (separatorRoot) return separatorRoot[1];
+  const root = BUILD_DIR_ROOT_PATTERN.exec(buildDir);
+  if (root) return `${root[1] ?? ""}${root[2]}`;
 
-  const driveRoot = buildDir.match(/^([A-Za-z]:)([\\/])[\\/]*$/);
-  if (driveRoot) return `${driveRoot[1]}${driveRoot[2]}`;
-
-  return buildDir.replace(/[\\/]+$/g, "");
+  return buildDir.replace(/[\\/]+$/, "");
 }
 
 function joinBuildPath(buildDir: string, file: string): string {

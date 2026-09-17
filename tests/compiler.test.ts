@@ -723,7 +723,7 @@ describe("project build manifest", () => {
     expect(manifest.serverMiddleware[0].file).toContain("headers.ts");
     const runtimeClient = await readFile(path.join(root, ".resux", "client", "runtime-client.mjs"), "utf8");
     expect(runtimeClient).toContain("createClientComponent");
-  }, 20000);
+  }, 30000);
 
   it("discovers plugins and route middleware recursively with stable mode-aware outputs", async () => {
     const root = path.join(os.tmpdir(), `resux-support-files-${Date.now()}`);

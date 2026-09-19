@@ -9,7 +9,8 @@ describe("resume-first interaction bootstrap", () => {
 
     expect(source).toContain('const __rxEvents=["click","submit"]');
     expect(source).toContain('const __rxRuntime="/__resux/runtime-client.mjs"');
-    expect(source).toContain("import(__rxRuntime)");
+    expect(source).toContain("const request=__rxRuntimeRequest();");
+    expect(source).toContain("import(request)");
     expect(source).toContain('__RESUX_DISPATCH_RESUMED_EVENT__');
     expect(source).not.toContain("bad event");
   });
@@ -20,6 +21,9 @@ describe("resume-first interaction bootstrap", () => {
     expect(source).toContain('name==="submit" || mods.includes("prevent")');
     expect(source).toContain('mods.includes("passive")');
     expect(source).toContain('mods.includes("stop")');
+    expect(source).toContain("const useCapture=__rxCapture(name);");
+    expect(source).toContain('name==="focus"');
+    expect(source).toContain('name==="error"');
   });
 
   it("checks conditional modifiers before cancelling native behavior or loading", () => {
@@ -32,15 +36,25 @@ describe("resume-first interaction bootstrap", () => {
     expect(source.indexOf("if(!__rxMatches(event,mods,name,target)) return;"))
       .toBeLessThan(source.indexOf("event.preventDefault();"));
     expect(source.indexOf("if(!__rxMatches(event,mods,name,target)) return;"))
-      .toBeLessThan(source.indexOf("void __rxLoad()"));
+      .toBeLessThan(source.indexOf("void __rxLoad().then(()=>{"));
   });
 
   it("allows a later interaction to retry after a rejected runtime import", () => {
     const source = getResumeBootstrapSource({ eventNames: ["click"] });
 
     expect(source).toContain("__rxRuntimePromise=undefined;");
+    expect(source).toContain("__rxRuntimeAttempt+=1;");
+    expect(source).toContain('"rx_retry="+__rxRuntimeAttempt');
     expect(source).toContain("}).catch((error)=>{");
     expect(source).toContain("}).catch(()=>{});");
+  });
+
+  it("matches strict runtime exact-modifier semantics for event classes without system keys", () => {
+    const source = getResumeBootstrapSource({ eventNames: ["submit"] });
+
+    expect(source).toContain('if(event.ctrlKey!==expected.has("ctrl")) return false;');
+    expect(source).toContain('if(event.shiftKey!==expected.has("shift")) return false;');
+    expect(source).not.toContain('Boolean(event.ctrlKey)!==expected.has("ctrl")');
   });
 
   it("allows a custom runtime source without interpolating event payload values", () => {

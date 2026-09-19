@@ -50,6 +50,7 @@ function countLines(value) {
 export async function collectRuntimeMetrics() {
   const sourceRuntimePath = path.join(rootDir, "src/runtime/index.ts");
   const distRuntimePath = path.join(rootDir, "dist/runtime/index.js");
+  const distResumePath = path.join(rootDir, "dist/runtime/resume.js");
   const distRuntimeDeclarationPath = path.join(rootDir, "dist/runtime/index.d.ts");
   const distRuntimeDirectory = path.join(rootDir, "dist/runtime");
 
@@ -66,6 +67,18 @@ export async function collectRuntimeMetrics() {
     throw new Error("dist/runtime/index.js does not export getClientRuntimeSource().");
   }
 
+  let resumeModule;
+  try {
+    resumeModule = await import(`${pathToFileURL(distResumePath).href}?metrics=${Date.now()}`);
+  } catch (error) {
+    throw new Error(
+      `Runtime metrics need built output at dist/runtime/resume.js. Run "npm run build" first. ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  if (typeof resumeModule.getResumeBootstrapSource !== "function") {
+    throw new Error("dist/runtime/resume.js does not export getResumeBootstrapSource().");
+  }
+
   const [sourceRuntime, distRuntimeJavaScript, distRuntimeDeclaration, distRuntimeDirectoryStats] = await Promise.all([
     readFile(sourceRuntimePath, "utf8"),
     readFile(distRuntimePath, "utf8"),
@@ -73,6 +86,7 @@ export async function collectRuntimeMetrics() {
     directoryBytes(distRuntimeDirectory)
   ]);
   const clientRuntime = runtimeModule.getClientRuntimeSource();
+  const resumeBootstrap = resumeModule.getResumeBootstrapSource({ eventNames: ["click", "submit"] });
 
   return {
     sourceRuntimeBytes: Buffer.byteLength(sourceRuntime),
@@ -82,6 +96,8 @@ export async function collectRuntimeMetrics() {
     distRuntimeTotalBytes: distRuntimeDirectoryStats.total,
     generatedClientRuntimeBytes: Buffer.byteLength(clientRuntime),
     generatedClientRuntimeGzipBytes: gzipSync(clientRuntime).byteLength,
+    resumeBootstrapBytes: Buffer.byteLength(resumeBootstrap),
+    resumeBootstrapGzipBytes: gzipSync(resumeBootstrap).byteLength,
     distRuntimeFiles: distRuntimeDirectoryStats.files
   };
 }
@@ -126,7 +142,9 @@ function renderMarkdown(metrics, budgets) {
     ["Built runtime declarations", "distRuntimeDeclarationBytes"],
     ["Built runtime directory", "distRuntimeTotalBytes"],
     ["Generated browser runtime", "generatedClientRuntimeBytes"],
-    ["Generated browser runtime (gzip)", "generatedClientRuntimeGzipBytes"]
+    ["Generated browser runtime (gzip)", "generatedClientRuntimeGzipBytes"],
+    ["Resume bootstrap", "resumeBootstrapBytes"],
+    ["Resume bootstrap (gzip)", "resumeBootstrapGzipBytes"]
   ];
   const output = [
     "## Runtime metrics",
@@ -160,6 +178,8 @@ function renderText(metrics, budgets) {
     `built runtime directory: ${formatBytes(metrics.distRuntimeTotalBytes)}`,
     `generated client runtime: ${formatBytes(metrics.generatedClientRuntimeBytes)}`,
     `generated client runtime gzip: ${formatBytes(metrics.generatedClientRuntimeGzipBytes)}`,
+    `resume bootstrap: ${formatBytes(metrics.resumeBootstrapBytes)}`,
+    `resume bootstrap gzip: ${formatBytes(metrics.resumeBootstrapGzipBytes)}`,
     failures.length === 0 ? "runtime budgets: pass" : `runtime budgets: fail\n${failures.join("\n")}`
   ].join("\n");
 }

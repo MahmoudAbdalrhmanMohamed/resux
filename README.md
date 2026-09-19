@@ -19,6 +19,25 @@ Resux is centered on explicit runtime cost:
 
 The documentation explains these boundaries in detail rather than describing Resux as a normal Vue SSR framework.
 
+## Resume-First Runtime
+
+Resux's initial-load architecture is called the **Resume-First Runtime**. The browser receives the smallest execution path that the rendered page actually needs:
+
+- static pages can ship with no Resux payload and no Resux browser runtime;
+- event-only pages keep serialized state and use a tiny bootstrap that loads the full runtime on first matching interaction;
+- startup-dependent features keep an eager compatibility path;
+- Vue islands can opt into `resume="interaction"`, `resume="visible"`, `resume="idle"`, or `resume="never"` while `immediate` remains the default.
+
+```vue
+<VueIsland
+  name="AnalyticsChart"
+  :props="{ series }"
+  resume="visible"
+/>
+```
+
+Architecture and framework-inspiration notes: [docs/resume-first-runtime.md](docs/resume-first-runtime.md).
+
 ## Create an app
 
 ```sh

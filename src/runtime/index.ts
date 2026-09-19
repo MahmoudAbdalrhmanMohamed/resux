@@ -2119,7 +2119,7 @@ export interface ResuxClientBootPlan {
 
 function collectResumableEventNames(html: string): string[] {
   const names = new Set<string>();
-  const pattern = /\\bdata-rx-on-([\\w:-]+)\\s*=/g;
+  const pattern = /\bdata-rx-on-([\w:-]+)\s*=/g;
   for (const match of html.matchAll(pattern)) {
     if (match[1]) names.add(match[1]);
   }

@@ -24,6 +24,7 @@ import {
   watchEffect
 } from "../reactivity/index.js";
 import type { ComputedRef, Ref, WatchCallback, WatchOptions, WatchSource, WatchStopHandle } from "../reactivity/index.js";
+import { getResumeBootstrapSource } from "./resume.js";
 
 export type JsonValue =
   | null
@@ -2100,7 +2101,7 @@ export async function renderApp(options: RenderAppOptions): Promise<RenderResult
   return renderAppAsync(options);
 }
 
-const CLIENT_RUNTIME_HTML_ATTRIBUTES = [
+const EAGER_CLIENT_RUNTIME_HTML_ATTRIBUTES = [
   "data-rx-vue-island",
   "data-resux-enhancement",
   "use-client-enhancement",
@@ -2109,7 +2110,7 @@ const CLIENT_RUNTIME_HTML_ATTRIBUTES = [
   "data-resux-img",
 ] as const;
 
-const CLIENT_RUNTIME_HTML_ATTRIBUTE_PREFIXES = [
+const EAGER_CLIENT_RUNTIME_HTML_ATTRIBUTE_PREFIXES = [
   "data-rx-video-",
 ] as const;
 
@@ -2127,8 +2128,20 @@ function htmlHasAttributePrefix(html: string, prefix: string): boolean {
   return new RegExp(`<[A-Za-z][^>]*\\s${escaped}[\\w:-]*(?:\\s*=|\\s|/?>)`, "i").test(html);
 }
 
-function htmlHasResumableEvent(html: string): boolean {
-  return /<[A-Za-z][^>]*\sdata-rx-on-[\w:-]+\s*=/.test(html);
+export type ResuxClientBootMode = "none" | "interaction" | "eager";
+
+export interface ResuxClientBootPlan {
+  mode: ResuxClientBootMode;
+  eventNames: string[];
+}
+
+function collectResumableEventNames(html: string): string[] {
+  const names = new Set<string>();
+  const pattern = /<[A-Za-z][^>]*\sdata-rx-on-([\w:-]+)\s*=/g;
+  for (const match of html.matchAll(pattern)) {
+    if (match[1]) names.add(match[1]);
+  }
+  return [...names];
 }
 
 function selectedClientMiddlewareNeedsRuntime(payload: ResuxPayload): boolean {
@@ -2144,25 +2157,12 @@ function selectedClientMiddlewareNeedsRuntime(payload: ResuxPayload): boolean {
   ));
 }
 
-/**
- * Returns whether a server-rendered document needs the browser runtime at all.
- *
- * Resux intentionally does not boot the client runtime merely to upgrade normal
- * links into SPA navigation. Native navigation remains the zero-JS baseline.
- * The runtime is required only when the rendered document declares actual
- * client work: resumable events, pending async data, client support modules,
- * islands, client enhancements, or managed media that needs browser behavior.
- */
-export function shouldLoadClientRuntime(result: RenderResult): boolean {
-  if (htmlHasResumableEvent(result.html)) {
+function hasEagerClientRuntimeWork(result: RenderResult): boolean {
+  if (EAGER_CLIENT_RUNTIME_HTML_ATTRIBUTES.some((attribute) => htmlHasAttribute(result.html, attribute))) {
     return true;
   }
 
-  if (CLIENT_RUNTIME_HTML_ATTRIBUTES.some((attribute) => htmlHasAttribute(result.html, attribute))) {
-    return true;
-  }
-
-  if (CLIENT_RUNTIME_HTML_ATTRIBUTE_PREFIXES.some((prefix) => htmlHasAttributePrefix(result.html, prefix))) {
+  if (EAGER_CLIENT_RUNTIME_HTML_ATTRIBUTE_PREFIXES.some((prefix) => htmlHasAttributePrefix(result.html, prefix))) {
     return true;
   }
 
@@ -2183,10 +2183,40 @@ export function shouldLoadClientRuntime(result: RenderResult): boolean {
   return false;
 }
 
+/**
+ * Plans the smallest browser boot path needed by a server-rendered document.
+ *
+ * - `none`: HTML is already complete; ship no Resux client payload or runtime.
+ * - `interaction`: serialize state, but load the full runtime only when one of
+ *   the rendered resumable event types is actually used.
+ * - `eager`: preserve startup semantics for client work that cannot wait for
+ *   a user interaction (pending data, plugins/middleware, islands, enhancements,
+ *   and managed media).
+ */
+export function getClientRuntimeBootPlan(result: RenderResult): ResuxClientBootPlan {
+  const eventNames = collectResumableEventNames(result.html);
+  if (hasEagerClientRuntimeWork(result)) {
+    return { mode: "eager", eventNames };
+  }
+  if (eventNames.length > 0) {
+    return { mode: "interaction", eventNames };
+  }
+  return { mode: "none", eventNames: [] };
+}
+
+/** Returns whether a document needs any Resux browser execution. */
+export function shouldLoadClientRuntime(result: RenderResult): boolean {
+  return getClientRuntimeBootPlan(result).mode !== "none";
+}
+
 export function renderDocument(result: RenderResult, title = "Resux App", options: RenderDocumentOptions = {}): string {
-  const needsClientRuntime = shouldLoadClientRuntime(result);
+  const bootPlan = getClientRuntimeBootPlan(result);
+  const needsClientRuntime = bootPlan.mode !== "none";
   const payload = needsClientRuntime
     ? escapeJsonForHtml(JSON.stringify(result.payload))
+    : "";
+  const resumeBootstrap = bootPlan.mode === "interaction"
+    ? getResumeBootstrapSource({ eventNames: bootPlan.eventNames })
     : "";
   const mergedHead = mergeHead([{ title }, result.head]);
   const htmlAttrs = {
@@ -2510,9 +2540,11 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
         : `<script>window.__RESUX__=${payload}</script>`)
       : "",
     options.devReload ? getDevReloadScript() : "",
-    needsClientRuntime
+    bootPlan.mode === "eager"
       ? '<script type="module" src="/__resux/runtime-client.mjs"></script>'
-      : "",
+      : (bootPlan.mode === "interaction"
+        ? `<script type="module">${resumeBootstrap}</script>`
+        : ""),
     "</body>",
     "</html>"
   ].join("");
@@ -10602,6 +10634,7 @@ function registerDelegatedEventsFromDom(root = document) {
 }
 
 function installResux() {
+  globalThis.__RESUX_DISPATCH_RESUMED_EVENT__ = (eventName, event) => handleDelegatedEvent(eventName, event);
   globalThis.__RESUX_USE_I18N__ = () => useClientI18n();
   globalThis.__RESUX_USE_LOCALE_PATH__ = () => useClientI18n().localePath;
   globalThis.__RESUX_USE_SWITCH_LOCALE_PATH__ = () => useClientI18n().switchLocalePath;

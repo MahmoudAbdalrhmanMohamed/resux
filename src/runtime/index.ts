@@ -2119,7 +2119,7 @@ const CLIENT_RUNTIME_HTML_MARKERS = [
  * islands, client enhancements, or managed media that needs browser behavior.
  */
 export function shouldLoadClientRuntime(result: RenderResult): boolean {
-  if (/\\bdata-rx-on-[\\w:-]+\\s*=/.test(result.html)) {
+  if (/\bdata-rx-on-[\w:-]+\s*=/.test(result.html)) {
     return true;
   }
 

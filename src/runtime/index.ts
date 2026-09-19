@@ -6362,6 +6362,37 @@ function inferImageMimeTypeFromSource(src: string): string | undefined {
   return resuxImageMimeType(extension);
 }
 
+export type VueIslandResumeMode = "immediate" | "interaction" | "visible" | "idle" | "never";
+
+const VUE_ISLAND_RESUME_MODES = new Set<VueIslandResumeMode>([
+  "immediate",
+  "interaction",
+  "visible",
+  "idle",
+  "never",
+]);
+
+function resolveVueIslandResumeMode(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+): VueIslandResumeMode {
+  const attr = node.attrs.find((entry) => entry.name === "resume");
+  if (!attr) return "immediate";
+  const value = String(
+    attr.kind === "static"
+      ? attr.value
+      : evaluateExpression(attr.value, context.scope, locals),
+  ).trim().toLowerCase() as VueIslandResumeMode;
+
+  if (!VUE_ISLAND_RESUME_MODES.has(value)) {
+    throw new Error(
+      `<VueIsland> resume must be one of immediate, interaction, visible, idle, or never. Received "${value}".`,
+    );
+  }
+  return value;
+}
+
 function renderVueIsland(
   node: ElementTemplateNode,
   context: RenderTemplateContext,
@@ -6369,8 +6400,9 @@ function renderVueIsland(
 ): string {
   const name = resolveVueIslandName(node, context, locals);
   const props = resolveVueIslandProps(node, context, locals);
+  const resume = resolveVueIslandResumeMode(node, context, locals);
   const scopeAttr = context.styleScopeId ? ` ${context.styleScopeId}=""` : "";
-  return `<div${scopeAttr} data-rx-vue-island="${escapeAttribute(name)}" data-rx-vue-props="${escapeAttribute(JSON.stringify(props))}"></div>`;
+  return `<div${scopeAttr} data-rx-vue-island="${escapeAttribute(name)}" data-rx-vue-resume="${resume}" data-rx-vue-props="${escapeAttribute(JSON.stringify(props))}"></div>`;
 }
 
 function appendStyleScopeAttribute(attrs: string[], styleScopeId?: string): void {
@@ -7740,6 +7772,7 @@ function getClientRouteRevision() {
   return clientRouteRevision;
 }
 const mountedVueIslands = new Map();
+const scheduledVueIslands = new Map();
 const pendingAsyncDataControllers = globalThis.__RESUX_PENDING_ASYNC_DATA_CONTROLLERS__ ||= new Set();
 let devImportRevision = 0;
 let routeTransitionToken = 0;
@@ -13650,35 +13683,133 @@ function collectScopeIdFromElement(element, ids) {
   }
 }
 
+function normalizeVueIslandResumeMode(value) {
+  const mode = String(value || "immediate").trim().toLowerCase();
+  return ["immediate", "interaction", "visible", "idle", "never"].includes(mode)
+    ? mode
+    : "immediate";
+}
+
+function clearScheduledVueIsland(el) {
+  const cleanup = scheduledVueIslands.get(el);
+  if (!cleanup) return;
+  scheduledVueIslands.delete(el);
+  cleanup();
+}
+
+async function mountVueIslandNow(el, islands) {
+  if (mountedVueIslands.has(el)) return;
+  clearScheduledVueIsland(el);
+
+  const name = el.getAttribute("data-rx-vue-island");
+  const modulePath = name ? islands[name] : null;
+  if (!name || !modulePath) {
+    el.setAttribute("data-rx-vue-error", "missing");
+    el.setAttribute("data-rx-vue-state", "error");
+    return;
+  }
+
+  el.setAttribute("data-rx-vue-state", "mounting");
+  try {
+    const props = JSON.parse(el.getAttribute("data-rx-vue-props") || "{}");
+    const island = await import(/* @vite-ignore */ modulePath);
+    if (!el.isConnected) return;
+    const app = island.mount ? island.mount(el, props) : null;
+    mountedVueIslands.set(el, app);
+    el.setAttribute("data-rx-vue-state", "mounted");
+    el.removeAttribute("data-rx-vue-error");
+  } catch {
+    el.setAttribute("data-rx-vue-error", "mount");
+    el.setAttribute("data-rx-vue-state", "error");
+  }
+}
+
+function scheduleVueIsland(el, islands) {
+  const mode = normalizeVueIslandResumeMode(el.getAttribute("data-rx-vue-resume"));
+  if (mode === "never") {
+    el.setAttribute("data-rx-vue-state", "static");
+    return;
+  }
+  if (mode === "immediate") {
+    return mountVueIslandNow(el, islands);
+  }
+
+  el.setAttribute("data-rx-vue-state", "scheduled");
+
+  if (mode === "visible") {
+    if (typeof IntersectionObserver === "undefined") {
+      return mountVueIslandNow(el, islands);
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        void mountVueIslandNow(el, islands);
+      }
+    });
+    observer.observe(el);
+    scheduledVueIslands.set(el, () => observer.disconnect());
+    return;
+  }
+
+  if (mode === "idle") {
+    let disposed = false;
+    const run = () => {
+      if (!disposed) void mountVueIslandNow(el, islands);
+    };
+    if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(run, { timeout: 2000 });
+      scheduledVueIslands.set(el, () => {
+        disposed = true;
+        window.cancelIdleCallback?.(id);
+      });
+    } else {
+      const id = setTimeout(run, 2000);
+      scheduledVueIslands.set(el, () => {
+        disposed = true;
+        clearTimeout(id);
+      });
+    }
+    return;
+  }
+
+  const events = ["pointerdown", "keydown", "focusin"];
+  const run = () => {
+    void mountVueIslandNow(el, islands);
+  };
+  for (const eventName of events) {
+    el.addEventListener(eventName, run, { once: true, capture: true });
+  }
+  scheduledVueIslands.set(el, () => {
+    for (const eventName of events) {
+      el.removeEventListener(eventName, run, { capture: true });
+    }
+  });
+}
+
 async function mountVueIslands(root = document) {
   const payload = globalThis.__RESUX__;
   const islands = payload && payload.vueIslands ? payload.vueIslands : {};
   const elements = root.querySelectorAll ? root.querySelectorAll("[data-rx-vue-island]") : [];
 
   for (const el of elements) {
-    if (mountedVueIslands.has(el)) {
+    if (
+      mountedVueIslands.has(el)
+      || scheduledVueIslands.has(el)
+      || el.getAttribute("data-rx-vue-state") === "static"
+    ) {
       continue;
     }
-
-    const name = el.getAttribute("data-rx-vue-island");
-    const modulePath = name ? islands[name] : null;
-    if (!name || !modulePath) {
-      el.setAttribute("data-rx-vue-error", "missing");
-      continue;
-    }
-
-    try {
-      const props = JSON.parse(el.getAttribute("data-rx-vue-props") || "{}");
-      const island = await import(/* @vite-ignore */ modulePath);
-      const app = island.mount ? island.mount(el, props) : null;
-      mountedVueIslands.set(el, app);
-    } catch {
-      el.setAttribute("data-rx-vue-error", "mount");
-    }
+    await scheduleVueIsland(el, islands);
   }
 }
 
 function unmountVueIslands(root) {
+  for (const [el] of scheduledVueIslands.entries()) {
+    if (root && root !== el && !(root.contains && root.contains(el))) {
+      continue;
+    }
+    clearScheduledVueIsland(el);
+  }
+
   for (const [el, app] of mountedVueIslands.entries()) {
     if (root && root !== el && !(root.contains && root.contains(el))) {
       continue;

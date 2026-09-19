@@ -2100,8 +2100,55 @@ export async function renderApp(options: RenderAppOptions): Promise<RenderResult
   return renderAppAsync(options);
 }
 
+const CLIENT_RUNTIME_HTML_MARKERS = [
+  "data-rx-vue-island",
+  "data-resux-enhancement=",
+  "use-client-enhancement=",
+  "data-rx-lazy-image",
+  "data-rx-lazy-video",
+  "data-rx-video-",
+] as const;
+
+/**
+ * Returns whether a server-rendered document needs the browser runtime at all.
+ *
+ * Resux intentionally does not boot the client runtime merely to upgrade normal
+ * links into SPA navigation. Native navigation remains the zero-JS baseline.
+ * The runtime is required only when the rendered document declares actual
+ * client work: resumable events, pending async data, client support modules,
+ * islands, client enhancements, or managed media that needs browser behavior.
+ */
+export function shouldLoadClientRuntime(result: RenderResult): boolean {
+  if (/\\bdata-rx-on-[\\w:-]+\\s*=/.test(result.html)) {
+    return true;
+  }
+
+  if (CLIENT_RUNTIME_HTML_MARKERS.some((marker) => result.html.includes(marker))) {
+    return true;
+  }
+
+  if (Object.values(result.payload.scopes ?? {}).some((scope) =>
+    Object.values(scope.asyncData ?? {}).some((entry) => Boolean(entry?.pending))
+  )) {
+    return true;
+  }
+
+  if (result.payload.plugins?.some((plugin) => plugin.mode !== "server")) {
+    return true;
+  }
+
+  if (result.payload.middleware?.some((middleware) => middleware.mode !== "server")) {
+    return true;
+  }
+
+  return false;
+}
+
 export function renderDocument(result: RenderResult, title = "Resux App", options: RenderDocumentOptions = {}): string {
-  const payload = escapeJsonForHtml(JSON.stringify(result.payload));
+  const needsClientRuntime = shouldLoadClientRuntime(result);
+  const payload = needsClientRuntime
+    ? escapeJsonForHtml(JSON.stringify(result.payload))
+    : "";
   const mergedHead = mergeHead([{ title }, result.head]);
   const htmlAttrs = {
     lang: "en",
@@ -2418,11 +2465,15 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
     '<div id="__resux">',
     result.html,
     "</div>",
-    (options.isStatic || (typeof process !== "undefined" && process.env?.RESUX_STATIC))
-      ? `<script>window.__RESUX__=${payload};window.__RESUX_STATIC__=true;</script>`
-      : `<script>window.__RESUX__=${payload}</script>`,
+    needsClientRuntime
+      ? ((options.isStatic || (typeof process !== "undefined" && process.env?.RESUX_STATIC))
+        ? `<script>window.__RESUX__=${payload};window.__RESUX_STATIC__=true;</script>`
+        : `<script>window.__RESUX__=${payload}</script>`)
+      : "",
     options.devReload ? getDevReloadScript() : "",
-    '<script type="module" src="/__resux/runtime-client.mjs"></script>',
+    needsClientRuntime
+      ? '<script type="module" src="/__resux/runtime-client.mjs"></script>'
+      : "",
     "</body>",
     "</html>"
   ].join("");

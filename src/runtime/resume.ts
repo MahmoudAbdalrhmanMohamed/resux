@@ -197,3 +197,78 @@ export function createResumeHandlerRegistry(
   registry.registerMany(entries);
   return registry;
 }
+
+
+export interface ResuxResumeBootstrapOptions {
+  eventNames: string[];
+  runtimeSrc?: string;
+}
+
+/**
+ * Generates the tiny browser bootstrap used by Resume-First documents.
+ *
+ * It registers only the event types present in the server HTML, preserves
+ * synchronous prevent/stop modifiers while the runtime is absent, imports the
+ * full client runtime once on first interaction, then hands the original event
+ * to the runtime's resumable-event dispatcher. Normal links are intentionally
+ * left to the browser until Resux has a reason to resume.
+ */
+export function getResumeBootstrapSource(options: ResuxResumeBootstrapOptions): string {
+  const eventNames = [...new Set(
+    options.eventNames
+      .map((name) => String(name || "").trim())
+      .filter((name) => /^[\\w:-]+$/.test(name)),
+  )];
+  const runtimeSrc = options.runtimeSrc?.trim() || "/__resux/runtime-client.mjs";
+
+  return `const __rxEvents=${JSON.stringify(eventNames)};
+const __rxRuntime=${JSON.stringify(runtimeSrc)};
+const __rxCleanups=[];
+let __rxActive=true;
+let __rxRuntimePromise;
+function __rxFindTarget(start,attr){
+  let node=start && start.nodeType===1 ? start : start && start.parentElement;
+  while(node){
+    if(typeof node.hasAttribute==="function" && node.hasAttribute(attr)) return node;
+    node=node.parentElement;
+  }
+  return null;
+}
+function __rxMods(target,name){
+  const raw=target && target.getAttribute ? target.getAttribute("data-rx-mod-"+name) : "";
+  return raw ? raw.split(",").map((value)=>value.trim()).filter(Boolean) : [];
+}
+function __rxCleanup(){
+  if(!__rxActive) return;
+  __rxActive=false;
+  while(__rxCleanups.length) __rxCleanups.pop()();
+}
+function __rxLoad(){
+  if(!__rxRuntimePromise){
+    __rxRuntimePromise=import(__rxRuntime).then((runtime)=>{
+      __rxCleanup();
+      return runtime;
+    });
+  }
+  return __rxRuntimePromise;
+}
+for(const name of __rxEvents){
+  const listener=(event)=>{
+    if(!__rxActive) return;
+    const target=__rxFindTarget(event.target,"data-rx-on-"+name);
+    if(!target) return;
+    const mods=__rxMods(target,name);
+    if((name==="submit" || mods.includes("prevent")) && !mods.includes("passive") && event.cancelable){
+      event.preventDefault();
+    }
+    if(mods.includes("stop")) event.stopPropagation();
+    void __rxLoad().then(()=>{
+      const dispatch=globalThis.__RESUX_DISPATCH_RESUMED_EVENT__;
+      if(typeof dispatch==="function") return dispatch(name,event);
+    });
+  };
+  document.addEventListener(name,listener,true);
+  __rxCleanups.push(()=>document.removeEventListener(name,listener,true));
+}
+`;
+}

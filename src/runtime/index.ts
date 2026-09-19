@@ -2100,14 +2100,49 @@ export async function renderApp(options: RenderAppOptions): Promise<RenderResult
   return renderAppAsync(options);
 }
 
-const CLIENT_RUNTIME_HTML_MARKERS = [
+const CLIENT_RUNTIME_HTML_ATTRIBUTES = [
   "data-rx-vue-island",
-  "data-resux-enhancement=",
-  "use-client-enhancement=",
+  "data-resux-enhancement",
+  "use-client-enhancement",
   "data-rx-lazy-image",
   "data-rx-lazy-video",
+  "data-resux-img",
+] as const;
+
+const CLIENT_RUNTIME_HTML_ATTRIBUTE_PREFIXES = [
   "data-rx-video-",
 ] as const;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[|\\{}()[\]^$+*?.-]/g, "\\$&");
+}
+
+function htmlHasAttribute(html: string, attribute: string): boolean {
+  const escaped = escapeRegExp(attribute);
+  return new RegExp(`<[A-Za-z][^>]*\\s${escaped}(?:\\s*=|\\s|/?>)`, "i").test(html);
+}
+
+function htmlHasAttributePrefix(html: string, prefix: string): boolean {
+  const escaped = escapeRegExp(prefix);
+  return new RegExp(`<[A-Za-z][^>]*\\s${escaped}[\\w:-]*(?:\\s*=|\\s|/?>)`, "i").test(html);
+}
+
+function htmlHasResumableEvent(html: string): boolean {
+  return /<[A-Za-z][^>]*\sdata-rx-on-[\w:-]+\s*=/.test(html);
+}
+
+function selectedClientMiddlewareNeedsRuntime(payload: ResuxPayload): boolean {
+  const configured = payload.pageMeta?.middleware;
+  const selectedNames = new Set(
+    (Array.isArray(configured) ? configured : configured ? [configured] : [])
+      .map((name) => String(name)),
+  );
+
+  return Boolean(payload.middleware?.some((middleware) =>
+    middleware.mode === "client"
+    && (middleware.global || selectedNames.has(middleware.name))
+  ));
+}
 
 /**
  * Returns whether a server-rendered document needs the browser runtime at all.
@@ -2119,11 +2154,15 @@ const CLIENT_RUNTIME_HTML_MARKERS = [
  * islands, client enhancements, or managed media that needs browser behavior.
  */
 export function shouldLoadClientRuntime(result: RenderResult): boolean {
-  if (/\bdata-rx-on-[\w:-]+\s*=/.test(result.html)) {
+  if (htmlHasResumableEvent(result.html)) {
     return true;
   }
 
-  if (CLIENT_RUNTIME_HTML_MARKERS.some((marker) => result.html.includes(marker))) {
+  if (CLIENT_RUNTIME_HTML_ATTRIBUTES.some((attribute) => htmlHasAttribute(result.html, attribute))) {
+    return true;
+  }
+
+  if (CLIENT_RUNTIME_HTML_ATTRIBUTE_PREFIXES.some((prefix) => htmlHasAttributePrefix(result.html, prefix))) {
     return true;
   }
 
@@ -2137,7 +2176,7 @@ export function shouldLoadClientRuntime(result: RenderResult): boolean {
     return true;
   }
 
-  if (result.payload.middleware?.some((middleware) => middleware.mode !== "server")) {
+  if (selectedClientMiddlewareNeedsRuntime(result.payload)) {
     return true;
   }
 

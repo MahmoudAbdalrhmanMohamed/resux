@@ -2102,9 +2102,6 @@ export async function renderApp(options: RenderAppOptions): Promise<RenderResult
 }
 
 const EAGER_CLIENT_RUNTIME_HTML_ATTRIBUTES = [
-  "data-rx-vue-island",
-  "data-resux-enhancement",
-  "use-client-enhancement",
   "data-rx-lazy-image",
   "data-rx-lazy-video",
   "data-resux-img",
@@ -2128,11 +2125,46 @@ function htmlHasAttributePrefix(html: string, prefix: string): boolean {
   return new RegExp(`<[A-Za-z][^>]*\\s${escaped}[\\w:-]*(?:\\s*=|\\s|/?>)`, "i").test(html);
 }
 
+function collectHtmlTagsWithAttribute(html: string, attribute: string): string[] {
+  const escaped = escapeRegExp(attribute);
+  return html.match(new RegExp(`<[A-Za-z][^>]*\\s${escaped}(?:\\s*=|\\s|/?>)[^>]*>`, "gi")) ?? [];
+}
+
+function readHtmlAttribute(tag: string, attribute: string): string | undefined {
+  const escaped = escapeRegExp(attribute);
+  const match = new RegExp(
+    `\\s${escaped}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`,
+    "i",
+  ).exec(tag);
+  return match?.[1] ?? match?.[2] ?? match?.[3];
+}
+
+function collectEnhancementTriggers(html: string): ClientEnhancementTrigger[] {
+  const tags = new Set([
+    ...collectHtmlTagsWithAttribute(html, "data-resux-enhancement"),
+    ...collectHtmlTagsWithAttribute(html, "use-client-enhancement"),
+  ]);
+  return [...tags].map((tag) => normalizeEnhancementTrigger(
+    readHtmlAttribute(tag, "data-resux-trigger")
+      ?? readHtmlAttribute(tag, "data-trigger")
+      ?? readHtmlAttribute(tag, "trigger"),
+    "visible",
+  ));
+}
+
+function collectVueIslandTriggers(html: string): ClientEnhancementTrigger[] {
+  return collectHtmlTagsWithAttribute(html, "data-rx-vue-island").map((tag) =>
+    normalizeEnhancementTrigger(readHtmlAttribute(tag, "data-rx-vue-trigger"), "immediate")
+  );
+}
+
 export type ResuxClientBootMode = "none" | "interaction" | "eager";
 
 export interface ResuxClientBootPlan {
   mode: ResuxClientBootMode;
   eventNames: string[];
+  deferEnhancements: boolean;
+  deferVueIslands: boolean;
 }
 
 function collectResumableEventNames(html: string): string[] {
@@ -2157,12 +2189,20 @@ function selectedClientMiddlewareNeedsRuntime(payload: ResuxPayload): boolean {
   ));
 }
 
-function hasEagerClientRuntimeWork(result: RenderResult): boolean {
+function hasEagerClientRuntimeWork(
+  result: RenderResult,
+  enhancementTriggers: ClientEnhancementTrigger[],
+  vueIslandTriggers: ClientEnhancementTrigger[],
+): boolean {
   if (EAGER_CLIENT_RUNTIME_HTML_ATTRIBUTES.some((attribute) => htmlHasAttribute(result.html, attribute))) {
     return true;
   }
 
   if (EAGER_CLIENT_RUNTIME_HTML_ATTRIBUTE_PREFIXES.some((prefix) => htmlHasAttributePrefix(result.html, prefix))) {
+    return true;
+  }
+
+  if (enhancementTriggers.includes("immediate") || vueIslandTriggers.includes("immediate")) {
     return true;
   }
 
@@ -2187,21 +2227,27 @@ function hasEagerClientRuntimeWork(result: RenderResult): boolean {
  * Plans the smallest browser boot path needed by a server-rendered document.
  *
  * - `none`: HTML is already complete; ship no Resux client payload or runtime.
- * - `interaction`: serialize state, but load the full runtime only when one of
- *   the rendered resumable event types is actually used.
- * - `eager`: preserve startup semantics for client work that cannot wait for
- *   a user interaction (pending data, plugins/middleware, islands, enhancements,
- *   and managed media).
+ * - `interaction`: ship only the tiny resume bootstrap. It waits for a
+ *   resumable event or a declared enhancement/island trigger before importing
+ *   the full browser runtime.
+ * - `eager`: preserve startup semantics for work that must begin immediately
+ *   (pending data, plugins/middleware, immediate islands/enhancements, and
+ *   managed media).
  */
 export function getClientRuntimeBootPlan(result: RenderResult): ResuxClientBootPlan {
   const eventNames = collectResumableEventNames(result.html);
-  if (hasEagerClientRuntimeWork(result)) {
-    return { mode: "eager", eventNames };
+  const enhancementTriggers = collectEnhancementTriggers(result.html);
+  const vueIslandTriggers = collectVueIslandTriggers(result.html);
+  const deferEnhancements = enhancementTriggers.some((trigger) => trigger !== "immediate");
+  const deferVueIslands = vueIslandTriggers.some((trigger) => trigger !== "immediate");
+
+  if (hasEagerClientRuntimeWork(result, enhancementTriggers, vueIslandTriggers)) {
+    return { mode: "eager", eventNames, deferEnhancements: false, deferVueIslands: false };
   }
-  if (eventNames.length > 0) {
-    return { mode: "interaction", eventNames };
+  if (eventNames.length > 0 || deferEnhancements || deferVueIslands) {
+    return { mode: "interaction", eventNames, deferEnhancements, deferVueIslands };
   }
-  return { mode: "none", eventNames: [] };
+  return { mode: "none", eventNames: [], deferEnhancements: false, deferVueIslands: false };
 }
 
 /** Returns whether a document needs any Resux browser execution. */
@@ -2216,7 +2262,11 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
     ? escapeJsonForHtml(JSON.stringify(result.payload))
     : "";
   const resumeBootstrap = bootPlan.mode === "interaction"
-    ? getResumeBootstrapSource({ eventNames: bootPlan.eventNames })
+    ? getResumeBootstrapSource({
+      eventNames: bootPlan.eventNames,
+      deferEnhancements: bootPlan.deferEnhancements,
+      deferVueIslands: bootPlan.deferVueIslands,
+    })
     : "";
   const mergedHead = mergeHead([{ title }, result.head]);
   const htmlAttrs = {
@@ -6404,8 +6454,9 @@ function renderVueIsland(
 ): string {
   const name = resolveVueIslandName(node, context, locals);
   const props = resolveVueIslandProps(node, context, locals);
+  const trigger = resolveVueIslandTrigger(node, context, locals);
   const scopeAttr = context.styleScopeId ? ` ${context.styleScopeId}=""` : "";
-  return `<div${scopeAttr} data-rx-vue-island="${escapeAttribute(name)}" data-rx-vue-props="${escapeAttribute(JSON.stringify(props))}"></div>`;
+  return `<div${scopeAttr} data-rx-vue-island="${escapeAttribute(name)}" data-rx-vue-trigger="${escapeAttribute(trigger)}" data-rx-vue-props="${escapeAttribute(JSON.stringify(props))}"></div>`;
 }
 
 function appendStyleScopeAttribute(attrs: string[], styleScopeId?: string): void {
@@ -6556,6 +6607,20 @@ function resolveVueIslandName(
   }
 
   return fixed.value;
+}
+
+function resolveVueIslandTrigger(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>
+): ClientEnhancementTrigger {
+  const triggerAttr = node.attrs.find((attr) => attr.name === "trigger");
+  const value = triggerAttr
+    ? (triggerAttr.kind === "static"
+      ? triggerAttr.value
+      : stringifyValue(evaluateExpression(triggerAttr.value, context.scope, locals)))
+    : undefined;
+  return normalizeEnhancementTrigger(value, "immediate");
 }
 
 function resolveVueIslandProps(
@@ -7775,6 +7840,7 @@ function getClientRouteRevision() {
   return clientRouteRevision;
 }
 const mountedVueIslands = new Map();
+const scheduledVueIslands = new Map();
 const pendingAsyncDataControllers = globalThis.__RESUX_PENDING_ASYNC_DATA_CONTROLLERS__ ||= new Set();
 let devImportRevision = 0;
 let routeTransitionToken = 0;
@@ -13685,35 +13751,68 @@ function collectScopeIdFromElement(element, ids) {
   }
 }
 
+async function mountVueIslandElement(el, islands) {
+  const name = el.getAttribute("data-rx-vue-island");
+  const modulePath = name ? islands[name] : null;
+  if (!name || !modulePath) {
+    el.setAttribute("data-rx-vue-error", "missing");
+    return;
+  }
+
+  try {
+    const props = JSON.parse(el.getAttribute("data-rx-vue-props") || "{}");
+    const island = await import(/* @vite-ignore */ modulePath);
+    const app = island.mount ? island.mount(el, props) : null;
+    mountedVueIslands.set(el, app);
+    el.setAttribute("data-rx-vue-status", "mounted");
+  } catch {
+    el.setAttribute("data-rx-vue-error", "mount");
+  }
+}
+
 async function mountVueIslands(root = document) {
   const payload = globalThis.__RESUX__;
   const islands = payload && payload.vueIslands ? payload.vueIslands : {};
   const elements = root.querySelectorAll ? root.querySelectorAll("[data-rx-vue-island]") : [];
 
   for (const el of elements) {
-    if (mountedVueIslands.has(el)) {
+    if (mountedVueIslands.has(el) || scheduledVueIslands.has(el)) {
       continue;
     }
 
-    const name = el.getAttribute("data-rx-vue-island");
-    const modulePath = name ? islands[name] : null;
-    if (!name || !modulePath) {
-      el.setAttribute("data-rx-vue-error", "missing");
+    const trigger = normalizeEnhancementTrigger(el.getAttribute("data-rx-vue-trigger"), "immediate");
+    if (trigger === "immediate") {
+      await mountVueIslandElement(el, islands);
       continue;
     }
 
-    try {
-      const props = JSON.parse(el.getAttribute("data-rx-vue-props") || "{}");
-      const island = await import(/* @vite-ignore */ modulePath);
-      const app = island.mount ? island.mount(el, props) : null;
-      mountedVueIslands.set(el, app);
-    } catch {
-      el.setAttribute("data-rx-vue-error", "mount");
+    el.setAttribute("data-rx-vue-status", "scheduled");
+    scheduledVueIslands.set(el, () => {});
+    const cancel = scheduleEnhancementTrigger(
+      "vue-island:" + (el.getAttribute("data-rx-vue-island") || "unknown"),
+      trigger,
+      el,
+      async () => {
+        scheduledVueIslands.delete(el);
+        await mountVueIslandElement(el, islands);
+      },
+    );
+    if (scheduledVueIslands.has(el)) {
+      scheduledVueIslands.set(el, cancel);
+    } else {
+      cancel();
     }
   }
 }
 
 function unmountVueIslands(root) {
+  for (const [el, cancel] of scheduledVueIslands.entries()) {
+    if (root && root !== el && !(root.contains && root.contains(el))) {
+      continue;
+    }
+    cancel();
+    scheduledVueIslands.delete(el);
+  }
   for (const [el, app] of mountedVueIslands.entries()) {
     if (root && root !== el && !(root.contains && root.contains(el))) {
       continue;

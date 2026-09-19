@@ -217,7 +217,7 @@ export function getResumeBootstrapSource(options: ResuxResumeBootstrapOptions): 
   const eventNames = [...new Set(
     options.eventNames
       .map((name) => String(name || "").trim())
-      .filter((name) => /^[\\w:-]+$/.test(name)),
+      .filter((name) => /^[\w:-]+$/.test(name)),
   )];
   const runtimeSrc = options.runtimeSrc?.trim() || "/__resux/runtime-client.mjs";
 

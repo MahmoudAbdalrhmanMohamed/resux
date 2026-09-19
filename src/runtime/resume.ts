@@ -202,6 +202,8 @@ export function createResumeHandlerRegistry(
 export interface ResuxResumeBootstrapOptions {
   eventNames: string[];
   runtimeSrc?: string;
+  deferEnhancements?: boolean;
+  deferVueIslands?: boolean;
 }
 
 /**
@@ -223,6 +225,8 @@ export function getResumeBootstrapSource(options: ResuxResumeBootstrapOptions): 
 
   return `const __rxEvents=${JSON.stringify(eventNames)};
 const __rxRuntime=${JSON.stringify(runtimeSrc)};
+const __rxDeferEnhancements=${options.deferEnhancements === true};
+const __rxDeferVueIslands=${options.deferVueIslands === true};
 const __rxCleanups=[];
 let __rxActive=true;
 let __rxRuntimePromise;
@@ -311,6 +315,80 @@ function __rxCapture(name){
     || name==="lazy-load-complete"
     || name==="invalid";
 }
+function __rxNormalizeTrigger(value,fallback){
+  const trigger=String(value || "").trim();
+  return trigger==="visible" || trigger==="interaction" || trigger==="idle" || trigger==="immediate" || trigger==="manual" || trigger==="page-load"
+    ? trigger
+    : fallback;
+}
+function __rxScheduleTarget(target,trigger){
+  if(!target || trigger==="manual") return;
+  const fire=()=>{ if(__rxActive) void __rxLoad().catch(()=>{}); };
+  if(trigger==="immediate"){
+    queueMicrotask(fire);
+    return;
+  }
+  if(trigger==="page-load"){
+    if(document.readyState==="complete"){
+      queueMicrotask(fire);
+      return;
+    }
+    const onLoad=()=>fire();
+    window.addEventListener("load",onLoad,{once:true});
+    __rxCleanups.push(()=>window.removeEventListener("load",onLoad));
+    return;
+  }
+  if(trigger==="idle"){
+    if(typeof window.requestIdleCallback==="function"){
+      const id=window.requestIdleCallback(fire);
+      __rxCleanups.push(()=>window.cancelIdleCallback && window.cancelIdleCallback(id));
+    }else{
+      const id=window.setTimeout(fire,32);
+      __rxCleanups.push(()=>window.clearTimeout(id));
+    }
+    return;
+  }
+  if(trigger==="interaction"){
+    const events=["click","pointerdown","touchstart","focusin","keydown"];
+    const onInteraction=()=>fire();
+    for(const eventName of events){
+      target.addEventListener(eventName,onInteraction,{once:true,capture:true,passive:eventName==="pointerdown" || eventName==="touchstart"});
+      __rxCleanups.push(()=>target.removeEventListener(eventName,onInteraction,true));
+    }
+    return;
+  }
+  if(trigger==="visible"){
+    if(typeof IntersectionObserver!=="function"){
+      queueMicrotask(fire);
+      return;
+    }
+    const observer=new IntersectionObserver((entries)=>{
+      if(entries.some((entry)=>entry.isIntersecting)){
+        observer.disconnect();
+        fire();
+      }
+    });
+    observer.observe(target);
+    __rxCleanups.push(()=>observer.disconnect());
+  }
+}
+function __rxScheduleDeferredTargets(){
+  if(__rxDeferEnhancements){
+    for(const target of document.querySelectorAll("[data-resux-enhancement], [use-client-enhancement]")){
+      const trigger=__rxNormalizeTrigger(
+        target.getAttribute("data-resux-trigger") || target.getAttribute("data-trigger") || target.getAttribute("trigger"),
+        "visible"
+      );
+      __rxScheduleTarget(target,trigger);
+    }
+  }
+  if(__rxDeferVueIslands){
+    for(const target of document.querySelectorAll("[data-rx-vue-island]")){
+      const trigger=__rxNormalizeTrigger(target.getAttribute("data-rx-vue-trigger"),"immediate");
+      __rxScheduleTarget(target,trigger);
+    }
+  }
+}
 for(const name of __rxEvents){
   const listener=(event)=>{
     if(!__rxActive) return;
@@ -331,5 +409,6 @@ for(const name of __rxEvents){
   document.addEventListener(name,listener,useCapture);
   __rxCleanups.push(()=>document.removeEventListener(name,listener,useCapture));
 }
+__rxScheduleDeferredTargets();
 `;
 }

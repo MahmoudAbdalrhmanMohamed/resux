@@ -64,7 +64,8 @@ describe("resume-first document boot", () => {
     expect(document).toContain("window.__RESUX__=");
     expect(document).not.toContain('src="/__resux/runtime-client.mjs"');
     expect(document).toContain('const __rxEvents=["click"]');
-    expect(document).toContain('import(__rxRuntime)');
+    expect(document).toContain("const request=__rxRuntimeRequest();");
+    expect(document).toContain("import(request)");
   });
 
   it("keeps startup behavior for pending async data and client support modules", () => {

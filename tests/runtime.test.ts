@@ -125,7 +125,8 @@ describe("runtime SSR", () => {
     expect(documentHtml).toContain('/__resux/dev-events');
     expect(documentHtml).toContain('__RESUX_APPLY_DEV_UPDATE__');
     expect(documentHtml).toContain('addEventListener("reload"');
-    expect(documentHtml).toContain('/__resux/runtime-client.mjs');
+    expect(documentHtml).not.toContain('/__resux/runtime-client.mjs');
+    expect(documentHtml).not.toContain('window.__RESUX__=');
   });
 
   it("serializes route params and async data", async () => {

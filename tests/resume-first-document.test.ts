@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getClientRuntimeBootPlan,
   renderDocument,
   shouldLoadClientRuntime,
   type RenderResult,
@@ -37,7 +38,7 @@ describe("resume-first document boot", () => {
     expect(document).toContain('<a href="/docs">Docs</a>');
   });
 
-  it("keeps the runtime for resumable event handlers", () => {
+  it("defers event-only pages until their first resumable interaction", () => {
     const result = createResult(
       '<button data-rx-on-click="s0:c0:increment">Increment</button>',
       {
@@ -54,10 +55,16 @@ describe("resume-first document boot", () => {
     );
 
     expect(shouldLoadClientRuntime(result)).toBe(true);
+    expect(getClientRuntimeBootPlan(result)).toEqual({
+      mode: "interaction",
+      eventNames: ["click"],
+    });
 
     const document = renderDocument(result);
     expect(document).toContain("window.__RESUX__=");
-    expect(document).toContain('/__resux/runtime-client.mjs');
+    expect(document).not.toContain('src="/__resux/runtime-client.mjs"');
+    expect(document).toContain('const __rxEvents=["click"]');
+    expect(document).toContain('import(__rxRuntime)');
   });
 
   it("keeps startup behavior for pending async data and client support modules", () => {
@@ -78,6 +85,7 @@ describe("resume-first document boot", () => {
       },
     });
     expect(shouldLoadClientRuntime(pending)).toBe(true);
+    expect(getClientRuntimeBootPlan(pending).mode).toBe("eager");
 
     const plugin = createResult("<main>Plugin</main>", {
       plugins: [{
@@ -88,6 +96,7 @@ describe("resume-first document boot", () => {
       }],
     });
     expect(shouldLoadClientRuntime(plugin)).toBe(true);
+    expect(getClientRuntimeBootPlan(plugin).mode).toBe("eager");
   });
 
   it("keeps islands, enhancements, and managed media on the client path", () => {

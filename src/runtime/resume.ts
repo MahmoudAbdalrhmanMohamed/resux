@@ -197,3 +197,113 @@ export function createResumeHandlerRegistry(
   registry.registerMany(entries);
   return registry;
 }
+
+
+export interface ResuxResumeBootstrapOptions {
+  eventNames: string[];
+  runtimeSrc?: string;
+}
+
+/**
+ * Generates the tiny browser bootstrap used by Resume-First documents.
+ *
+ * It registers only the event types present in the server HTML, preserves
+ * synchronous prevent/stop modifiers while the runtime is absent, imports the
+ * full client runtime once on first interaction, then hands the original event
+ * to the runtime's resumable-event dispatcher. Normal links are intentionally
+ * left to the browser until Resux has a reason to resume.
+ */
+export function getResumeBootstrapSource(options: ResuxResumeBootstrapOptions): string {
+  const eventNames = [...new Set(
+    options.eventNames
+      .map((name) => String(name || "").trim())
+      .filter((name) => /^[\w:-]+$/.test(name)),
+  )];
+  const runtimeSrc = options.runtimeSrc?.trim() || "/__resux/runtime-client.mjs";
+
+  return `const __rxEvents=${JSON.stringify(eventNames)};
+const __rxRuntime=${JSON.stringify(runtimeSrc)};
+const __rxCleanups=[];
+let __rxActive=true;
+let __rxRuntimePromise;
+function __rxFindTarget(start,attr){
+  let node=start && start.nodeType===1 ? start : start && start.parentElement;
+  while(node){
+    if(typeof node.hasAttribute==="function" && node.hasAttribute(attr)) return node;
+    node=node.parentElement;
+  }
+  return null;
+}
+function __rxMods(target,name){
+  const raw=target && target.getAttribute ? target.getAttribute("data-rx-mod-"+name) : "";
+  return raw ? raw.split(",").map((value)=>value.trim()).filter(Boolean) : [];
+}
+function __rxMouseMatches(event,mods){
+  const buttons=mods.filter((mod)=>mod==="left" || mod==="middle" || mod==="right");
+  if(!buttons.length) return true;
+  return buttons.some((mod)=>mod==="left" ? event.button===0 : mod==="middle" ? event.button===1 : event.button===2);
+}
+function __rxKeyMatches(event,mods){
+  const aliases={enter:"Enter",tab:"Tab",delete:["Delete","Backspace"],esc:"Escape",escape:"Escape",space:" ",up:"ArrowUp",down:"ArrowDown",left:"ArrowLeft",right:"ArrowRight"};
+  const keys=mods.filter((mod)=>Object.prototype.hasOwnProperty.call(aliases,mod));
+  if(!keys.length) return true;
+  return keys.some((mod)=>{
+    const expected=aliases[mod];
+    return Array.isArray(expected) ? expected.includes(event.key) : event.key===expected;
+  });
+}
+function __rxMatches(event,mods,name,target){
+  if(mods.includes("self") && event.target!==target) return false;
+  if(mods.includes("ctrl") && !event.ctrlKey) return false;
+  if(mods.includes("shift") && !event.shiftKey) return false;
+  if(mods.includes("alt") && !event.altKey) return false;
+  if(mods.includes("meta") && !event.metaKey) return false;
+  if(mods.includes("exact")){
+    const expected=new Set(mods.filter((mod)=>mod==="ctrl" || mod==="shift" || mod==="alt" || mod==="meta"));
+    if(Boolean(event.ctrlKey)!==expected.has("ctrl")) return false;
+    if(Boolean(event.shiftKey)!==expected.has("shift")) return false;
+    if(Boolean(event.altKey)!==expected.has("alt")) return false;
+    if(Boolean(event.metaKey)!==expected.has("meta")) return false;
+  }
+  if((name==="click" || name==="mousedown" || name==="mouseup") && !__rxMouseMatches(event,mods)) return false;
+  if(name.startsWith("key") && !__rxKeyMatches(event,mods)) return false;
+  return true;
+}
+function __rxCleanup(){
+  if(!__rxActive) return;
+  __rxActive=false;
+  while(__rxCleanups.length) __rxCleanups.pop()();
+}
+function __rxLoad(){
+  if(!__rxRuntimePromise){
+    __rxRuntimePromise=import(__rxRuntime).then((runtime)=>{
+      __rxCleanup();
+      return runtime;
+    }).catch((error)=>{
+      __rxRuntimePromise=undefined;
+      throw error;
+    });
+  }
+  return __rxRuntimePromise;
+}
+for(const name of __rxEvents){
+  const listener=(event)=>{
+    if(!__rxActive) return;
+    const target=__rxFindTarget(event.target,"data-rx-on-"+name);
+    if(!target) return;
+    const mods=__rxMods(target,name);
+    if(!__rxMatches(event,mods,name,target)) return;
+    if((name==="submit" || mods.includes("prevent")) && !mods.includes("passive") && event.cancelable){
+      event.preventDefault();
+    }
+    if(mods.includes("stop")) event.stopPropagation();
+    void __rxLoad().then(()=>{
+      const dispatch=globalThis.__RESUX_DISPATCH_RESUMED_EVENT__;
+      if(typeof dispatch==="function") return dispatch(name,event);
+    }).catch(()=>{});
+  };
+  document.addEventListener(name,listener,true);
+  __rxCleanups.push(()=>document.removeEventListener(name,listener,true));
+}
+`;
+}

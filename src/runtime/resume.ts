@@ -226,6 +226,7 @@ const __rxRuntime=${JSON.stringify(runtimeSrc)};
 const __rxCleanups=[];
 let __rxActive=true;
 let __rxRuntimePromise;
+let __rxRuntimeAttempt=0;
 function __rxFindTarget(start,attr){
   let node=start && start.nodeType===1 ? start : start && start.parentElement;
   while(node){
@@ -260,10 +261,10 @@ function __rxMatches(event,mods,name,target){
   if(mods.includes("meta") && !event.metaKey) return false;
   if(mods.includes("exact")){
     const expected=new Set(mods.filter((mod)=>mod==="ctrl" || mod==="shift" || mod==="alt" || mod==="meta"));
-    if(Boolean(event.ctrlKey)!==expected.has("ctrl")) return false;
-    if(Boolean(event.shiftKey)!==expected.has("shift")) return false;
-    if(Boolean(event.altKey)!==expected.has("alt")) return false;
-    if(Boolean(event.metaKey)!==expected.has("meta")) return false;
+    if(event.ctrlKey!==expected.has("ctrl")) return false;
+    if(event.shiftKey!==expected.has("shift")) return false;
+    if(event.altKey!==expected.has("alt")) return false;
+    if(event.metaKey!==expected.has("meta")) return false;
   }
   if((name==="click" || name==="mousedown" || name==="mouseup") && !__rxMouseMatches(event,mods)) return false;
   if(name.startsWith("key") && !__rxKeyMatches(event,mods)) return false;
@@ -274,17 +275,41 @@ function __rxCleanup(){
   __rxActive=false;
   while(__rxCleanups.length) __rxCleanups.pop()();
 }
+function __rxRuntimeRequest(){
+  if(__rxRuntimeAttempt===0) return __rxRuntime;
+  const separator=__rxRuntime.includes("?") ? "&" : "?";
+  return __rxRuntime+separator+"rx_retry="+__rxRuntimeAttempt;
+}
 function __rxLoad(){
   if(!__rxRuntimePromise){
-    __rxRuntimePromise=import(__rxRuntime).then((runtime)=>{
+    const request=__rxRuntimeRequest();
+    __rxRuntimePromise=import(request).then((runtime)=>{
       __rxCleanup();
       return runtime;
     }).catch((error)=>{
       __rxRuntimePromise=undefined;
+      __rxRuntimeAttempt+=1;
       throw error;
     });
   }
   return __rxRuntimePromise;
+}
+function __rxCapture(name){
+  return name==="focus"
+    || name==="blur"
+    || name==="mouseenter"
+    || name==="mouseleave"
+    || name==="pointerenter"
+    || name==="pointerleave"
+    || name==="load"
+    || name==="error"
+    || name==="loadstart"
+    || name==="loadedmetadata"
+    || name==="loadeddata"
+    || name==="canplay"
+    || name==="lazy-load-start"
+    || name==="lazy-load-complete"
+    || name==="invalid";
 }
 for(const name of __rxEvents){
   const listener=(event)=>{
@@ -302,8 +327,9 @@ for(const name of __rxEvents){
       if(typeof dispatch==="function") return dispatch(name,event);
     }).catch(()=>{});
   };
-  document.addEventListener(name,listener,true);
-  __rxCleanups.push(()=>document.removeEventListener(name,listener,true));
+  const useCapture=__rxCapture(name);
+  document.addEventListener(name,listener,useCapture);
+  __rxCleanups.push(()=>document.removeEventListener(name,listener,useCapture));
 }
 `;
 }

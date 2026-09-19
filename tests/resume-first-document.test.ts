@@ -58,6 +58,8 @@ describe("resume-first document boot", () => {
     expect(getClientRuntimeBootPlan(result)).toEqual({
       mode: "interaction",
       eventNames: ["click"],
+      deferEnhancements: false,
+      deferVueIslands: false,
     });
 
     const document = renderDocument(result);
@@ -123,7 +125,12 @@ describe("resume-first document boot", () => {
       "<main><code>data-rx-vue-island</code><p>data-rx-video-controls</p><pre>data-rx-on-click=</pre></main>",
     );
 
-    expect(getClientRuntimeBootPlan(result)).toEqual({ mode: "none", eventNames: [] });
+    expect(getClientRuntimeBootPlan(result)).toEqual({
+      mode: "none",
+      eventNames: [],
+      deferEnhancements: false,
+      deferVueIslands: false,
+    });
   });
 
   it("boots only client middleware selected by the current route", () => {

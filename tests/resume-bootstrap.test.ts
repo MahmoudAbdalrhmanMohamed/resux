@@ -68,7 +68,9 @@ describe("resume-first interaction bootstrap", () => {
       deferVueIslands: true,
     });
 
-    expect(source).toContain(".then(()=>__rxActivateTarget(target))");
+    expect(source).toContain("await __rxActivateTarget(target);");
+    expect(source).toContain("fire(__rxCaptureInteraction(target,event))");
+    expect(source).toContain("__rxReplayInteraction(target,queuedInteraction)");
     expect(source).toContain("if(!disposed && __rxActive && target.isConnected) arm();");
     expect(source).toContain("__RESUX_ACTIVATE_DEFERRED__=__rxActivateManual");
   });

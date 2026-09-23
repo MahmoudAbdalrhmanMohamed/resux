@@ -4186,7 +4186,7 @@ async function renderElementAsync(
   }
 
   if (node.tag === "VueIsland") {
-    return renderVueIsland(node, context, locals);
+    return renderVueIslandAsync(node, context, renderComponent, locals);
   }
 
   if (isComponentTag(node.tag)) {
@@ -6470,15 +6470,15 @@ function inferImageMimeTypeFromSource(src: string): string | undefined {
   return resuxImageMimeType(extension);
 }
 
-function renderVueIsland(
+function renderVueIslandMarkup(
   node: ElementTemplateNode,
   context: RenderTemplateContext,
-  locals: Record<string, unknown>
+  locals: Record<string, unknown>,
+  fallbackHtml: string,
 ): string {
   const name = resolveVueIslandName(node, context, locals);
   const props = resolveVueIslandProps(node, context, locals);
   const trigger = resolveVueIslandTrigger(node, context, locals);
-  const fallbackHtml = renderTemplateNodes(node.children, context, locals);
   if (trigger === "interaction" && fallbackHtml.trim().length === 0) {
     throw new Error(
       '<VueIsland trigger="interaction"> requires server-rendered fallback children so the first interaction has a reachable target.',
@@ -6486,6 +6486,38 @@ function renderVueIsland(
   }
   const scopeAttr = context.styleScopeId ? ` ${context.styleScopeId}=""` : "";
   return `<div${scopeAttr} data-rx-vue-island="${escapeAttribute(name)}" data-rx-vue-trigger="${escapeAttribute(trigger)}" data-rx-vue-props="${escapeAttribute(JSON.stringify(props))}">${fallbackHtml}</div>`;
+}
+
+function renderVueIsland(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>
+): string {
+  return renderVueIslandMarkup(
+    node,
+    context,
+    locals,
+    renderTemplateNodes(node.children, context, locals),
+  );
+}
+
+async function renderVueIslandAsync(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  renderComponent: (
+    component: ComponentDefinition,
+    props?: ComponentProps,
+    renderSlot?: () => Promise<string>,
+  ) => Promise<string>,
+  locals: Record<string, unknown>,
+): Promise<string> {
+  const fallbackHtml = await renderTemplateNodesAsync(
+    node.children,
+    context,
+    renderComponent,
+    locals,
+  );
+  return renderVueIslandMarkup(node, context, locals, fallbackHtml);
 }
 
 function appendStyleScopeAttribute(attrs: string[], styleScopeId?: string): void {

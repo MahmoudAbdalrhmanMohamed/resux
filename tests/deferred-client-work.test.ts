@@ -5,27 +5,15 @@ import {
   getClientRuntimeSource,
   renderApp,
   renderDocument,
-  type RenderResult,
 } from "../src/runtime/index.js";
 import { getResumeBootstrapSource } from "../src/runtime/resume.js";
-
-function createResult(html: string): RenderResult {
-  return {
-    html,
-    head: {},
-    payload: {
-      route: { path: "/", params: {}, query: {} },
-      scopes: {},
-      modules: {},
-    },
-  } as RenderResult;
-}
+import { createRuntimeResult } from "./runtime-result-fixture.js";
 
 function createVueIslandPage(
   id: string,
   islandName: string,
   trigger: string,
-  withFallback = false,
+  fallback: "none" | "button" | "component" = "none",
 ) {
   return defineComponent({
     id,
@@ -43,7 +31,7 @@ function createVueIslandPage(
         { kind: "static", name: "trigger", value: trigger },
       ],
       events: [],
-      children: withFallback
+      children: fallback === "button"
         ? [{
             type: "element",
             tag: "button",
@@ -51,7 +39,15 @@ function createVueIslandPage(
             events: [],
             children: [{ type: "text", value: "Open menu" }],
           }]
-        : [],
+        : fallback === "component"
+          ? [{
+              type: "element",
+              tag: "FallbackCard",
+              attrs: [],
+              events: [],
+              children: [],
+            }]
+          : [],
     }],
   });
 }
@@ -76,7 +72,7 @@ describe("demand-driven client work", () => {
       "interaction-page",
       "Menu",
       "interaction",
-      true,
+      "button",
     );
 
     const rendered = await renderApp({
@@ -99,8 +95,43 @@ describe("demand-driven client work", () => {
     })).rejects.toThrow("requires server-rendered fallback children");
   });
 
+  it("renders Vue island component fallbacks through the async renderer", async () => {
+    const fallbackCard = defineComponent({
+      id: "fallback-card",
+      name: "FallbackCard",
+      file: "FallbackCard.vue",
+      handlers: [],
+      script() {
+        return {};
+      },
+      template: [{
+        type: "element",
+        tag: "strong",
+        attrs: [],
+        events: [],
+        children: [{ type: "text", value: "Ready to interact" }],
+      }],
+    });
+    const page = createVueIslandPage(
+      "component-fallback-page",
+      "Menu",
+      "interaction",
+      "component",
+    );
+
+    const rendered = await renderApp({
+      page,
+      route: { path: "/", params: {}, query: {} },
+      components: { FallbackCard: fallbackCard },
+      vueIslands: { Menu: "/__resux/vue-islands/menu.mjs" },
+    });
+
+    expect(rendered.html).toContain("<strong>Ready to interact</strong>");
+    expect(rendered.html).toContain('data-rx-vue-trigger="interaction"');
+  });
+
   it("defers default-visible client enhancements instead of eagerly booting", () => {
-    const result = createResult(
+    const result = createRuntimeResult(
       '<section data-resux-enhancement="chart" data-resux-trigger="visible"></section>',
     );
 
@@ -117,7 +148,7 @@ describe("demand-driven client work", () => {
   });
 
   it("keeps immediate enhancements eager", () => {
-    const result = createResult(
+    const result = createRuntimeResult(
       '<section data-resux-enhancement="editor" data-resux-trigger="immediate"></section>',
     );
 
@@ -126,7 +157,7 @@ describe("demand-driven client work", () => {
   });
 
   it("defers explicitly scheduled Vue islands but preserves immediate compatibility", () => {
-    const visible = createResult(
+    const visible = createRuntimeResult(
       '<div data-rx-vue-island="Chart" data-rx-vue-trigger="visible" data-rx-vue-props="{}"></div>',
     );
     expect(getClientRuntimeBootPlan(visible)).toEqual({
@@ -136,7 +167,7 @@ describe("demand-driven client work", () => {
       deferVueIslands: true,
     });
 
-    const immediate = createResult(
+    const immediate = createRuntimeResult(
       '<div data-rx-vue-island="Editor" data-rx-vue-trigger="immediate" data-rx-vue-props="{}"></div>',
     );
     expect(getClientRuntimeBootPlan(immediate).mode).toBe("eager");
@@ -159,12 +190,15 @@ describe("demand-driven client work", () => {
     expect(source).toContain("IntersectionObserver");
     expect(source).toContain("requestIdleCallback");
     expect(source).toContain("__rxActivateTarget(target)");
+    expect(source).toContain("fire(__rxCaptureInteraction(target,event))");
+    expect(source).toContain("__rxReplayInteraction(target,queuedInteraction)");
+    expect(source).toContain('event.type==="click" && event.cancelable');
     expect(source).toContain("target.isConnected");
     expect(source).toContain("window.setTimeout(()=>{");
   });
 
   it("does not let manual work accidentally pull the full runtime into initial load", () => {
-    const result = createResult(
+    const result = createRuntimeResult(
       '<section data-resux-enhancement="map" data-resux-trigger="manual"></section>',
     );
 
@@ -179,7 +213,7 @@ describe("demand-driven client work", () => {
       { length: 33 },
       (_, index) => `data-rx-on-event${index}="s0:c0:h${index}"`,
     ).join(" ");
-    const result = createResult(`<button ${eventAttributes}>Many events</button>`);
+    const result = createRuntimeResult(`<button ${eventAttributes}>Many events</button>`);
 
     expect(getClientRuntimeBootPlan(result).mode).toBe("eager");
     expect(renderDocument(result)).toContain('src="/__resux/runtime-client.mjs"');

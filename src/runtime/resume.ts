@@ -303,10 +303,7 @@ function __rxRuntimeRequest(){
 function __rxLoad(){
   if(!__rxRuntimePromise){
     const request=__rxRuntimeRequest();
-    __rxRuntimePromise=import(request).then((runtime)=>{
-      __rxCleanup();
-      return runtime;
-    }).catch((error)=>{
+    __rxRuntimePromise=import(request).catch((error)=>{
       __rxRuntimePromise=undefined;
       __rxRuntimeAttempt+=1;
       throw error;
@@ -345,7 +342,9 @@ async function __rxActivateManual(targetOrSelector){
   const target=typeof targetOrSelector==="string" ? document.querySelector(targetOrSelector) : targetOrSelector;
   if(!target) return false;
   await __rxLoad();
-  return __rxActivateTarget(target);
+  const activated=await __rxActivateTarget(target);
+  __rxCleanup();
+  return activated;
 }
 globalThis.__RESUX_ACTIVATE_DEFERRED__=__rxActivateManual;
 __rxCleanups.push(()=>{
@@ -353,20 +352,116 @@ __rxCleanups.push(()=>{
     delete globalThis.__RESUX_ACTIVATE_DEFERRED__;
   }
 });
+function __rxInteractionPath(boundary,eventTarget){
+  const path=[];
+  let node=eventTarget && eventTarget.nodeType===1 ? eventTarget : boundary;
+  while(node && node!==boundary){
+    const parent=node.parentElement;
+    if(!parent) return [];
+    const index=Array.prototype.indexOf.call(parent.children,node);
+    if(index<0) return [];
+    path.push(index);
+    node=parent;
+  }
+  return node===boundary ? path.reverse() : [];
+}
+function __rxCaptureInteraction(boundary,event){
+  if(!event) return null;
+  if(event.type==="click" && event.cancelable){
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }else if(event.type==="focusin" || event.type==="keydown"){
+    event.stopPropagation();
+  }
+  return {event,path:__rxInteractionPath(boundary,event.target)};
+}
+function __rxResolveInteractionTarget(boundary,interaction){
+  let node=boundary;
+  for(const index of interaction.path){
+    const child=node.children && node.children[index];
+    if(!child) return boundary;
+    node=child;
+  }
+  return node;
+}
+function __rxReplayInteraction(boundary,interaction){
+  if(!interaction) return;
+  const replayTarget=__rxResolveInteractionTarget(boundary,interaction);
+  if(!replayTarget || !replayTarget.isConnected) return;
+  if(interaction.event.type==="click" && typeof replayTarget.click==="function"){
+    replayTarget.click();
+    return;
+  }
+  if(
+    interaction.event.type==="focusin"
+    && typeof replayTarget.focus==="function"
+    && document.activeElement!==replayTarget
+  ){
+    replayTarget.focus();
+    return;
+  }
+  let replay;
+  try{
+    replay=new interaction.event.constructor(interaction.event.type,interaction.event);
+  }catch{
+    replay=new Event(interaction.event.type,{
+      bubbles:interaction.event.bubbles,
+      cancelable:interaction.event.cancelable,
+      composed:interaction.event.composed
+    });
+  }
+  replayTarget.dispatchEvent(replay);
+}
+function __rxFindInteractionBoundary(start){
+  let current=start && start.nodeType===1 ? start : start && start.parentElement;
+  while(current){
+    if(
+      current.hasAttribute
+      && current.hasAttribute("data-rx-vue-island")
+      && __rxNormalizeTrigger(current.getAttribute("data-rx-vue-trigger"),"immediate")==="interaction"
+    ){
+      return current;
+    }
+    if(current.matches && current.matches("[data-resux-enhancement], [use-client-enhancement]")){
+      const trigger=__rxNormalizeTrigger(
+        current.getAttribute("data-resux-trigger") || current.getAttribute("data-trigger") || current.getAttribute("trigger"),
+        "visible"
+      );
+      if(trigger==="interaction") return current;
+    }
+    current=current.parentElement;
+  }
+  return null;
+}
 function __rxScheduleTarget(target,trigger){
   if(!target || trigger==="manual") return;
   let disposed=false;
+  let activating=false;
+  let interactions=[];
   let cancel=()=>{};
   const setCancel=(next)=>{
     cancel();
     cancel=typeof next==="function" ? next : ()=>{};
   };
-  const fire=()=>{
-    if(disposed || !__rxActive || !target.isConnected) return;
-    setCancel();
+  const fire=(interaction)=>{
+    if(interaction) interactions.push(interaction);
+    if(disposed || !__rxActive || !target.isConnected || activating) return;
+    activating=true;
+    if(!interaction) setCancel();
     void __rxLoad()
-      .then(()=>__rxActivateTarget(target))
+      .then(async()=>{
+        await __rxActivateTarget(target);
+        const queuedInteractions=interactions;
+        interactions=[];
+        setCancel();
+        for(const queuedInteraction of queuedInteractions){
+          __rxReplayInteraction(target,queuedInteraction);
+        }
+        __rxCleanup();
+      })
       .catch(()=>{
+        activating=false;
+        interactions=[];
         if(disposed || !__rxActive || !target.isConnected) return;
         const retryId=window.setTimeout(()=>{
           if(!disposed && __rxActive && target.isConnected) arm();
@@ -375,7 +470,7 @@ function __rxScheduleTarget(target,trigger){
       });
   };
   const scheduleTimeout=(delay=0)=>{
-    const id=window.setTimeout(fire,delay);
+    const id=window.setTimeout(()=>fire(),delay);
     setCancel(()=>window.clearTimeout(id));
   };
   const arm=()=>{
@@ -396,7 +491,7 @@ function __rxScheduleTarget(target,trigger){
     }
     if(trigger==="idle"){
       if(typeof window.requestIdleCallback==="function"){
-        const id=window.requestIdleCallback(fire);
+        const id=window.requestIdleCallback(()=>fire());
         setCancel(()=>window.cancelIdleCallback && window.cancelIdleCallback(id));
       }else{
         scheduleTimeout(32);
@@ -404,13 +499,12 @@ function __rxScheduleTarget(target,trigger){
       return;
     }
     if(trigger==="interaction"){
-      const events=["click","pointerdown","touchstart","focusin","keydown"];
-      const onInteraction=()=>{
-        setCancel();
-        fire();
+      const events=["click","focusin","keydown"];
+      const onInteraction=(event)=>{
+        fire(__rxCaptureInteraction(target,event));
       };
       for(const eventName of events){
-        target.addEventListener(eventName,onInteraction,{capture:true,passive:eventName==="pointerdown" || eventName==="touchstart"});
+        target.addEventListener(eventName,onInteraction,{capture:true});
       }
       setCancel(()=>{
         for(const eventName of events){
@@ -460,6 +554,10 @@ function __rxScheduleDeferredTargets(){
 for(const name of __rxEvents){
   const listener=(event)=>{
     if(!__rxActive) return;
+    if(
+      (name==="click" || name==="focusin" || name==="keydown")
+      && __rxFindInteractionBoundary(event.target)
+    ) return;
     const target=__rxFindTarget(event.target,"data-rx-on-"+name);
     if(!target) return;
     const mods=__rxMods(target,name);
@@ -470,7 +568,9 @@ for(const name of __rxEvents){
     if(mods.includes("stop")) event.stopPropagation();
     void __rxLoad().then(()=>{
       const dispatch=globalThis.__RESUX_DISPATCH_RESUMED_EVENT__;
-      if(typeof dispatch==="function") return dispatch(name,event);
+      const result=typeof dispatch==="function" ? dispatch(name,event) : undefined;
+      __rxCleanup();
+      return result;
     }).catch(()=>{});
   };
   const useCapture=__rxCapture(name);

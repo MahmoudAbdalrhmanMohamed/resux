@@ -181,15 +181,16 @@ export async function assertSafeResuxMediaUrl(
   } catch {
     // Treat malformed request origins as untrusted rather than skipping checks.
   }
-  if (origin && target.origin === origin.origin) {
-    return;
-  }
 
   const hostname = target.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (!hostname
-    || hostname === "localhost"
+  const isLoopbackDevelopmentHost = hostname === "localhost"
     || hostname.endsWith(".localhost")
-    || hostname.endsWith(".local")) {
+    || hostname === "127.0.0.1"
+    || hostname === "::1";
+  if (origin && target.origin === origin.origin && isLoopbackDevelopmentHost) {
+    return;
+  }
+  if (!hostname || hostname.endsWith(".local")) {
     throw new ResuxMediaFetchError("unsafe_url", "Media source resolves to a local or private network target.", 400);
   }
 
@@ -320,6 +321,7 @@ export async function fetchResuxMediaSource(
         if (!location) {
           return { response, body: null, finalUrl: currentUrl };
         }
+        await response.body?.cancel().catch(() => undefined);
         if (redirects >= RESUX_MEDIA_MAX_REDIRECTS) {
           throw new ResuxMediaFetchError(
             "too_many_redirects",

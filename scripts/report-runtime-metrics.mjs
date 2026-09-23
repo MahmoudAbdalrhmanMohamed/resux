@@ -51,11 +51,15 @@ export async function collectRuntimeMetrics() {
   const sourceRuntimePath = path.join(rootDir, "src/runtime/index.ts");
   const distRuntimePath = path.join(rootDir, "dist/runtime/index.js");
   const distRuntimeDeclarationPath = path.join(rootDir, "dist/runtime/index.d.ts");
+  const distResumePath = path.join(rootDir, "dist/runtime/resume.js");
   const distRuntimeDirectory = path.join(rootDir, "dist/runtime");
 
   let runtimeModule;
+  let resumeModule;
   try {
-    runtimeModule = await import(`${pathToFileURL(distRuntimePath).href}?metrics=${Date.now()}`);
+    const revision = Date.now();
+    runtimeModule = await import(`${pathToFileURL(distRuntimePath).href}?metrics=${revision}`);
+    resumeModule = await import(`${pathToFileURL(distResumePath).href}?metrics=${revision}`);
   } catch (error) {
     throw new Error(
       `Runtime metrics need built output at dist/runtime/index.js. Run \"npm run build\" first. ${error instanceof Error ? error.message : String(error)}`
@@ -65,6 +69,9 @@ export async function collectRuntimeMetrics() {
   if (typeof runtimeModule.getClientRuntimeSource !== "function") {
     throw new Error("dist/runtime/index.js does not export getClientRuntimeSource().");
   }
+  if (typeof resumeModule.getResumeBootstrapSource !== "function") {
+    throw new Error("dist/runtime/resume.js does not export getResumeBootstrapSource().");
+  }
 
   const [sourceRuntime, distRuntimeJavaScript, distRuntimeDeclaration, distRuntimeDirectoryStats] = await Promise.all([
     readFile(sourceRuntimePath, "utf8"),
@@ -73,6 +80,23 @@ export async function collectRuntimeMetrics() {
     directoryBytes(distRuntimeDirectory)
   ]);
   const clientRuntime = runtimeModule.getClientRuntimeSource();
+  const maxResumeEventNames = resumeModule.RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAMES;
+  const maxResumeEventNameLength = resumeModule.RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAME_LENGTH;
+  if (!Number.isInteger(maxResumeEventNames) || maxResumeEventNames <= 0) {
+    throw new Error("dist/runtime/resume.js does not expose a valid resume event-count bound.");
+  }
+  if (!Number.isInteger(maxResumeEventNameLength) || maxResumeEventNameLength <= 0) {
+    throw new Error("dist/runtime/resume.js does not expose a valid resume event-name length bound.");
+  }
+  const worstCaseEventNames = Array.from({ length: maxResumeEventNames }, (_, index) => {
+    const prefix = `event-${index.toString(36)}-`;
+    return prefix + "x".repeat(Math.max(0, maxResumeEventNameLength - prefix.length));
+  });
+  const resumeBootstrap = resumeModule.getResumeBootstrapSource({
+    eventNames: worstCaseEventNames,
+    deferEnhancements: true,
+    deferVueIslands: true,
+  });
 
   return {
     sourceRuntimeBytes: Buffer.byteLength(sourceRuntime),
@@ -82,6 +106,10 @@ export async function collectRuntimeMetrics() {
     distRuntimeTotalBytes: distRuntimeDirectoryStats.total,
     generatedClientRuntimeBytes: Buffer.byteLength(clientRuntime),
     generatedClientRuntimeGzipBytes: gzipSync(clientRuntime).byteLength,
+    generatedResumeBootstrapBytes: Buffer.byteLength(resumeBootstrap),
+    generatedResumeBootstrapGzipBytes: gzipSync(resumeBootstrap).byteLength,
+    generatedResumeBootstrapEventNames: worstCaseEventNames.length,
+    generatedResumeBootstrapEventNameLength: maxResumeEventNameLength,
     distRuntimeFiles: distRuntimeDirectoryStats.files
   };
 }
@@ -126,7 +154,9 @@ function renderMarkdown(metrics, budgets) {
     ["Built runtime declarations", "distRuntimeDeclarationBytes"],
     ["Built runtime directory", "distRuntimeTotalBytes"],
     ["Generated browser runtime", "generatedClientRuntimeBytes"],
-    ["Generated browser runtime (gzip)", "generatedClientRuntimeGzipBytes"]
+    ["Generated browser runtime (gzip)", "generatedClientRuntimeGzipBytes"],
+    ["Resume-first bootstrap", "generatedResumeBootstrapBytes"],
+    ["Resume-first bootstrap (gzip)", "generatedResumeBootstrapGzipBytes"]
   ];
   const output = [
     "## Runtime metrics",
@@ -160,6 +190,8 @@ function renderText(metrics, budgets) {
     `built runtime directory: ${formatBytes(metrics.distRuntimeTotalBytes)}`,
     `generated client runtime: ${formatBytes(metrics.generatedClientRuntimeBytes)}`,
     `generated client runtime gzip: ${formatBytes(metrics.generatedClientRuntimeGzipBytes)}`,
+    `resume-first bootstrap: ${formatBytes(metrics.generatedResumeBootstrapBytes)} (worst-case ${metrics.generatedResumeBootstrapEventNames} event names × ${metrics.generatedResumeBootstrapEventNameLength} chars)`,
+    `resume-first bootstrap gzip: ${formatBytes(metrics.generatedResumeBootstrapGzipBytes)}`,
     failures.length === 0 ? "runtime budgets: pass" : `runtime budgets: fail\n${failures.join("\n")}`
   ].join("\n");
 }

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
@@ -47,6 +48,20 @@ function countLines(value) {
   return value.split(/\r?\n/).length;
 }
 
+function createLowRedundancyEventName(index, length) {
+  let value = "";
+  let block = 0;
+
+  while (value.length < length) {
+    value += createHash("sha512")
+      .update(`resux-resume-budget:${index}:${block}`)
+      .digest("base64url");
+    block += 1;
+  }
+
+  return value.slice(0, length);
+}
+
 export async function collectRuntimeMetrics() {
   const sourceRuntimePath = path.join(rootDir, "src/runtime/index.ts");
   const distRuntimePath = path.join(rootDir, "dist/runtime/index.js");
@@ -88,10 +103,13 @@ export async function collectRuntimeMetrics() {
   if (!Number.isInteger(maxResumeEventNameLength) || maxResumeEventNameLength <= 0) {
     throw new Error("dist/runtime/resume.js does not expose a valid resume event-name length bound.");
   }
-  const worstCaseEventNames = Array.from({ length: maxResumeEventNames }, (_, index) => {
-    const prefix = `event-${index.toString(36)}-`;
-    return prefix + "x".repeat(Math.max(0, maxResumeEventNameLength - prefix.length));
-  });
+  const worstCaseEventNames = Array.from(
+    { length: maxResumeEventNames },
+    (_, index) => createLowRedundancyEventName(index, maxResumeEventNameLength),
+  );
+  if (new Set(worstCaseEventNames).size !== maxResumeEventNames) {
+    throw new Error("Resume bootstrap worst-case fixture did not produce distinct event names.");
+  }
   const resumeBootstrap = resumeModule.getResumeBootstrapSource({
     eventNames: worstCaseEventNames,
     deferEnhancements: true,

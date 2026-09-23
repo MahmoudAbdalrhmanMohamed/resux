@@ -6,5 +6,5 @@
   "generatedClientRuntimeBytes": 500000,
   "generatedClientRuntimeGzipBytes": 100000,
   "generatedResumeBootstrapBytes": 12288,
-  "generatedResumeBootstrapGzipBytes": 4096
+  "generatedResumeBootstrapGzipBytes": 4608
 }

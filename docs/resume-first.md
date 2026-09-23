@@ -154,7 +154,7 @@ Rules:
 
 The bootstrap has its own strict size budget because it is the code allowed onto the critical path for deferred pages. Growing the full optional runtime and growing the initial bootstrap are not equivalent regressions.
 
-The budget is measured against the bounded worst-case serialized event set, not a small hand-picked sample. Resume-First allows at most 32 distinct event names of up to 64 characters in the inline bootstrap; documents beyond that bound fall back to eager runtime loading instead of silently exceeding the bootstrap budget.
+The budget is measured against the bounded worst-case serialized event set, not a small hand-picked sample. Resume-First allows at most 32 distinct event names of up to 64 characters in the inline bootstrap; documents beyond that bound fall back to eager runtime loading instead of silently exceeding the bootstrap budget. The gzip guardrail uses deterministic low-redundancy valid names at the full bounds so shared prefixes or repeated filler cannot make the worst-case fixture artificially easy to compress.
 
 A performance change should answer:
 

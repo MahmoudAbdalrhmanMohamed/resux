@@ -121,6 +121,20 @@ describe("runtime performance regressions", () => {
     expect(source).toContain("clearTimeout(timeout);");
   });
 
+  it("bounds route payload caches and speculative prefetch concurrency", () => {
+    const source = getClientRuntimeSource();
+
+    expect(source).toContain("const ROUTE_PAYLOAD_CACHE_MAX_ENTRIES = 64;");
+    expect(source).toContain("const ROUTE_PAYLOAD_FAILURE_MAX_ENTRIES = 64;");
+    expect(source).toContain("const ROUTE_PREFETCH_MAX_IN_FLIGHT = 8;");
+    expect(source).toContain("function setBoundedRouteMapEntry(map, key, value, maxEntries)");
+    expect(source).toContain("while (map.size > maxEntries)");
+    expect(source).toContain("return readCachedRoutePayload(key);");
+    expect(source).toContain("countInFlightRoutePrefetches() >= ROUTE_PREFETCH_MAX_IN_FLIGHT");
+    expect(source).toContain("setBoundedRouteMapEntry(routePayloadCache, key, result, ROUTE_PAYLOAD_CACHE_MAX_ENTRIES);");
+    expect(source).toContain("}, ROUTE_PAYLOAD_FAILURE_MAX_ENTRIES);");
+  });
+
   it("hydrates i18n from public route payload config without module side effects", () => {
     const source = getClientRuntimeSource();
     expect(source).toContain("function useClientI18n(routeOverride)");

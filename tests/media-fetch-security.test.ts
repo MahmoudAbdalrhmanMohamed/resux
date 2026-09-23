@@ -1,10 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   assertSafeResuxMediaUrl,
   fetchResuxMediaSource,
   isPrivateNetworkAddress,
   ResuxMediaFetchError,
 } from "../src/security/media-fetch.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("remote media fetch security", () => {
   it.each([
@@ -39,7 +43,7 @@ describe("remote media fetch security", () => {
       new URL("http://localhost:3000/public/hero.jpg"),
       "http://localhost:3000",
       resolver,
-    )).resolves.toBeUndefined();
+    )).resolves.toEqual([]);
     expect(resolver).not.toHaveBeenCalled();
   });
 
@@ -89,6 +93,55 @@ describe("remote media fetch security", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("enforces the deadline while DNS resolution is still pending", async () => {
+    vi.useFakeTimers();
+    const request = fetchResuxMediaSource(
+      new URL("https://slow-dns.example.test/image.jpg"),
+      {
+        requestOrigin: "https://app.example.test",
+        maxBytes: 1024,
+        timeoutMs: 100,
+      },
+      {
+        fetch: vi.fn() as unknown as typeof fetch,
+        resolveAddresses: () => new Promise<string[]>(() => undefined),
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(101);
+    await expect(request).rejects.toMatchObject({
+      code: "timeout",
+      statusCode: 504,
+    });
+  });
+
+  it("cancels non-success upstream bodies before returning the status", async () => {
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("upstream error"));
+      },
+      cancel,
+    });
+    const fetchMock = vi.fn(async () => new Response(body, { status: 503 }));
+
+    const result = await fetchResuxMediaSource(
+      new URL("https://media.example.test/image.jpg"),
+      {
+        requestOrigin: "https://app.example.test",
+        maxBytes: 1024,
+      },
+      {
+        fetch: fetchMock as typeof fetch,
+        resolveAddresses: async () => ["93.184.216.34"],
+      },
+    );
+
+    expect(result.response.status).toBe(503);
+    expect(result.body).toBeNull();
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 
   it("stops reading responses that exceed the configured byte limit", async () => {

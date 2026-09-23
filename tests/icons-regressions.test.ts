@@ -73,6 +73,35 @@ describe("icon runtime regressions", () => {
     await expect(request).resolves.toBeNull();
   });
 
+  it("queues icon requests above the in-flight limit instead of dropping them", async () => {
+    const resolvers: Array<(response: Response) => void> = [];
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => {
+      resolvers.push(resolve);
+    }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const requests = Array.from({ length: 33 }, (_, index) =>
+      fetchIconifyIcon(`audit-queue:icon-${index}`, "https://icons.example.test"));
+
+    await Promise.resolve();
+    expect(fetchMock).toHaveBeenCalledTimes(32);
+
+    resolvers[0]?.(new Response(
+      '<svg viewBox="0 0 24 24"><path d="M0 0h1v1z"/></svg>',
+      { status: 200 },
+    ));
+    await requests[0];
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(33));
+
+    for (const resolve of resolvers.slice(1)) {
+      resolve(new Response(
+        '<svg viewBox="0 0 24 24"><path d="M0 0h1v1z"/></svg>',
+        { status: 200 },
+      ));
+    }
+    await Promise.all(requests);
+  });
+
   it("rejects oversized icon responses before caching them", async () => {
     const fetchMock = vi.fn(async () => new Response("x".repeat(300 * 1024), { status: 200 }));
     globalThis.fetch = fetchMock as unknown as typeof fetch;

@@ -90,7 +90,7 @@ describe("runtime performance regressions", () => {
     expect(source).toContain('reason: "navigation"');
     expect(source).toContain('pending.reason === "prefetch"');
     expect(source).toContain('return loadRoute(key, { reason: "navigation", force: true });');
-    expect(source).toContain("routePayloadFailures.set(key");
+    expect(source).toContain("setBoundedRouteMapEntry(routePayloadFailures, key");
   });
 
   it("normalizes route payload keys and keeps query while excluding hash and trailing slash", () => {

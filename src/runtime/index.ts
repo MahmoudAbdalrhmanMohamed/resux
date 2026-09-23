@@ -908,7 +908,6 @@ const resuxClientEnhancements = new Map<string, ClientEnhancementSetup>();
 const resuxActiveEnhancementDisposers = new Set<() => void | Promise<void>>();
 const resuxScheduledEnhancementDisposers = new Set<() => void | Promise<void>>();
 const resuxBoundEnhancementTargets = new WeakSet<Element>();
-const resuxDeclaredEnhancementActivators = new WeakMap<Element, () => Promise<void>>();
 const resuxVisibleEnhancementCallbacks = new Map<Element, Set<() => void>>();
 let resuxVisibleEnhancementObserver: IntersectionObserver | null = null;
 let resuxVisibleEnhancementPollTimer = 0;
@@ -1796,7 +1795,6 @@ export async function useClientEnhancement(
     disposed = true;
     resuxScheduledEnhancementDisposers.delete(dispose);
     resuxBoundEnhancementTargets.delete(target);
-    resuxDeclaredEnhancementActivators.delete(target);
     setEnhancementBound(target, false);
     if (idleWarningTimer) {
       window.clearTimeout(idleWarningTimer);
@@ -1997,14 +1995,8 @@ function prepareDeclaredClientEnhancement(
   logEnhancementDebug(`found element ${declaration.name} trigger=${declaration.trigger}`);
 }
 
-async function activateDeclaredClientEnhancement(
-  element: Element,
-  forceActivate = false,
-): Promise<void> {
+async function activateDeclaredClientEnhancement(element: Element): Promise<void> {
   if (resuxBoundEnhancementTargets.has(element)) {
-    if (forceActivate) {
-      await resuxDeclaredEnhancementActivators.get(element)?.();
-    }
     return;
   }
   const declaration = readDeclaredClientEnhancement(element);
@@ -2018,20 +2010,15 @@ async function activateDeclaredClientEnhancement(
 
   prepareDeclaredClientEnhancement(element, declaration);
   try {
-    const enhancement = await useClientEnhancement(declaration.name, {
+    await useClientEnhancement(declaration.name, {
       target: element,
       trigger: declaration.trigger,
       options: declaration.options,
     });
-    resuxDeclaredEnhancementActivators.set(element, enhancement.activate);
     setEnhancementBound(element, true);
-    if (forceActivate) {
-      await enhancement.activate();
-    }
     element.removeAttribute("data-rx-enhancement-error");
   } catch (error) {
     resuxBoundEnhancementTargets.delete(element);
-    resuxDeclaredEnhancementActivators.delete(element);
     setEnhancementBound(element, false);
     reportDeclaredClientEnhancementError(
       element,

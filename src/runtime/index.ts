@@ -2186,9 +2186,13 @@ export interface ResuxClientBootPlan {
 
 function collectResumableEventNames(html: string): string[] {
   const names = new Set<string>();
-  const pattern = /<[A-Za-z][^>]*\sdata-rx-on-([\w:-]+)\s*=/g;
-  for (const match of html.matchAll(pattern)) {
-    if (match[1]) names.add(match[1]);
+  const tagPattern = /<[A-Za-z][^>]*>/g;
+  const eventPattern = /\sdata-rx-on-([\w:-]+)\s*=/g;
+  for (const tagMatch of html.matchAll(tagPattern)) {
+    const tag = tagMatch[0];
+    for (const eventMatch of tag.matchAll(eventPattern)) {
+      if (eventMatch[1]) names.add(eventMatch[1]);
+    }
   }
   return [...names];
 }

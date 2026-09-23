@@ -85,8 +85,11 @@ const ICON_FETCH_TIMEOUT_MS = 10_000;
 const ICON_FETCH_MAX_BYTES = 256 * 1024;
 const ICON_FETCH_CACHE_MAX_ENTRIES = 256;
 const ICON_FETCH_MAX_IN_FLIGHT = 32;
+const ICON_FETCH_QUEUE_MAX_ENTRIES = 512;
 const pendingFetches = new Map<string, Promise<IconData | null>>();
 const fetchedIconCache = new Map<string, IconData>();
+const iconFetchQueue: Array<() => void> = [];
+let activeIconFetches = 0;
 
 function stripTrailingSlashes(value: string): string {
   let end = value.length;
@@ -172,6 +175,32 @@ function rememberFetchedIcon(cacheKey: string, data: IconData): void {
   }
 }
 
+function runWithIconFetchSlot(
+  task: () => Promise<IconData | null>,
+): Promise<IconData | null> {
+  if (activeIconFetches >= ICON_FETCH_MAX_IN_FLIGHT
+    && iconFetchQueue.length >= ICON_FETCH_QUEUE_MAX_ENTRIES) {
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve) => {
+    const run = () => {
+      activeIconFetches += 1;
+      void task()
+        .then(resolve, () => resolve(null))
+        .finally(() => {
+          activeIconFetches = Math.max(0, activeIconFetches - 1);
+          iconFetchQueue.shift()?.();
+        });
+    };
+    if (activeIconFetches < ICON_FETCH_MAX_IN_FLIGHT) {
+      run();
+    } else {
+      iconFetchQueue.push(run);
+    }
+  });
+}
+
 export function fetchIconifyIcon(
   name: string,
   apiProvider: string = DEFAULT_ICON_API_PROVIDER,
@@ -197,15 +226,11 @@ export function fetchIconifyIcon(
   if (pending) {
     return pending;
   }
-  if (pendingFetches.size >= ICON_FETCH_MAX_IN_FLIGHT) {
-    return Promise.resolve(null);
-  }
-
   const prefix = parts[0];
   const iconName = parts[1];
   const url = provider + "/" + encodeURIComponent(prefix) + "/" + encodeURIComponent(iconName) + ".svg";
 
-  const fetchPromise = (async () => {
+  const fetchPromise = runWithIconFetchSlot(async () => {
     const controller = typeof AbortController === "function" ? new AbortController() : null;
     const timeout = setTimeout(() => controller?.abort(), ICON_FETCH_TIMEOUT_MS);
     try {
@@ -236,7 +261,7 @@ export function fetchIconifyIcon(
     } finally {
       clearTimeout(timeout);
     }
-  })().finally(() => {
+  }).finally(() => {
     pendingFetches.delete(cacheKey);
   });
 

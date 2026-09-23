@@ -3994,35 +3994,45 @@ function createGeneratedVideoRoutePath(
   return `/_resux/generated/videos/${digest}.${extension}`;
 }
 
+function resolveGeneratedMediaDiskPath(
+  appRoot: string,
+  pathname: string,
+  mediaDirectory: "images" | "videos",
+): { filePath: string; relativePath: string } | null {
+  const publicRoot = path.resolve(appRoot, "public");
+  const generatedRoot = path.resolve(publicRoot, "_resux", "generated", mediaDirectory);
+  const resolved = resolveRequestPathWithinBoundary(publicRoot, generatedRoot, pathname);
+  return resolved
+    ? { filePath: resolved, relativePath: decodeURIComponent(pathname) }
+    : null;
+}
+
 function resolveGeneratedImageDiskPath(
   appRoot: string,
   pathname: string,
 ): { filePath: string; relativePath: string } | null {
-  const publicRoot = path.resolve(appRoot, "public");
-  const generatedRoot = path.resolve(publicRoot, "_resux", "generated", "images");
-  const resolved = resolveRequestPathWithinBoundary(publicRoot, generatedRoot, pathname);
-  if (!resolved) {
-    return null;
-  }
-  return {
-    filePath: resolved,
-    relativePath: decodeURIComponent(pathname),
-  };
+  return resolveGeneratedMediaDiskPath(appRoot, pathname, "images");
 }
 
 function resolveGeneratedVideoDiskPath(
   appRoot: string,
   pathname: string,
 ): { filePath: string; relativePath: string } | null {
-  const publicRoot = path.resolve(appRoot, "public");
-  const generatedRoot = path.resolve(publicRoot, "_resux", "generated", "videos");
-  const resolved = resolveRequestPathWithinBoundary(publicRoot, generatedRoot, pathname);
-  if (!resolved) {
-    return null;
-  }
+  return resolveGeneratedMediaDiskPath(appRoot, pathname, "videos");
+}
+
+function generatedMediaCacheTiming(
+  now: number,
+  cacheMaxAgeSeconds: number,
+): { expiresAt: number; responseMaxAge: number } {
+  const expiresAt = cacheMaxAgeSeconds
+    ? now + (cacheMaxAgeSeconds * 1000)
+    : now;
   return {
-    filePath: resolved,
-    relativePath: decodeURIComponent(pathname),
+    expiresAt,
+    responseMaxAge: cacheMaxAgeSeconds
+      ? Math.max(1, Math.floor((expiresAt - now) / 1000))
+      : 0,
   };
 }
 
@@ -4375,12 +4385,10 @@ async function serveGeneratedResuxImage(
     return;
   }
   const { body, contentType } = media;
-  const expiresAt = cacheMaxAgeSeconds
-    ? now + (cacheMaxAgeSeconds * 1000)
-    : now;
-  const responseMaxAge = cacheMaxAgeSeconds
-    ? Math.max(1, Math.floor((expiresAt - now) / 1000))
-    : 0;
+  const { expiresAt, responseMaxAge } = generatedMediaCacheTiming(
+    now,
+    cacheMaxAgeSeconds,
+  );
 
   if (cacheMaxAgeSeconds) {
     await mkdir(path.dirname(filePath), { recursive: true });
@@ -4629,12 +4637,10 @@ async function serveGeneratedResuxVideo(
     return;
   }
   const { body, contentType } = media;
-  const expiresAt = cacheMaxAgeSeconds
-    ? now + (cacheMaxAgeSeconds * 1000)
-    : now;
-  const responseMaxAge = cacheMaxAgeSeconds
-    ? Math.max(1, Math.floor((expiresAt - now) / 1000))
-    : 0;
+  const { expiresAt, responseMaxAge } = generatedMediaCacheTiming(
+    now,
+    cacheMaxAgeSeconds,
+  );
 
   if (cacheMaxAgeSeconds) {
     await mkdir(path.dirname(filePath), { recursive: true });

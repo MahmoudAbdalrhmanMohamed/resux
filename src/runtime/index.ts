@@ -24,7 +24,11 @@ import {
   watchEffect
 } from "../reactivity/index.js";
 import type { ComputedRef, Ref, WatchCallback, WatchOptions, WatchSource, WatchStopHandle } from "../reactivity/index.js";
-import { getResumeBootstrapSource } from "./resume.js";
+import {
+  getResumeBootstrapSource,
+  RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAME_LENGTH,
+  RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAMES,
+} from "./resume.js";
 
 export type JsonValue =
   | null
@@ -904,6 +908,7 @@ const resuxClientEnhancements = new Map<string, ClientEnhancementSetup>();
 const resuxActiveEnhancementDisposers = new Set<() => void | Promise<void>>();
 const resuxScheduledEnhancementDisposers = new Set<() => void | Promise<void>>();
 const resuxBoundEnhancementTargets = new WeakSet<Element>();
+const resuxDeclaredEnhancementActivators = new WeakMap<Element, () => Promise<void>>();
 const resuxVisibleEnhancementCallbacks = new Map<Element, Set<() => void>>();
 let resuxVisibleEnhancementObserver: IntersectionObserver | null = null;
 let resuxVisibleEnhancementPollTimer = 0;
@@ -1791,6 +1796,7 @@ export async function useClientEnhancement(
     disposed = true;
     resuxScheduledEnhancementDisposers.delete(dispose);
     resuxBoundEnhancementTargets.delete(target);
+    resuxDeclaredEnhancementActivators.delete(target);
     setEnhancementBound(target, false);
     if (idleWarningTimer) {
       window.clearTimeout(idleWarningTimer);
@@ -1991,8 +1997,14 @@ function prepareDeclaredClientEnhancement(
   logEnhancementDebug(`found element ${declaration.name} trigger=${declaration.trigger}`);
 }
 
-async function activateDeclaredClientEnhancement(element: Element): Promise<void> {
+async function activateDeclaredClientEnhancement(
+  element: Element,
+  forceActivate = false,
+): Promise<void> {
   if (resuxBoundEnhancementTargets.has(element)) {
+    if (forceActivate) {
+      await resuxDeclaredEnhancementActivators.get(element)?.();
+    }
     return;
   }
   const declaration = readDeclaredClientEnhancement(element);
@@ -2006,15 +2018,20 @@ async function activateDeclaredClientEnhancement(element: Element): Promise<void
 
   prepareDeclaredClientEnhancement(element, declaration);
   try {
-    await useClientEnhancement(declaration.name, {
+    const enhancement = await useClientEnhancement(declaration.name, {
       target: element,
       trigger: declaration.trigger,
       options: declaration.options,
     });
+    resuxDeclaredEnhancementActivators.set(element, enhancement.activate);
     setEnhancementBound(element, true);
+    if (forceActivate) {
+      await enhancement.activate();
+    }
     element.removeAttribute("data-rx-enhancement-error");
   } catch (error) {
     resuxBoundEnhancementTargets.delete(element);
+    resuxDeclaredEnhancementActivators.delete(element);
     setEnhancementBound(element, false);
     reportDeclaredClientEnhancementError(
       element,
@@ -2176,6 +2193,13 @@ function collectResumableEventNames(html: string): string[] {
   return [...names];
 }
 
+function canUseResumeBootstrapForEvents(eventNames: string[]): boolean {
+  return (
+    eventNames.length <= RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAMES
+    && eventNames.every((name) => name.length <= RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAME_LENGTH)
+  );
+}
+
 function selectedClientMiddlewareNeedsRuntime(payload: ResuxPayload): boolean {
   const configured = payload.pageMeta?.middleware;
   const selectedNames = new Set(
@@ -2241,7 +2265,10 @@ export function getClientRuntimeBootPlan(result: RenderResult): ResuxClientBootP
   const deferEnhancements = enhancementTriggers.some((trigger) => trigger !== "immediate");
   const deferVueIslands = vueIslandTriggers.some((trigger) => trigger !== "immediate");
 
-  if (hasEagerClientRuntimeWork(result, enhancementTriggers, vueIslandTriggers)) {
+  if (
+    hasEagerClientRuntimeWork(result, enhancementTriggers, vueIslandTriggers)
+    || !canUseResumeBootstrapForEvents(eventNames)
+  ) {
     return { mode: "eager", eventNames, deferEnhancements: false, deferVueIslands: false };
   }
   if (eventNames.length > 0 || deferEnhancements || deferVueIslands) {
@@ -6455,8 +6482,14 @@ function renderVueIsland(
   const name = resolveVueIslandName(node, context, locals);
   const props = resolveVueIslandProps(node, context, locals);
   const trigger = resolveVueIslandTrigger(node, context, locals);
+  const fallbackHtml = renderTemplateNodes(node.children, context, locals);
+  if (trigger === "interaction" && fallbackHtml.trim().length === 0) {
+    throw new Error(
+      '<VueIsland trigger="interaction"> requires server-rendered fallback children so the first interaction has a reachable target.',
+    );
+  }
   const scopeAttr = context.styleScopeId ? ` ${context.styleScopeId}=""` : "";
-  return `<div${scopeAttr} data-rx-vue-island="${escapeAttribute(name)}" data-rx-vue-trigger="${escapeAttribute(trigger)}" data-rx-vue-props="${escapeAttribute(JSON.stringify(props))}"></div>`;
+  return `<div${scopeAttr} data-rx-vue-island="${escapeAttribute(name)}" data-rx-vue-trigger="${escapeAttribute(trigger)}" data-rx-vue-props="${escapeAttribute(JSON.stringify(props))}">${fallbackHtml}</div>`;
 }
 
 function appendStyleScopeAttribute(attrs: string[], styleScopeId?: string): void {
@@ -7841,6 +7874,7 @@ function getClientRouteRevision() {
 }
 const mountedVueIslands = new Map();
 const scheduledVueIslands = new Map();
+const mountingVueIslands = new Map();
 const pendingAsyncDataControllers = globalThis.__RESUX_PENDING_ASYNC_DATA_CONTROLLERS__ ||= new Set();
 let devImportRevision = 0;
 let routeTransitionToken = 0;
@@ -7882,6 +7916,7 @@ const resuxClientEnhancements = new Map();
 const resuxActiveEnhancementDisposers = new Set();
 const resuxScheduledEnhancementDisposers = new Set();
 const resuxBoundEnhancementTargets = new WeakSet();
+const resuxDeclaredEnhancementActivators = new WeakMap();
 const resuxVisibleEnhancementCallbacks = new Map();
 let resuxVisibleEnhancementObserver = null;
 let resuxVisibleEnhancementPollTimer = 0;
@@ -8824,6 +8859,7 @@ async function useClientEnhancement(name, options = {}) {
     disposed = true;
     resuxScheduledEnhancementDisposers.delete(dispose);
     resuxBoundEnhancementTargets.delete(target);
+    resuxDeclaredEnhancementActivators.delete(target);
     setEnhancementBound(target, false);
     if (idleWarningTimer) {
       window.clearTimeout(idleWarningTimer);
@@ -9011,8 +9047,12 @@ function prepareDeclaredClientEnhancement(element, declaration) {
   logEnhancementDebug("found element " + declaration.name + " trigger=" + declaration.trigger);
 }
 
-async function activateDeclaredClientEnhancement(element) {
+async function activateDeclaredClientEnhancement(element, forceActivate = false) {
   if (resuxBoundEnhancementTargets.has(element)) {
+    if (forceActivate) {
+      const activate = resuxDeclaredEnhancementActivators.get(element);
+      if (activate) await activate();
+    }
     return;
   }
   const declaration = readDeclaredClientEnhancement(element);
@@ -9026,15 +9066,20 @@ async function activateDeclaredClientEnhancement(element) {
 
   prepareDeclaredClientEnhancement(element, declaration);
   try {
-    await useClientEnhancement(declaration.name, {
+    const enhancement = await useClientEnhancement(declaration.name, {
       target: element,
       trigger: declaration.trigger,
       options: declaration.options,
     });
+    resuxDeclaredEnhancementActivators.set(element, enhancement.activate);
     setEnhancementBound(element, true);
+    if (forceActivate) {
+      await enhancement.activate();
+    }
     element.removeAttribute("data-rx-enhancement-error");
   } catch (error) {
     resuxBoundEnhancementTargets.delete(element);
+    resuxDeclaredEnhancementActivators.delete(element);
     setEnhancementBound(element, false);
     reportDeclaredClientEnhancementError(
       element,
@@ -10699,8 +10744,37 @@ function registerDelegatedEventsFromDom(root = document) {
   });
 }
 
+function resolveDeferredActivationTarget(targetOrSelector) {
+  if (typeof targetOrSelector === "string") {
+    return document.querySelector(targetOrSelector);
+  }
+  return targetOrSelector && targetOrSelector.nodeType === 1 ? targetOrSelector : null;
+}
+
+async function activateDeferredClientTarget(target) {
+  if (!target || !target.isConnected) {
+    return false;
+  }
+  if (target.hasAttribute("data-rx-vue-island")) {
+    const payload = globalThis.__RESUX__;
+    const islands = payload && payload.vueIslands ? payload.vueIslands : {};
+    await mountVueIslandElement(target, islands);
+    return mountedVueIslands.has(target);
+  }
+  if (target.matches && target.matches("[data-resux-enhancement], [use-client-enhancement]")) {
+    await activateDeclaredClientEnhancement(target, true);
+    return true;
+  }
+  return false;
+}
+
 function installResux() {
   globalThis.__RESUX_DISPATCH_RESUMED_EVENT__ = (eventName, event) => handleDelegatedEvent(eventName, event);
+  globalThis.__RESUX_ACTIVATE_DEFERRED_TARGET__ = (target) => activateDeferredClientTarget(target);
+  globalThis.__RESUX_ACTIVATE_DEFERRED__ = (targetOrSelector) => {
+    const target = resolveDeferredActivationTarget(targetOrSelector);
+    return target ? activateDeferredClientTarget(target) : Promise.resolve(false);
+  };
   globalThis.__RESUX_USE_I18N__ = () => useClientI18n();
   globalThis.__RESUX_USE_LOCALE_PATH__ = () => useClientI18n().localePath;
   globalThis.__RESUX_USE_SWITCH_LOCALE_PATH__ = () => useClientI18n().switchLocalePath;
@@ -13752,6 +13826,16 @@ function collectScopeIdFromElement(element, ids) {
 }
 
 async function mountVueIslandElement(el, islands) {
+  if (mountedVueIslands.has(el) || mountingVueIslands.has(el) || !el.isConnected) {
+    return;
+  }
+
+  const scheduledCancel = scheduledVueIslands.get(el);
+  if (scheduledCancel) {
+    scheduledCancel();
+    scheduledVueIslands.delete(el);
+  }
+
   const name = el.getAttribute("data-rx-vue-island");
   const modulePath = name ? islands[name] : null;
   if (!name || !modulePath) {
@@ -13759,14 +13843,34 @@ async function mountVueIslandElement(el, islands) {
     return;
   }
 
+  const token = { cancelled: false };
+  mountingVueIslands.set(el, token);
+  el.setAttribute("data-rx-vue-status", "loading");
   try {
     const props = JSON.parse(el.getAttribute("data-rx-vue-props") || "{}");
     const island = await import(/* @vite-ignore */ modulePath);
+    if (token.cancelled || !el.isConnected) {
+      return;
+    }
     const app = island.mount ? island.mount(el, props) : null;
+    if (token.cancelled || !el.isConnected) {
+      if (app && typeof app.unmount === "function") {
+        app.unmount();
+      }
+      return;
+    }
     mountedVueIslands.set(el, app);
     el.setAttribute("data-rx-vue-status", "mounted");
+    el.removeAttribute("data-rx-vue-error");
   } catch {
-    el.setAttribute("data-rx-vue-error", "mount");
+    if (!token.cancelled && el.isConnected) {
+      el.setAttribute("data-rx-vue-error", "mount");
+      el.setAttribute("data-rx-vue-status", "error");
+    }
+  } finally {
+    if (mountingVueIslands.get(el) === token) {
+      mountingVueIslands.delete(el);
+    }
   }
 }
 
@@ -13793,7 +13897,6 @@ async function mountVueIslands(root = document) {
       trigger,
       el,
       async () => {
-        scheduledVueIslands.delete(el);
         await mountVueIslandElement(el, islands);
       },
     );
@@ -13806,6 +13909,12 @@ async function mountVueIslands(root = document) {
 }
 
 function unmountVueIslands(root) {
+  for (const [el, token] of mountingVueIslands.entries()) {
+    if (root && root !== el && !(root.contains && root.contains(el))) {
+      continue;
+    }
+    token.cancelled = true;
+  }
   for (const [el, cancel] of scheduledVueIslands.entries()) {
     if (root && root !== el && !(root.contains && root.contains(el))) {
       continue;

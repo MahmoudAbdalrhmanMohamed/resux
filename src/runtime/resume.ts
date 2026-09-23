@@ -199,6 +199,9 @@ export function createResumeHandlerRegistry(
 }
 
 
+export const RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAMES = 32;
+export const RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAME_LENGTH = 64;
+
 export interface ResuxResumeBootstrapOptions {
   eventNames: string[];
   runtimeSrc?: string;
@@ -221,6 +224,19 @@ export function getResumeBootstrapSource(options: ResuxResumeBootstrapOptions): 
       .map((name) => String(name || "").trim())
       .filter((name) => /^[\w:-]+$/.test(name)),
   )];
+  if (eventNames.length > RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAMES) {
+    throw new RangeError(
+      `Resume bootstrap supports at most ${RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAMES} distinct event types.`,
+    );
+  }
+  const oversizedEventName = eventNames.find(
+    (name) => name.length > RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAME_LENGTH,
+  );
+  if (oversizedEventName) {
+    throw new RangeError(
+      `Resume bootstrap event names must be at most ${RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAME_LENGTH} characters.`,
+    );
+  }
   const runtimeSrc = options.runtimeSrc?.trim() || "/__resux/runtime-client.mjs";
 
   return `const __rxEvents=${JSON.stringify(eventNames)};
@@ -321,56 +337,108 @@ function __rxNormalizeTrigger(value,fallback){
     ? trigger
     : fallback;
 }
+function __rxActivateTarget(target){
+  const activate=globalThis.__RESUX_ACTIVATE_DEFERRED_TARGET__;
+  return typeof activate==="function" ? Promise.resolve(activate(target)) : Promise.resolve(false);
+}
+async function __rxActivateManual(targetOrSelector){
+  const target=typeof targetOrSelector==="string" ? document.querySelector(targetOrSelector) : targetOrSelector;
+  if(!target) return false;
+  await __rxLoad();
+  return __rxActivateTarget(target);
+}
+globalThis.__RESUX_ACTIVATE_DEFERRED__=__rxActivateManual;
+__rxCleanups.push(()=>{
+  if(globalThis.__RESUX_ACTIVATE_DEFERRED__===__rxActivateManual){
+    delete globalThis.__RESUX_ACTIVATE_DEFERRED__;
+  }
+});
 function __rxScheduleTarget(target,trigger){
   if(!target || trigger==="manual") return;
-  const fire=()=>{ if(__rxActive) void __rxLoad().catch(()=>{}); };
-  if(trigger==="immediate"){
-    queueMicrotask(fire);
-    return;
-  }
-  if(trigger==="page-load"){
-    if(document.readyState==="complete"){
-      queueMicrotask(fire);
+  let disposed=false;
+  let cancel=()=>{};
+  const setCancel=(next)=>{
+    cancel();
+    cancel=typeof next==="function" ? next : ()=>{};
+  };
+  const fire=()=>{
+    if(disposed || !__rxActive || !target.isConnected) return;
+    setCancel();
+    void __rxLoad()
+      .then(()=>__rxActivateTarget(target))
+      .catch(()=>{
+        if(disposed || !__rxActive || !target.isConnected) return;
+        const retryId=window.setTimeout(()=>{
+          if(!disposed && __rxActive && target.isConnected) arm();
+        },250);
+        setCancel(()=>window.clearTimeout(retryId));
+      });
+  };
+  const arm=()=>{
+    if(disposed || !__rxActive || !target.isConnected) return;
+    if(trigger==="immediate"){
+      const id=window.setTimeout(fire,0);
+      setCancel(()=>window.clearTimeout(id));
       return;
     }
-    const onLoad=()=>fire();
-    window.addEventListener("load",onLoad,{once:true});
-    __rxCleanups.push(()=>window.removeEventListener("load",onLoad));
-    return;
-  }
-  if(trigger==="idle"){
-    if(typeof window.requestIdleCallback==="function"){
-      const id=window.requestIdleCallback(fire);
-      __rxCleanups.push(()=>window.cancelIdleCallback && window.cancelIdleCallback(id));
-    }else{
-      const id=window.setTimeout(fire,32);
-      __rxCleanups.push(()=>window.clearTimeout(id));
-    }
-    return;
-  }
-  if(trigger==="interaction"){
-    const events=["click","pointerdown","touchstart","focusin","keydown"];
-    const onInteraction=()=>fire();
-    for(const eventName of events){
-      target.addEventListener(eventName,onInteraction,{once:true,capture:true,passive:eventName==="pointerdown" || eventName==="touchstart"});
-      __rxCleanups.push(()=>target.removeEventListener(eventName,onInteraction,true));
-    }
-    return;
-  }
-  if(trigger==="visible"){
-    if(typeof IntersectionObserver!=="function"){
-      queueMicrotask(fire);
-      return;
-    }
-    const observer=new IntersectionObserver((entries)=>{
-      if(entries.some((entry)=>entry.isIntersecting)){
-        observer.disconnect();
-        fire();
+    if(trigger==="page-load"){
+      if(document.readyState==="complete"){
+        const id=window.setTimeout(fire,0);
+        setCancel(()=>window.clearTimeout(id));
+        return;
       }
-    });
-    observer.observe(target);
-    __rxCleanups.push(()=>observer.disconnect());
-  }
+      const onLoad=()=>fire();
+      window.addEventListener("load",onLoad,{once:true});
+      setCancel(()=>window.removeEventListener("load",onLoad));
+      return;
+    }
+    if(trigger==="idle"){
+      if(typeof window.requestIdleCallback==="function"){
+        const id=window.requestIdleCallback(fire);
+        setCancel(()=>window.cancelIdleCallback && window.cancelIdleCallback(id));
+      }else{
+        const id=window.setTimeout(fire,32);
+        setCancel(()=>window.clearTimeout(id));
+      }
+      return;
+    }
+    if(trigger==="interaction"){
+      const events=["click","pointerdown","touchstart","focusin","keydown"];
+      const onInteraction=()=>{
+        setCancel();
+        fire();
+      };
+      for(const eventName of events){
+        target.addEventListener(eventName,onInteraction,{capture:true,passive:eventName==="pointerdown" || eventName==="touchstart"});
+      }
+      setCancel(()=>{
+        for(const eventName of events){
+          target.removeEventListener(eventName,onInteraction,true);
+        }
+      });
+      return;
+    }
+    if(trigger==="visible"){
+      if(typeof IntersectionObserver!=="function"){
+        const id=window.setTimeout(fire,0);
+        setCancel(()=>window.clearTimeout(id));
+        return;
+      }
+      const observer=new IntersectionObserver((entries)=>{
+        if(entries.some((entry)=>entry.isIntersecting)){
+          observer.disconnect();
+          fire();
+        }
+      });
+      observer.observe(target);
+      setCancel(()=>observer.disconnect());
+    }
+  };
+  arm();
+  __rxCleanups.push(()=>{
+    disposed=true;
+    cancel();
+  });
 }
 function __rxScheduleDeferredTargets(){
   if(__rxDeferEnhancements){

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   defineComponent,
   getClientRuntimeBootPlan,
+  getClientRuntimeSource,
   renderApp,
   renderDocument,
   type RenderResult,
@@ -51,6 +52,56 @@ describe("demand-driven client work", () => {
     expect(result.html).toContain('data-rx-vue-island="Chart"');
     expect(result.html).toContain('data-rx-vue-trigger="visible"');
     expect(getClientRuntimeBootPlan(result).mode).toBe("interaction");
+  });
+
+  it("renders interaction Vue islands with a reachable SSR fallback and rejects empty interaction boundaries", async () => {
+    const withFallback = defineComponent({
+      id: "interaction-page",
+      name: "InteractionPage",
+      file: "InteractionPage.vue",
+      handlers: [],
+      script() {
+        return {};
+      },
+      template: [{
+        type: "element",
+        tag: "VueIsland",
+        attrs: [
+          { kind: "static", name: "name", value: "Menu" },
+          { kind: "static", name: "trigger", value: "interaction" },
+        ],
+        events: [],
+        children: [{
+          type: "element",
+          tag: "button",
+          attrs: [],
+          events: [],
+          children: [{ type: "text", value: "Open menu" }],
+        }],
+      }],
+    });
+
+    const rendered = await renderApp({
+      page: withFallback,
+      route: { path: "/", params: {}, query: {} },
+      vueIslands: { Menu: "/__resux/vue-islands/menu.mjs" },
+    });
+    expect(rendered.html).toContain("<button>Open menu</button>");
+    expect(rendered.html).toContain('data-rx-vue-trigger="interaction"');
+
+    const withoutFallback = defineComponent({
+      ...withFallback,
+      id: "empty-interaction-page",
+      template: [{
+        ...withFallback.template[0],
+        children: [],
+      }],
+    });
+    await expect(renderApp({
+      page: withoutFallback,
+      route: { path: "/", params: {}, query: {} },
+      vueIslands: { Menu: "/__resux/vue-islands/menu.mjs" },
+    })).rejects.toThrow("requires server-rendered fallback children");
   });
 
   it("defers default-visible client enhancements instead of eagerly booting", () => {
@@ -112,6 +163,9 @@ describe("demand-driven client work", () => {
     expect(source).toContain('trigger==="manual"');
     expect(source).toContain("IntersectionObserver");
     expect(source).toContain("requestIdleCallback");
+    expect(source).toContain("__rxActivateTarget(target)");
+    expect(source).toContain("target.isConnected");
+    expect(source).toContain("window.setTimeout(()=>{");
   });
 
   it("does not let manual work accidentally pull the full runtime into initial load", () => {
@@ -122,5 +176,27 @@ describe("demand-driven client work", () => {
     const document = renderDocument(result);
     expect(getClientRuntimeBootPlan(result).mode).toBe("interaction");
     expect(document).not.toContain('src="/__resux/runtime-client.mjs"');
+    expect(document).toContain("__RESUX_ACTIVATE_DEFERRED__");
+  });
+
+  it("keeps oversized event sets off the bounded inline bootstrap", () => {
+    const eventAttributes = Array.from(
+      { length: 33 },
+      (_, index) => `data-rx-on-event${index}="s0:c0:h${index}"`,
+    ).join(" ");
+    const result = createResult(`<button ${eventAttributes}>Many events</button>`);
+
+    expect(getClientRuntimeBootPlan(result).mode).toBe("eager");
+    expect(renderDocument(result)).toContain('src="/__resux/runtime-client.mjs"');
+  });
+
+  it("guards in-flight Vue island imports and exposes runtime activation for manual targets", () => {
+    const runtime = getClientRuntimeSource();
+
+    expect(runtime).toContain("const mountingVueIslands = new Map()");
+    expect(runtime).toContain("token.cancelled || !el.isConnected");
+    expect(runtime).toContain("token.cancelled = true");
+    expect(runtime).toContain("__RESUX_ACTIVATE_DEFERRED_TARGET__");
+    expect(runtime).toContain("__RESUX_ACTIVATE_DEFERRED__");
   });
 });

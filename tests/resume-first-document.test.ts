@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getClientRuntimeBootPlan,
   renderDocument,
   shouldLoadClientRuntime,
   type RenderResult,
@@ -37,7 +38,7 @@ describe("resume-first document boot", () => {
     expect(document).toContain('<a href="/docs">Docs</a>');
   });
 
-  it("keeps the runtime for resumable event handlers", () => {
+  it("defers event-only pages until their first resumable interaction", () => {
     const result = createResult(
       '<button data-rx-on-click="s0:c0:increment">Increment</button>',
       {
@@ -54,10 +55,17 @@ describe("resume-first document boot", () => {
     );
 
     expect(shouldLoadClientRuntime(result)).toBe(true);
+    expect(getClientRuntimeBootPlan(result)).toEqual({
+      mode: "interaction",
+      eventNames: ["click"],
+    });
 
     const document = renderDocument(result);
     expect(document).toContain("window.__RESUX__=");
-    expect(document).toContain('/__resux/runtime-client.mjs');
+    expect(document).not.toContain('src="/__resux/runtime-client.mjs"');
+    expect(document).toContain('const __rxEvents=["click"]');
+    expect(document).toContain("const request=__rxRuntimeRequest();");
+    expect(document).toContain("import(request)");
   });
 
   it("keeps startup behavior for pending async data and client support modules", () => {
@@ -78,6 +86,7 @@ describe("resume-first document boot", () => {
       },
     });
     expect(shouldLoadClientRuntime(pending)).toBe(true);
+    expect(getClientRuntimeBootPlan(pending).mode).toBe("eager");
 
     const plugin = createResult("<main>Plugin</main>", {
       plugins: [{
@@ -88,6 +97,7 @@ describe("resume-first document boot", () => {
       }],
     });
     expect(shouldLoadClientRuntime(plugin)).toBe(true);
+    expect(getClientRuntimeBootPlan(plugin).mode).toBe("eager");
   });
 
   it("keeps islands, enhancements, and managed media on the client path", () => {
@@ -108,55 +118,45 @@ describe("resume-first document boot", () => {
     ))).toBe(true);
   });
 
-  it("does not treat documentation text as client-work attributes", () => {
+  it("does not treat documentation text as client-work attributes or events", () => {
     const result = createResult(
       "<main><code>data-rx-vue-island</code><p>data-rx-video-controls</p><pre>data-rx-on-click=</pre></main>",
     );
 
-    expect(shouldLoadClientRuntime(result)).toBe(false);
+    expect(getClientRuntimeBootPlan(result)).toEqual({ mode: "none", eventNames: [] });
   });
 
   it("boots only client middleware selected by the current route", () => {
-    const middleware = [
-      {
-        id: "global-server",
-        name: "server-only",
-        file: "middleware/server.ts",
-        global: true,
-        mode: "server" as const,
-        src: "/__resux/middleware/server.mjs",
-      },
-      {
-        id: "named-client",
-        name: "auth",
-        file: "middleware/auth.client.ts",
-        global: false,
-        mode: "client" as const,
-        src: "/__resux/middleware/auth.mjs",
-      },
-      {
-        id: "global-client",
-        name: "analytics",
-        file: "middleware/analytics.client.ts",
-        global: true,
-        mode: "client" as const,
-        src: "/__resux/middleware/analytics.mjs",
-      },
-    ];
+    const namedClient = {
+      id: "named-client",
+      name: "auth",
+      file: "middleware/auth.client.ts",
+      global: false,
+      mode: "client" as const,
+      src: "/__resux/middleware/auth.mjs",
+    };
+    const globalClient = {
+      id: "global-client",
+      name: "analytics",
+      file: "middleware/analytics.client.ts",
+      global: true,
+      mode: "client" as const,
+      src: "/__resux/middleware/analytics.mjs",
+    };
 
-    expect(shouldLoadClientRuntime(createResult("<main>Public</main>", {
-      middleware: middleware.slice(0, 2),
+    expect(getClientRuntimeBootPlan(createResult("<main>Public</main>", {
+      middleware: [namedClient],
       pageMeta: {},
-    }))).toBe(false);
+    })).mode).toBe("none");
 
-    expect(shouldLoadClientRuntime(createResult("<main>Private</main>", {
-      middleware: middleware.slice(0, 2),
+    expect(getClientRuntimeBootPlan(createResult("<main>Private</main>", {
+      middleware: [namedClient],
       pageMeta: { middleware: "auth" },
-    }))).toBe(true);
+    })).mode).toBe("eager");
 
-    expect(shouldLoadClientRuntime(createResult("<main>Global</main>", {
-      middleware: [middleware[2]],
+    expect(getClientRuntimeBootPlan(createResult("<main>Global</main>", {
+      middleware: [globalClient],
       pageMeta: {},
-    }))).toBe(true);
+    })).mode).toBe("eager");
   });
 });

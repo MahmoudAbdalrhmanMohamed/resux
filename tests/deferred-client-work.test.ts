@@ -52,15 +52,26 @@ function createVueIslandPage(
   });
 }
 
+async function renderVueIslandTestPage(
+  page: Parameters<typeof renderApp>[0]["page"],
+  islandName: string,
+  components?: Parameters<typeof renderApp>[0]["components"],
+) {
+  return renderApp({
+    page,
+    route: { path: "/", params: {}, query: {} },
+    ...(components ? { components } : {}),
+    vueIslands: {
+      [islandName]: `/__resux/vue-islands/${islandName.toLowerCase()}.mjs`,
+    },
+  });
+}
+
 describe("demand-driven client work", () => {
   it("renders Vue island trigger metadata without importing its client module on the server", async () => {
     const page = createVueIslandPage("page", "Chart", "visible");
 
-    const result = await renderApp({
-      page,
-      route: { path: "/", params: {}, query: {} },
-      vueIslands: { Chart: "/__resux/vue-islands/chart.mjs" },
-    });
+    const result = await renderVueIslandTestPage(page, "Chart");
 
     expect(result.html).toContain('data-rx-vue-island="Chart"');
     expect(result.html).toContain('data-rx-vue-trigger="visible"');
@@ -75,11 +86,7 @@ describe("demand-driven client work", () => {
       "button",
     );
 
-    const rendered = await renderApp({
-      page: withFallback,
-      route: { path: "/", params: {}, query: {} },
-      vueIslands: { Menu: "/__resux/vue-islands/menu.mjs" },
-    });
+    const rendered = await renderVueIslandTestPage(withFallback, "Menu");
     expect(rendered.html).toContain("<button>Open menu</button>");
     expect(rendered.html).toContain('data-rx-vue-trigger="interaction"');
 
@@ -88,11 +95,9 @@ describe("demand-driven client work", () => {
       "Menu",
       "interaction",
     );
-    await expect(renderApp({
-      page: withoutFallback,
-      route: { path: "/", params: {}, query: {} },
-      vueIslands: { Menu: "/__resux/vue-islands/menu.mjs" },
-    })).rejects.toThrow("requires server-rendered fallback children");
+    await expect(
+      renderVueIslandTestPage(withoutFallback, "Menu"),
+    ).rejects.toThrow("requires server-rendered fallback children");
   });
 
   it("renders Vue island component fallbacks through the async renderer", async () => {
@@ -119,12 +124,11 @@ describe("demand-driven client work", () => {
       "component",
     );
 
-    const rendered = await renderApp({
+    const rendered = await renderVueIslandTestPage(
       page,
-      route: { path: "/", params: {}, query: {} },
-      components: { FallbackCard: fallbackCard },
-      vueIslands: { Menu: "/__resux/vue-islands/menu.mjs" },
-    });
+      "Menu",
+      { FallbackCard: fallbackCard },
+    );
 
     expect(rendered.html).toContain("<strong>Ready to interact</strong>");
     expect(rendered.html).toContain('data-rx-vue-trigger="interaction"');

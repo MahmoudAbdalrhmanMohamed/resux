@@ -21,27 +21,44 @@ function createResult(html: string): RenderResult {
   } as RenderResult;
 }
 
+function createVueIslandPage(
+  id: string,
+  islandName: string,
+  trigger: string,
+  withFallback = false,
+) {
+  return defineComponent({
+    id,
+    name: id,
+    file: `${id}.vue`,
+    handlers: [],
+    script() {
+      return {};
+    },
+    template: [{
+      type: "element",
+      tag: "VueIsland",
+      attrs: [
+        { kind: "static", name: "name", value: islandName },
+        { kind: "static", name: "trigger", value: trigger },
+      ],
+      events: [],
+      children: withFallback
+        ? [{
+            type: "element",
+            tag: "button",
+            attrs: [],
+            events: [],
+            children: [{ type: "text", value: "Open menu" }],
+          }]
+        : [],
+    }],
+  });
+}
+
 describe("demand-driven client work", () => {
   it("renders Vue island trigger metadata without importing its client module on the server", async () => {
-    const page = defineComponent({
-      id: "page",
-      name: "Page",
-      file: "Page.vue",
-      handlers: [],
-      script() {
-        return {};
-      },
-      template: [{
-        type: "element",
-        tag: "VueIsland",
-        attrs: [
-          { kind: "static", name: "name", value: "Chart" },
-          { kind: "static", name: "trigger", value: "visible" },
-        ],
-        events: [],
-        children: [],
-      }],
-    });
+    const page = createVueIslandPage("page", "Chart", "visible");
 
     const result = await renderApp({
       page,
@@ -55,31 +72,12 @@ describe("demand-driven client work", () => {
   });
 
   it("renders interaction Vue islands with a reachable SSR fallback and rejects empty interaction boundaries", async () => {
-    const withFallback = defineComponent({
-      id: "interaction-page",
-      name: "InteractionPage",
-      file: "InteractionPage.vue",
-      handlers: [],
-      script() {
-        return {};
-      },
-      template: [{
-        type: "element",
-        tag: "VueIsland",
-        attrs: [
-          { kind: "static", name: "name", value: "Menu" },
-          { kind: "static", name: "trigger", value: "interaction" },
-        ],
-        events: [],
-        children: [{
-          type: "element",
-          tag: "button",
-          attrs: [],
-          events: [],
-          children: [{ type: "text", value: "Open menu" }],
-        }],
-      }],
-    });
+    const withFallback = createVueIslandPage(
+      "interaction-page",
+      "Menu",
+      "interaction",
+      true,
+    );
 
     const rendered = await renderApp({
       page: withFallback,
@@ -89,14 +87,11 @@ describe("demand-driven client work", () => {
     expect(rendered.html).toContain("<button>Open menu</button>");
     expect(rendered.html).toContain('data-rx-vue-trigger="interaction"');
 
-    const withoutFallback = defineComponent({
-      ...withFallback,
-      id: "empty-interaction-page",
-      template: [{
-        ...withFallback.template[0],
-        children: [],
-      }],
-    });
+    const withoutFallback = createVueIslandPage(
+      "empty-interaction-page",
+      "Menu",
+      "interaction",
+    );
     await expect(renderApp({
       page: withoutFallback,
       route: { path: "/", params: {}, query: {} },

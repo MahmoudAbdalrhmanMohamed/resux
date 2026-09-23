@@ -2620,6 +2620,115 @@ async function fetchMediaSourceOrRespond(
   }
 }
 
+function respondMediaJsonError(
+  response: ServerResponse,
+  statusCode: number,
+  error: string,
+): void {
+  response.writeHead(statusCode, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  response.end(JSON.stringify({ error }));
+}
+
+async function fetchAndTransformImageSource(
+  request: IncomingMessage,
+  response: ServerResponse,
+  sourceUrl: URL,
+  requestOrigin: string,
+  options: ResuxImageRequestOptions,
+): Promise<{ body: Buffer; contentType: string } | null> {
+  const upstream = await fetchMediaSourceOrRespond(
+    request,
+    response,
+    sourceUrl,
+    requestOrigin,
+    "image",
+  );
+  if (!upstream) {
+    return null;
+  }
+  if (!upstream.response.ok) {
+    respondMediaJsonError(
+      response,
+      upstream.response.status,
+      `Image source request failed with status ${upstream.response.status}.`,
+    );
+    return null;
+  }
+
+  const sourceBuffer = upstream.body ?? Buffer.alloc(0);
+  const sourceContentType = upstream.response.headers.get("content-type");
+  const needsTransform = shouldTransformImage(options);
+  const transformed = await transformResuxImage(sourceBuffer, sourceContentType, options);
+  if (needsTransform && !transformed) {
+    respondMediaJsonError(
+      response,
+      501,
+      sharpFactoryLoadError
+        ?? "Image transform failed. Verify source format and requested modifiers.",
+    );
+    return null;
+  }
+
+  return {
+    body: transformed?.buffer ?? sourceBuffer,
+    contentType: transformed?.contentType ?? sourceContentType ?? "application/octet-stream",
+  };
+}
+
+async function fetchAndTransformVideoSource(
+  request: IncomingMessage,
+  response: ServerResponse,
+  sourceUrl: URL,
+  requestOrigin: string,
+  options: ResuxVideoRequestOptions,
+  sourceIdentity: string,
+): Promise<{ body: Buffer; contentType: string } | null> {
+  const upstream = await fetchMediaSourceOrRespond(
+    request,
+    response,
+    sourceUrl,
+    requestOrigin,
+    "video",
+  );
+  if (!upstream) {
+    return null;
+  }
+  if (!upstream.response.ok) {
+    respondMediaJsonError(
+      response,
+      upstream.response.status,
+      `Video source request failed with status ${upstream.response.status}.`,
+    );
+    return null;
+  }
+
+  const sourceBuffer = upstream.body ?? Buffer.alloc(0);
+  const sourceContentType = upstream.response.headers.get("content-type");
+  const needsTransform = shouldTransformVideo(options);
+  const transformed = await transformResuxVideo(sourceBuffer, sourceIdentity, options);
+  if (needsTransform && !transformed) {
+    respondMediaJsonError(
+      response,
+      501,
+      ffmpegBinaryLoadError
+        ?? ffmpegTransformLastError
+        ?? "Video transform failed. Verify ffmpeg availability and requested options.",
+    );
+    return null;
+  }
+
+  return {
+    body: transformed?.buffer ?? sourceBuffer,
+    contentType:
+      transformed?.contentType
+      ?? sourceContentType
+      ?? mimeTypeFromVideoFormat(options.format ?? inferVideoFormatFromSource(sourceIdentity) ?? "mp4"),
+  };
+}
+
 function readPort(value: string | undefined, fallback: number): number {
   if (!value) {
     return fallback;
@@ -4086,56 +4195,17 @@ async function serveResuxImage(
     extraModifiers: parseImageExtraModifiers(requestUrl.searchParams),
   };
 
-  const upstream = await fetchMediaSourceOrRespond(
+  const media = await fetchAndTransformImageSource(
     request,
     response,
     sourceUrl,
     requestOrigin,
-    "image",
-  );
-  if (!upstream) {
-    return;
-  }
-
-  if (!upstream.response.ok) {
-    response.writeHead(upstream.response.status, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(
-      JSON.stringify({
-        error: `Image source request failed with status ${upstream.response.status}.`,
-      }),
-    );
-    return;
-  }
-
-  const sourceBuffer = upstream.body ?? Buffer.alloc(0);
-  const sourceContentType = upstream.response.headers.get("content-type");
-  const needsTransform = shouldTransformImage(options);
-  const transformed = await transformResuxImage(
-    sourceBuffer,
-    sourceContentType,
     options,
   );
-  if (needsTransform && !transformed) {
-    response.writeHead(501, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(
-      JSON.stringify({
-        error:
-          sharpFactoryLoadError
-          ?? "Image transform failed. Verify source format and requested modifiers.",
-      }),
-    );
+  if (!media) {
     return;
   }
-
-  const body = transformed?.buffer ?? sourceBuffer;
-  const contentType =
-    transformed?.contentType ?? sourceContentType ?? "application/octet-stream";
+  const { body, contentType } = media;
   const cacheControl = shouldTransformImage(options)
     ? "public, max-age=31536000, immutable"
     : "public, max-age=86400";
@@ -4294,56 +4364,17 @@ async function serveGeneratedResuxImage(
     return;
   }
 
-  const upstream = await fetchMediaSourceOrRespond(
+  const media = await fetchAndTransformImageSource(
     request,
     response,
     sourceUrl,
     requestOrigin,
-    "image",
-  );
-  if (!upstream) {
-    return;
-  }
-
-  if (!upstream.response.ok) {
-    response.writeHead(upstream.response.status, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(
-      JSON.stringify({
-        error: `Image source request failed with status ${upstream.response.status}.`,
-      }),
-    );
-    return;
-  }
-
-  const sourceBuffer = upstream.body ?? Buffer.alloc(0);
-  const sourceContentType = upstream.response.headers.get("content-type");
-  const needsTransform = shouldTransformImage(options);
-  const transformed = await transformResuxImage(
-    sourceBuffer,
-    sourceContentType,
     options,
   );
-  if (needsTransform && !transformed) {
-    response.writeHead(501, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(
-      JSON.stringify({
-        error:
-          sharpFactoryLoadError
-          ?? "Image transform failed. Verify source format and requested modifiers.",
-      }),
-    );
+  if (!media) {
     return;
   }
-
-  const body = transformed?.buffer ?? sourceBuffer;
-  const contentType =
-    transformed?.contentType ?? sourceContentType ?? "application/octet-stream";
+  const { body, contentType } = media;
   const expiresAt = cacheMaxAgeSeconds
     ? now + (cacheMaxAgeSeconds * 1000)
     : now;
@@ -4436,59 +4467,18 @@ async function serveResuxVideo(
       ?? normalizeVideoQuality(requestUrl.searchParams.get("quality")),
   };
 
-  const upstream = await fetchMediaSourceOrRespond(
+  const media = await fetchAndTransformVideoSource(
     request,
     response,
     sourceUrl,
     requestOrigin,
-    "video",
-  );
-  if (!upstream) {
-    return;
-  }
-
-  if (!upstream.response.ok) {
-    response.writeHead(upstream.response.status, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(
-      JSON.stringify({
-        error: `Video source request failed with status ${upstream.response.status}.`,
-      }),
-    );
-    return;
-  }
-
-  const sourceBuffer = upstream.body ?? Buffer.alloc(0);
-  const sourceContentType = upstream.response.headers.get("content-type");
-  const needsTransform = shouldTransformVideo(options);
-  const transformed = await transformResuxVideo(
-    sourceBuffer,
-    sourceParam || sourceUrl.pathname,
     options,
+    sourceParam || sourceUrl.pathname,
   );
-  if (needsTransform && !transformed) {
-    response.writeHead(501, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(
-      JSON.stringify({
-        error:
-          ffmpegBinaryLoadError
-          ?? ffmpegTransformLastError
-          ?? "Video transform failed. Verify ffmpeg availability and requested options.",
-      }),
-    );
+  if (!media) {
     return;
   }
-
-  const body = transformed?.buffer ?? sourceBuffer;
-  const contentType =
-    transformed?.contentType
-    ?? sourceContentType
-    ?? mimeTypeFromVideoFormat(inferVideoFormatFromSource(sourceParam || sourceUrl.pathname) ?? "mp4");
+  const { body, contentType } = media;
   const cacheControl = needsTransform
     ? "public, max-age=31536000, immutable"
     : "public, max-age=86400";
@@ -4627,58 +4617,18 @@ async function serveGeneratedResuxVideo(
     return;
   }
 
-  const upstream = await fetchMediaSourceOrRespond(
+  const media = await fetchAndTransformVideoSource(
     request,
     response,
     sourceUrl,
     requestOrigin,
-    "video",
-  );
-  if (!upstream) {
-    return;
-  }
-  if (!upstream.response.ok) {
-    response.writeHead(upstream.response.status, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(
-      JSON.stringify({
-        error: `Video source request failed with status ${upstream.response.status}.`,
-      }),
-    );
-    return;
-  }
-
-  const sourceBuffer = upstream.body ?? Buffer.alloc(0);
-  const sourceContentType = upstream.response.headers.get("content-type");
-  const needsTransform = shouldTransformVideo(options);
-  const transformed = await transformResuxVideo(
-    sourceBuffer,
-    sourceParam || sourceUrl.pathname,
     options,
+    sourceParam || sourceUrl.pathname,
   );
-  if (needsTransform && !transformed) {
-    response.writeHead(501, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(
-      JSON.stringify({
-        error:
-          ffmpegBinaryLoadError
-          ?? ffmpegTransformLastError
-          ?? "Video transform failed. Verify ffmpeg availability and requested options.",
-      }),
-    );
+  if (!media) {
     return;
   }
-
-  const body = transformed?.buffer ?? sourceBuffer;
-  const contentType =
-    transformed?.contentType
-    ?? sourceContentType
-    ?? mimeTypeFromVideoFormat(options.format ?? inferVideoFormatFromSource(sourceParam) ?? "mp4");
+  const { body, contentType } = media;
   const expiresAt = cacheMaxAgeSeconds
     ? now + (cacheMaxAgeSeconds * 1000)
     : now;

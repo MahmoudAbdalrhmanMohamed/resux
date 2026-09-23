@@ -374,17 +374,19 @@ function __rxScheduleTarget(target,trigger){
         setCancel(()=>window.clearTimeout(retryId));
       });
   };
+  const scheduleTimeout=(delay=0)=>{
+    const id=window.setTimeout(fire,delay);
+    setCancel(()=>window.clearTimeout(id));
+  };
   const arm=()=>{
     if(disposed || !__rxActive || !target.isConnected) return;
     if(trigger==="immediate"){
-      const id=window.setTimeout(fire,0);
-      setCancel(()=>window.clearTimeout(id));
+      scheduleTimeout();
       return;
     }
     if(trigger==="page-load"){
       if(document.readyState==="complete"){
-        const id=window.setTimeout(fire,0);
-        setCancel(()=>window.clearTimeout(id));
+        scheduleTimeout();
         return;
       }
       const onLoad=()=>fire();
@@ -397,8 +399,7 @@ function __rxScheduleTarget(target,trigger){
         const id=window.requestIdleCallback(fire);
         setCancel(()=>window.cancelIdleCallback && window.cancelIdleCallback(id));
       }else{
-        const id=window.setTimeout(fire,32);
-        setCancel(()=>window.clearTimeout(id));
+        scheduleTimeout(32);
       }
       return;
     }
@@ -420,8 +421,7 @@ function __rxScheduleTarget(target,trigger){
     }
     if(trigger==="visible"){
       if(typeof IntersectionObserver!=="function"){
-        const id=window.setTimeout(fire,0);
-        setCancel(()=>window.clearTimeout(id));
+        scheduleTimeout();
         return;
       }
       const observer=new IntersectionObserver((entries)=>{

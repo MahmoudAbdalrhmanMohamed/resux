@@ -5,9 +5,27 @@ import {
   getClientRuntimeSource,
   renderApp,
   renderDocument,
+  type ComponentDefinition,
 } from "../src/runtime/index.js";
 import { getResumeBootstrapSource } from "../src/runtime/resume.js";
 import { createRuntimeResult } from "./runtime-result-fixture.js";
+
+function createTestComponent(
+  id: string,
+  name: string,
+  template: ComponentDefinition["template"],
+): ComponentDefinition {
+  return defineComponent({
+    id,
+    name,
+    file: `${id}.vue`,
+    handlers: [],
+    script() {
+      return {};
+    },
+    template,
+  });
+}
 
 function createVueIslandPage(
   id: string,
@@ -15,15 +33,7 @@ function createVueIslandPage(
   trigger: string,
   fallback: "none" | "button" | "component" = "none",
 ) {
-  return defineComponent({
-    id,
-    name: id,
-    file: `${id}.vue`,
-    handlers: [],
-    script() {
-      return {};
-    },
-    template: [{
+  return createTestComponent(id, id, [{
       type: "element",
       tag: "VueIsland",
       attrs: [
@@ -49,7 +59,7 @@ function createVueIslandPage(
             }]
           : [],
     }],
-  });
+  );
 }
 
 async function renderVueIslandTestPage(
@@ -101,22 +111,17 @@ describe("demand-driven client work", () => {
   });
 
   it("renders Vue island component fallbacks through the async renderer", async () => {
-    const fallbackCard = defineComponent({
-      id: "fallback-card",
-      name: "FallbackCard",
-      file: "FallbackCard.vue",
-      handlers: [],
-      script() {
-        return {};
-      },
-      template: [{
+    const fallbackCard = createTestComponent(
+      "fallback-card",
+      "FallbackCard",
+      [{
         type: "element",
         tag: "strong",
         attrs: [],
         events: [],
         children: [{ type: "text", value: "Ready to interact" }],
       }],
-    });
+    );
     const page = createVueIslandPage(
       "component-fallback-page",
       "Menu",

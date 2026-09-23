@@ -37,10 +37,11 @@ describe("resume-first interaction bootstrap", () => {
     expect(source).toContain('mods.includes("exact")');
     expect(source).toContain('__rxKeyMatches(event,mods)');
     expect(source).toContain('__rxMouseMatches(event,mods)');
-    expect(source.indexOf("if(!__rxMatches(event,mods,name,target)) return;"))
-      .toBeLessThan(source.indexOf("event.preventDefault();"));
-    expect(source.indexOf("if(!__rxMatches(event,mods,name,target)) return;"))
-      .toBeLessThan(source.indexOf("void __rxLoad().then(()=>{"));
+    const delegatedListener = source.slice(source.indexOf("for(const name of __rxEvents){"));
+    expect(delegatedListener.indexOf("if(!__rxMatches(event,mods,name,target)) return;"))
+      .toBeLessThan(delegatedListener.indexOf("event.preventDefault();"));
+    expect(delegatedListener.indexOf("if(!__rxMatches(event,mods,name,target)) return;"))
+      .toBeLessThan(delegatedListener.indexOf("void __rxLoad().then(()=>{"));
   });
 
   it("allows a later interaction to retry after a rejected runtime import", () => {
@@ -49,7 +50,7 @@ describe("resume-first interaction bootstrap", () => {
     expect(source).toContain("__rxRuntimePromise=undefined;");
     expect(source).toContain("__rxRuntimeAttempt+=1;");
     expect(source).toContain('"rx_retry="+__rxRuntimeAttempt');
-    expect(source).toContain("}).catch((error)=>{");
+    expect(source).toContain("import(request).catch((error)=>{");
     expect(source).toContain("}).catch(()=>{});");
   });
 

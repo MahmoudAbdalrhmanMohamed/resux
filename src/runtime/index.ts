@@ -6615,22 +6615,29 @@ function renderResuxLoadingIndicatorMarkup(
   return `<div ${attrs.join(" ")}><div class="rx-loading-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Idle"><span class="rx-loading-progress"></span></div>${slot}</div>`;
 }
 
+function resolveVueIslandAttributeValue(
+  node: ElementTemplateNode,
+  attributeName: string,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>
+): string | undefined {
+  const attr = node.attrs.find((candidate) => candidate.name === attributeName);
+  if (!attr) return undefined;
+  return attr.kind === "static"
+    ? attr.value
+    : stringifyValue(evaluateExpression(attr.value, context.scope, locals));
+}
+
 function resolveVueIslandName(
   node: ElementTemplateNode,
   context: RenderTemplateContext,
   locals: Record<string, unknown>
 ): string {
-  const dynamic = node.attrs.find((attr) => attr.kind === "dynamic" && attr.name === "name");
-  if (dynamic) {
-    return stringifyValue(evaluateExpression(dynamic.value, context.scope, locals));
-  }
-
-  const fixed = node.attrs.find((attr) => attr.kind === "static" && attr.name === "name");
-  if (!fixed?.value) {
+  const nameAttr = node.attrs.find((attr) => attr.name === "name");
+  if (!nameAttr || (nameAttr.kind === "static" && !nameAttr.value)) {
     throw new Error("<VueIsland> needs a name attribute.");
   }
-
-  return fixed.value;
+  return resolveVueIslandAttributeValue(node, "name", context, locals) ?? "";
 }
 
 function resolveVueIslandTrigger(
@@ -6638,13 +6645,10 @@ function resolveVueIslandTrigger(
   context: RenderTemplateContext,
   locals: Record<string, unknown>
 ): ClientEnhancementTrigger {
-  const triggerAttr = node.attrs.find((attr) => attr.name === "trigger");
-  const value = triggerAttr
-    ? (triggerAttr.kind === "static"
-      ? triggerAttr.value
-      : stringifyValue(evaluateExpression(triggerAttr.value, context.scope, locals)))
-    : undefined;
-  return normalizeEnhancementTrigger(value, "immediate");
+  return normalizeEnhancementTrigger(
+    resolveVueIslandAttributeValue(node, "trigger", context, locals),
+    "immediate",
+  );
 }
 
 function resolveVueIslandProps(

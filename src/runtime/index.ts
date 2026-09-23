@@ -13899,24 +13899,22 @@ async function mountVueIslands(root = document) {
   }
 }
 
+function vueIslandBelongsToRoot(root, el) {
+  return !root || root === el || Boolean(root.contains && root.contains(el));
+}
+
 function unmountVueIslands(root) {
   for (const [el, token] of mountingVueIslands.entries()) {
-    if (root && root !== el && !(root.contains && root.contains(el))) {
-      continue;
-    }
+    if (!vueIslandBelongsToRoot(root, el)) continue;
     token.cancelled = true;
   }
   for (const [el, cancel] of scheduledVueIslands.entries()) {
-    if (root && root !== el && !(root.contains && root.contains(el))) {
-      continue;
-    }
+    if (!vueIslandBelongsToRoot(root, el)) continue;
     cancel();
     scheduledVueIslands.delete(el);
   }
   for (const [el, app] of mountedVueIslands.entries()) {
-    if (root && root !== el && !(root.contains && root.contains(el))) {
-      continue;
-    }
+    if (!vueIslandBelongsToRoot(root, el)) continue;
     if (app && typeof app.unmount === "function") {
       app.unmount();
     }

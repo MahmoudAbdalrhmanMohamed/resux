@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { getResumeBootstrapSource } from "../src/runtime/resume.js";
+import {
+  getResumeBootstrapSource,
+  RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAME_LENGTH,
+  RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAMES,
+} from "../src/runtime/resume.js";
+import { createDeferredResumeBootstrapSource } from "./runtime-result-fixture.js";
 
 describe("resume-first interaction bootstrap", () => {
   it("registers only declared resumable event types and imports the runtime lazily", () => {
@@ -33,10 +38,11 @@ describe("resume-first interaction bootstrap", () => {
     expect(source).toContain('mods.includes("exact")');
     expect(source).toContain('__rxKeyMatches(event,mods)');
     expect(source).toContain('__rxMouseMatches(event,mods)');
-    expect(source.indexOf("if(!__rxMatches(event,mods,name,target)) return;"))
-      .toBeLessThan(source.indexOf("event.preventDefault();"));
-    expect(source.indexOf("if(!__rxMatches(event,mods,name,target)) return;"))
-      .toBeLessThan(source.indexOf("void __rxLoad().then(()=>{"));
+    const delegatedListener = source.slice(source.indexOf("for(const name of __rxEvents){"));
+    expect(delegatedListener.indexOf("if(!__rxMatches(event,mods,name,target)) return;"))
+      .toBeLessThan(delegatedListener.indexOf("event.preventDefault();"));
+    expect(delegatedListener.indexOf("if(!__rxMatches(event,mods,name,target)) return;"))
+      .toBeLessThan(delegatedListener.indexOf("void __rxLoad().then(()=>{"));
   });
 
   it("allows a later interaction to retry after a rejected runtime import", () => {
@@ -45,7 +51,7 @@ describe("resume-first interaction bootstrap", () => {
     expect(source).toContain("__rxRuntimePromise=undefined;");
     expect(source).toContain("__rxRuntimeAttempt+=1;");
     expect(source).toContain('"rx_retry="+__rxRuntimeAttempt');
-    expect(source).toContain("}).catch((error)=>{");
+    expect(source).toContain("import(request).catch((error)=>{");
     expect(source).toContain("}).catch(()=>{});");
   });
 
@@ -55,6 +61,32 @@ describe("resume-first interaction bootstrap", () => {
     expect(source).toContain('if(event.ctrlKey!==expected.has("ctrl")) return false;');
     expect(source).toContain('if(event.shiftKey!==expected.has("shift")) return false;');
     expect(source).not.toContain('Boolean(event.ctrlKey)!==expected.has("ctrl")');
+  });
+
+  it("re-arms deferred targets after a failed runtime import and activates the original target", () => {
+    const source = createDeferredResumeBootstrapSource();
+
+    expect(source).toContain("await __rxActivateTarget(target);");
+    expect(source).toContain("fire(__rxCaptureInteraction(target,event))");
+    expect(source).toContain("__rxReplayInteraction(target,queuedInteraction)");
+    expect(source).toContain("if(!disposed && __rxActive && target.isConnected) arm();");
+    expect(source).toContain("__RESUX_ACTIVATE_DEFERRED__=__rxActivateManual");
+  });
+
+  it("bounds serialized event metadata used by the inline bootstrap", () => {
+    const maxNames = Array.from(
+      { length: RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAMES },
+      (_, index) => `event-${index}`,
+    );
+    expect(() => getResumeBootstrapSource({ eventNames: maxNames })).not.toThrow();
+
+    expect(() => getResumeBootstrapSource({
+      eventNames: [...maxNames, "one-more-event"],
+    })).toThrow("at most");
+
+    expect(() => getResumeBootstrapSource({
+      eventNames: ["x".repeat(RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAME_LENGTH + 1)],
+    })).toThrow("at most");
   });
 
   it("allows a custom runtime source without interpolating event payload values", () => {

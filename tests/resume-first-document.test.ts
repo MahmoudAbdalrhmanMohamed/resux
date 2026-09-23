@@ -3,32 +3,12 @@ import {
   getClientRuntimeBootPlan,
   renderDocument,
   shouldLoadClientRuntime,
-  type RenderResult,
 } from "../src/runtime/index.js";
-
-function createResult(
-  html: string,
-  overrides: Partial<RenderResult["payload"]> = {},
-): RenderResult {
-  return {
-    html,
-    head: {},
-    payload: {
-      route: {
-        path: "/",
-        params: {},
-        query: {},
-      },
-      scopes: {},
-      modules: {},
-      ...overrides,
-    },
-  } as RenderResult;
-}
+import { createRuntimeResult } from "./runtime-result-fixture.js";
 
 describe("resume-first document boot", () => {
   it("emits no executable client payload or runtime for a static document", () => {
-    const result = createResult("<main><h1>Static</h1><a href=\"/docs\">Docs</a></main>");
+    const result = createRuntimeResult("<main><h1>Static</h1><a href=\"/docs\">Docs</a></main>");
 
     expect(shouldLoadClientRuntime(result)).toBe(false);
 
@@ -39,7 +19,7 @@ describe("resume-first document boot", () => {
   });
 
   it("defers event-only pages until their first resumable interaction", () => {
-    const result = createResult(
+    const result = createRuntimeResult(
       '<button data-rx-on-click="s0:c0:increment">Increment</button>',
       {
         scopes: {
@@ -58,6 +38,8 @@ describe("resume-first document boot", () => {
     expect(getClientRuntimeBootPlan(result)).toEqual({
       mode: "interaction",
       eventNames: ["click"],
+      deferEnhancements: false,
+      deferVueIslands: false,
     });
 
     const document = renderDocument(result);
@@ -69,7 +51,7 @@ describe("resume-first document boot", () => {
   });
 
   it("keeps startup behavior for pending async data and client support modules", () => {
-    const pending = createResult("<main>Loading</main>", {
+    const pending = createRuntimeResult("<main>Loading</main>", {
       scopes: {
         s0: {
           id: "s0",
@@ -88,7 +70,7 @@ describe("resume-first document boot", () => {
     expect(shouldLoadClientRuntime(pending)).toBe(true);
     expect(getClientRuntimeBootPlan(pending).mode).toBe("eager");
 
-    const plugin = createResult("<main>Plugin</main>", {
+    const plugin = createRuntimeResult("<main>Plugin</main>", {
       plugins: [{
         id: "p0",
         file: "plugins/app.client.ts",
@@ -101,29 +83,34 @@ describe("resume-first document boot", () => {
   });
 
   it("keeps islands, enhancements, and managed media on the client path", () => {
-    expect(shouldLoadClientRuntime(createResult(
+    expect(shouldLoadClientRuntime(createRuntimeResult(
       '<div data-rx-vue-island="Chart"></div>',
     ))).toBe(true);
 
-    expect(shouldLoadClientRuntime(createResult(
+    expect(shouldLoadClientRuntime(createRuntimeResult(
       '<section data-resux-enhancement="map"></section>',
     ))).toBe(true);
 
-    expect(shouldLoadClientRuntime(createResult(
+    expect(shouldLoadClientRuntime(createRuntimeResult(
       '<img data-rx-lazy-image="true" data-rx-lazy-src="/hero.webp">',
     ))).toBe(true);
 
-    expect(shouldLoadClientRuntime(createResult(
+    expect(shouldLoadClientRuntime(createRuntimeResult(
       '<img data-resux-img="loading" data-rx-fallback-src="/fallback.webp" src="/hero.webp">',
     ))).toBe(true);
   });
 
   it("does not treat documentation text as client-work attributes or events", () => {
-    const result = createResult(
+    const result = createRuntimeResult(
       "<main><code>data-rx-vue-island</code><p>data-rx-video-controls</p><pre>data-rx-on-click=</pre></main>",
     );
 
-    expect(getClientRuntimeBootPlan(result)).toEqual({ mode: "none", eventNames: [] });
+    expect(getClientRuntimeBootPlan(result)).toEqual({
+      mode: "none",
+      eventNames: [],
+      deferEnhancements: false,
+      deferVueIslands: false,
+    });
   });
 
   it("boots only client middleware selected by the current route", () => {
@@ -144,17 +131,17 @@ describe("resume-first document boot", () => {
       src: "/__resux/middleware/analytics.mjs",
     };
 
-    expect(getClientRuntimeBootPlan(createResult("<main>Public</main>", {
+    expect(getClientRuntimeBootPlan(createRuntimeResult("<main>Public</main>", {
       middleware: [namedClient],
       pageMeta: {},
     })).mode).toBe("none");
 
-    expect(getClientRuntimeBootPlan(createResult("<main>Private</main>", {
+    expect(getClientRuntimeBootPlan(createRuntimeResult("<main>Private</main>", {
       middleware: [namedClient],
       pageMeta: { middleware: "auth" },
     })).mode).toBe("eager");
 
-    expect(getClientRuntimeBootPlan(createResult("<main>Global</main>", {
+    expect(getClientRuntimeBootPlan(createRuntimeResult("<main>Global</main>", {
       middleware: [globalClient],
       pageMeta: {},
     })).mode).toBe("eager");

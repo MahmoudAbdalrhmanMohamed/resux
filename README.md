@@ -37,7 +37,7 @@ Resux uses a **Resume-First** startup model:
 />
 ```
 
-The critical bootstrap has its own enforced raw and gzip size budgets. See [Resux Resume-First Architecture](docs/resume-first.md) for the execution model, performance rules, and the framework ideas Resux intentionally learns from Qwik, Astro, Angular, Nuxt, Next.js, and Svelte.
+The critical bootstrap has enforced 14 KiB raw and 5 KiB gzip worst-case size budgets. See [Resux Resume-First Architecture](docs/resume-first.md) for the execution model, performance rules, and the framework ideas Resux intentionally learns from Qwik, Astro, Angular, Nuxt, Next.js, and Svelte.
 
 ## Create an app
 

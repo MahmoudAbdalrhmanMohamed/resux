@@ -5,6 +5,6 @@
   "distRuntimeTotalBytes": 1500000,
   "generatedClientRuntimeBytes": 500000,
   "generatedClientRuntimeGzipBytes": 100000,
-  "generatedResumeBootstrapBytes": 12288,
-  "generatedResumeBootstrapGzipBytes": 4608
+  "generatedResumeBootstrapBytes": 14336,
+  "generatedResumeBootstrapGzipBytes": 5120
 }

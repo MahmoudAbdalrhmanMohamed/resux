@@ -152,7 +152,7 @@ Rules:
 
 `npm run report:runtime` and `npm run check:runtime-size` track both the complete generated browser runtime and the Resume-First bootstrap.
 
-The bootstrap has its own strict size budget because it is the code allowed onto the critical path for deferred pages. Growing the full optional runtime and growing the initial bootstrap are not equivalent regressions.
+The bootstrap has its own strict size budget because it is the code allowed onto the critical path for deferred pages. The current guardrails are 14 KiB raw and 5 KiB gzip for the bounded worst-case bootstrap. Growing the full optional runtime and growing the initial bootstrap are not equivalent regressions.
 
 The budget is measured against the bounded worst-case serialized event set, not a small hand-picked sample. Resume-First allows at most 32 distinct event names of up to 64 characters in the inline bootstrap; documents beyond that bound fall back to eager runtime loading instead of silently exceeding the bootstrap budget. The gzip guardrail uses deterministic low-redundancy valid names at the full bounds so shared prefixes or repeated filler cannot make the worst-case fixture artificially easy to compress.
 

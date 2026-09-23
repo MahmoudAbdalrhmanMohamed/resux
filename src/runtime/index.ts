@@ -2119,19 +2119,24 @@ function escapeRegExp(value: string): string {
   return value.replace(/[|\\{}()[\]^$+*?.-]/g, "\\$&");
 }
 
-function htmlHasAttribute(html: string, attribute: string): boolean {
+function htmlAttributePattern(attribute: string, matchPrefix = false): string {
   const escaped = escapeRegExp(attribute);
-  return new RegExp(`<[A-Za-z][^>]*\\s${escaped}(?:\\s*=|\\s|/?>)`, "i").test(html);
+  const suffix = matchPrefix ? "[\\w:-]*" : "";
+  return `${escaped}${suffix}(?:\\s*=|\\s|/?>)`;
+}
+
+function htmlHasAttribute(html: string, attribute: string): boolean {
+  return new RegExp(`<[A-Za-z][^>]*\\s${htmlAttributePattern(attribute)}`, "i").test(html);
 }
 
 function htmlHasAttributePrefix(html: string, prefix: string): boolean {
-  const escaped = escapeRegExp(prefix);
-  return new RegExp(`<[A-Za-z][^>]*\\s${escaped}[\\w:-]*(?:\\s*=|\\s|/?>)`, "i").test(html);
+  return new RegExp(`<[A-Za-z][^>]*\\s${htmlAttributePattern(prefix, true)}`, "i").test(html);
 }
 
 function collectHtmlTagsWithAttribute(html: string, attribute: string): string[] {
-  const escaped = escapeRegExp(attribute);
-  return html.match(new RegExp(`<[A-Za-z][^>]*\\s${escaped}(?:\\s*=|\\s|/?>)[^>]*>`, "gi")) ?? [];
+  return html.match(
+    new RegExp(`<[A-Za-z][^>]*\\s${htmlAttributePattern(attribute)}[^>]*>`, "gi"),
+  ) ?? [];
 }
 
 function readHtmlAttribute(tag: string, attribute: string): string | undefined {

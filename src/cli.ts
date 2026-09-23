@@ -3899,7 +3899,7 @@ function resolveGeneratedImageDiskPath(
   }
   return {
     filePath: resolved,
-    relativePath: pathname,
+    relativePath: decodeURIComponent(pathname),
   };
 }
 
@@ -3915,7 +3915,7 @@ function resolveGeneratedVideoDiskPath(
   }
   return {
     filePath: resolved,
-    relativePath: pathname,
+    relativePath: decodeURIComponent(pathname),
   };
 }
 

@@ -43,6 +43,19 @@ describe("remote media fetch security", () => {
     expect(resolver).not.toHaveBeenCalled();
   });
 
+  it("does not trust a spoofed same-origin metadata host", async () => {
+    await expect(assertSafeResuxMediaUrl(
+      new URL("http://169.254.169.254/latest/meta-data/"),
+      "http://169.254.169.254",
+      async () => {
+        throw new Error("literal IPs should not require DNS");
+      },
+    )).rejects.toMatchObject({
+      code: "unsafe_url",
+      statusCode: 400,
+    });
+  });
+
   it("rejects remote hostnames that resolve to private networks", async () => {
     await expect(assertSafeResuxMediaUrl(
       new URL("https://media.example.test/image.jpg"),

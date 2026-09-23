@@ -1,5 +1,8 @@
 import { lookup } from "node:dns/promises";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
+import { Readable } from "node:stream";
 
 export const RESUX_MEDIA_FETCH_TIMEOUT_MS = 30_000;
 export const RESUX_IMAGE_MAX_SOURCE_BYTES = 32 * 1024 * 1024;
@@ -34,6 +37,23 @@ export interface ResuxFetchedMediaSource {
 export interface ResuxMediaFetchDependencies {
   fetch?: typeof globalThis.fetch;
   resolveAddresses?: (hostname: string) => Promise<string[]>;
+  isCloudflareRuntime?: () => boolean;
+}
+
+function mediaError(
+  code: ResuxMediaFetchErrorCode,
+  message: string,
+  statusCode: number,
+): ResuxMediaFetchError {
+  return new ResuxMediaFetchError(code, message, statusCode);
+}
+
+function mediaTimeoutError(timeoutMs: number): ResuxMediaFetchError {
+  return mediaError(
+    "timeout",
+    `Media source request timed out after ${timeoutMs}ms.`,
+    504,
+  );
 }
 
 async function resolveHostnameAddresses(hostname: string): Promise<string[]> {
@@ -44,12 +64,8 @@ async function resolveHostnameAddresses(hostname: string): Promise<string[]> {
 export function isPrivateNetworkAddress(address: string): boolean {
   const normalized = address.trim().toLowerCase().replace(/^\[|\]$/g, "").split("%", 1)[0] ?? "";
   const family = isIP(normalized);
-  if (family === 4) {
-    return isPrivateIpv4(normalized);
-  }
-  if (family === 6) {
-    return isPrivateIpv6(normalized);
-  }
+  if (family === 4) return isPrivateIpv4(normalized);
+  if (family === 6) return isPrivateIpv6(normalized);
   return true;
 }
 
@@ -76,15 +92,11 @@ function isPrivateIpv4(address: string): boolean {
 
 function isPrivateIpv6(address: string): boolean {
   const segments = expandIpv6(address);
-  if (!segments) {
-    return true;
-  }
+  if (!segments) return true;
 
   const allZero = segments.every((segment) => segment === 0);
   const loopback = segments.slice(0, 7).every((segment) => segment === 0) && segments[7] === 1;
-  if (allZero || loopback) {
-    return true;
-  }
+  if (allZero || loopback) return true;
 
   const first = segments[0] ?? 0;
   if ((first & 0xfe00) === 0xfc00
@@ -97,12 +109,10 @@ function isPrivateIpv6(address: string): boolean {
   const ipv4Mapped = segments.slice(0, 5).every((segment) => segment === 0)
     && segments[5] === 0xffff;
   const ipv4Compatible = segments.slice(0, 6).every((segment) => segment === 0);
-  if (ipv4Mapped || ipv4Compatible) {
-    const ipv4 = `${(segments[6] ?? 0) >> 8}.${(segments[6] ?? 0) & 0xff}.${(segments[7] ?? 0) >> 8}.${(segments[7] ?? 0) & 0xff}`;
-    return isPrivateIpv4(ipv4);
-  }
+  if (!ipv4Mapped && !ipv4Compatible) return false;
 
-  return false;
+  const ipv4 = `${(segments[6] ?? 0) >> 8}.${(segments[6] ?? 0) & 0xff}.${(segments[7] ?? 0) >> 8}.${(segments[7] ?? 0) & 0xff}`;
+  return isPrivateIpv4(ipv4);
 }
 
 function expandIpv6(address: string): number[] | null {
@@ -111,9 +121,7 @@ function expandIpv6(address: string): number[] | null {
   const lastColon = input.lastIndexOf(":");
   const possibleIpv4 = lastColon >= 0 ? input.slice(lastColon + 1) : input;
   if (possibleIpv4.includes(".")) {
-    if (isIP(possibleIpv4) !== 4) {
-      return null;
-    }
+    if (isIP(possibleIpv4) !== 4) return null;
     const octets = possibleIpv4.split(".").map(Number);
     ipv4Tail = [
       ((octets[0] ?? 0) << 8) | (octets[1] ?? 0),
@@ -123,97 +131,199 @@ function expandIpv6(address: string): number[] | null {
   }
 
   const halves = input.split("::");
-  if (halves.length > 2) {
-    return null;
-  }
+  if (halves.length > 2) return null;
+
   const parseHalf = (value: string): number[] | null => {
     if (!value) return [];
-    const parts = value.split(":");
     const parsed: number[] = [];
-    for (const part of parts) {
+    for (const part of value.split(":")) {
       if (part === "ipv4") {
         parsed.push(...ipv4Tail);
-        continue;
-      }
-      if (!/^[0-9a-f]{1,4}$/i.test(part)) {
+      } else if (/^[0-9a-f]{1,4}$/i.test(part)) {
+        parsed.push(Number.parseInt(part, 16));
+      } else {
         return null;
       }
-      parsed.push(Number.parseInt(part, 16));
     }
     return parsed;
   };
 
   const left = parseHalf(halves[0] ?? "");
   const right = parseHalf(halves[1] ?? "");
-  if (!left || !right) {
-    return null;
-  }
-  if (halves.length === 1) {
-    return left.length === 8 ? left : null;
-  }
+  if (!left || !right) return null;
+  if (halves.length === 1) return left.length === 8 ? left : null;
+
   const missing = 8 - left.length - right.length;
-  if (missing < 1) {
-    return null;
-  }
+  if (missing < 1) return null;
   return [...left, ...new Array<number>(missing).fill(0), ...right];
 }
 
 function hostnameNeedsDnsValidation(hostname: string): boolean {
-  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  return isIP(normalized) === 0;
+  return isIP(hostname.toLowerCase().replace(/^\[|\]$/g, "")) === 0;
+}
+
+function isLoopbackDevelopmentHost(hostname: string): boolean {
+  return hostname === "localhost"
+    || hostname.endsWith(".localhost")
+    || hostname === "127.0.0.1"
+    || hostname === "::1";
 }
 
 export async function assertSafeResuxMediaUrl(
   target: URL,
   requestOrigin: string,
   resolveAddresses: (hostname: string) => Promise<string[]> = resolveHostnameAddresses,
-): Promise<void> {
+): Promise<string[]> {
   if (target.protocol !== "http:" && target.protocol !== "https:") {
-    throw new ResuxMediaFetchError("unsafe_url", "Media sources must use HTTP or HTTPS.", 400);
+    throw mediaError("unsafe_url", "Media sources must use HTTP or HTTPS.", 400);
   }
   if (target.username || target.password) {
-    throw new ResuxMediaFetchError("unsafe_url", "Media source URLs cannot contain credentials.", 400);
+    throw mediaError("unsafe_url", "Media source URLs cannot contain credentials.", 400);
   }
 
   let origin: URL | null = null;
   try {
     origin = new URL(requestOrigin);
   } catch {
-    // Treat malformed request origins as untrusted rather than skipping checks.
+    // Invalid request-origin headers never create a trust exemption.
   }
 
   const hostname = target.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  const isLoopbackDevelopmentHost = hostname === "localhost"
-    || hostname.endsWith(".localhost")
-    || hostname === "127.0.0.1"
-    || hostname === "::1";
-  if (origin && target.origin === origin.origin && isLoopbackDevelopmentHost) {
-    return;
+  if (origin && target.origin === origin.origin && isLoopbackDevelopmentHost(hostname)) {
+    return [];
   }
   if (!hostname || hostname.endsWith(".local")) {
-    throw new ResuxMediaFetchError("unsafe_url", "Media source resolves to a local or private network target.", 400);
+    throw mediaError("unsafe_url", "Media source resolves to a local or private network target.", 400);
   }
 
   if (!hostnameNeedsDnsValidation(hostname)) {
     if (isPrivateNetworkAddress(hostname)) {
-      throw new ResuxMediaFetchError("unsafe_url", "Media source resolves to a local or private network target.", 400);
+      throw mediaError("unsafe_url", "Media source resolves to a local or private network target.", 400);
     }
-    return;
+    return [hostname];
   }
 
   let addresses: string[];
   try {
     addresses = await resolveAddresses(hostname);
   } catch {
-    throw new ResuxMediaFetchError("network", "Media source hostname could not be resolved.", 502);
+    throw mediaError("network", "Media source hostname could not be resolved.", 502);
   }
-  if (addresses.length === 0 || addresses.some(isPrivateNetworkAddress)) {
-    throw new ResuxMediaFetchError("unsafe_url", "Media source resolves to a local or private network target.", 400);
+  const uniqueAddresses = [...new Set(addresses)];
+  if (uniqueAddresses.length === 0 || uniqueAddresses.some(isPrivateNetworkAddress)) {
+    throw mediaError("unsafe_url", "Media source resolves to a local or private network target.", 400);
   }
+  return uniqueAddresses;
 }
 
 function isRedirectStatus(status: number): boolean {
   return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
+
+function isCloudflareWorkersRuntime(): boolean {
+  return typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers";
+}
+
+function toResponseHeaders(rawHeaders: string[]): Headers {
+  const headers = new Headers();
+  for (let index = 0; index < rawHeaders.length; index += 2) {
+    const name = rawHeaders[index];
+    const value = rawHeaders[index + 1];
+    if (name && value !== undefined) headers.append(name, value);
+  }
+  return headers;
+}
+
+function fetchPinnedNodeMediaUrl(
+  target: URL,
+  address: string,
+  accept: string | undefined,
+  signal: AbortSignal,
+): Promise<Response> {
+  const request = target.protocol === "https:" ? httpsRequest : httpRequest;
+  const requestHeaders: Record<string, string> = {
+    host: target.host,
+    "accept-encoding": "identity",
+  };
+  if (accept) requestHeaders.accept = accept;
+
+  return new Promise((resolve, reject) => {
+    const req = request({
+      protocol: target.protocol,
+      hostname: address,
+      port: target.port || undefined,
+      method: "GET",
+      path: `${target.pathname}${target.search}`,
+      headers: requestHeaders,
+      signal,
+      ...(target.protocol === "https:" ? { servername: target.hostname } : {}),
+    }, (incoming) => {
+      const status = incoming.statusCode ?? 502;
+      const init: ResponseInit = {
+        status,
+        statusText: incoming.statusMessage,
+        headers: toResponseHeaders(incoming.rawHeaders),
+      };
+      if (status === 204 || status === 205 || status === 304) {
+        incoming.resume();
+        resolve(new Response(null, init));
+        return;
+      }
+      const body = Readable.toWeb(incoming) as ReadableStream<Uint8Array>;
+      resolve(new Response(body, init));
+    });
+    req.once("error", reject);
+    req.end();
+  });
+}
+
+async function raceAgainstAbort<T>(
+  operation: Promise<T>,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<T> {
+  if (signal.aborted) throw mediaTimeoutError(timeoutMs);
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(mediaTimeoutError(timeoutMs));
+    signal.addEventListener("abort", onAbort, { once: true });
+    void operation.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
+}
+
+async function fetchValidatedMediaUrl(
+  target: URL,
+  addresses: string[],
+  accept: string | undefined,
+  signal: AbortSignal,
+  dependencies: ResuxMediaFetchDependencies,
+): Promise<Response> {
+  const init: RequestInit = {
+    headers: accept ? { accept } : undefined,
+    redirect: "manual",
+    signal,
+  };
+  if (dependencies.fetch) return dependencies.fetch(target, init);
+
+  const cloudflare = dependencies.isCloudflareRuntime?.() ?? isCloudflareWorkersRuntime();
+  if (!cloudflare && addresses.length > 0) {
+    return fetchPinnedNodeMediaUrl(target, addresses[0]!, accept, signal);
+  }
+
+  if (typeof globalThis.fetch !== "function") {
+    throw mediaError("network", "Fetch is unavailable in this runtime.", 502);
+  }
+  return globalThis.fetch(target, init);
+}
+
+function sourceTooLargeError(maxBytes: number): ResuxMediaFetchError {
+  return mediaError(
+    "too_large",
+    `Media source exceeds the ${maxBytes}-byte safety limit.`,
+    413,
+  );
 }
 
 async function readBodyWithLimit(response: Response, maxBytes: number): Promise<Buffer> {
@@ -221,23 +331,13 @@ async function readBodyWithLimit(response: Response, maxBytes: number): Promise<
   if (rawLength) {
     const contentLength = Number(rawLength);
     if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-      throw new ResuxMediaFetchError(
-        "too_large",
-        `Media source exceeds the ${maxBytes}-byte safety limit.`,
-        413,
-      );
+      throw sourceTooLargeError(maxBytes);
     }
   }
 
   if (!response.body) {
     const body = Buffer.from(await response.arrayBuffer());
-    if (body.byteLength > maxBytes) {
-      throw new ResuxMediaFetchError(
-        "too_large",
-        `Media source exceeds the ${maxBytes}-byte safety limit.`,
-        413,
-      );
-    }
+    if (body.byteLength > maxBytes) throw sourceTooLargeError(maxBytes);
     return body;
   }
 
@@ -252,11 +352,7 @@ async function readBodyWithLimit(response: Response, maxBytes: number): Promise<
       total += chunk.byteLength;
       if (total > maxBytes) {
         await reader.cancel().catch(() => undefined);
-        throw new ResuxMediaFetchError(
-          "too_large",
-          `Media source exceeds the ${maxBytes}-byte safety limit.`,
-          413,
-        );
+        throw sourceTooLargeError(maxBytes);
       }
       chunks.push(chunk);
     }
@@ -264,6 +360,10 @@ async function readBodyWithLimit(response: Response, maxBytes: number): Promise<
     reader.releaseLock();
   }
   return Buffer.concat(chunks, total);
+}
+
+async function cancelResponseBody(response: Response): Promise<void> {
+  await response.body?.cancel().catch(() => undefined);
 }
 
 export async function fetchResuxMediaSource(
@@ -276,11 +376,6 @@ export async function fetchResuxMediaSource(
   },
   dependencies: ResuxMediaFetchDependencies = {},
 ): Promise<ResuxFetchedMediaSource> {
-  const fetchImpl = dependencies.fetch ?? globalThis.fetch;
-  if (typeof fetchImpl !== "function") {
-    throw new ResuxMediaFetchError("network", "Fetch is unavailable in this runtime.", 502);
-  }
-
   const controller = new AbortController();
   const timeoutMs = options.timeoutMs ?? RESUX_MEDIA_FETCH_TIMEOUT_MS;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -288,30 +383,33 @@ export async function fetchResuxMediaSource(
 
   try {
     for (let redirects = 0; redirects <= RESUX_MEDIA_MAX_REDIRECTS; redirects += 1) {
-      await assertSafeResuxMediaUrl(
-        currentUrl,
-        options.requestOrigin,
-        dependencies.resolveAddresses ?? resolveHostnameAddresses,
+      const addresses = await raceAgainstAbort(
+        assertSafeResuxMediaUrl(
+          currentUrl,
+          options.requestOrigin,
+          dependencies.resolveAddresses ?? resolveHostnameAddresses,
+        ),
+        controller.signal,
+        timeoutMs,
       );
 
       let response: Response;
       try {
-        response = await fetchImpl(currentUrl, {
-          headers: options.accept ? { accept: options.accept } : undefined,
-          redirect: "manual",
-          signal: controller.signal,
-        });
+        response = await fetchValidatedMediaUrl(
+          currentUrl,
+          addresses,
+          options.accept,
+          controller.signal,
+          dependencies,
+        );
       } catch (error) {
-        if (controller.signal.aborted) {
-          throw new ResuxMediaFetchError(
-            "timeout",
-            `Media source request timed out after ${timeoutMs}ms.`,
-            504,
-          );
-        }
-        throw new ResuxMediaFetchError(
+        if (controller.signal.aborted) throw mediaTimeoutError(timeoutMs);
+        if (error instanceof ResuxMediaFetchError) throw error;
+        throw mediaError(
           "network",
-          error instanceof Error ? `Failed to fetch media source: ${error.message}` : "Failed to fetch media source.",
+          error instanceof Error
+            ? `Failed to fetch media source: ${error.message}`
+            : "Failed to fetch media source.",
           502,
         );
       }
@@ -319,11 +417,12 @@ export async function fetchResuxMediaSource(
       if (isRedirectStatus(response.status)) {
         const location = response.headers.get("location");
         if (!location) {
+          await cancelResponseBody(response);
           return { response, body: null, finalUrl: currentUrl };
         }
-        await response.body?.cancel().catch(() => undefined);
+        await cancelResponseBody(response);
         if (redirects >= RESUX_MEDIA_MAX_REDIRECTS) {
-          throw new ResuxMediaFetchError(
+          throw mediaError(
             "too_many_redirects",
             "Media source exceeded the redirect safety limit.",
             502,
@@ -333,21 +432,26 @@ export async function fetchResuxMediaSource(
         continue;
       }
 
-      const body = response.ok ? await readBodyWithLimit(response, options.maxBytes) : null;
+      if (!response.ok) {
+        await cancelResponseBody(response);
+        return { response, body: null, finalUrl: currentUrl };
+      }
+
+      const body = await readBodyWithLimit(response, options.maxBytes);
       return { response, body, finalUrl: currentUrl };
     }
   } catch (error) {
     if (controller.signal.aborted && !(error instanceof ResuxMediaFetchError)) {
-      throw new ResuxMediaFetchError(
-        "timeout",
-        `Media source request timed out after ${timeoutMs}ms.`,
-        504,
-      );
+      throw mediaTimeoutError(timeoutMs);
     }
     throw error;
   } finally {
     clearTimeout(timeout);
   }
 
-  throw new ResuxMediaFetchError("too_many_redirects", "Media source exceeded the redirect safety limit.", 502);
+  throw mediaError(
+    "too_many_redirects",
+    "Media source exceeded the redirect safety limit.",
+    502,
+  );
 }

@@ -19,6 +19,26 @@ Resux is centered on explicit runtime cost:
 
 The documentation explains these boundaries in detail rather than describing Resux as a normal Vue SSR framework.
 
+## Resume-First architecture
+
+Resux uses a **Resume-First** startup model:
+
+- server/static-only pages ship no Resux client JavaScript;
+- event-only pages ship serialized state plus a small resume bootstrap and load the full runtime on the first matching interaction;
+- client enhancements can defer runtime loading to visibility, interaction, idle time, page load, or manual activation;
+- Vue islands remain explicit client boundaries and can opt into the same trigger model while preserving immediate mounting by default; interaction islands keep server-rendered fallback content until activation;
+- normal links keep native browser navigation before the application has a real reason to resume.
+
+```vue
+<VueIsland
+  name="AnalyticsChart"
+  trigger="visible"
+  :props="{ range: '30d' }"
+/>
+```
+
+The critical bootstrap has enforced 14 KiB raw and 5 KiB gzip worst-case size budgets. See [Resux Resume-First Architecture](docs/resume-first.md) for the execution model, performance rules, and the framework ideas Resux intentionally learns from Qwik, Astro, Angular, Nuxt, Next.js, and Svelte.
+
 ## Create an app
 
 ```sh

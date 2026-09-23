@@ -16,6 +16,7 @@ import {
   ResuxMediaFetchError,
 } from "./security/media-fetch.js";
 import {
+  isPathWithinBoundary,
   isRealPathWithinBoundary,
   resolveRequestPathWithinBoundary,
 } from "./security/path-boundary.js";
@@ -2412,23 +2413,20 @@ function shouldSkipDevWatch(
   outDir: string,
 ): boolean {
   const resolved = path.resolve(changedPath);
-  const generatedMediaRoot = path.resolve(
-    appRoot,
-    "public",
-    "_resux",
-    "generated",
-    "images",
-  );
+  const generatedMediaRoots = [
+    path.resolve(appRoot, "public", "_resux", "generated", "images"),
+    path.resolve(appRoot, "public", "_resux", "generated", "videos"),
+  ];
   const nitroDir = path.resolve(appRoot, ".nitro");
   const resuxNitroDir = path.resolve(appRoot, ".resux-nitro");
   return (
-    resolved.startsWith(path.resolve(outDir)) ||
-    resolved.startsWith(nitroDir) ||
-    resolved.startsWith(resuxNitroDir) ||
-    resolved.startsWith(generatedMediaRoot) ||
+    isPathWithinBoundary(path.resolve(outDir), resolved) ||
+    isPathWithinBoundary(nitroDir, resolved) ||
+    isPathWithinBoundary(resuxNitroDir, resolved) ||
+    generatedMediaRoots.some((root) => isPathWithinBoundary(root, resolved)) ||
     resolved.includes(`${path.sep}node_modules${path.sep}`) ||
     resolved.includes(`${path.sep}dist${path.sep}`) ||
-    !resolved.startsWith(path.resolve(appRoot))
+    !isPathWithinBoundary(path.resolve(appRoot), resolved)
   );
 }
 
@@ -5523,7 +5521,7 @@ async function serveResuxAsset(
   const resolved = path.resolve(outDir, relative);
   const allowedRoot = path.resolve(outDir, "client");
 
-  if (!resolved.startsWith(allowedRoot)) {
+  if (!isPathWithinBoundary(allowedRoot, resolved)) {
     response.writeHead(403);
     response.end("Forbidden");
     return;
@@ -5537,6 +5535,12 @@ async function serveResuxAsset(
     }
     response.writeHead(404);
     response.end("Not found");
+    return;
+  }
+
+  if (!(await isRealPathWithinBoundary(allowedRoot, resolved))) {
+    response.writeHead(403);
+    response.end("Forbidden");
     return;
   }
 

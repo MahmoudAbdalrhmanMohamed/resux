@@ -4479,7 +4479,7 @@ async function serveResuxVideo(
     return;
   }
   const { body, contentType } = media;
-  const cacheControl = needsTransform
+  const cacheControl = shouldTransformVideo(options)
     ? "public, max-age=31536000, immutable"
     : "public, max-age=86400";
 

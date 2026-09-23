@@ -14,7 +14,7 @@ afterEach(() => {
 
 describe("icon runtime regressions", () => {
   it("uses the configured provider and preserves every path", async () => {
-    const fetchMock = vi.fn(async () => ({
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => ({
       ok: true,
       text: async () => `
         <svg viewBox='0 0 32 32'>

@@ -9,6 +9,12 @@ import { cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  fetchResuxMediaSource,
+  RESUX_IMAGE_MAX_SOURCE_BYTES,
+  RESUX_VIDEO_MAX_SOURCE_BYTES,
+  ResuxMediaFetchError,
+} from "./security/media-fetch.js";
 import type { ViteDevServer } from "vite";
 import type { BuildOptions } from "./compiler/index.js";
 import { createResux } from "./core/resux.js";
@@ -2585,6 +2591,33 @@ function firstHeaderValue(
   return value?.split(",")[0]?.trim();
 }
 
+async function fetchMediaSourceOrRespond(
+  request: IncomingMessage,
+  response: ServerResponse,
+  sourceUrl: URL,
+  requestOrigin: string,
+  kind: "image" | "video",
+) {
+  try {
+    return await fetchResuxMediaSource(sourceUrl, {
+      requestOrigin,
+      accept: firstHeaderValue(request.headers.accept),
+      maxBytes: kind === "image" ? RESUX_IMAGE_MAX_SOURCE_BYTES : RESUX_VIDEO_MAX_SOURCE_BYTES,
+    });
+  } catch (error) {
+    const statusCode = error instanceof ResuxMediaFetchError ? error.statusCode : 502;
+    const message = error instanceof ResuxMediaFetchError
+      ? error.message
+      : `Failed to fetch ${kind} source.`;
+    response.writeHead(statusCode, {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    response.end(JSON.stringify({ error: message }));
+    return null;
+  }
+}
+
 function readPort(value: string | undefined, fallback: number): number {
   if (!value) {
     return fallback;
@@ -4069,36 +4102,32 @@ async function serveResuxImage(
     extraModifiers: parseImageExtraModifiers(requestUrl.searchParams),
   };
 
-  const forwardedAccept = firstHeaderValue(request.headers.accept);
-  const upstream = await fetch(sourceUrl, {
-    headers: forwardedAccept ? { accept: forwardedAccept } : undefined,
-    redirect: "follow",
-  }).catch(() => null);
-
+  const upstream = await fetchMediaSourceOrRespond(
+    request,
+    response,
+    sourceUrl,
+    requestOrigin,
+    "image",
+  );
   if (!upstream) {
-    response.writeHead(502, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(JSON.stringify({ error: "Failed to fetch image source." }));
     return;
   }
 
-  if (!upstream.ok) {
-    response.writeHead(upstream.status, {
+  if (!upstream.response.ok) {
+    response.writeHead(upstream.response.status, {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
     });
     response.end(
       JSON.stringify({
-        error: `Image source request failed with status ${upstream.status}.`,
+        error: `Image source request failed with status ${upstream.response.status}.`,
       }),
     );
     return;
   }
 
-  const sourceBuffer = Buffer.from(await upstream.arrayBuffer());
-  const sourceContentType = upstream.headers.get("content-type");
+  const sourceBuffer = upstream.body ?? Buffer.alloc(0);
+  const sourceContentType = upstream.response.headers.get("content-type");
   const needsTransform = shouldTransformImage(options);
   const transformed = await transformResuxImage(
     sourceBuffer,
@@ -4281,36 +4310,32 @@ async function serveGeneratedResuxImage(
     return;
   }
 
-  const forwardedAccept = firstHeaderValue(request.headers.accept);
-  const upstream = await fetch(sourceUrl, {
-    headers: forwardedAccept ? { accept: forwardedAccept } : undefined,
-    redirect: "follow",
-  }).catch(() => null);
-
+  const upstream = await fetchMediaSourceOrRespond(
+    request,
+    response,
+    sourceUrl,
+    requestOrigin,
+    "image",
+  );
   if (!upstream) {
-    response.writeHead(502, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(JSON.stringify({ error: "Failed to fetch image source." }));
     return;
   }
 
-  if (!upstream.ok) {
-    response.writeHead(upstream.status, {
+  if (!upstream.response.ok) {
+    response.writeHead(upstream.response.status, {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
     });
     response.end(
       JSON.stringify({
-        error: `Image source request failed with status ${upstream.status}.`,
+        error: `Image source request failed with status ${upstream.response.status}.`,
       }),
     );
     return;
   }
 
-  const sourceBuffer = Buffer.from(await upstream.arrayBuffer());
-  const sourceContentType = upstream.headers.get("content-type");
+  const sourceBuffer = upstream.body ?? Buffer.alloc(0);
+  const sourceContentType = upstream.response.headers.get("content-type");
   const needsTransform = shouldTransformImage(options);
   const transformed = await transformResuxImage(
     sourceBuffer,
@@ -4427,36 +4452,32 @@ async function serveResuxVideo(
       ?? normalizeVideoQuality(requestUrl.searchParams.get("quality")),
   };
 
-  const forwardedAccept = firstHeaderValue(request.headers.accept);
-  const upstream = await fetch(sourceUrl, {
-    headers: forwardedAccept ? { accept: forwardedAccept } : undefined,
-    redirect: "follow",
-  }).catch(() => null);
-
+  const upstream = await fetchMediaSourceOrRespond(
+    request,
+    response,
+    sourceUrl,
+    requestOrigin,
+    "video",
+  );
   if (!upstream) {
-    response.writeHead(502, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(JSON.stringify({ error: "Failed to fetch video source." }));
     return;
   }
 
-  if (!upstream.ok) {
-    response.writeHead(upstream.status, {
+  if (!upstream.response.ok) {
+    response.writeHead(upstream.response.status, {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
     });
     response.end(
       JSON.stringify({
-        error: `Video source request failed with status ${upstream.status}.`,
+        error: `Video source request failed with status ${upstream.response.status}.`,
       }),
     );
     return;
   }
 
-  const sourceBuffer = Buffer.from(await upstream.arrayBuffer());
-  const sourceContentType = upstream.headers.get("content-type");
+  const sourceBuffer = upstream.body ?? Buffer.alloc(0);
+  const sourceContentType = upstream.response.headers.get("content-type");
   const needsTransform = shouldTransformVideo(options);
   const transformed = await transformResuxVideo(
     sourceBuffer,
@@ -4622,34 +4643,31 @@ async function serveGeneratedResuxVideo(
     return;
   }
 
-  const forwardedAccept = firstHeaderValue(request.headers.accept);
-  const upstream = await fetch(sourceUrl, {
-    headers: forwardedAccept ? { accept: forwardedAccept } : undefined,
-    redirect: "follow",
-  }).catch(() => null);
+  const upstream = await fetchMediaSourceOrRespond(
+    request,
+    response,
+    sourceUrl,
+    requestOrigin,
+    "video",
+  );
   if (!upstream) {
-    response.writeHead(502, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(JSON.stringify({ error: "Failed to fetch video source." }));
     return;
   }
-  if (!upstream.ok) {
-    response.writeHead(upstream.status, {
+  if (!upstream.response.ok) {
+    response.writeHead(upstream.response.status, {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
     });
     response.end(
       JSON.stringify({
-        error: `Video source request failed with status ${upstream.status}.`,
+        error: `Video source request failed with status ${upstream.response.status}.`,
       }),
     );
     return;
   }
 
-  const sourceBuffer = Buffer.from(await upstream.arrayBuffer());
-  const sourceContentType = upstream.headers.get("content-type");
+  const sourceBuffer = upstream.body ?? Buffer.alloc(0);
+  const sourceContentType = upstream.response.headers.get("content-type");
   const needsTransform = shouldTransformVideo(options);
   const transformed = await transformResuxVideo(
     sourceBuffer,

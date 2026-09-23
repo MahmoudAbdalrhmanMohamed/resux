@@ -15,6 +15,10 @@ import {
   RESUX_VIDEO_MAX_SOURCE_BYTES,
   ResuxMediaFetchError,
 } from "./security/media-fetch.js";
+import {
+  isRealPathWithinBoundary,
+  resolveRequestPathWithinBoundary,
+} from "./security/path-boundary.js";
 import type { ViteDevServer } from "vite";
 import type { BuildOptions } from "./compiler/index.js";
 import { createResux } from "./core/resux.js";
@@ -3889,19 +3893,13 @@ function resolveGeneratedImageDiskPath(
 ): { filePath: string; relativePath: string } | null {
   const publicRoot = path.resolve(appRoot, "public");
   const generatedRoot = path.resolve(publicRoot, "_resux", "generated", "images");
-  let decodedPath: string;
-  try {
-    decodedPath = decodeURIComponent(pathname);
-  } catch {
-    return null;
-  }
-  const resolved = path.resolve(publicRoot, `.${decodedPath}`);
-  if (!resolved.startsWith(generatedRoot)) {
+  const resolved = resolveRequestPathWithinBoundary(publicRoot, generatedRoot, pathname);
+  if (!resolved) {
     return null;
   }
   return {
     filePath: resolved,
-    relativePath: decodedPath,
+    relativePath: pathname,
   };
 }
 
@@ -3911,19 +3909,13 @@ function resolveGeneratedVideoDiskPath(
 ): { filePath: string; relativePath: string } | null {
   const publicRoot = path.resolve(appRoot, "public");
   const generatedRoot = path.resolve(publicRoot, "_resux", "generated", "videos");
-  let decodedPath: string;
-  try {
-    decodedPath = decodeURIComponent(pathname);
-  } catch {
-    return null;
-  }
-  const resolved = path.resolve(publicRoot, `.${decodedPath}`);
-  if (!resolved.startsWith(generatedRoot)) {
+  const resolved = resolveRequestPathWithinBoundary(publicRoot, generatedRoot, pathname);
+  if (!resolved) {
     return null;
   }
   return {
     filePath: resolved,
-    relativePath: decodedPath,
+    relativePath: pathname,
   };
 }
 
@@ -4024,17 +4016,11 @@ async function resolveLocalSourceFileInfo(
   }
 
   const publicRoot = path.resolve(appRoot, "public");
-  let decodedPath: string;
-  try {
-    decodedPath = decodeURIComponent(sourceUrl.pathname);
-  } catch {
+  const resolved = resolveRequestPathWithinBoundary(publicRoot, publicRoot, sourceUrl.pathname);
+  if (!resolved || !(await exists(resolved))) {
     return null;
   }
-  const resolved = path.resolve(publicRoot, `.${decodedPath}`);
-  if (!resolved.startsWith(publicRoot)) {
-    return null;
-  }
-  if (!(await exists(resolved))) {
+  if (!(await isRealPathWithinBoundary(publicRoot, resolved))) {
     return null;
   }
   const sourceStats = await stat(resolved);
@@ -5309,15 +5295,15 @@ async function servePublicFile(
   }
 
   for (const { base, boundary } of candidates) {
-    const resolved = path.resolve(base, `.${decodeURIComponent(pathname)}`);
-    if (!resolved.startsWith(boundary)) {
-      continue;
-    }
-    if (!(await exists(resolved))) {
+    const resolved = resolveRequestPathWithinBoundary(base, boundary, pathname);
+    if (!resolved || !(await exists(resolved))) {
       continue;
     }
     const fileStats = await stat(resolved);
     if (!fileStats.isFile()) {
+      continue;
+    }
+    if (!(await isRealPathWithinBoundary(boundary, resolved))) {
       continue;
     }
 

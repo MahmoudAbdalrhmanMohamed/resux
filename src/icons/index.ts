@@ -214,7 +214,7 @@ export function fetchIconifyIcon(
       const svgText = await readBoundedIconSvg(response);
       if (!svgText) return null;
       const viewBox = readSvgAttribute(svgText, "viewBox") || "0 0 24 24";
-      const paths = [...svgText.matchAll(/<path\\b[^>]*>/gi)]
+      const paths = [...svgText.matchAll(/<path\b[^>]*>/gi)]
         .slice(0, 128)
         .map((match) => ({
           d: readSvgAttribute(match[0], "d").slice(0, 65_536),

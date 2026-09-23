@@ -4,6 +4,7 @@ import {
   RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAME_LENGTH,
   RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAMES,
 } from "../src/runtime/resume.js";
+import { createDeferredResumeBootstrapSource } from "./runtime-result-fixture.js";
 
 describe("resume-first interaction bootstrap", () => {
   it("registers only declared resumable event types and imports the runtime lazily", () => {
@@ -63,11 +64,7 @@ describe("resume-first interaction bootstrap", () => {
   });
 
   it("re-arms deferred targets after a failed runtime import and activates the original target", () => {
-    const source = getResumeBootstrapSource({
-      eventNames: [],
-      deferEnhancements: true,
-      deferVueIslands: true,
-    });
+    const source = createDeferredResumeBootstrapSource();
 
     expect(source).toContain("await __rxActivateTarget(target);");
     expect(source).toContain("fire(__rxCaptureInteraction(target,event))");

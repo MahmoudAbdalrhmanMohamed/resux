@@ -7,8 +7,10 @@ import {
   renderDocument,
   type ComponentDefinition,
 } from "../src/runtime/index.js";
-import { getResumeBootstrapSource } from "../src/runtime/resume.js";
-import { createRuntimeResult } from "./runtime-result-fixture.js";
+import {
+  createDeferredResumeBootstrapSource,
+  createRuntimeResult,
+} from "./runtime-result-fixture.js";
 
 function createTestComponent(
   id: string,
@@ -75,6 +77,11 @@ async function renderVueIslandTestPage(
       [islandName]: `/__resux/vue-islands/${islandName.toLowerCase()}.mjs`,
     },
   });
+}
+
+function expectEagerClientRuntime(result: ReturnType<typeof createRuntimeResult>): void {
+  expect(getClientRuntimeBootPlan(result).mode).toBe("eager");
+  expect(renderDocument(result)).toContain('src="/__resux/runtime-client.mjs"');
 }
 
 describe("demand-driven client work", () => {
@@ -161,8 +168,7 @@ describe("demand-driven client work", () => {
       '<section data-resux-enhancement="editor" data-resux-trigger="immediate"></section>',
     );
 
-    expect(getClientRuntimeBootPlan(result).mode).toBe("eager");
-    expect(renderDocument(result)).toContain('src="/__resux/runtime-client.mjs"');
+    expectEagerClientRuntime(result);
   });
 
   it("defers explicitly scheduled Vue islands but preserves immediate compatibility", () => {
@@ -183,11 +189,7 @@ describe("demand-driven client work", () => {
   });
 
   it("supports visible, interaction, idle, page-load, and manual deferred triggers in the bootstrap", () => {
-    const source = getResumeBootstrapSource({
-      eventNames: [],
-      deferEnhancements: true,
-      deferVueIslands: true,
-    });
+    const source = createDeferredResumeBootstrapSource();
 
     expect(source).toContain('document.querySelectorAll("[data-resux-enhancement], [use-client-enhancement]")');
     expect(source).toContain('document.querySelectorAll("[data-rx-vue-island]")');
@@ -224,8 +226,7 @@ describe("demand-driven client work", () => {
     ).join(" ");
     const result = createRuntimeResult(`<button ${eventAttributes}>Many events</button>`);
 
-    expect(getClientRuntimeBootPlan(result).mode).toBe("eager");
-    expect(renderDocument(result)).toContain('src="/__resux/runtime-client.mjs"');
+    expectEagerClientRuntime(result);
   });
 
   it("guards in-flight Vue island imports and exposes runtime activation for manual targets", () => {

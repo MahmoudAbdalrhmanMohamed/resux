@@ -38,6 +38,12 @@ export interface ResuxMediaFetchDependencies {
   fetch?: typeof globalThis.fetch;
   resolveAddresses?: (hostname: string) => Promise<string[]>;
   isCloudflareRuntime?: () => boolean;
+  fetchPinnedNode?: (
+    target: URL,
+    address: string,
+    accept: string | undefined,
+    signal: AbortSignal,
+  ) => Promise<Response>;
 }
 
 function mediaError(
@@ -101,15 +107,26 @@ function isPrivateIpv6(address: string): boolean {
   const first = segments[0] ?? 0;
   if ((first & 0xfe00) === 0xfc00
     || (first & 0xffc0) === 0xfe80
+    || (first & 0xffc0) === 0xfec0
     || (first & 0xff00) === 0xff00
     || (first === 0x2001 && segments[1] === 0x0db8)) {
     return true;
   }
 
+  if (first === 0x2002) {
+    const high = segments[1] ?? 0;
+    const low = segments[2] ?? 0;
+    const ipv4 = `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
+    return isPrivateIpv4(ipv4);
+  }
+
   const ipv4Mapped = segments.slice(0, 5).every((segment) => segment === 0)
     && segments[5] === 0xffff;
   const ipv4Compatible = segments.slice(0, 6).every((segment) => segment === 0);
-  if (!ipv4Mapped && !ipv4Compatible) return false;
+  const nat64 = first === 0x64
+    && segments[1] === 0xff9b
+    && segments.slice(2, 6).every((segment) => segment === 0);
+  if (!ipv4Mapped && !ipv4Compatible && !nat64) return false;
 
   const ipv4 = `${(segments[6] ?? 0) >> 8}.${(segments[6] ?? 0) & 0xff}.${(segments[7] ?? 0) >> 8}.${(segments[7] ?? 0) & 0xff}`;
   return isPrivateIpv4(ipv4);
@@ -171,8 +188,9 @@ function isLoopbackDevelopmentHost(hostname: string): boolean {
 
 export async function assertSafeResuxMediaUrl(
   target: URL,
-  requestOrigin: string,
+  _requestOrigin: string,
   resolveAddresses: (hostname: string) => Promise<string[]> = resolveHostnameAddresses,
+  trustedLoopbackPort?: number,
 ): Promise<string[]> {
   if (target.protocol !== "http:" && target.protocol !== "https:") {
     throw mediaError("unsafe_url", "Media sources must use HTTP or HTTPS.", 400);
@@ -181,15 +199,19 @@ export async function assertSafeResuxMediaUrl(
     throw mediaError("unsafe_url", "Media source URLs cannot contain credentials.", 400);
   }
 
-  let origin: URL | null = null;
-  try {
-    origin = new URL(requestOrigin);
-  } catch {
-    // Invalid request-origin headers never create a trust exemption.
-  }
-
   const hostname = target.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (origin && target.origin === origin.origin && isLoopbackDevelopmentHost(hostname)) {
+  const targetPort = target.port
+    ? Number(target.port)
+    : target.protocol === "https:"
+      ? 443
+      : 80;
+  if (
+    Number.isInteger(trustedLoopbackPort)
+    && trustedLoopbackPort! > 0
+    && trustedLoopbackPort! <= 65_535
+    && targetPort === trustedLoopbackPort
+    && isLoopbackDevelopmentHost(hostname)
+  ) {
     return [];
   }
   if (!hostname || hostname.endsWith(".local")) {
@@ -309,7 +331,17 @@ async function fetchValidatedMediaUrl(
 
   const cloudflare = dependencies.isCloudflareRuntime?.() ?? isCloudflareWorkersRuntime();
   if (!cloudflare && addresses.length > 0) {
-    return fetchPinnedNodeMediaUrl(target, addresses[0]!, accept, signal);
+    const pinnedFetch = dependencies.fetchPinnedNode ?? fetchPinnedNodeMediaUrl;
+    let lastError: unknown;
+    for (const address of addresses) {
+      try {
+        return await pinnedFetch(target, address, accept, signal);
+      } catch (error) {
+        if (signal.aborted) throw error;
+        lastError = error;
+      }
+    }
+    throw lastError ?? mediaError("network", "Failed to fetch media source.", 502);
   }
 
   if (typeof globalThis.fetch !== "function") {
@@ -373,6 +405,7 @@ export async function fetchResuxMediaSource(
     accept?: string;
     maxBytes: number;
     timeoutMs?: number;
+    trustedLoopbackPort?: number;
   },
   dependencies: ResuxMediaFetchDependencies = {},
 ): Promise<ResuxFetchedMediaSource> {
@@ -388,6 +421,7 @@ export async function fetchResuxMediaSource(
           currentUrl,
           options.requestOrigin,
           dependencies.resolveAddresses ?? resolveHostnameAddresses,
+          redirects === 0 ? options.trustedLoopbackPort : undefined,
         ),
         controller.signal,
         timeoutMs,

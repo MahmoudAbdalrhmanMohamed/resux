@@ -128,11 +128,12 @@ describe("remote media fetch security", () => {
       },
     );
 
-    await vi.advanceTimersByTimeAsync(101);
-    await expect(request).rejects.toMatchObject({
+    const rejection = expect(request).rejects.toMatchObject({
       code: "timeout",
       statusCode: 504,
     });
+    await vi.advanceTimersByTimeAsync(101);
+    await rejection;
   });
 
   it("cancels non-success upstream bodies before returning the status", async () => {

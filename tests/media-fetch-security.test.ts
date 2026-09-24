@@ -10,6 +10,45 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+const PUBLIC_MEDIA_URL = "https://media.example.test/image.jpg";
+const APP_ORIGIN = "https://app.example.test";
+const PUBLIC_ADDRESS = "93.184.216.34";
+
+function expectUnsafeMediaUrl(
+  target: string,
+  requestOrigin: string,
+  resolveAddresses: (hostname: string) => Promise<string[]>,
+  trustedLoopbackPort?: number,
+) {
+  return expect(assertSafeResuxMediaUrl(
+    new URL(target),
+    requestOrigin,
+    resolveAddresses,
+    trustedLoopbackPort,
+  )).rejects.toMatchObject({
+    code: "unsafe_url",
+    statusCode: 400,
+  });
+}
+
+function fetchPublicMedia(
+  dependencies: Parameters<typeof fetchResuxMediaSource>[2],
+  options: Partial<Parameters<typeof fetchResuxMediaSource>[1]> = {},
+) {
+  return fetchResuxMediaSource(
+    new URL(PUBLIC_MEDIA_URL),
+    {
+      requestOrigin: APP_ORIGIN,
+      maxBytes: 1024,
+      ...options,
+    },
+    {
+      resolveAddresses: async () => [PUBLIC_ADDRESS],
+      ...dependencies,
+    },
+  );
+}
+
 describe("remote media fetch security", () => {
   it.each([
     "127.0.0.1",
@@ -52,41 +91,32 @@ describe("remote media fetch security", () => {
   });
 
   it("does not trust a spoofed loopback origin for a different local port", async () => {
-    await expect(assertSafeResuxMediaUrl(
-      new URL("http://127.0.0.1:6379/private"),
+    await expectUnsafeMediaUrl(
+      "http://127.0.0.1:6379/private",
       "http://127.0.0.1:6379",
       async () => {
         throw new Error("literal IPs should not require DNS");
       },
       3000,
-    )).rejects.toMatchObject({
-      code: "unsafe_url",
-      statusCode: 400,
-    });
+    );
   });
 
   it("does not trust a spoofed same-origin metadata host", async () => {
-    await expect(assertSafeResuxMediaUrl(
-      new URL("http://169.254.169.254/latest/meta-data/"),
+    await expectUnsafeMediaUrl(
+      "http://169.254.169.254/latest/meta-data/",
       "http://169.254.169.254",
       async () => {
         throw new Error("literal IPs should not require DNS");
       },
-    )).rejects.toMatchObject({
-      code: "unsafe_url",
-      statusCode: 400,
-    });
+    );
   });
 
   it("rejects remote hostnames that resolve to private networks", async () => {
-    await expect(assertSafeResuxMediaUrl(
-      new URL("https://media.example.test/image.jpg"),
-      "https://app.example.test",
+    await expectUnsafeMediaUrl(
+      PUBLIC_MEDIA_URL,
+      APP_ORIGIN,
       async () => ["10.20.30.40"],
-    )).rejects.toMatchObject({
-      code: "unsafe_url",
-      statusCode: 400,
-    });
+    );
   });
 
   it("validates every redirect before following it", async () => {
@@ -95,17 +125,9 @@ describe("remote media fetch security", () => {
       headers: { location: "http://169.254.169.254/latest/meta-data/" },
     }));
 
-    await expect(fetchResuxMediaSource(
-      new URL("https://media.example.test/image.jpg"),
-      {
-        requestOrigin: "https://app.example.test",
-        maxBytes: 1024,
-      },
-      {
-        fetch: fetchMock as typeof fetch,
-        resolveAddresses: async () => ["93.184.216.34"],
-      },
-    )).rejects.toMatchObject({
+    await expect(fetchPublicMedia({
+      fetch: fetchMock as typeof fetch,
+    })).rejects.toMatchObject({
       code: "unsafe_url",
       statusCode: 400,
     });
@@ -146,17 +168,9 @@ describe("remote media fetch security", () => {
     });
     const fetchMock = vi.fn(async () => new Response(body, { status: 503 }));
 
-    const result = await fetchResuxMediaSource(
-      new URL("https://media.example.test/image.jpg"),
-      {
-        requestOrigin: "https://app.example.test",
-        maxBytes: 1024,
-      },
-      {
-        fetch: fetchMock as typeof fetch,
-        resolveAddresses: async () => ["93.184.216.34"],
-      },
-    );
+    const result = await fetchPublicMedia({
+      fetch: fetchMock as typeof fetch,
+    });
 
     expect(result.response.status).toBe(503);
     expect(result.body).toBeNull();
@@ -168,18 +182,11 @@ describe("remote media fetch security", () => {
       .mockRejectedValueOnce(new Error("first address unreachable"))
       .mockResolvedValueOnce(new Response("ok", { status: 200 }));
 
-    const result = await fetchResuxMediaSource(
-      new URL("https://media.example.test/image.jpg"),
-      {
-        requestOrigin: "https://app.example.test",
-        maxBytes: 1024,
-      },
-      {
-        resolveAddresses: async () => ["93.184.216.34", "1.1.1.1"],
-        isCloudflareRuntime: () => false,
-        fetchPinnedNode: pinnedFetch,
-      },
-    );
+    const result = await fetchPublicMedia({
+      resolveAddresses: async () => [PUBLIC_ADDRESS, "1.1.1.1"],
+      isCloudflareRuntime: () => false,
+      fetchPinnedNode: pinnedFetch,
+    });
 
     expect(pinnedFetch).toHaveBeenCalledTimes(2);
     expect(result.body?.toString("utf8")).toBe("ok");
@@ -190,16 +197,9 @@ describe("remote media fetch security", () => {
 
     let thrown: unknown;
     try {
-      await fetchResuxMediaSource(
-        new URL("https://media.example.test/image.jpg"),
-        {
-          requestOrigin: "https://app.example.test",
-          maxBytes: 4,
-        },
-        {
-          fetch: fetchMock as typeof fetch,
-          resolveAddresses: async () => ["93.184.216.34"],
-        },
+      await fetchPublicMedia(
+        { fetch: fetchMock as typeof fetch },
+        { maxBytes: 4 },
       );
     } catch (error) {
       thrown = error;

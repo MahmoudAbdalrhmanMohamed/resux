@@ -81,8 +81,15 @@ if (typeof globalThis !== "undefined") {
 }
 
 const DEFAULT_ICON_API_PROVIDER = "https://api.iconify.design";
+const ICON_FETCH_TIMEOUT_MS = 10_000;
+const ICON_FETCH_MAX_BYTES = 256 * 1024;
+const ICON_FETCH_CACHE_MAX_ENTRIES = 256;
+const ICON_FETCH_MAX_IN_FLIGHT = 32;
+const ICON_FETCH_QUEUE_MAX_ENTRIES = 512;
 const pendingFetches = new Map<string, Promise<IconData | null>>();
 const fetchedIconCache = new Map<string, IconData>();
+const iconFetchQueue: Array<() => void> = [];
+let activeIconFetches = 0;
 
 function stripTrailingSlashes(value: string): string {
   let end = value.length;
@@ -114,12 +121,92 @@ export function normalizeIconApiProvider(value: unknown): string {
   return DEFAULT_ICON_API_PROVIDER;
 }
 
+async function readBoundedIconSvg(response: Response): Promise<string | null> {
+  const rawLength = response.headers?.get?.("content-length");
+  if (rawLength) {
+    const contentLength = Number(rawLength);
+    if (Number.isFinite(contentLength) && contentLength > ICON_FETCH_MAX_BYTES) {
+      return null;
+    }
+  }
+
+  if (!response.body?.getReader) {
+    const text = await response.text();
+    return new TextEncoder().encode(text).byteLength <= ICON_FETCH_MAX_BYTES ? text : null;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let totalBytes = 0;
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > ICON_FETCH_MAX_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        return null;
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    return text;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function readFetchedIcon(cacheKey: string): IconData | undefined {
+  const cached = fetchedIconCache.get(cacheKey);
+  if (!cached) return undefined;
+  fetchedIconCache.delete(cacheKey);
+  fetchedIconCache.set(cacheKey, cached);
+  return cached;
+}
+
+function rememberFetchedIcon(cacheKey: string, data: IconData): void {
+  fetchedIconCache.delete(cacheKey);
+  fetchedIconCache.set(cacheKey, data);
+  while (fetchedIconCache.size > ICON_FETCH_CACHE_MAX_ENTRIES) {
+    const oldestKey = fetchedIconCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    fetchedIconCache.delete(oldestKey);
+  }
+}
+
+function runWithIconFetchSlot(
+  task: () => Promise<IconData | null>,
+): Promise<IconData | null> {
+  if (activeIconFetches >= ICON_FETCH_MAX_IN_FLIGHT
+    && iconFetchQueue.length >= ICON_FETCH_QUEUE_MAX_ENTRIES) {
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve) => {
+    const run = () => {
+      activeIconFetches += 1;
+      void task()
+        .then(resolve, () => resolve(null))
+        .finally(() => {
+          activeIconFetches = Math.max(0, activeIconFetches - 1);
+          iconFetchQueue.shift()?.();
+        });
+    };
+    if (activeIconFetches < ICON_FETCH_MAX_IN_FLIGHT) {
+      run();
+    } else {
+      iconFetchQueue.push(run);
+    }
+  });
+}
+
 export function fetchIconifyIcon(
   name: string,
   apiProvider: string = DEFAULT_ICON_API_PROVIDER,
 ): Promise<IconData | null> {
   const normalized = String(name || "").trim().toLowerCase();
-  if (!normalized) return Promise.resolve(null);
+  if (!normalized || normalized.length > 256) return Promise.resolve(null);
   if (iconRegistry[normalized]) {
     return Promise.resolve(iconRegistry[normalized]);
   }
@@ -131,7 +218,7 @@ export function fetchIconifyIcon(
 
   const provider = normalizeIconApiProvider(apiProvider);
   const cacheKey = provider + "::" + normalized;
-  const cached = fetchedIconCache.get(cacheKey);
+  const cached = readFetchedIcon(cacheKey);
   if (cached) {
     return Promise.resolve(cached);
   }
@@ -139,19 +226,23 @@ export function fetchIconifyIcon(
   if (pending) {
     return pending;
   }
-
   const prefix = parts[0];
   const iconName = parts[1];
   const url = provider + "/" + encodeURIComponent(prefix) + "/" + encodeURIComponent(iconName) + ".svg";
 
-  const fetchPromise = fetch(url)
-    .then((response) => response.ok ? response.text() : null)
-    .then((svgText) => {
+  const fetchPromise = runWithIconFetchSlot(async () => {
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    const timeout = setTimeout(() => controller?.abort(), ICON_FETCH_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, controller ? { signal: controller.signal } : undefined);
+      if (!response.ok) return null;
+      const svgText = await readBoundedIconSvg(response);
       if (!svgText) return null;
       const viewBox = readSvgAttribute(svgText, "viewBox") || "0 0 24 24";
       const paths = [...svgText.matchAll(/<path\b[^>]*>/gi)]
+        .slice(0, 128)
         .map((match) => ({
-          d: readSvgAttribute(match[0], "d"),
+          d: readSvgAttribute(match[0], "d").slice(0, 65_536),
           opacity: readSvgAttribute(match[0], "opacity") || undefined,
         }))
         .filter((entry) => Boolean(entry.d));
@@ -163,13 +254,16 @@ export function fetchIconifyIcon(
         paths,
         viewBox,
       };
-      fetchedIconCache.set(cacheKey, data);
+      rememberFetchedIcon(cacheKey, data);
       return data;
-    })
-    .catch(() => null)
-    .finally(() => {
-      pendingFetches.delete(cacheKey);
-    });
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }).finally(() => {
+    pendingFetches.delete(cacheKey);
+  });
 
   pendingFetches.set(cacheKey, fetchPromise);
   return fetchPromise;

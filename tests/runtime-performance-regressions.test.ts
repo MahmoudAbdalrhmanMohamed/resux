@@ -90,7 +90,7 @@ describe("runtime performance regressions", () => {
     expect(source).toContain('reason: "navigation"');
     expect(source).toContain('pending.reason === "prefetch"');
     expect(source).toContain('return loadRoute(key, { reason: "navigation", force: true });');
-    expect(source).toContain("routePayloadFailures.set(key");
+    expect(source).toContain("setBoundedRouteMapEntry(routePayloadFailures, key");
   });
 
   it("normalizes route payload keys and keeps query while excluding hash and trailing slash", () => {
@@ -119,6 +119,20 @@ describe("runtime performance regressions", () => {
     expect(source).toContain("new AbortController()");
     expect(source).toContain("controller?.abort();");
     expect(source).toContain("clearTimeout(timeout);");
+  });
+
+  it("bounds route payload caches and speculative prefetch concurrency", () => {
+    const source = getClientRuntimeSource();
+
+    expect(source).toContain("const ROUTE_PAYLOAD_CACHE_MAX_ENTRIES = 64;");
+    expect(source).toContain("const ROUTE_PAYLOAD_FAILURE_MAX_ENTRIES = 64;");
+    expect(source).toContain("const ROUTE_PREFETCH_MAX_IN_FLIGHT = 8;");
+    expect(source).toContain("function setBoundedRouteMapEntry(map, key, value, maxEntries)");
+    expect(source).toContain("while (map.size > maxEntries)");
+    expect(source).toContain("return readCachedRoutePayload(key);");
+    expect(source).toContain("countInFlightRoutePrefetches() >= ROUTE_PREFETCH_MAX_IN_FLIGHT");
+    expect(source).toContain("setBoundedRouteMapEntry(routePayloadCache, key, result, ROUTE_PAYLOAD_CACHE_MAX_ENTRIES);");
+    expect(source).toContain("}, ROUTE_PAYLOAD_FAILURE_MAX_ENTRIES);");
   });
 
   it("hydrates i18n from public route payload config without module side effects", () => {

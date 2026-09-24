@@ -7896,6 +7896,9 @@ if (typeof globalThis !== "undefined") {
 const routePayloadCache = new Map();
 const routePayloadRequests = new Map();
 const routePayloadFailures = new Map();
+const ROUTE_PAYLOAD_CACHE_MAX_ENTRIES = 64;
+const ROUTE_PAYLOAD_FAILURE_MAX_ENTRIES = 64;
+const ROUTE_PREFETCH_MAX_IN_FLIGHT = 8;
 const ROUTE_PREFETCH_FAILURE_COOLDOWN_MS = 5000;
 const ROUTE_PAYLOAD_TIMEOUT_MS = 30000;
 let routePayloadGeneration = 0;
@@ -13971,6 +13974,9 @@ async function prefetchNavigationTarget(event) {
   if (!routePath || routePayloadCache.has(routePath) || routePayloadRequests.has(routePath)) {
     return;
   }
+  if (countInFlightRoutePrefetches() >= ROUTE_PREFETCH_MAX_IN_FLIGHT) {
+    return;
+  }
   if (isRoutePrefetchCoolingDown(routePath)) {
     return;
   }
@@ -14054,6 +14060,40 @@ function normalizeRoutePayloadKey(routePath) {
   return pathname + target.search;
 }
 
+function setBoundedRouteMapEntry(map, key, value, maxEntries) {
+  if (map.has(key)) {
+    map.delete(key);
+  }
+  map.set(key, value);
+  while (map.size > maxEntries) {
+    const oldestKey = map.keys().next().value;
+    if (oldestKey === undefined) {
+      break;
+    }
+    map.delete(oldestKey);
+  }
+}
+
+function readCachedRoutePayload(key) {
+  if (!routePayloadCache.has(key)) {
+    return undefined;
+  }
+  const cached = routePayloadCache.get(key);
+  routePayloadCache.delete(key);
+  routePayloadCache.set(key, cached);
+  return cached;
+}
+
+function countInFlightRoutePrefetches() {
+  let count = 0;
+  for (const entry of routePayloadRequests.values()) {
+    if (entry?.reason === "prefetch") {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 function isRoutePrefetchCoolingDown(routePath, now = Date.now()) {
   const key = normalizeRoutePayloadKey(routePath);
   const failure = routePayloadFailures.get(key);
@@ -14088,7 +14128,7 @@ async function loadRoute(routePath, options = {}) {
   if (force) {
     invalidateRoutePayload(key);
   } else if (routePayloadCache.has(key)) {
-    return routePayloadCache.get(key);
+    return readCachedRoutePayload(key);
   }
 
   if (reason === "prefetch" && !force && isRoutePrefetchCoolingDown(key)) {
@@ -14126,14 +14166,14 @@ async function loadRoute(routePath, options = {}) {
       return loadRoute(key, { reason, force: false });
     }
     routePayloadFailures.delete(key);
-    routePayloadCache.set(key, result);
+    setBoundedRouteMapEntry(routePayloadCache, key, result, ROUTE_PAYLOAD_CACHE_MAX_ENTRIES);
     return result;
   } catch (error) {
-    routePayloadFailures.set(key, {
+    setBoundedRouteMapEntry(routePayloadFailures, key, {
       status: "failed",
       error,
       failedAt: Date.now()
-    });
+    }, ROUTE_PAYLOAD_FAILURE_MAX_ENTRIES);
     throw error;
   } finally {
     if (routePayloadRequests.get(key) === entry) {

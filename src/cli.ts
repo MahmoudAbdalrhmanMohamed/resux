@@ -9,6 +9,18 @@ import { cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  fetchResuxMediaSource,
+  RESUX_IMAGE_MAX_SOURCE_BYTES,
+  RESUX_VIDEO_MAX_SOURCE_BYTES,
+  ResuxMediaFetchError,
+} from "./security/media-fetch.js";
+import {
+  isPathWithinBoundary,
+  isRealPathWithinBoundary,
+  prepareSafeFileWriteWithinBoundary,
+  resolveRequestPathWithinBoundary,
+} from "./security/path-boundary.js";
 import type { ViteDevServer } from "vite";
 import type { BuildOptions } from "./compiler/index.js";
 import { createResux } from "./core/resux.js";
@@ -2402,23 +2414,20 @@ function shouldSkipDevWatch(
   outDir: string,
 ): boolean {
   const resolved = path.resolve(changedPath);
-  const generatedMediaRoot = path.resolve(
-    appRoot,
-    "public",
-    "_resux",
-    "generated",
-    "images",
-  );
+  const generatedMediaRoots = [
+    path.resolve(appRoot, "public", "_resux", "generated", "images"),
+    path.resolve(appRoot, "public", "_resux", "generated", "videos"),
+  ];
   const nitroDir = path.resolve(appRoot, ".nitro");
   const resuxNitroDir = path.resolve(appRoot, ".resux-nitro");
   return (
-    resolved.startsWith(path.resolve(outDir)) ||
-    resolved.startsWith(nitroDir) ||
-    resolved.startsWith(resuxNitroDir) ||
-    resolved.startsWith(generatedMediaRoot) ||
+    isPathWithinBoundary(path.resolve(outDir), resolved) ||
+    isPathWithinBoundary(nitroDir, resolved) ||
+    isPathWithinBoundary(resuxNitroDir, resolved) ||
+    generatedMediaRoots.some((root) => isPathWithinBoundary(root, resolved)) ||
     resolved.includes(`${path.sep}node_modules${path.sep}`) ||
     resolved.includes(`${path.sep}dist${path.sep}`) ||
-    !resolved.startsWith(path.resolve(appRoot))
+    !isPathWithinBoundary(path.resolve(appRoot), resolved)
   );
 }
 
@@ -2583,6 +2592,145 @@ function firstHeaderValue(
     return value[0]?.split(",")[0]?.trim();
   }
   return value?.split(",")[0]?.trim();
+}
+
+async function fetchMediaSourceOrRespond(
+  request: IncomingMessage,
+  response: ServerResponse,
+  sourceUrl: URL,
+  requestOrigin: string,
+  kind: "image" | "video",
+) {
+  try {
+    return await fetchResuxMediaSource(sourceUrl, {
+      requestOrigin,
+      accept: firstHeaderValue(request.headers.accept),
+      maxBytes: kind === "image" ? RESUX_IMAGE_MAX_SOURCE_BYTES : RESUX_VIDEO_MAX_SOURCE_BYTES,
+      trustedLoopbackPort: request.socket.localPort ?? undefined,
+    });
+  } catch (error) {
+    const statusCode = error instanceof ResuxMediaFetchError ? error.statusCode : 502;
+    const message = error instanceof ResuxMediaFetchError
+      ? error.message
+      : `Failed to fetch ${kind} source.`;
+    response.writeHead(statusCode, {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    response.end(JSON.stringify({ error: message }));
+    return null;
+  }
+}
+
+function respondMediaJsonError(
+  response: ServerResponse,
+  statusCode: number,
+  error: string,
+): void {
+  response.writeHead(statusCode, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  response.end(JSON.stringify({ error }));
+}
+
+type ResuxMediaTransformResult = {
+  buffer: Buffer;
+  contentType: string;
+};
+
+async function fetchAndTransformMediaSource(
+  request: IncomingMessage,
+  response: ServerResponse,
+  sourceUrl: URL,
+  requestOrigin: string,
+  kind: "image" | "video",
+  needsTransform: boolean,
+  transform: (
+    sourceBuffer: Buffer,
+    sourceContentType: string | null,
+  ) => Promise<ResuxMediaTransformResult | null>,
+  transformFailureMessage: string,
+  fallbackContentType: string,
+): Promise<{ body: Buffer; contentType: string } | null> {
+  const upstream = await fetchMediaSourceOrRespond(
+    request,
+    response,
+    sourceUrl,
+    requestOrigin,
+    kind,
+  );
+  if (!upstream) {
+    return null;
+  }
+  if (!upstream.response.ok) {
+    respondMediaJsonError(
+      response,
+      upstream.response.status,
+      `${kind === "image" ? "Image" : "Video"} source request failed with status ${upstream.response.status}.`,
+    );
+    return null;
+  }
+
+  const sourceBuffer = upstream.body ?? Buffer.alloc(0);
+  const sourceContentType = upstream.response.headers.get("content-type");
+  const transformed = await transform(sourceBuffer, sourceContentType);
+  if (needsTransform && !transformed) {
+    respondMediaJsonError(response, 501, transformFailureMessage);
+    return null;
+  }
+
+  return {
+    body: transformed?.buffer ?? sourceBuffer,
+    contentType: transformed?.contentType ?? sourceContentType ?? fallbackContentType,
+  };
+}
+
+function fetchAndTransformImageSource(
+  request: IncomingMessage,
+  response: ServerResponse,
+  sourceUrl: URL,
+  requestOrigin: string,
+  options: ResuxImageRequestOptions,
+): Promise<{ body: Buffer; contentType: string } | null> {
+  return fetchAndTransformMediaSource(
+    request,
+    response,
+    sourceUrl,
+    requestOrigin,
+    "image",
+    shouldTransformImage(options),
+    (sourceBuffer, sourceContentType) =>
+      transformResuxImage(sourceBuffer, sourceContentType, options),
+    sharpFactoryLoadError
+      ?? "Image transform failed. Verify source format and requested modifiers.",
+    "application/octet-stream",
+  );
+}
+
+function fetchAndTransformVideoSource(
+  request: IncomingMessage,
+  response: ServerResponse,
+  sourceUrl: URL,
+  requestOrigin: string,
+  options: ResuxVideoRequestOptions,
+  sourceIdentity: string,
+): Promise<{ body: Buffer; contentType: string } | null> {
+  return fetchAndTransformMediaSource(
+    request,
+    response,
+    sourceUrl,
+    requestOrigin,
+    "video",
+    shouldTransformVideo(options),
+    (sourceBuffer) => transformResuxVideo(sourceBuffer, sourceIdentity, options),
+    ffmpegBinaryLoadError
+      ?? ffmpegTransformLastError
+      ?? "Video transform failed. Verify ffmpeg availability and requested options.",
+    mimeTypeFromVideoFormat(
+      options.format ?? inferVideoFormatFromSource(sourceIdentity) ?? "mp4",
+    ),
+  );
 }
 
 function readPort(value: string | undefined, fallback: number): number {
@@ -3850,48 +3998,196 @@ function createGeneratedVideoRoutePath(
   return `/_resux/generated/videos/${digest}.${extension}`;
 }
 
+function resolveGeneratedMediaDiskPath(
+  appRoot: string,
+  pathname: string,
+  mediaDirectory: "images" | "videos",
+): { filePath: string; relativePath: string } | null {
+  const publicRoot = path.resolve(appRoot, "public");
+  const generatedRoot = path.resolve(publicRoot, "_resux", "generated", mediaDirectory);
+  const resolved = resolveRequestPathWithinBoundary(publicRoot, generatedRoot, pathname);
+  return resolved
+    ? { filePath: resolved, relativePath: decodeURIComponent(pathname) }
+    : null;
+}
+
 function resolveGeneratedImageDiskPath(
   appRoot: string,
   pathname: string,
 ): { filePath: string; relativePath: string } | null {
-  const publicRoot = path.resolve(appRoot, "public");
-  const generatedRoot = path.resolve(publicRoot, "_resux", "generated", "images");
-  let decodedPath: string;
-  try {
-    decodedPath = decodeURIComponent(pathname);
-  } catch {
-    return null;
-  }
-  const resolved = path.resolve(publicRoot, `.${decodedPath}`);
-  if (!resolved.startsWith(generatedRoot)) {
-    return null;
-  }
-  return {
-    filePath: resolved,
-    relativePath: decodedPath,
-  };
+  return resolveGeneratedMediaDiskPath(appRoot, pathname, "images");
 }
 
 function resolveGeneratedVideoDiskPath(
   appRoot: string,
   pathname: string,
 ): { filePath: string; relativePath: string } | null {
-  const publicRoot = path.resolve(appRoot, "public");
-  const generatedRoot = path.resolve(publicRoot, "_resux", "generated", "videos");
-  let decodedPath: string;
-  try {
-    decodedPath = decodeURIComponent(pathname);
-  } catch {
-    return null;
-  }
-  const resolved = path.resolve(publicRoot, `.${decodedPath}`);
-  if (!resolved.startsWith(generatedRoot)) {
-    return null;
-  }
+  return resolveGeneratedMediaDiskPath(appRoot, pathname, "videos");
+}
+
+function generatedMediaCacheTiming(
+  now: number,
+  cacheMaxAgeSeconds: number | undefined,
+): { expiresAt: number; responseMaxAge: number } {
+  const expiresAt = cacheMaxAgeSeconds
+    ? now + (cacheMaxAgeSeconds * 1000)
+    : now;
   return {
-    filePath: resolved,
-    relativePath: decodedPath,
+    expiresAt,
+    responseMaxAge: cacheMaxAgeSeconds
+      ? Math.max(1, Math.floor((expiresAt - now) / 1000))
+      : 0,
   };
+}
+
+async function serveGeneratedMediaCacheHit(
+  response: ServerResponse,
+  method: string,
+  filePath: string,
+  expiresAt: number,
+  now: number,
+): Promise<void> {
+  const remaining = Math.max(1, Math.floor((expiresAt - now) / 1000));
+  response.writeHead(200, {
+    "content-type": mimeType(filePath),
+    "cache-control": `public, max-age=${remaining}`,
+    "x-resux-cache": "hit",
+  });
+  if (method === "HEAD") {
+    response.end();
+    return;
+  }
+  response.end(await readFile(filePath));
+}
+
+async function writeGeneratedMediaCache(
+  appRoot: string,
+  filePath: string,
+  metadataPath: string,
+  body: Buffer,
+  metadata: ResuxGeneratedImageCacheMetadata | ResuxGeneratedVideoCacheMetadata,
+): Promise<void> {
+  const safeFilePath = await prepareSafeFileWriteWithinBoundary(appRoot, filePath);
+  const safeMetadataPath = await prepareSafeFileWriteWithinBoundary(appRoot, metadataPath);
+  await writeFile(safeFilePath, body);
+  await writeFile(safeMetadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
+}
+
+async function tryServeGeneratedMediaCache(
+  response: ServerResponse,
+  method: string,
+  filePath: string,
+  cacheMaxAgeSeconds: number | undefined,
+  metadata: { expiresAt: number } | null,
+  isValid: () => boolean,
+  now: number,
+): Promise<boolean> {
+  if (
+    !cacheMaxAgeSeconds
+    || !metadata
+    || !(await exists(filePath))
+    || !isValid()
+  ) {
+    return false;
+  }
+  await serveGeneratedMediaCacheHit(
+    response,
+    method,
+    filePath,
+    metadata.expiresAt,
+    now,
+  );
+  return true;
+}
+
+async function respondWithGeneratedMedia(
+  response: ServerResponse,
+  method: string,
+  appRoot: string,
+  filePath: string,
+  metadataPath: string,
+  media: { body: Buffer; contentType: string },
+  cacheMaxAgeSeconds: number | undefined,
+  now: number,
+  createMetadata: (
+    expiresAt: number,
+  ) => ResuxGeneratedImageCacheMetadata | ResuxGeneratedVideoCacheMetadata,
+): Promise<void> {
+  const { body, contentType } = media;
+  const { expiresAt, responseMaxAge } = generatedMediaCacheTiming(
+    now,
+    cacheMaxAgeSeconds,
+  );
+
+  if (cacheMaxAgeSeconds) {
+    await writeGeneratedMediaCache(
+      appRoot,
+      filePath,
+      metadataPath,
+      body,
+      createMetadata(expiresAt),
+    );
+  }
+
+  response.writeHead(200, {
+    "content-type": contentType,
+    "cache-control": cacheMaxAgeSeconds
+      ? `public, max-age=${responseMaxAge}`
+      : "no-store",
+    "x-resux-cache": cacheMaxAgeSeconds ? "miss" : "bypass",
+    vary: "Accept",
+  });
+  if (method === "HEAD") {
+    response.end();
+    return;
+  }
+  response.end(body);
+}
+
+async function serveGeneratedMediaCacheOrSource<TMetadata extends { expiresAt: number }>(
+  response: ServerResponse,
+  method: string,
+  appRoot: string,
+  filePath: string,
+  metadataPath: string,
+  cacheMaxAgeSeconds: number | undefined,
+  now: number,
+  readMetadata: () => Promise<TMetadata | null>,
+  isMetadataValid: (metadata: TMetadata) => boolean,
+  fetchMedia: () => Promise<{ body: Buffer; contentType: string } | null>,
+  createMetadata: (
+    expiresAt: number,
+  ) => ResuxGeneratedImageCacheMetadata | ResuxGeneratedVideoCacheMetadata,
+): Promise<void> {
+  const metadata = await readMetadata();
+  if (await tryServeGeneratedMediaCache(
+    response,
+    method,
+    filePath,
+    cacheMaxAgeSeconds,
+    metadata,
+    () => Boolean(metadata && isMetadataValid(metadata)),
+    now,
+  )) {
+    return;
+  }
+
+  const media = await fetchMedia();
+  if (!media) {
+    return;
+  }
+
+  await respondWithGeneratedMedia(
+    response,
+    method,
+    appRoot,
+    filePath,
+    metadataPath,
+    media,
+    cacheMaxAgeSeconds,
+    now,
+    createMetadata,
+  );
 }
 
 async function readGeneratedImageMetadata(
@@ -3991,17 +4287,11 @@ async function resolveLocalSourceFileInfo(
   }
 
   const publicRoot = path.resolve(appRoot, "public");
-  let decodedPath: string;
-  try {
-    decodedPath = decodeURIComponent(sourceUrl.pathname);
-  } catch {
+  const resolved = resolveRequestPathWithinBoundary(publicRoot, publicRoot, sourceUrl.pathname);
+  if (!resolved || !(await exists(resolved))) {
     return null;
   }
-  const resolved = path.resolve(publicRoot, `.${decodedPath}`);
-  if (!resolved.startsWith(publicRoot)) {
-    return null;
-  }
-  if (!(await exists(resolved))) {
+  if (!(await isRealPathWithinBoundary(publicRoot, resolved))) {
     return null;
   }
   const sourceStats = await stat(resolved);
@@ -4069,60 +4359,17 @@ async function serveResuxImage(
     extraModifiers: parseImageExtraModifiers(requestUrl.searchParams),
   };
 
-  const forwardedAccept = firstHeaderValue(request.headers.accept);
-  const upstream = await fetch(sourceUrl, {
-    headers: forwardedAccept ? { accept: forwardedAccept } : undefined,
-    redirect: "follow",
-  }).catch(() => null);
-
-  if (!upstream) {
-    response.writeHead(502, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(JSON.stringify({ error: "Failed to fetch image source." }));
-    return;
-  }
-
-  if (!upstream.ok) {
-    response.writeHead(upstream.status, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(
-      JSON.stringify({
-        error: `Image source request failed with status ${upstream.status}.`,
-      }),
-    );
-    return;
-  }
-
-  const sourceBuffer = Buffer.from(await upstream.arrayBuffer());
-  const sourceContentType = upstream.headers.get("content-type");
-  const needsTransform = shouldTransformImage(options);
-  const transformed = await transformResuxImage(
-    sourceBuffer,
-    sourceContentType,
+  const media = await fetchAndTransformImageSource(
+    request,
+    response,
+    sourceUrl,
+    requestOrigin,
     options,
   );
-  if (needsTransform && !transformed) {
-    response.writeHead(501, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(
-      JSON.stringify({
-        error:
-          sharpFactoryLoadError
-          ?? "Image transform failed. Verify source format and requested modifiers.",
-      }),
-    );
+  if (!media) {
     return;
   }
-
-  const body = transformed?.buffer ?? sourceBuffer;
-  const contentType =
-    transformed?.contentType ?? sourceContentType ?? "application/octet-stream";
+  const { body, contentType } = media;
   const cacheControl = shouldTransformImage(options)
     ? "public, max-age=31536000, immutable"
     : "public, max-age=86400";
@@ -4260,92 +4507,24 @@ async function serveGeneratedResuxImage(
     ),
   );
   const now = Date.now();
-  const metadata = await readGeneratedImageMetadata(metadataPath);
-  if (
-    cacheMaxAgeSeconds
-    && (await exists(filePath))
-    && metadata
-    && generatedImageMetadataValid(metadata, cacheKey, now, sourceInfo)
-  ) {
-    const remaining = Math.max(1, Math.floor((metadata.expiresAt - now) / 1000));
-    response.writeHead(200, {
-      "content-type": mimeType(filePath),
-      "cache-control": `public, max-age=${remaining}`,
-      "x-resux-cache": "hit",
-    });
-    if (method === "HEAD") {
-      response.end();
-      return;
-    }
-    response.end(await readFile(filePath));
-    return;
-  }
-
-  const forwardedAccept = firstHeaderValue(request.headers.accept);
-  const upstream = await fetch(sourceUrl, {
-    headers: forwardedAccept ? { accept: forwardedAccept } : undefined,
-    redirect: "follow",
-  }).catch(() => null);
-
-  if (!upstream) {
-    response.writeHead(502, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(JSON.stringify({ error: "Failed to fetch image source." }));
-    return;
-  }
-
-  if (!upstream.ok) {
-    response.writeHead(upstream.status, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(
-      JSON.stringify({
-        error: `Image source request failed with status ${upstream.status}.`,
-      }),
-    );
-    return;
-  }
-
-  const sourceBuffer = Buffer.from(await upstream.arrayBuffer());
-  const sourceContentType = upstream.headers.get("content-type");
-  const needsTransform = shouldTransformImage(options);
-  const transformed = await transformResuxImage(
-    sourceBuffer,
-    sourceContentType,
-    options,
-  );
-  if (needsTransform && !transformed) {
-    response.writeHead(501, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(
-      JSON.stringify({
-        error:
-          sharpFactoryLoadError
-          ?? "Image transform failed. Verify source format and requested modifiers.",
-      }),
-    );
-    return;
-  }
-
-  const body = transformed?.buffer ?? sourceBuffer;
-  const contentType =
-    transformed?.contentType ?? sourceContentType ?? "application/octet-stream";
-  const expiresAt = cacheMaxAgeSeconds
-    ? now + (cacheMaxAgeSeconds * 1000)
-    : now;
-  const responseMaxAge = cacheMaxAgeSeconds
-    ? Math.max(1, Math.floor((expiresAt - now) / 1000))
-    : 0;
-
-  if (cacheMaxAgeSeconds) {
-    await mkdir(path.dirname(filePath), { recursive: true });
-    await writeFile(filePath, body);
-    const metadataPayload: ResuxGeneratedImageCacheMetadata = {
+  await serveGeneratedMediaCacheOrSource(
+    response,
+    method,
+    appRoot,
+    filePath,
+    metadataPath,
+    cacheMaxAgeSeconds,
+    now,
+    () => readGeneratedImageMetadata(metadataPath),
+    (metadata) => generatedImageMetadataValid(metadata, cacheKey, now, sourceInfo),
+    () => fetchAndTransformImageSource(
+      request,
+      response,
+      sourceUrl,
+      requestOrigin,
+      options,
+    ),
+    (expiresAt): ResuxGeneratedImageCacheMetadata => ({
       version: 1,
       key: cacheKey,
       createdAt: now,
@@ -4363,25 +4542,8 @@ async function serveGeneratedResuxImage(
           : {}),
       },
       ...(sourceInfo ? { sourceMtimeMs: sourceInfo.mtimeMs, sourceSize: sourceInfo.size } : {}),
-    };
-    await writeFile(metadataPath, `${JSON.stringify(metadataPayload, null, 2)}\n`, "utf8");
-  }
-
-  response.writeHead(200, {
-    "content-type": contentType,
-    "cache-control": cacheMaxAgeSeconds
-      ? `public, max-age=${responseMaxAge}`
-      : "no-store",
-    "x-resux-cache": cacheMaxAgeSeconds ? "miss" : "bypass",
-    vary: "Accept",
-  });
-
-  if (method === "HEAD") {
-    response.end();
-    return;
-  }
-
-  response.end(body);
+    }),
+  );
 }
 
 async function serveResuxVideo(
@@ -4427,64 +4589,19 @@ async function serveResuxVideo(
       ?? normalizeVideoQuality(requestUrl.searchParams.get("quality")),
   };
 
-  const forwardedAccept = firstHeaderValue(request.headers.accept);
-  const upstream = await fetch(sourceUrl, {
-    headers: forwardedAccept ? { accept: forwardedAccept } : undefined,
-    redirect: "follow",
-  }).catch(() => null);
-
-  if (!upstream) {
-    response.writeHead(502, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(JSON.stringify({ error: "Failed to fetch video source." }));
-    return;
-  }
-
-  if (!upstream.ok) {
-    response.writeHead(upstream.status, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(
-      JSON.stringify({
-        error: `Video source request failed with status ${upstream.status}.`,
-      }),
-    );
-    return;
-  }
-
-  const sourceBuffer = Buffer.from(await upstream.arrayBuffer());
-  const sourceContentType = upstream.headers.get("content-type");
-  const needsTransform = shouldTransformVideo(options);
-  const transformed = await transformResuxVideo(
-    sourceBuffer,
-    sourceParam || sourceUrl.pathname,
+  const media = await fetchAndTransformVideoSource(
+    request,
+    response,
+    sourceUrl,
+    requestOrigin,
     options,
+    sourceParam || sourceUrl.pathname,
   );
-  if (needsTransform && !transformed) {
-    response.writeHead(501, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(
-      JSON.stringify({
-        error:
-          ffmpegBinaryLoadError
-          ?? ffmpegTransformLastError
-          ?? "Video transform failed. Verify ffmpeg availability and requested options.",
-      }),
-    );
+  if (!media) {
     return;
   }
-
-  const body = transformed?.buffer ?? sourceBuffer;
-  const contentType =
-    transformed?.contentType
-    ?? sourceContentType
-    ?? mimeTypeFromVideoFormat(inferVideoFormatFromSource(sourceParam || sourceUrl.pathname) ?? "mp4");
-  const cacheControl = needsTransform
+  const { body, contentType } = media;
+  const cacheControl = shouldTransformVideo(options)
     ? "public, max-age=31536000, immutable"
     : "public, max-age=86400";
 
@@ -4601,93 +4718,25 @@ async function serveGeneratedResuxVideo(
     createVideoTransformSignature(sourceParam, options.format, options.quality),
   );
   const now = Date.now();
-  const metadata = await readGeneratedVideoMetadata(metadataPath);
-  if (
-    cacheMaxAgeSeconds
-    && (await exists(filePath))
-    && metadata
-    && generatedVideoMetadataValid(metadata, cacheKey, now, sourceInfo)
-  ) {
-    const remaining = Math.max(1, Math.floor((metadata.expiresAt - now) / 1000));
-    response.writeHead(200, {
-      "content-type": mimeType(filePath),
-      "cache-control": `public, max-age=${remaining}`,
-      "x-resux-cache": "hit",
-    });
-    if (method === "HEAD") {
-      response.end();
-      return;
-    }
-    response.end(await readFile(filePath));
-    return;
-  }
-
-  const forwardedAccept = firstHeaderValue(request.headers.accept);
-  const upstream = await fetch(sourceUrl, {
-    headers: forwardedAccept ? { accept: forwardedAccept } : undefined,
-    redirect: "follow",
-  }).catch(() => null);
-  if (!upstream) {
-    response.writeHead(502, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(JSON.stringify({ error: "Failed to fetch video source." }));
-    return;
-  }
-  if (!upstream.ok) {
-    response.writeHead(upstream.status, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(
-      JSON.stringify({
-        error: `Video source request failed with status ${upstream.status}.`,
-      }),
-    );
-    return;
-  }
-
-  const sourceBuffer = Buffer.from(await upstream.arrayBuffer());
-  const sourceContentType = upstream.headers.get("content-type");
-  const needsTransform = shouldTransformVideo(options);
-  const transformed = await transformResuxVideo(
-    sourceBuffer,
-    sourceParam || sourceUrl.pathname,
-    options,
-  );
-  if (needsTransform && !transformed) {
-    response.writeHead(501, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
-    response.end(
-      JSON.stringify({
-        error:
-          ffmpegBinaryLoadError
-          ?? ffmpegTransformLastError
-          ?? "Video transform failed. Verify ffmpeg availability and requested options.",
-      }),
-    );
-    return;
-  }
-
-  const body = transformed?.buffer ?? sourceBuffer;
-  const contentType =
-    transformed?.contentType
-    ?? sourceContentType
-    ?? mimeTypeFromVideoFormat(options.format ?? inferVideoFormatFromSource(sourceParam) ?? "mp4");
-  const expiresAt = cacheMaxAgeSeconds
-    ? now + (cacheMaxAgeSeconds * 1000)
-    : now;
-  const responseMaxAge = cacheMaxAgeSeconds
-    ? Math.max(1, Math.floor((expiresAt - now) / 1000))
-    : 0;
-
-  if (cacheMaxAgeSeconds) {
-    await mkdir(path.dirname(filePath), { recursive: true });
-    await writeFile(filePath, body);
-    const metadataPayload: ResuxGeneratedVideoCacheMetadata = {
+  await serveGeneratedMediaCacheOrSource(
+    response,
+    method,
+    appRoot,
+    filePath,
+    metadataPath,
+    cacheMaxAgeSeconds,
+    now,
+    () => readGeneratedVideoMetadata(metadataPath),
+    (metadata) => generatedVideoMetadataValid(metadata, cacheKey, now, sourceInfo),
+    () => fetchAndTransformVideoSource(
+      request,
+      response,
+      sourceUrl,
+      requestOrigin,
+      options,
+      sourceParam || sourceUrl.pathname,
+    ),
+    (expiresAt): ResuxGeneratedVideoCacheMetadata => ({
       version: 1,
       key: cacheKey,
       createdAt: now,
@@ -4699,23 +4748,8 @@ async function serveGeneratedResuxVideo(
         ...(options.quality ? { quality: options.quality } : {}),
       },
       ...(sourceInfo ? { sourceMtimeMs: sourceInfo.mtimeMs, sourceSize: sourceInfo.size } : {}),
-    };
-    await writeFile(metadataPath, `${JSON.stringify(metadataPayload, null, 2)}\n`, "utf8");
-  }
-
-  response.writeHead(200, {
-    "content-type": contentType,
-    "cache-control": cacheMaxAgeSeconds
-      ? `public, max-age=${responseMaxAge}`
-      : "no-store",
-    "x-resux-cache": cacheMaxAgeSeconds ? "miss" : "bypass",
-    vary: "Accept",
-  });
-  if (method === "HEAD") {
-    response.end();
-    return;
-  }
-  response.end(body);
+    }),
+  );
 }
 
 function applyDefaultSecurityHeaders(
@@ -5291,15 +5325,15 @@ async function servePublicFile(
   }
 
   for (const { base, boundary } of candidates) {
-    const resolved = path.resolve(base, `.${decodeURIComponent(pathname)}`);
-    if (!resolved.startsWith(boundary)) {
-      continue;
-    }
-    if (!(await exists(resolved))) {
+    const resolved = resolveRequestPathWithinBoundary(base, boundary, pathname);
+    if (!resolved || !(await exists(resolved))) {
       continue;
     }
     const fileStats = await stat(resolved);
     if (!fileStats.isFile()) {
+      continue;
+    }
+    if (!(await isRealPathWithinBoundary(boundary, resolved))) {
       continue;
     }
 
@@ -5519,7 +5553,7 @@ async function serveResuxAsset(
   const resolved = path.resolve(outDir, relative);
   const allowedRoot = path.resolve(outDir, "client");
 
-  if (!resolved.startsWith(allowedRoot)) {
+  if (!isPathWithinBoundary(allowedRoot, resolved)) {
     response.writeHead(403);
     response.end("Forbidden");
     return;
@@ -5533,6 +5567,12 @@ async function serveResuxAsset(
     }
     response.writeHead(404);
     response.end("Not found");
+    return;
+  }
+
+  if (!(await isRealPathWithinBoundary(allowedRoot, resolved))) {
+    response.writeHead(403);
+    response.end("Forbidden");
     return;
   }
 

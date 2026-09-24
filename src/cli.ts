@@ -4073,6 +4073,77 @@ async function writeGeneratedMediaCache(
   await writeFile(safeMetadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
 }
 
+async function tryServeGeneratedMediaCache(
+  response: ServerResponse,
+  method: string,
+  filePath: string,
+  cacheMaxAgeSeconds: number | undefined,
+  metadata: { expiresAt: number } | null,
+  isValid: () => boolean,
+  now: number,
+): Promise<boolean> {
+  if (
+    !cacheMaxAgeSeconds
+    || !metadata
+    || !(await exists(filePath))
+    || !isValid()
+  ) {
+    return false;
+  }
+  await serveGeneratedMediaCacheHit(
+    response,
+    method,
+    filePath,
+    metadata.expiresAt,
+    now,
+  );
+  return true;
+}
+
+async function respondWithGeneratedMedia(
+  response: ServerResponse,
+  method: string,
+  appRoot: string,
+  filePath: string,
+  metadataPath: string,
+  media: { body: Buffer; contentType: string },
+  cacheMaxAgeSeconds: number | undefined,
+  now: number,
+  createMetadata: (
+    expiresAt: number,
+  ) => ResuxGeneratedImageCacheMetadata | ResuxGeneratedVideoCacheMetadata,
+): Promise<void> {
+  const { body, contentType } = media;
+  const { expiresAt, responseMaxAge } = generatedMediaCacheTiming(
+    now,
+    cacheMaxAgeSeconds,
+  );
+
+  if (cacheMaxAgeSeconds) {
+    await writeGeneratedMediaCache(
+      appRoot,
+      filePath,
+      metadataPath,
+      body,
+      createMetadata(expiresAt),
+    );
+  }
+
+  response.writeHead(200, {
+    "content-type": contentType,
+    "cache-control": cacheMaxAgeSeconds
+      ? `public, max-age=${responseMaxAge}`
+      : "no-store",
+    "x-resux-cache": cacheMaxAgeSeconds ? "miss" : "bypass",
+    vary: "Accept",
+  });
+  if (method === "HEAD") {
+    response.end();
+    return;
+  }
+  response.end(body);
+}
+
 async function readGeneratedImageMetadata(
   metadataPath: string,
 ): Promise<ResuxGeneratedImageCacheMetadata | null> {
@@ -4391,19 +4462,15 @@ async function serveGeneratedResuxImage(
   );
   const now = Date.now();
   const metadata = await readGeneratedImageMetadata(metadataPath);
-  if (
-    cacheMaxAgeSeconds
-    && (await exists(filePath))
-    && metadata
-    && generatedImageMetadataValid(metadata, cacheKey, now, sourceInfo)
-  ) {
-    await serveGeneratedMediaCacheHit(
-      response,
-      method,
-      filePath,
-      metadata.expiresAt,
-      now,
-    );
+  if (await tryServeGeneratedMediaCache(
+    response,
+    method,
+    filePath,
+    cacheMaxAgeSeconds,
+    metadata,
+    () => generatedImageMetadataValid(metadata!, cacheKey, now, sourceInfo),
+    now,
+  )) {
     return;
   }
 
@@ -4417,14 +4484,17 @@ async function serveGeneratedResuxImage(
   if (!media) {
     return;
   }
-  const { body, contentType } = media;
-  const { expiresAt, responseMaxAge } = generatedMediaCacheTiming(
-    now,
-    cacheMaxAgeSeconds,
-  );
 
-  if (cacheMaxAgeSeconds) {
-    const metadataPayload: ResuxGeneratedImageCacheMetadata = {
+  await respondWithGeneratedMedia(
+    response,
+    method,
+    appRoot,
+    filePath,
+    metadataPath,
+    media,
+    cacheMaxAgeSeconds,
+    now,
+    (expiresAt): ResuxGeneratedImageCacheMetadata => ({
       version: 1,
       key: cacheKey,
       createdAt: now,
@@ -4442,31 +4512,8 @@ async function serveGeneratedResuxImage(
           : {}),
       },
       ...(sourceInfo ? { sourceMtimeMs: sourceInfo.mtimeMs, sourceSize: sourceInfo.size } : {}),
-    };
-    await writeGeneratedMediaCache(
-      appRoot,
-      filePath,
-      metadataPath,
-      body,
-      metadataPayload,
-    );
-  }
-
-  response.writeHead(200, {
-    "content-type": contentType,
-    "cache-control": cacheMaxAgeSeconds
-      ? `public, max-age=${responseMaxAge}`
-      : "no-store",
-    "x-resux-cache": cacheMaxAgeSeconds ? "miss" : "bypass",
-    vary: "Accept",
-  });
-
-  if (method === "HEAD") {
-    response.end();
-    return;
-  }
-
-  response.end(body);
+    }),
+  );
 }
 
 async function serveResuxVideo(
@@ -4642,19 +4689,15 @@ async function serveGeneratedResuxVideo(
   );
   const now = Date.now();
   const metadata = await readGeneratedVideoMetadata(metadataPath);
-  if (
-    cacheMaxAgeSeconds
-    && (await exists(filePath))
-    && metadata
-    && generatedVideoMetadataValid(metadata, cacheKey, now, sourceInfo)
-  ) {
-    await serveGeneratedMediaCacheHit(
-      response,
-      method,
-      filePath,
-      metadata.expiresAt,
-      now,
-    );
+  if (await tryServeGeneratedMediaCache(
+    response,
+    method,
+    filePath,
+    cacheMaxAgeSeconds,
+    metadata,
+    () => generatedVideoMetadataValid(metadata!, cacheKey, now, sourceInfo),
+    now,
+  )) {
     return;
   }
 
@@ -4669,14 +4712,17 @@ async function serveGeneratedResuxVideo(
   if (!media) {
     return;
   }
-  const { body, contentType } = media;
-  const { expiresAt, responseMaxAge } = generatedMediaCacheTiming(
-    now,
-    cacheMaxAgeSeconds,
-  );
 
-  if (cacheMaxAgeSeconds) {
-    const metadataPayload: ResuxGeneratedVideoCacheMetadata = {
+  await respondWithGeneratedMedia(
+    response,
+    method,
+    appRoot,
+    filePath,
+    metadataPath,
+    media,
+    cacheMaxAgeSeconds,
+    now,
+    (expiresAt): ResuxGeneratedVideoCacheMetadata => ({
       version: 1,
       key: cacheKey,
       createdAt: now,
@@ -4688,29 +4734,8 @@ async function serveGeneratedResuxVideo(
         ...(options.quality ? { quality: options.quality } : {}),
       },
       ...(sourceInfo ? { sourceMtimeMs: sourceInfo.mtimeMs, sourceSize: sourceInfo.size } : {}),
-    };
-    await writeGeneratedMediaCache(
-      appRoot,
-      filePath,
-      metadataPath,
-      body,
-      metadataPayload,
-    );
-  }
-
-  response.writeHead(200, {
-    "content-type": contentType,
-    "cache-control": cacheMaxAgeSeconds
-      ? `public, max-age=${responseMaxAge}`
-      : "no-store",
-    "x-resux-cache": cacheMaxAgeSeconds ? "miss" : "bypass",
-    vary: "Accept",
-  });
-  if (method === "HEAD") {
-    response.end();
-    return;
-  }
-  response.end(body);
+    }),
+  );
 }
 
 function applyDefaultSecurityHeaders(

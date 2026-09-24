@@ -21,7 +21,10 @@ describe("remote media fetch security", () => {
     "::1",
     "fc00::1",
     "fe80::1",
+    "fec0::1",
     "::ffff:127.0.0.1",
+    "64:ff9b::7f00:1",
+    "2002:7f00:1::",
   ])("rejects private or local address %s", (address) => {
     expect(isPrivateNetworkAddress(address)).toBe(true);
   });
@@ -43,8 +46,23 @@ describe("remote media fetch security", () => {
       new URL("http://localhost:3000/public/hero.jpg"),
       "http://localhost:3000",
       resolver,
+      3000,
     )).resolves.toEqual([]);
     expect(resolver).not.toHaveBeenCalled();
+  });
+
+  it("does not trust a spoofed loopback origin for a different local port", async () => {
+    await expect(assertSafeResuxMediaUrl(
+      new URL("http://127.0.0.1:6379/private"),
+      "http://127.0.0.1:6379",
+      async () => {
+        throw new Error("literal IPs should not require DNS");
+      },
+      3000,
+    )).rejects.toMatchObject({
+      code: "unsafe_url",
+      statusCode: 400,
+    });
   });
 
   it("does not trust a spoofed same-origin metadata host", async () => {
@@ -142,6 +160,28 @@ describe("remote media fetch security", () => {
     expect(result.response.status).toBe(503);
     expect(result.body).toBeNull();
     expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("tries each validated DNS address until one connects", async () => {
+    const pinnedFetch = vi.fn()
+      .mockRejectedValueOnce(new Error("first address unreachable"))
+      .mockResolvedValueOnce(new Response("ok", { status: 200 }));
+
+    const result = await fetchResuxMediaSource(
+      new URL("https://media.example.test/image.jpg"),
+      {
+        requestOrigin: "https://app.example.test",
+        maxBytes: 1024,
+      },
+      {
+        resolveAddresses: async () => ["93.184.216.34", "1.1.1.1"],
+        isCloudflareRuntime: () => false,
+        fetchPinnedNode: pinnedFetch,
+      },
+    );
+
+    expect(pinnedFetch).toHaveBeenCalledTimes(2);
+    expect(result.body?.toString("utf8")).toBe("ok");
   });
 
   it("stops reading responses that exceed the configured byte limit", async () => {

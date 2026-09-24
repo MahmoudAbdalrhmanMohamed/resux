@@ -206,9 +206,10 @@ export async function assertSafeResuxMediaUrl(
       ? 443
       : 80;
   if (
-    Number.isInteger(trustedLoopbackPort)
-    && trustedLoopbackPort! > 0
-    && trustedLoopbackPort! <= 65_535
+    typeof trustedLoopbackPort === "number"
+    && Number.isInteger(trustedLoopbackPort)
+    && trustedLoopbackPort > 0
+    && trustedLoopbackPort <= 65_535
     && targetPort === trustedLoopbackPort
     && isLoopbackDevelopmentHost(hostname)
   ) {

@@ -4040,6 +4040,39 @@ function generatedMediaCacheTiming(
   };
 }
 
+async function serveGeneratedMediaCacheHit(
+  response: ServerResponse,
+  method: string,
+  filePath: string,
+  expiresAt: number,
+  now: number,
+): Promise<void> {
+  const remaining = Math.max(1, Math.floor((expiresAt - now) / 1000));
+  response.writeHead(200, {
+    "content-type": mimeType(filePath),
+    "cache-control": `public, max-age=${remaining}`,
+    "x-resux-cache": "hit",
+  });
+  if (method === "HEAD") {
+    response.end();
+    return;
+  }
+  response.end(await readFile(filePath));
+}
+
+async function writeGeneratedMediaCache(
+  appRoot: string,
+  filePath: string,
+  metadataPath: string,
+  body: Buffer,
+  metadata: ResuxGeneratedImageCacheMetadata | ResuxGeneratedVideoCacheMetadata,
+): Promise<void> {
+  const safeFilePath = await prepareSafeFileWriteWithinBoundary(appRoot, filePath);
+  const safeMetadataPath = await prepareSafeFileWriteWithinBoundary(appRoot, metadataPath);
+  await writeFile(safeFilePath, body);
+  await writeFile(safeMetadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
+}
+
 async function readGeneratedImageMetadata(
   metadataPath: string,
 ): Promise<ResuxGeneratedImageCacheMetadata | null> {
@@ -4364,17 +4397,13 @@ async function serveGeneratedResuxImage(
     && metadata
     && generatedImageMetadataValid(metadata, cacheKey, now, sourceInfo)
   ) {
-    const remaining = Math.max(1, Math.floor((metadata.expiresAt - now) / 1000));
-    response.writeHead(200, {
-      "content-type": mimeType(filePath),
-      "cache-control": `public, max-age=${remaining}`,
-      "x-resux-cache": "hit",
-    });
-    if (method === "HEAD") {
-      response.end();
-      return;
-    }
-    response.end(await readFile(filePath));
+    await serveGeneratedMediaCacheHit(
+      response,
+      method,
+      filePath,
+      metadata.expiresAt,
+      now,
+    );
     return;
   }
 
@@ -4395,9 +4424,6 @@ async function serveGeneratedResuxImage(
   );
 
   if (cacheMaxAgeSeconds) {
-    const safeFilePath = await prepareSafeFileWriteWithinBoundary(appRoot, filePath);
-    const safeMetadataPath = await prepareSafeFileWriteWithinBoundary(appRoot, metadataPath);
-    await writeFile(safeFilePath, body);
     const metadataPayload: ResuxGeneratedImageCacheMetadata = {
       version: 1,
       key: cacheKey,
@@ -4417,7 +4443,13 @@ async function serveGeneratedResuxImage(
       },
       ...(sourceInfo ? { sourceMtimeMs: sourceInfo.mtimeMs, sourceSize: sourceInfo.size } : {}),
     };
-    await writeFile(safeMetadataPath, `${JSON.stringify(metadataPayload, null, 2)}\n`, "utf8");
+    await writeGeneratedMediaCache(
+      appRoot,
+      filePath,
+      metadataPath,
+      body,
+      metadataPayload,
+    );
   }
 
   response.writeHead(200, {
@@ -4616,17 +4648,13 @@ async function serveGeneratedResuxVideo(
     && metadata
     && generatedVideoMetadataValid(metadata, cacheKey, now, sourceInfo)
   ) {
-    const remaining = Math.max(1, Math.floor((metadata.expiresAt - now) / 1000));
-    response.writeHead(200, {
-      "content-type": mimeType(filePath),
-      "cache-control": `public, max-age=${remaining}`,
-      "x-resux-cache": "hit",
-    });
-    if (method === "HEAD") {
-      response.end();
-      return;
-    }
-    response.end(await readFile(filePath));
+    await serveGeneratedMediaCacheHit(
+      response,
+      method,
+      filePath,
+      metadata.expiresAt,
+      now,
+    );
     return;
   }
 
@@ -4648,9 +4676,6 @@ async function serveGeneratedResuxVideo(
   );
 
   if (cacheMaxAgeSeconds) {
-    const safeFilePath = await prepareSafeFileWriteWithinBoundary(appRoot, filePath);
-    const safeMetadataPath = await prepareSafeFileWriteWithinBoundary(appRoot, metadataPath);
-    await writeFile(safeFilePath, body);
     const metadataPayload: ResuxGeneratedVideoCacheMetadata = {
       version: 1,
       key: cacheKey,
@@ -4664,7 +4689,13 @@ async function serveGeneratedResuxVideo(
       },
       ...(sourceInfo ? { sourceMtimeMs: sourceInfo.mtimeMs, sourceSize: sourceInfo.size } : {}),
     };
-    await writeFile(safeMetadataPath, `${JSON.stringify(metadataPayload, null, 2)}\n`, "utf8");
+    await writeGeneratedMediaCache(
+      appRoot,
+      filePath,
+      metadataPath,
+      body,
+      metadataPayload,
+    );
   }
 
   response.writeHead(200, {

@@ -4144,6 +4144,52 @@ async function respondWithGeneratedMedia(
   response.end(body);
 }
 
+async function serveGeneratedMediaCacheOrSource<TMetadata extends { expiresAt: number }>(
+  response: ServerResponse,
+  method: string,
+  appRoot: string,
+  filePath: string,
+  metadataPath: string,
+  cacheMaxAgeSeconds: number | undefined,
+  now: number,
+  readMetadata: () => Promise<TMetadata | null>,
+  isMetadataValid: (metadata: TMetadata) => boolean,
+  fetchMedia: () => Promise<{ body: Buffer; contentType: string } | null>,
+  createMetadata: (
+    expiresAt: number,
+  ) => ResuxGeneratedImageCacheMetadata | ResuxGeneratedVideoCacheMetadata,
+): Promise<void> {
+  const metadata = await readMetadata();
+  if (await tryServeGeneratedMediaCache(
+    response,
+    method,
+    filePath,
+    cacheMaxAgeSeconds,
+    metadata,
+    () => Boolean(metadata && isMetadataValid(metadata)),
+    now,
+  )) {
+    return;
+  }
+
+  const media = await fetchMedia();
+  if (!media) {
+    return;
+  }
+
+  await respondWithGeneratedMedia(
+    response,
+    method,
+    appRoot,
+    filePath,
+    metadataPath,
+    media,
+    cacheMaxAgeSeconds,
+    now,
+    createMetadata,
+  );
+}
+
 async function readGeneratedImageMetadata(
   metadataPath: string,
 ): Promise<ResuxGeneratedImageCacheMetadata | null> {
@@ -4461,39 +4507,23 @@ async function serveGeneratedResuxImage(
     ),
   );
   const now = Date.now();
-  const metadata = await readGeneratedImageMetadata(metadataPath);
-  if (await tryServeGeneratedMediaCache(
-    response,
-    method,
-    filePath,
-    cacheMaxAgeSeconds,
-    metadata,
-    () => generatedImageMetadataValid(metadata!, cacheKey, now, sourceInfo),
-    now,
-  )) {
-    return;
-  }
-
-  const media = await fetchAndTransformImageSource(
-    request,
-    response,
-    sourceUrl,
-    requestOrigin,
-    options,
-  );
-  if (!media) {
-    return;
-  }
-
-  await respondWithGeneratedMedia(
+  await serveGeneratedMediaCacheOrSource(
     response,
     method,
     appRoot,
     filePath,
     metadataPath,
-    media,
     cacheMaxAgeSeconds,
     now,
+    () => readGeneratedImageMetadata(metadataPath),
+    (metadata) => generatedImageMetadataValid(metadata, cacheKey, now, sourceInfo),
+    () => fetchAndTransformImageSource(
+      request,
+      response,
+      sourceUrl,
+      requestOrigin,
+      options,
+    ),
     (expiresAt): ResuxGeneratedImageCacheMetadata => ({
       version: 1,
       key: cacheKey,
@@ -4688,40 +4718,24 @@ async function serveGeneratedResuxVideo(
     createVideoTransformSignature(sourceParam, options.format, options.quality),
   );
   const now = Date.now();
-  const metadata = await readGeneratedVideoMetadata(metadataPath);
-  if (await tryServeGeneratedMediaCache(
-    response,
-    method,
-    filePath,
-    cacheMaxAgeSeconds,
-    metadata,
-    () => generatedVideoMetadataValid(metadata!, cacheKey, now, sourceInfo),
-    now,
-  )) {
-    return;
-  }
-
-  const media = await fetchAndTransformVideoSource(
-    request,
-    response,
-    sourceUrl,
-    requestOrigin,
-    options,
-    sourceParam || sourceUrl.pathname,
-  );
-  if (!media) {
-    return;
-  }
-
-  await respondWithGeneratedMedia(
+  await serveGeneratedMediaCacheOrSource(
     response,
     method,
     appRoot,
     filePath,
     metadataPath,
-    media,
     cacheMaxAgeSeconds,
     now,
+    () => readGeneratedVideoMetadata(metadataPath),
+    (metadata) => generatedVideoMetadataValid(metadata, cacheKey, now, sourceInfo),
+    () => fetchAndTransformVideoSource(
+      request,
+      response,
+      sourceUrl,
+      requestOrigin,
+      options,
+      sourceParam || sourceUrl.pathname,
+    ),
     (expiresAt): ResuxGeneratedVideoCacheMetadata => ({
       version: 1,
       key: cacheKey,

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -87,7 +87,10 @@ describe("filesystem path boundary security", () => {
         "hero.webp",
       );
 
-      await expect(prepareSafeFileWriteWithinBoundary(appRoot, target)).resolves.toBe(target);
+      const realAppRoot = await realpath(appRoot);
+      await expect(prepareSafeFileWriteWithinBoundary(appRoot, target)).resolves.toBe(
+        path.join(realAppRoot, "public", "_resux", "generated", "images", "hero.webp"),
+      );
     } finally {
       await rm(fixture, { recursive: true, force: true });
     }

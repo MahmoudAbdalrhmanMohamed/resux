@@ -18,6 +18,7 @@ import {
 import {
   isPathWithinBoundary,
   isRealPathWithinBoundary,
+  prepareSafeFileWriteWithinBoundary,
   resolveRequestPathWithinBoundary,
 } from "./security/path-boundary.js";
 import type { ViteDevServer } from "vite";
@@ -2605,6 +2606,7 @@ async function fetchMediaSourceOrRespond(
       requestOrigin,
       accept: firstHeaderValue(request.headers.accept),
       maxBytes: kind === "image" ? RESUX_IMAGE_MAX_SOURCE_BYTES : RESUX_VIDEO_MAX_SOURCE_BYTES,
+      trustedLoopbackPort: request.socket.localPort ?? undefined,
     });
   } catch (error) {
     const statusCode = error instanceof ResuxMediaFetchError ? error.statusCode : 502;
@@ -4023,7 +4025,7 @@ function resolveGeneratedVideoDiskPath(
 
 function generatedMediaCacheTiming(
   now: number,
-  cacheMaxAgeSeconds: number,
+  cacheMaxAgeSeconds: number | undefined,
 ): { expiresAt: number; responseMaxAge: number } {
   const expiresAt = cacheMaxAgeSeconds
     ? now + (cacheMaxAgeSeconds * 1000)
@@ -4391,8 +4393,9 @@ async function serveGeneratedResuxImage(
   );
 
   if (cacheMaxAgeSeconds) {
-    await mkdir(path.dirname(filePath), { recursive: true });
-    await writeFile(filePath, body);
+    const safeFilePath = await prepareSafeFileWriteWithinBoundary(appRoot, filePath);
+    const safeMetadataPath = await prepareSafeFileWriteWithinBoundary(appRoot, metadataPath);
+    await writeFile(safeFilePath, body);
     const metadataPayload: ResuxGeneratedImageCacheMetadata = {
       version: 1,
       key: cacheKey,
@@ -4412,7 +4415,7 @@ async function serveGeneratedResuxImage(
       },
       ...(sourceInfo ? { sourceMtimeMs: sourceInfo.mtimeMs, sourceSize: sourceInfo.size } : {}),
     };
-    await writeFile(metadataPath, `${JSON.stringify(metadataPayload, null, 2)}\n`, "utf8");
+    await writeFile(safeMetadataPath, `${JSON.stringify(metadataPayload, null, 2)}\n`, "utf8");
   }
 
   response.writeHead(200, {
@@ -4643,8 +4646,9 @@ async function serveGeneratedResuxVideo(
   );
 
   if (cacheMaxAgeSeconds) {
-    await mkdir(path.dirname(filePath), { recursive: true });
-    await writeFile(filePath, body);
+    const safeFilePath = await prepareSafeFileWriteWithinBoundary(appRoot, filePath);
+    const safeMetadataPath = await prepareSafeFileWriteWithinBoundary(appRoot, metadataPath);
+    await writeFile(safeFilePath, body);
     const metadataPayload: ResuxGeneratedVideoCacheMetadata = {
       version: 1,
       key: cacheKey,
@@ -4658,7 +4662,7 @@ async function serveGeneratedResuxVideo(
       },
       ...(sourceInfo ? { sourceMtimeMs: sourceInfo.mtimeMs, sourceSize: sourceInfo.size } : {}),
     };
-    await writeFile(metadataPath, `${JSON.stringify(metadataPayload, null, 2)}\n`, "utf8");
+    await writeFile(safeMetadataPath, `${JSON.stringify(metadataPayload, null, 2)}\n`, "utf8");
   }
 
   response.writeHead(200, {

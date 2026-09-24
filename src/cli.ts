@@ -2634,19 +2634,31 @@ function respondMediaJsonError(
   response.end(JSON.stringify({ error }));
 }
 
-async function fetchAndTransformImageSource(
+type ResuxMediaTransformResult = {
+  buffer: Buffer;
+  contentType: string;
+};
+
+async function fetchAndTransformMediaSource(
   request: IncomingMessage,
   response: ServerResponse,
   sourceUrl: URL,
   requestOrigin: string,
-  options: ResuxImageRequestOptions,
+  kind: "image" | "video",
+  needsTransform: boolean,
+  transform: (
+    sourceBuffer: Buffer,
+    sourceContentType: string | null,
+  ) => Promise<ResuxMediaTransformResult | null>,
+  transformFailureMessage: string,
+  fallbackContentType: string,
 ): Promise<{ body: Buffer; contentType: string } | null> {
   const upstream = await fetchMediaSourceOrRespond(
     request,
     response,
     sourceUrl,
     requestOrigin,
-    "image",
+    kind,
   );
   if (!upstream) {
     return null;
@@ -2655,32 +2667,48 @@ async function fetchAndTransformImageSource(
     respondMediaJsonError(
       response,
       upstream.response.status,
-      `Image source request failed with status ${upstream.response.status}.`,
+      `${kind === "image" ? "Image" : "Video"} source request failed with status ${upstream.response.status}.`,
     );
     return null;
   }
 
   const sourceBuffer = upstream.body ?? Buffer.alloc(0);
   const sourceContentType = upstream.response.headers.get("content-type");
-  const needsTransform = shouldTransformImage(options);
-  const transformed = await transformResuxImage(sourceBuffer, sourceContentType, options);
+  const transformed = await transform(sourceBuffer, sourceContentType);
   if (needsTransform && !transformed) {
-    respondMediaJsonError(
-      response,
-      501,
-      sharpFactoryLoadError
-        ?? "Image transform failed. Verify source format and requested modifiers.",
-    );
+    respondMediaJsonError(response, 501, transformFailureMessage);
     return null;
   }
 
   return {
     body: transformed?.buffer ?? sourceBuffer,
-    contentType: transformed?.contentType ?? sourceContentType ?? "application/octet-stream",
+    contentType: transformed?.contentType ?? sourceContentType ?? fallbackContentType,
   };
 }
 
-async function fetchAndTransformVideoSource(
+function fetchAndTransformImageSource(
+  request: IncomingMessage,
+  response: ServerResponse,
+  sourceUrl: URL,
+  requestOrigin: string,
+  options: ResuxImageRequestOptions,
+): Promise<{ body: Buffer; contentType: string } | null> {
+  return fetchAndTransformMediaSource(
+    request,
+    response,
+    sourceUrl,
+    requestOrigin,
+    "image",
+    shouldTransformImage(options),
+    (sourceBuffer, sourceContentType) =>
+      transformResuxImage(sourceBuffer, sourceContentType, options),
+    sharpFactoryLoadError
+      ?? "Image transform failed. Verify source format and requested modifiers.",
+    "application/octet-stream",
+  );
+}
+
+function fetchAndTransformVideoSource(
   request: IncomingMessage,
   response: ServerResponse,
   sourceUrl: URL,
@@ -2688,47 +2716,21 @@ async function fetchAndTransformVideoSource(
   options: ResuxVideoRequestOptions,
   sourceIdentity: string,
 ): Promise<{ body: Buffer; contentType: string } | null> {
-  const upstream = await fetchMediaSourceOrRespond(
+  return fetchAndTransformMediaSource(
     request,
     response,
     sourceUrl,
     requestOrigin,
     "video",
+    shouldTransformVideo(options),
+    (sourceBuffer) => transformResuxVideo(sourceBuffer, sourceIdentity, options),
+    ffmpegBinaryLoadError
+      ?? ffmpegTransformLastError
+      ?? "Video transform failed. Verify ffmpeg availability and requested options.",
+    mimeTypeFromVideoFormat(
+      options.format ?? inferVideoFormatFromSource(sourceIdentity) ?? "mp4",
+    ),
   );
-  if (!upstream) {
-    return null;
-  }
-  if (!upstream.response.ok) {
-    respondMediaJsonError(
-      response,
-      upstream.response.status,
-      `Video source request failed with status ${upstream.response.status}.`,
-    );
-    return null;
-  }
-
-  const sourceBuffer = upstream.body ?? Buffer.alloc(0);
-  const sourceContentType = upstream.response.headers.get("content-type");
-  const needsTransform = shouldTransformVideo(options);
-  const transformed = await transformResuxVideo(sourceBuffer, sourceIdentity, options);
-  if (needsTransform && !transformed) {
-    respondMediaJsonError(
-      response,
-      501,
-      ffmpegBinaryLoadError
-        ?? ffmpegTransformLastError
-        ?? "Video transform failed. Verify ffmpeg availability and requested options.",
-    );
-    return null;
-  }
-
-  return {
-    body: transformed?.buffer ?? sourceBuffer,
-    contentType:
-      transformed?.contentType
-      ?? sourceContentType
-      ?? mimeTypeFromVideoFormat(options.format ?? inferVideoFormatFromSource(sourceIdentity) ?? "mp4"),
-  };
 }
 
 function readPort(value: string | undefined, fallback: number): number {

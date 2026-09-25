@@ -4,7 +4,9 @@
 
 Resux is a public-beta HTML-first web framework with a custom resumable runtime. It uses familiar `.vue` files and file-based routing, but normal Resux components do **not** use Vue hydration or the Vue runtime. The compiler renders HTML on the server, serializes the state needed to continue, and loads browser handler code when interaction actually needs it.
 
-🧪 **Status:** Public beta. Resux is ready for evaluation and real-world testing, but its APIs may still change before 1.0.\n\n📖 **Documentation:** https://mahmoudabdalrhmanmohamed.github.io/resux-docs/
+🧪 **Status:** Public beta. Resux is ready for evaluation and real-world testing, but its APIs may still change before 1.0.
+
+📖 **Documentation:** https://mahmoudabdalrhmanmohamed.github.io/resux-docs/
 
 ## Why Resux
 

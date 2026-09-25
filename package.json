@@ -1,6 +1,6 @@
 {
   "name": "resuxjs",
-  "version": "0.3.11",
+  "version": "0.4.0-beta.1",
   "private": false,
   "description": "Resumable web framework with Vue-like SFC routing and a custom SSR/runtime pipeline.",
   "type": "module",

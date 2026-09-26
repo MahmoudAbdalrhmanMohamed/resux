@@ -244,7 +244,7 @@ jobs:
           PACKAGE_NAME: ${{ needs.validate.outputs.package_name }}
           PACKAGE_VERSION: ${{ needs.validate.outputs.package_version }}
           DIST_TAG: ${{ needs.validate.outputs.dist_tag }}
-        run: npm publish "release-artifacts/${PACKAGE_NAME}-${PACKAGE_VERSION}.tgz" --access public --tag "${DIST_TAG}" --provenance
+        run: npm publish "./release-artifacts/${PACKAGE_NAME}-${PACKAGE_VERSION}.tgz" --access public --tag "${DIST_TAG}" --provenance
 
       - name: Publish create package with provenance
         if: steps.create_published.outputs.exists == 'false' && steps.create_package.outputs.exists == 'true'
@@ -253,4 +253,4 @@ jobs:
           CREATE_PACKAGE_NAME: ${{ needs.validate.outputs.create_package_name }}
           CREATE_PACKAGE_VERSION: ${{ needs.validate.outputs.create_package_version }}
           DIST_TAG: ${{ needs.validate.outputs.dist_tag }}
-        run: npm publish "release-artifacts/${CREATE_PACKAGE_NAME}-${CREATE_PACKAGE_VERSION}.tgz" --access public --tag "${DIST_TAG}" --provenance
+        run: npm publish "./release-artifacts/${CREATE_PACKAGE_NAME}-${CREATE_PACKAGE_VERSION}.tgz" --access public --tag "${DIST_TAG}" --provenance

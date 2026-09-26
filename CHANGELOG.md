@@ -4,6 +4,13 @@ All notable changes to Resux are documented here.
 
 Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaking API changes when they are clearly documented.
 
+## [0.4.0-beta.2] - 2026-09-25
+
+### Release recovery
+
+- Fixed the npm release workflow so packed tarballs are published from explicit local paths instead of being interpreted as GitHub shorthand.
+- No framework runtime behavior changed from `0.4.0-beta.1`; this prerelease exists to complete the first npm public-beta publication safely.
+
 ## [0.4.0-beta.1] - 2026-09-25
 
 ### Public beta

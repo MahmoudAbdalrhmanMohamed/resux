@@ -5,6 +5,7 @@ import {
   onBeforeUnmount,
   onMounted,
   ref,
+  useId,
   watch
 } from "vue";
 
@@ -61,6 +62,7 @@ export const RxVerificationCode = defineComponent({
   setup(props, { emit, attrs }) {
     const inputRef = ref<HTMLInputElement | null>(null);
     const focused = ref(false);
+    const messageId = `rx-verification-code-${useId()}-message`;
     const initialStatus = normalizeStatus(props.status);
     const phase = ref<VerificationCodePhase>(
       initialStatus === "idle" ? "input" : initialStatus
@@ -192,7 +194,7 @@ export const RxVerificationCode = defineComponent({
         name: props.name || undefined,
         "aria-label": props.ariaLabel,
         "aria-invalid": status === "error" ? "true" : undefined,
-        "aria-describedby": status === "error" && props.errorText ? "rx-verification-code-message" : undefined,
+        "aria-describedby": status === "error" && props.errorText ? messageId : undefined,
         style: {
           position: "absolute",
           width: "1px",
@@ -298,7 +300,7 @@ export const RxVerificationCode = defineComponent({
         ? h(
             "span",
             {
-              id: "rx-verification-code-message",
+              id: messageId,
               class: props.unstyled ? undefined : "rx-verification-code-error",
               role: "alert"
             },

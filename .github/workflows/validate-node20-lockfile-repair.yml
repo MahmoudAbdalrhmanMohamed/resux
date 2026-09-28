@@ -1,0 +1,44 @@
+name: Validate Node 20 lockfile repair
+
+on:
+  push:
+    branches:
+      - fix/node20-lock-rolldown-bindings
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fix branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/node20-lock-rolldown-bindings
+
+      - name: Setup Node 20.19
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.0
+          cache: npm
+
+      - name: Strict install
+        run: npm ci --no-audit --no-fund
+
+      - name: Build framework
+        run: npm run build
+
+      - name: Run framework tests
+        run: npm test
+
+      - name: Remove validation workflow after success
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/validate-node20-lockfile-repair.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/validate-node20-lockfile-repair.yml
+          git commit -m "ci: remove Node 20 lockfile validation helper"
+          git push origin HEAD:fix/node20-lock-rolldown-bindings

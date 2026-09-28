@@ -4,6 +4,19 @@ All notable changes to Resux are documented here.
 
 Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaking API changes when they are clearly documented.
 
+## [0.4.0-beta.3] - 2026-09-28
+
+### Node.js 20.19 compatibility
+
+- Restored the Node 20-compatible `tsdown@0.19.0` build toolchain after a dependency update caused source builds to require newer Node.js versions and fail while loading `unrun`.
+- Repaired the npm lockfile nesting for `unrun`'s Rolldown `1.0.0-rc.17` optional PPC64 and S390X Linux bindings so frozen installs succeed with npm 10 on Node.js 20.19.
+- Revalidated the supported Node.js 20.19 path with strict `npm ci`, framework build, and framework tests.
+
+### Maintenance
+
+- Includes the post-beta.2 dependency maintenance updates for Vite and Node.js type definitions.
+- No intentional public API or Resux runtime feature changes are introduced by this prerelease; it focuses on supported-environment reliability.
+
 ## [0.4.0-beta.2] - 2026-09-25
 
 ### Release recovery

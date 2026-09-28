@@ -420,7 +420,7 @@ export const verificationCodeStyles = `
 .rx-verification-code-cell.is-active {
   border-color: var(--rx-verification-accent);
   box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--rx-verification-accent) 15%, transparent),
+    0 0 0 3px rgba(37, 99, 235, 0.15),
     0 6px 18px rgba(37, 99, 235, 0.12);
   transform: translateY(-1px);
 }
@@ -450,7 +450,7 @@ export const verificationCodeStyles = `
   animation: rxVerificationShake 360ms ease-in-out;
 }
 .rx-verification-code.is-error .rx-verification-code-cell {
-  border-color: color-mix(in srgb, var(--rx-verification-danger) 72%, white);
+  border-color: #fca5a5;
 }
 .rx-verification-code-status {
   min-height: 3rem;

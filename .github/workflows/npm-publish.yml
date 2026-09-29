@@ -146,6 +146,16 @@ jobs:
           VERSION="$(node -p "require('./package.json').version")"
           gh release edit "v$VERSION" --target "$GITHUB_SHA" --draft=false --prerelease
 
+      - name: Dispatch prerelease npm publication
+        if: steps.prerelease.outputs.eligible == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          gh workflow run "npm-publish.yml" --ref "v$VERSION"
+
   validate:
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     name: Validate release artifact

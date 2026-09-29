@@ -4,6 +4,22 @@ All notable changes to Resux are documented here.
 
 Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaking API changes when they are clearly documented.
 
+## [0.4.0-beta.5] - 2026-09-30
+
+### Vercel portability and rendering
+
+- Fixed generated server imports that embedded build-machine absolute paths such as `/vercel/path0`; project modules now use relocation-safe relative module specifiers inside the packaged server output.
+- Fixed URL-reserved characters in generated relative module specifiers and preserved custom Resux output directories.
+- Fixed Vercel deployment packaging for app-level `assets/`, including nested image, video, SVG, JSON, and other static files.
+- Fixed reactive values passed to `useHead` so refs/getters are resolved for `htmlAttrs`, `bodyAttrs`, metadata, links, and styles instead of rendering values such as `[object Object]`.
+- Added typed reactive head input support so supported refs/getters no longer require unsafe TypeScript casts.
+- Added regression coverage for Vercel static assets, relocated server imports, custom output directories, URL-reserved filenames, and reactive head attributes.
+
+### Validation
+
+- Reproduced the production Idea Store failures from Vercel logs before the fix: absolute `/vercel/path0/.resux/server/imported/...` imports, missing `/assets/*` responses, and `lang="[object Object]"`.
+- Revalidated the framework production quality gates and deployment matrix, including the dedicated Vercel target.
+
 ## [0.4.0-beta.4] - 2026-09-29
 
 ### Serverless runtime packaging

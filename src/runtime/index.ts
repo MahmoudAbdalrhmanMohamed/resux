@@ -128,7 +128,19 @@ export interface HeadEntry {
   link?: Array<Record<string, string>>;
   style?: ComponentStyle[];
   htmlAttrs?: Record<string, string>;
+  bodyAttrs?: Record<string, string>;
 }
+
+type ReactiveHeadValue<T> =
+  T extends Array<infer Item>
+    ? MaybeRefOrGetter<Array<ReactiveHeadValue<Item>>>
+    : T extends object
+      ? MaybeRefOrGetter<{ [Key in keyof T]: ReactiveHeadValue<T[Key]> }>
+      : MaybeRefOrGetter<T>;
+
+export type HeadInput = {
+  [Key in keyof HeadEntry]?: ReactiveHeadValue<NonNullable<HeadEntry[Key]>>;
+};
 
 export interface ComponentStyle {
   id: string;
@@ -531,7 +543,7 @@ export interface SetupContext {
   defineModel<T>(name?: string, options?: unknown): Ref<T>;
   useRoute(): RouteContext;
   useRouter(): ResuxRouter;
-  useHead(input: HeadEntry): void;
+  useHead(input: HeadInput): void;
   useSeoMeta(input: SeoMetaInput): void;
   useRuntimeConfig(): RuntimeConfig;
   useResuxApp(): ResuxAppLike;
@@ -2898,27 +2910,28 @@ function createServerI18nContext(route: RouteContext, runtimeConfig: RuntimeConf
   };
 }
 
-function resolveHeadReactiveValue(value: unknown): unknown {
+function unwrapHeadValue(value: unknown): unknown {
   if (isRef(value)) {
-    return resolveHeadReactiveValue(unref(value));
+    return unref(value);
   }
-  if (typeof value === "function") {
-    return resolveHeadReactiveValue((value as () => unknown)());
-  }
-  if (Array.isArray(value)) {
-    return value.map((entry) => resolveHeadReactiveValue(entry));
-  }
-  if (value && typeof value === "object") {
-    const resolved: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-      resolved[key] = resolveHeadReactiveValue(entry);
-    }
-    return resolved;
-  }
-  return value;
+  return typeof value === "function" ? (value as () => unknown)() : value;
 }
 
-function resolveHeadEntry(input: HeadEntry): HeadEntry {
+function resolveHeadReactiveValue(value: unknown): unknown {
+  const unwrapped = unwrapHeadValue(value);
+  if (Array.isArray(unwrapped)) {
+    return unwrapped.map((entry) => resolveHeadReactiveValue(entry));
+  }
+  if (!unwrapped || typeof unwrapped !== "object") {
+    return unwrapped;
+  }
+  return Object.fromEntries(
+    Object.entries(unwrapped as Record<string, unknown>)
+      .map(([key, entry]) => [key, resolveHeadReactiveValue(entry)]),
+  );
+}
+
+function resolveHeadEntry(input: HeadInput): HeadEntry {
   return resolveHeadReactiveValue(input) as HeadEntry;
 }
 
@@ -3032,7 +3045,7 @@ export function createServerSetupContext(
       return createServerRouter();
     },
 
-    useHead(input: HeadEntry): void {
+    useHead(input: HeadInput): void {
       headEntries.push(resolveHeadEntry(input));
     },
 

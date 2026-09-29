@@ -2308,6 +2308,8 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
     lang: "en",
     ...(mergedHead.htmlAttrs ?? {})
   };
+  const renderedBodyAttrs = renderAttributes(mergedHead.bodyAttrs ?? {});
+  const bodyOpenTag = renderedBodyAttrs ? `<body ${renderedBodyAttrs}>` : "<body>";
   return [
     "<!doctype html>",
     `<html ${renderAttributes(htmlAttrs)}>`,
@@ -2615,7 +2617,7 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
 }
 </style>`,
     "</head>",
-    "<body>",
+    bodyOpenTag,
     '<div id="__resux">',
     result.html,
     "</div>",
@@ -7185,7 +7187,8 @@ function mergeHead(entries: HeadEntry[]): HeadEntry {
     meta: [],
     link: [],
     style: [],
-    htmlAttrs: {}
+    htmlAttrs: {},
+    bodyAttrs: {}
   };
 
   for (const entry of entries) {
@@ -7205,6 +7208,12 @@ function mergeHead(entries: HeadEntry[]): HeadEntry {
       merged.htmlAttrs = {
         ...(merged.htmlAttrs ?? {}),
         ...entry.htmlAttrs
+      };
+    }
+    if (entry.bodyAttrs) {
+      merged.bodyAttrs = {
+        ...(merged.bodyAttrs ?? {}),
+        ...entry.bodyAttrs
       };
     }
   }

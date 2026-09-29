@@ -33,7 +33,10 @@ describe("runtime SSR", () => {
         const locale = ctx.ref("en");
         ctx.useHead({
           htmlAttrs: {
-            lang: locale as unknown as string,
+            lang: locale,
+          },
+          bodyAttrs: {
+            class: () => "overflow-x-hidden",
           },
         });
         return { locale };
@@ -49,6 +52,7 @@ describe("runtime SSR", () => {
 
     expect(result.head.htmlAttrs?.lang).toBe("en");
     expect(documentHtml).toContain('<html lang="en">');
+    expect(documentHtml).toContain('<body class="overflow-x-hidden">');
     expect(documentHtml).not.toContain("[object Object]");
   });
 

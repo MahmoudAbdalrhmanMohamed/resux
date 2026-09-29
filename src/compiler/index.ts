@@ -2092,6 +2092,17 @@ function ensureCompiledUserModule(
   return targetJsFile;
 }
 
+function resolveServerUserModuleImport(
+  resolvedPath: string,
+  file: string,
+  outDir?: string,
+): string {
+  const projectRoot = findProjectRoot(file);
+  const buildOutDir = outDir ? path.resolve(outDir) : path.join(projectRoot, ".resux");
+  const compiledTarget = ensureCompiledUserModule(resolvedPath, projectRoot, buildOutDir);
+  return relativeImportPath(path.join(buildOutDir, "server"), compiledTarget);
+}
+
 function processImportDeclaration(
   statement: ts.ImportDeclaration | ts.ImportEqualsDeclaration,
   sourceFile: ts.SourceFile,
@@ -2187,10 +2198,7 @@ function processImportDeclaration(
       
       let normalized = "";
       if (!client && (resolvedExt === ".ts" || resolvedExt === ".tsx" || resolvedExt === ".js" || resolvedExt === ".jsx")) {
-        const projectRoot = findProjectRoot(file);
-        const buildOutDir = outDir ? path.resolve(outDir) : path.join(projectRoot, ".resux");
-        const compiledTarget = ensureCompiledUserModule(resolvedPath, projectRoot, buildOutDir);
-        normalized = relativeImportPath(path.join(buildOutDir, "server"), compiledTarget);
+        normalized = resolveServerUserModuleImport(resolvedPath, file, outDir);
       } else {
         normalized = fileUrl(resolvedPath);
       }
@@ -2209,9 +2217,7 @@ function processImportDeclaration(
       
       let normalized = "";
       if (resolvedExt === ".ts" || resolvedExt === ".tsx" || resolvedExt === ".js" || resolvedExt === ".jsx") {
-        const buildOutDir = outDir ? path.resolve(outDir) : path.join(projectRoot, ".resux");
-        const compiledTarget = ensureCompiledUserModule(resolvedPath, projectRoot, buildOutDir);
-        normalized = relativeImportPath(path.join(buildOutDir, "server"), compiledTarget);
+        normalized = resolveServerUserModuleImport(resolvedPath, file, outDir);
       } else {
         normalized = fileUrl(resolvedPath);
       }
@@ -2288,10 +2294,7 @@ function processImportDeclaration(
         
         let normalized = "";
         if (!client && (resolvedExt === ".ts" || resolvedExt === ".tsx" || resolvedExt === ".js" || resolvedExt === ".jsx")) {
-          const projectRoot = findProjectRoot(file);
-          const outDir = path.join(projectRoot, ".resux");
-          const compiledTarget = ensureCompiledUserModule(resolvedPath, projectRoot, outDir);
-          normalized = relativeImportPath(path.join(outDir, "server"), compiledTarget);
+          normalized = resolveServerUserModuleImport(resolvedPath, file, outDir);
         } else {
           normalized = fileUrl(resolvedPath);
         }
@@ -2310,9 +2313,7 @@ function processImportDeclaration(
         
         let normalized = "";
         if (resolvedExt === ".ts" || resolvedExt === ".tsx" || resolvedExt === ".js" || resolvedExt === ".jsx") {
-          const outDir = path.join(projectRoot, ".resux");
-          const compiledTarget = ensureCompiledUserModule(resolvedPath, projectRoot, outDir);
-          normalized = relativeImportPath(path.join(outDir, "server"), compiledTarget);
+          normalized = resolveServerUserModuleImport(resolvedPath, file, outDir);
         } else {
           normalized = fileUrl(resolvedPath);
         }

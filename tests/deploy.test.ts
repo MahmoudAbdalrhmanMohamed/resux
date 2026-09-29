@@ -270,3 +270,26 @@ describe("vercel post-build dependencies", () => {
     ).rejects.toThrow('requires "sharp"');
   });
 });
+
+
+describe("vercel static asset packaging", () => {
+  it("copies app assets into the Vercel static output", async () => {
+    const root = await createTempApp("resux-deploy-vercel-assets");
+    await scaffoldVercelBuildLayout(root);
+    await scaffoldSharpPackages(root);
+    await mkdir(path.join(root, "assets", "footer"), { recursive: true });
+    await writeFile(path.join(root, "assets", "logo.webp"), "logo", "utf8");
+    await writeFile(path.join(root, "assets", "footer", "footer.webp"), "footer", "utf8");
+
+    await applyDeploymentPostBuild({
+      appRoot: root,
+      outDir: path.join(root, ".resux"),
+      env: {} as NodeJS.ProcessEnv,
+      nitroPreset: "vercel",
+      target: "vercel",
+    });
+
+    expect(await fileExists(path.join(root, ".vercel", "output", "static", "assets", "logo.webp"))).toBe(true);
+    expect(await fileExists(path.join(root, ".vercel", "output", "static", "assets", "footer", "footer.webp"))).toBe(true);
+  });
+});

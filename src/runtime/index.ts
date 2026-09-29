@@ -23,7 +23,7 @@ import {
   watch,
   watchEffect
 } from "../reactivity/index.js";
-import type { ComputedRef, Ref, WatchCallback, WatchOptions, WatchSource, WatchStopHandle } from "../reactivity/index.js";
+import type { ComputedRef, MaybeRefOrGetter, Ref, WatchCallback, WatchOptions, WatchSource, WatchStopHandle } from "../reactivity/index.js";
 import {
   getResumeBootstrapSource,
   RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAME_LENGTH,
@@ -128,7 +128,19 @@ export interface HeadEntry {
   link?: Array<Record<string, string>>;
   style?: ComponentStyle[];
   htmlAttrs?: Record<string, string>;
+  bodyAttrs?: Record<string, string>;
 }
+
+type ReactiveHeadValue<T> =
+  T extends Array<infer Item>
+    ? MaybeRefOrGetter<Array<ReactiveHeadValue<Item>>>
+    : T extends object
+      ? MaybeRefOrGetter<{ [Key in keyof T]: ReactiveHeadValue<T[Key]> }>
+      : MaybeRefOrGetter<T>;
+
+export type HeadInput = {
+  [Key in keyof HeadEntry]?: ReactiveHeadValue<NonNullable<HeadEntry[Key]>>;
+};
 
 export interface ComponentStyle {
   id: string;
@@ -531,7 +543,7 @@ export interface SetupContext {
   defineModel<T>(name?: string, options?: unknown): Ref<T>;
   useRoute(): RouteContext;
   useRouter(): ResuxRouter;
-  useHead(input: HeadEntry): void;
+  useHead(input: HeadInput): void;
   useSeoMeta(input: SeoMetaInput): void;
   useRuntimeConfig(): RuntimeConfig;
   useResuxApp(): ResuxAppLike;
@@ -2296,6 +2308,8 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
     lang: "en",
     ...(mergedHead.htmlAttrs ?? {})
   };
+  const renderedBodyAttrs = renderAttributes(mergedHead.bodyAttrs ?? {});
+  const bodyOpenTag = renderedBodyAttrs ? `<body ${renderedBodyAttrs}>` : "<body>";
   return [
     "<!doctype html>",
     `<html ${renderAttributes(htmlAttrs)}>`,
@@ -2603,7 +2617,7 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
 }
 </style>`,
     "</head>",
-    "<body>",
+    bodyOpenTag,
     '<div id="__resux">',
     result.html,
     "</div>",
@@ -2898,6 +2912,31 @@ function createServerI18nContext(route: RouteContext, runtimeConfig: RuntimeConf
   };
 }
 
+function unwrapHeadValue(value: unknown): unknown {
+  if (isRef(value)) {
+    return unref(value);
+  }
+  return typeof value === "function" ? (value as () => unknown)() : value;
+}
+
+function resolveHeadReactiveValue(value: unknown): unknown {
+  const unwrapped = unwrapHeadValue(value);
+  if (Array.isArray(unwrapped)) {
+    return unwrapped.map((entry) => resolveHeadReactiveValue(entry));
+  }
+  if (!unwrapped || typeof unwrapped !== "object") {
+    return unwrapped;
+  }
+  return Object.fromEntries(
+    Object.entries(unwrapped as Record<string, unknown>)
+      .map(([key, entry]) => [key, resolveHeadReactiveValue(entry)]),
+  );
+}
+
+function resolveHeadEntry(input: HeadInput): HeadEntry {
+  return resolveHeadReactiveValue(input) as HeadEntry;
+}
+
 export function createServerSetupContext(
   route: RouteContext,
   props: ComponentProps,
@@ -3008,8 +3047,8 @@ export function createServerSetupContext(
       return createServerRouter();
     },
 
-    useHead(input: HeadEntry): void {
-      headEntries.push(input);
+    useHead(input: HeadInput): void {
+      headEntries.push(resolveHeadEntry(input));
     },
 
     useSeoMeta(input: SeoMetaInput): void {
@@ -7148,7 +7187,8 @@ function mergeHead(entries: HeadEntry[]): HeadEntry {
     meta: [],
     link: [],
     style: [],
-    htmlAttrs: {}
+    htmlAttrs: {},
+    bodyAttrs: {}
   };
 
   for (const entry of entries) {
@@ -7168,6 +7208,12 @@ function mergeHead(entries: HeadEntry[]): HeadEntry {
       merged.htmlAttrs = {
         ...(merged.htmlAttrs ?? {}),
         ...entry.htmlAttrs
+      };
+    }
+    if (entry.bodyAttrs) {
+      merged.bodyAttrs = {
+        ...(merged.bodyAttrs ?? {}),
+        ...entry.bodyAttrs
       };
     }
   }

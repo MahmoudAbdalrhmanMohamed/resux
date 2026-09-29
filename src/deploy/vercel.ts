@@ -199,6 +199,16 @@ async function postBuild(context: DeployBuildContext): Promise<void> {
   ]);
   await assertRuntimeClientAsset(path.join(context.appRoot, ".vercel", "output", "static"));
 
+  const appAssetsDir = path.join(context.appRoot, "assets");
+  const vercelStaticAssetsDir = path.join(context.appRoot, ".vercel", "output", "static", "assets");
+  if (await pathExists(appAssetsDir)) {
+    await mkdir(path.dirname(vercelStaticAssetsDir), { recursive: true });
+    await cp(appAssetsDir, vercelStaticAssetsDir, {
+      recursive: true,
+      force: true,
+    });
+  }
+
   const outputDir = path.join(context.appRoot, ".vercel", "output");
   const functionsDir = path.join(outputDir, "functions");
   await materializeLinkedFunctions(functionsDir);

@@ -23,6 +23,39 @@ function nextRuntimeImportQuery() {
 }
 
 describe("runtime SSR", () => {
+  it("unwraps reactive values passed to useHead", async () => {
+    const page: ComponentDefinition = defineComponent({
+      id: "m-head-ref",
+      name: "HeadRefPage",
+      file: "HeadRefPage.vue",
+      handlers: [],
+      async script(ctx) {
+        const locale = ctx.ref("en");
+        ctx.useHead({
+          htmlAttrs: {
+            lang: locale,
+          },
+          bodyAttrs: {
+            class: () => "overflow-x-hidden",
+          },
+        });
+        return { locale };
+      },
+      template: [{ type: "element", tag: "main", attrs: [], events: [], children: [{ type: "text", value: "Head" }] }],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/en", params: {}, query: {} },
+    });
+    const documentHtml = renderDocument(result);
+
+    expect(result.head.htmlAttrs?.lang).toBe("en");
+    expect(documentHtml).toContain('<html lang="en">');
+    expect(documentHtml).toContain('<body class="overflow-x-hidden">');
+    expect(documentHtml).not.toContain("[object Object]");
+  });
+
   it("renders object interpolation as JSON text instead of [object Object]", async () => {
     const page: ComponentDefinition = defineComponent({
       id: "m-object-display",

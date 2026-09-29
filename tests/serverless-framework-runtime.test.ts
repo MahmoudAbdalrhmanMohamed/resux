@@ -75,11 +75,50 @@ async function scaffoldFrameworkPackage(root: string): Promise<void> {
         "./node": "./dist/node.js",
         "./package.json": "./package.json",
       },
+      dependencies: { vue: "1.0.0" },
     }, null, 2),
     "utf8",
   );
-  await writeFile(path.join(packageRoot, "dist", "index.js"), "export const runtime = true;\n", "utf8");
+  await writeFile(
+    path.join(packageRoot, "dist", "index.js"),
+    'import { h } from "vue"; export const runtime = h;\n',
+    "utf8",
+  );
   await writeFile(path.join(packageRoot, "dist", "node.js"), "export const nodeRuntime = true;\n", "utf8");
+}
+
+async function scaffoldVue(root: string): Promise<void> {
+  const packageRoot = path.join(root, "node_modules", "vue");
+  const sharedRoot = path.join(root, "node_modules", "@vue", "shared");
+  await mkdir(packageRoot, { recursive: true });
+  await mkdir(sharedRoot, { recursive: true });
+  await writeFile(
+    path.join(packageRoot, "package.json"),
+    JSON.stringify({
+      name: "vue",
+      version: "1.0.0",
+      type: "module",
+      exports: "./index.js",
+      dependencies: { "@vue/shared": "1.0.0" },
+    }, null, 2),
+    "utf8",
+  );
+  await writeFile(
+    path.join(packageRoot, "index.js"),
+    'import { shared } from "@vue/shared"; export const h = () => shared;\n',
+    "utf8",
+  );
+  await writeFile(
+    path.join(sharedRoot, "package.json"),
+    JSON.stringify({
+      name: "@vue/shared",
+      version: "1.0.0",
+      type: "module",
+      exports: "./index.js",
+    }, null, 2),
+    "utf8",
+  );
+  await writeFile(path.join(sharedRoot, "index.js"), 'export const shared = "shared";\n', "utf8");
 }
 
 async function scaffoldSharp(root: string): Promise<void> {
@@ -130,6 +169,7 @@ async function scaffoldMarked(root: string): Promise<void> {
 async function scaffoldAppRuntime(root: string): Promise<void> {
   await scaffoldResuxOutput(root);
   await scaffoldFrameworkPackage(root);
+  await scaffoldVue(root);
   await scaffoldSharp(root);
   await scaffoldMarked(root);
 }
@@ -154,6 +194,8 @@ describe("serverless framework runtime packaging", () => {
     expect(await exists(path.join(functionRoot, "node_modules", "resuxjs", "package.json"))).toBe(true);
     expect(await exists(path.join(functionRoot, "node_modules", "resuxjs", "dist", "index.js"))).toBe(true);
     expect(await exists(path.join(functionRoot, "node_modules", "resuxjs", "dist", "node.js"))).toBe(true);
+    expect(await exists(path.join(functionRoot, "node_modules", "vue", "package.json"))).toBe(true);
+    expect(await exists(path.join(functionRoot, "node_modules", "@vue", "shared", "package.json"))).toBe(true);
     expect(await exists(path.join(functionRoot, "node_modules", "marked", "package.json"))).toBe(true);
     expect(await exists(path.join(functionRoot, "node_modules", "marked-helper", "package.json"))).toBe(true);
     expect(await exists(path.join(functionRoot, "node_modules", "node:path"))).toBe(false);
@@ -179,6 +221,8 @@ describe("serverless framework runtime packaging", () => {
     expect(await exists(path.join(functionRoot, "node_modules", "resuxjs", "package.json"))).toBe(true);
     expect(await exists(path.join(functionRoot, "node_modules", "resuxjs", "dist", "index.js"))).toBe(true);
     expect(await exists(path.join(functionRoot, "node_modules", "resuxjs", "dist", "node.js"))).toBe(true);
+    expect(await exists(path.join(functionRoot, "node_modules", "vue", "package.json"))).toBe(true);
+    expect(await exists(path.join(functionRoot, "node_modules", "@vue", "shared", "package.json"))).toBe(true);
     expect(await exists(path.join(functionRoot, "node_modules", "marked", "package.json"))).toBe(true);
     expect(await exists(path.join(functionRoot, "node_modules", "marked-helper", "package.json"))).toBe(true);
   });

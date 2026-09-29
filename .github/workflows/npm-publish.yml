@@ -64,6 +64,24 @@ jobs:
             echo "needed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Install dependencies before release creation
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Verify Rolldown Linux native binding before release creation
+        run: node -e "require.resolve('@rolldown/binding-linux-x64-gnu')"
+
+      - name: Run strict framework quality gates before release creation
+        run: npm run quality
+
+      - name: Verify deployment targets before release creation
+        run: npm run verify:deploy-targets
+
+      - name: Verify generated templates before release creation
+        run: npm run test:templates
+
+      - name: Verify package contents before release creation
+        run: npm run pack:check
+
       - name: Publish GitHub beta.4 prerelease
         if: steps.beta4.outputs.needed == 'true'
         shell: bash

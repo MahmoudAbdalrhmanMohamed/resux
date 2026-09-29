@@ -1184,3 +1184,45 @@ void loadCompilerDom
     await readFile(path.join(root, ".resux", "client", "vue-islands", "CounterIsland.mjs"), "utf8");
   }, 20000);
 });
+
+
+describe("portable server user-module imports", () => {
+  it("emits relative imports for project composables instead of build-machine file URLs", async () => {
+    const root = path.join(os.tmpdir(), `resux-portable-imports-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await mkdir(path.join(root, "composables"), { recursive: true });
+    await writeFile(
+      path.join(root, "composables", "useThing.ts"),
+      'export function useThing() { return "portable"; }\n',
+      "utf8",
+    );
+    await writeFile(
+      path.join(root, "pages", "index.vue"),
+      `<script setup>
+import { useThing } from "../composables/useThing";
+const value = useThing();
+</script>
+<template><main>{{ value }}</main></template>`,
+      "utf8",
+    );
+
+    await buildProject(root);
+
+    const serverDir = path.join(root, ".resux", "server");
+    const moduleFiles = (await readdir(serverDir)).filter((name) => /^m\d+\.mjs$/.test(name));
+    const moduleSources = await Promise.all(
+      moduleFiles.map(async (name) => ({
+        name,
+        source: await readFile(path.join(serverDir, name), "utf8"),
+      })),
+    );
+    const pageModule = moduleSources.find((entry) => entry.source.includes("useThing"));
+    expect(pageModule).toBeDefined();
+    expect(pageModule?.source).toContain('from "./imported/composables/useThing.mjs"');
+    expect(pageModule?.source).not.toContain(
+      pathToFileURL(path.join(serverDir, "imported", "composables", "useThing.mjs")).href,
+    );
+    expect(await readFile(path.join(serverDir, "imported", "composables", "useThing.mjs"), "utf8"))
+      .toContain("function useThing");
+  }, 20000);
+});

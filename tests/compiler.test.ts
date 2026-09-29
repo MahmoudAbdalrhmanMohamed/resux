@@ -1224,9 +1224,9 @@ const value = useThing();
     );
     const pageModule = moduleSources.find((entry) => entry.source.includes("useThing"));
     expect(pageModule).toBeDefined();
-    expect(pageModule?.source).toContain('from "./imported/composables/use%23Thing.mjs"');
+    expect(pageModule?.source).toContain('from "./imported/composables/use_23_Thing.mjs"');
     expect(pageModule?.source).not.toContain("file://");
-    expect(await readFile(path.join(serverDir, "imported", "composables", "use#Thing.mjs"), "utf8"))
+    expect(await readFile(path.join(serverDir, "imported", "composables", "use_23_Thing.mjs"), "utf8"))
       .toContain("function useThing");
     await import(`${pathToFileURL(path.join(serverDir, "manifest.mjs")).href}?t=${Date.now()}`);
   }, 20000);

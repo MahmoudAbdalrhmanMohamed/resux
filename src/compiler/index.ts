@@ -2022,8 +2022,17 @@ function ensureCompiledUserModule(
   outDir: string,
   compiledSet = new Set<string>()
 ): string {
-  const relativePath = path.relative(projectRoot, resolvedFile);
-  const targetJsFile = path.join(outDir, "server", "imported", relativePath.replace(/\.[ct]sx?$/, ".mjs"));
+  const relativePath = normalizePath(path.relative(projectRoot, resolvedFile));
+  const safeRelativePath = relativePath
+    .split("/")
+    .map((segment) =>
+      segment
+        .replace(/_/g, "__")
+        .replace(/[%#?]/g, (character) => `_${character.codePointAt(0)!.toString(16).toUpperCase()}_`)
+    )
+    .join("/")
+    .replace(/\.[jt]sx?$/, ".mjs");
+  const targetJsFile = path.join(outDir, "server", "imported", safeRelativePath);
 
   if (compiledSet.has(resolvedFile)) {
     return targetJsFile;
@@ -2855,11 +2864,7 @@ function createVueIslandClientSource(island: VueIslandRecord, entryDir: string):
 
 function relativeImportPath(fromDir: string, file: string): string {
   const relative = normalizePath(path.relative(fromDir, file));
-  const specifier = relative.startsWith(".") ? relative : `./${relative}`;
-  return specifier
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
+  return relative.startsWith(".") ? relative : `./${relative}`;
 }
 
 function createServerManifestSource(

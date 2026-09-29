@@ -485,7 +485,8 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
     for (const file of allFiles) {
       const component = await compileVueFile(file, {
         id: idByFile.get(file)!,
-        name: inferComponentName(absoluteRoot, file, componentDirs)
+        name: inferComponentName(absoluteRoot, file, componentDirs),
+        outDir: absoluteOut
       });
       compiledByFile.set(file, component);
       await writeFile(path.join(absoluteOut, "server", `${component.id}.mjs`), component.serverSource, "utf8");
@@ -983,16 +984,17 @@ async function writeClientEnhancementManifests(
   await writeFile(path.join(outDir, "client", "client-enhancements.mjs"), source, "utf8");
 }
 
-export async function compileVueFile(file: string, options: { id: string; name?: string }): Promise<CompiledComponent> {
+export async function compileVueFile(file: string, options: { id: string; name?: string; outDir?: string }): Promise<CompiledComponent> {
   const source = await readFile(file, "utf8");
   return compileVueSource(source, {
     file,
     id: options.id,
-    name: options.name ?? pascalCase(path.basename(file, ".vue"))
+    name: options.name ?? pascalCase(path.basename(file, ".vue")),
+    outDir: options.outDir
   });
 }
 
-export function compileVueSource(source: string, options: { file: string; id: string; name: string }): CompiledComponent {
+export function compileVueSource(source: string, options: { file: string; id: string; name: string; outDir?: string }): CompiledComponent {
   const parsed = parseSfc(source, { filename: options.file });
   const descriptor = parsed.descriptor;
 
@@ -1018,7 +1020,8 @@ export function compileVueSource(source: string, options: { file: string; id: st
     styles: compiledStyles.styles,
     styleScopeId: compiledStyles.styleScopeId,
     client: false,
-    expressions: template.expressions
+    expressions: template.expressions,
+    outDir: options.outDir
   });
   const clientSource = createComponentModuleSource({
     id: options.id,
@@ -1029,7 +1032,8 @@ export function compileVueSource(source: string, options: { file: string; id: st
     styles: compiledStyles.styles,
     styleScopeId: compiledStyles.styleScopeId,
     client: true,
-    expressions: template.expressions
+    expressions: template.expressions,
+    outDir: options.outDir
   });
 
   return {
@@ -2092,7 +2096,8 @@ function processImportDeclaration(
   statement: ts.ImportDeclaration | ts.ImportEqualsDeclaration,
   sourceFile: ts.SourceFile,
   file: string,
-  client: boolean
+  client: boolean,
+  outDir?: string
 ): string {
   if (ts.isImportDeclaration(statement)) {
     const specifier = statement.moduleSpecifier;
@@ -2183,9 +2188,9 @@ function processImportDeclaration(
       let normalized = "";
       if (!client && (resolvedExt === ".ts" || resolvedExt === ".tsx" || resolvedExt === ".js" || resolvedExt === ".jsx")) {
         const projectRoot = findProjectRoot(file);
-        const outDir = path.join(projectRoot, ".resux");
-        const compiledTarget = ensureCompiledUserModule(resolvedPath, projectRoot, outDir);
-        normalized = relativeImportPath(path.join(outDir, "server"), compiledTarget);
+        const buildOutDir = outDir ? path.resolve(outDir) : path.join(projectRoot, ".resux");
+        const compiledTarget = ensureCompiledUserModule(resolvedPath, projectRoot, buildOutDir);
+        normalized = relativeImportPath(path.join(buildOutDir, "server"), compiledTarget);
       } else {
         normalized = fileUrl(resolvedPath);
       }
@@ -2204,9 +2209,9 @@ function processImportDeclaration(
       
       let normalized = "";
       if (resolvedExt === ".ts" || resolvedExt === ".tsx" || resolvedExt === ".js" || resolvedExt === ".jsx") {
-        const outDir = path.join(projectRoot, ".resux");
-        const compiledTarget = ensureCompiledUserModule(resolvedPath, projectRoot, outDir);
-        normalized = relativeImportPath(path.join(outDir, "server"), compiledTarget);
+        const buildOutDir = outDir ? path.resolve(outDir) : path.join(projectRoot, ".resux");
+        const compiledTarget = ensureCompiledUserModule(resolvedPath, projectRoot, buildOutDir);
+        normalized = relativeImportPath(path.join(buildOutDir, "server"), compiledTarget);
       } else {
         normalized = fileUrl(resolvedPath);
       }
@@ -2752,6 +2757,7 @@ function createComponentModuleSource(options: {
   styleScopeId?: string;
   client: boolean;
   expressions?: { id: string; original: string; transformed: string; locals: string[] }[];
+  outDir?: string;
 }): string {
   const importPath = options.client ? "/__resux/runtime-client.mjs" : "resuxjs/runtime";
   const factory = options.client ? "createClientComponent" : "defineComponent";
@@ -2789,7 +2795,13 @@ function createComponentModuleSource(options: {
   }).join("\n");
 
   const importsText = (options.analysis.importDeclarations ?? []).map((decl) => {
-    return processImportDeclaration(decl, options.analysis.sourceFile, options.file, options.client);
+    return processImportDeclaration(
+      decl,
+      options.analysis.sourceFile,
+      options.file,
+      options.client,
+      options.outDir,
+    );
   }).filter(Boolean).join("\n");
 
   const source = [
@@ -2842,7 +2854,11 @@ function createVueIslandClientSource(island: VueIslandRecord, entryDir: string):
 
 function relativeImportPath(fromDir: string, file: string): string {
   const relative = normalizePath(path.relative(fromDir, file));
-  return relative.startsWith(".") ? relative : `./${relative}`;
+  const specifier = relative.startsWith(".") ? relative : `./${relative}`;
+  return specifier
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
 }
 
 function createServerManifestSource(

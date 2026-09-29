@@ -47,12 +47,22 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
+
+          if [[ "$VERSION" != "0.4.0-beta.4" ]]; then
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "draft=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping one-shot beta.4 bootstrap for version $VERSION."
+            exit 0
+          fi
+
+          echo "eligible=true" >> "$GITHUB_OUTPUT"
+
           CREATE_VERSION="$(node -p "require('./packages/create-resuxjs/package.json').version")"
           CREATE_RANGE="$(node -p "require('./packages/create-resuxjs/package.json').dependencies.resuxjs")"
           LOCK_VERSION="$(node -p "require('./package-lock.json').version")"
           LOCK_ROOT_VERSION="$(node -p "require('./package-lock.json').packages[''].version")"
 
-          test "$VERSION" = "0.4.0-beta.4"
           test "$CREATE_VERSION" = "$VERSION"
           test "$CREATE_RANGE" = "^$VERSION"
           test "$LOCK_VERSION" = "$VERSION"
@@ -68,32 +78,51 @@ jobs:
             }
           fi
 
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+          if RELEASE_JSON="$(gh release view "$RELEASE_TAG" --json isDraft,publishedAt 2>/dev/null)"; then
+            RELEASE_DRAFT="$(node -e 'const data=JSON.parse(process.argv[1]); process.stdout.write(String(Boolean(data.isDraft)))' "$RELEASE_JSON")"
+            RELEASE_PUBLISHED_AT="$(node -e 'const data=JSON.parse(process.argv[1]); process.stdout.write(data.publishedAt ?? "")' "$RELEASE_JSON")"
+
             echo "needed=false" >> "$GITHUB_OUTPUT"
+            if [[ "$RELEASE_DRAFT" == "true" ]]; then
+              echo "draft=true" >> "$GITHUB_OUTPUT"
+            else
+              test -n "$RELEASE_PUBLISHED_AT" || {
+                echo "Existing release $RELEASE_TAG is neither draft nor published."
+                exit 1
+              }
+              echo "draft=false" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "draft=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install dependencies before release creation
+        if: steps.beta4.outputs.eligible == 'true'
         run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Verify Rolldown Linux native binding before release creation
+        if: steps.beta4.outputs.eligible == 'true'
         run: node -e "require.resolve('@rolldown/binding-linux-x64-gnu')"
 
       - name: Run strict framework quality gates before release creation
+        if: steps.beta4.outputs.eligible == 'true'
         run: npm run quality
 
       - name: Verify deployment targets before release creation
+        if: steps.beta4.outputs.eligible == 'true'
         run: npm run verify:deploy-targets
 
       - name: Verify generated templates before release creation
+        if: steps.beta4.outputs.eligible == 'true'
         run: npm run test:templates
 
       - name: Verify package contents before release creation
+        if: steps.beta4.outputs.eligible == 'true'
         run: npm run pack:check
 
       - name: Publish GitHub beta.4 prerelease
-        if: steps.beta4.outputs.needed == 'true'
+        if: steps.beta4.outputs.eligible == 'true' && steps.beta4.outputs.needed == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -119,7 +148,17 @@ jobs:
 
           gh release create "v0.4.0-beta.4"             --target "$GITHUB_SHA"             --title "Resux v0.4.0-beta.4 — Public Beta"             --notes-file "$RUNNER_TEMP/beta4-notes.md"             --prerelease
 
+      - name: Publish existing beta.4 draft prerelease
+        if: steps.beta4.outputs.eligible == 'true' && steps.beta4.outputs.draft == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release edit "v0.4.0-beta.4" --draft=false --prerelease
+
       - name: Dispatch beta.4 publication
+        if: steps.beta4.outputs.eligible == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

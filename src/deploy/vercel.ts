@@ -226,6 +226,12 @@ async function postBuild(context: DeployBuildContext): Promise<void> {
   );
   await ensureResuxProductionReport(context.appRoot, functionRoots);
   await ensureResuxFrameworkRuntime(context.appRoot, functionRoots);
+  await ensureRuntimeDependencyTrees(
+    context.appRoot,
+    functionRoots,
+    "vue",
+    "Resux Vercel framework Vue runtime",
+  );
   await ensureServerRuntimeDependencyTrees(
     context.appRoot,
     path.join(context.appRoot, ".resux", "server"),

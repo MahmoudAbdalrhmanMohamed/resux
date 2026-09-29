@@ -3,11 +3,128 @@ name: Publish to npm
 on:
   release:
     types: [published]
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/npm-publish.yml
 
 permissions: {}
 
 jobs:
+  recover-stable-create:
+    name: Recover create-resuxjs 0.3.11 latest
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout immutable stable source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: v0.3.11
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node for npm Trusted Publishing
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24.21.0
+          registry-url: "https://registry.npmjs.org/"
+          package-manager-cache: false
+
+      - name: Validate stable recovery source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "e4a798fe0bd9f7a007ab476810ea376088c1162e"
+          test "$(node -p "require('./package.json').version")" = "0.3.11"
+          test "$(node -p "require('./packages/create-resuxjs/package.json').name")" = "create-resuxjs"
+          test "$(node -p "require('./packages/create-resuxjs/package.json').version")" = "0.3.11"
+          test "$(node -p "require('./packages/create-resuxjs/package.json').dependencies.resuxjs")" = "^0.3.11"
+          test "$(npm view resuxjs@0.3.11 version)" = "0.3.11"
+
+      - name: Require npm with Trusted Publishing support
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --version
+          node <<'NODE'
+          const { execFileSync } = require('node:child_process');
+          const version = execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim();
+          const [major, minor, patch] = version.split('.').map(Number);
+          if (!Number.isInteger(major) || !Number.isInteger(minor) || !Number.isInteger(patch) || major < 11 || (major === 11 && minor < 5) || (major === 11 && minor === 5 && patch < 1)) {
+            throw new Error(`npm ${version} is too old for Trusted Publishing; require >=11.5.1`);
+          }
+          NODE
+
+      - name: Capture current npm tags
+        id: before
+        shell: bash
+        run: |
+          set -euo pipefail
+          NEXT_BEFORE="$(npm view create-resuxjs@next version)"
+          LATEST_BEFORE="$(npm view create-resuxjs@latest version)"
+          echo "next=$NEXT_BEFORE" >> "$GITHUB_OUTPUT"
+          echo "latest=$LATEST_BEFORE" >> "$GITHUB_OUTPUT"
+          echo "Current create-resuxjs latest: $LATEST_BEFORE"
+          echo "Current create-resuxjs next: $NEXT_BEFORE"
+
+      - name: Ensure stable 0.3.11 is not already published
+        shell: bash
+        run: |
+          set -euo pipefail
+          if npm view create-resuxjs@0.3.11 version >/dev/null 2>&1; then
+            echo "create-resuxjs@0.3.11 already exists; refusing to republish an immutable npm version."
+            exit 1
+          fi
+
+      - name: Pack stable create package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+          npm pack ./packages/create-resuxjs --pack-destination release-artifacts
+          test -f release-artifacts/create-resuxjs-0.3.11.tgz
+
+      - name: Publish create-resuxjs 0.3.11 as latest
+        shell: bash
+        run: npm publish "./release-artifacts/create-resuxjs-0.3.11.tgz" --access public --tag latest --provenance
+
+      - name: Verify latest changed and next stayed untouched
+        shell: bash
+        env:
+          NEXT_BEFORE: ${{ steps.before.outputs.next }}
+        run: |
+          set -euo pipefail
+          read_npm() {
+            spec="$1"
+            field="${2:-version}"
+            value=""
+            for attempt in 1 2 3 4 5 6; do
+              value="$(npm view "$spec" "$field" 2>/dev/null || true)"
+              if [ -n "$value" ]; then
+                printf '%s' "$value"
+                return 0
+              fi
+              sleep 5
+            done
+            return 1
+          }
+          LATEST_AFTER="$(read_npm create-resuxjs@latest)"
+          NEXT_AFTER="$(read_npm create-resuxjs@next)"
+          FRAMEWORK_RANGE="$(read_npm create-resuxjs@0.3.11 dependencies.resuxjs)"
+          test "$LATEST_AFTER" = "0.3.11" || { echo "Expected latest 0.3.11, got $LATEST_AFTER"; exit 1; }
+          test "$FRAMEWORK_RANGE" = "^0.3.11" || { echo "Expected dependency ^0.3.11, got $FRAMEWORK_RANGE"; exit 1; }
+          test "$NEXT_AFTER" = "$NEXT_BEFORE" || { echo "next changed from $NEXT_BEFORE to $NEXT_AFTER"; exit 1; }
+          echo "create-resuxjs@latest=$LATEST_AFTER"
+          echo "create-resuxjs@next=$NEXT_AFTER"
+          echo "resuxjs dependency=$FRAMEWORK_RANGE"
   validate:
+    if: github.event_name == 'release'
     name: Validate release artifact
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -151,6 +268,7 @@ jobs:
           retention-days: 1
 
   publish:
+    if: github.event_name == 'release'
     name: Publish validated npm artifacts
     needs: validate
     runs-on: ubuntu-latest

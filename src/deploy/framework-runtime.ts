@@ -2,6 +2,7 @@ import { cp, mkdir, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathExists, readJsonRecord } from "./common.js";
+import { collectServerRuntimeDependencyNames, ensureRuntimeDependencyTrees } from "./runtime-dependencies.js";
 
 interface PackageRecord extends Record<string, unknown> {
   name?: unknown;
@@ -65,6 +66,8 @@ export async function ensureResuxFrameworkRuntime(
     );
   }
 
+  const frameworkRuntimeDependencies = await collectServerRuntimeDependencyNames(distRoot);
+
   for (const runtimeRoot of runtimeRoots) {
     const targetRoot = path.join(runtimeRoot, "node_modules", "resuxjs");
     await rm(targetRoot, { recursive: true, force: true });
@@ -75,5 +78,17 @@ export async function ensureResuxFrameworkRuntime(
       force: true,
       dereference: true,
     });
+  }
+
+  // Resux UI/icons are optional runtime surfaces. Only include Vue when the
+  // packaged framework build actually imports it, so server-only/minimal
+  // framework fixtures and consumers do not gain an unconditional dependency.
+  if (frameworkRuntimeDependencies.includes("vue")) {
+    await ensureRuntimeDependencyTrees(
+      appRoot,
+      runtimeRoots,
+      "vue",
+      "Resux framework Vue runtime",
+    );
   }
 }

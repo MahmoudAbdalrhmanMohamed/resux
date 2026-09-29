@@ -23,7 +23,7 @@ import {
   watch,
   watchEffect
 } from "../reactivity/index.js";
-import type { ComputedRef, Ref, WatchCallback, WatchOptions, WatchSource, WatchStopHandle } from "../reactivity/index.js";
+import type { ComputedRef, MaybeRefOrGetter, Ref, WatchCallback, WatchOptions, WatchSource, WatchStopHandle } from "../reactivity/index.js";
 import {
   getResumeBootstrapSource,
   RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAME_LENGTH,

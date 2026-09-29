@@ -2185,7 +2185,7 @@ function processImportDeclaration(
         const projectRoot = findProjectRoot(file);
         const outDir = path.join(projectRoot, ".resux");
         const compiledTarget = ensureCompiledUserModule(resolvedPath, projectRoot, outDir);
-        normalized = fileUrl(compiledTarget);
+        normalized = relativeImportPath(path.join(outDir, "server"), compiledTarget);
       } else {
         normalized = fileUrl(resolvedPath);
       }
@@ -2206,7 +2206,7 @@ function processImportDeclaration(
       if (resolvedExt === ".ts" || resolvedExt === ".tsx" || resolvedExt === ".js" || resolvedExt === ".jsx") {
         const outDir = path.join(projectRoot, ".resux");
         const compiledTarget = ensureCompiledUserModule(resolvedPath, projectRoot, outDir);
-        normalized = fileUrl(compiledTarget);
+        normalized = relativeImportPath(path.join(outDir, "server"), compiledTarget);
       } else {
         normalized = fileUrl(resolvedPath);
       }
@@ -2286,7 +2286,7 @@ function processImportDeclaration(
           const projectRoot = findProjectRoot(file);
           const outDir = path.join(projectRoot, ".resux");
           const compiledTarget = ensureCompiledUserModule(resolvedPath, projectRoot, outDir);
-          normalized = fileUrl(compiledTarget);
+          normalized = relativeImportPath(path.join(outDir, "server"), compiledTarget);
         } else {
           normalized = fileUrl(resolvedPath);
         }
@@ -2307,7 +2307,7 @@ function processImportDeclaration(
         if (resolvedExt === ".ts" || resolvedExt === ".tsx" || resolvedExt === ".js" || resolvedExt === ".jsx") {
           const outDir = path.join(projectRoot, ".resux");
           const compiledTarget = ensureCompiledUserModule(resolvedPath, projectRoot, outDir);
-          normalized = fileUrl(compiledTarget);
+          normalized = relativeImportPath(path.join(outDir, "server"), compiledTarget);
         } else {
           normalized = fileUrl(resolvedPath);
         }

@@ -1192,6 +1192,11 @@ describe("portable server user-module imports", () => {
     await mkdir(path.join(root, "pages"), { recursive: true });
     await mkdir(path.join(root, "composables"), { recursive: true });
     await writeFile(
+      path.join(root, "package.json"),
+      JSON.stringify({ name: "portable-import-test", private: true, type: "module" }, null, 2),
+      "utf8",
+    );
+    await writeFile(
       path.join(root, "composables", "useThing.ts"),
       'export function useThing() { return "portable"; }\n',
       "utf8",

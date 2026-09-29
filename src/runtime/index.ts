@@ -2898,6 +2898,30 @@ function createServerI18nContext(route: RouteContext, runtimeConfig: RuntimeConf
   };
 }
 
+function resolveHeadReactiveValue(value: unknown): unknown {
+  if (isRef(value)) {
+    return resolveHeadReactiveValue(unref(value));
+  }
+  if (typeof value === "function") {
+    return resolveHeadReactiveValue((value as () => unknown)());
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => resolveHeadReactiveValue(entry));
+  }
+  if (value && typeof value === "object") {
+    const resolved: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      resolved[key] = resolveHeadReactiveValue(entry);
+    }
+    return resolved;
+  }
+  return value;
+}
+
+function resolveHeadEntry(input: HeadEntry): HeadEntry {
+  return resolveHeadReactiveValue(input) as HeadEntry;
+}
+
 export function createServerSetupContext(
   route: RouteContext,
   props: ComponentProps,
@@ -3009,7 +3033,7 @@ export function createServerSetupContext(
     },
 
     useHead(input: HeadEntry): void {
-      headEntries.push(input);
+      headEntries.push(resolveHeadEntry(input));
     },
 
     useSeoMeta(input: SeoMetaInput): void {

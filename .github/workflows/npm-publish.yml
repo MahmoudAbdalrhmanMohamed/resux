@@ -3,11 +3,94 @@ name: Publish to npm
 on:
   release:
     types: [published]
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
+      - package-lock.json
+      - packages/create-resuxjs/package.json
+      - CHANGELOG.md
+      - .github/workflows/npm-publish.yml
 
 permissions: {}
 
 jobs:
+  bootstrap-beta4-release:
+    name: Bootstrap beta.4 release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout merged beta.4 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup release metadata Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+
+      - name: Validate beta.4 metadata
+        id: beta4
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          CREATE_VERSION="$(node -p "require('./packages/create-resuxjs/package.json').version")"
+          CREATE_RANGE="$(node -p "require('./packages/create-resuxjs/package.json').dependencies.resuxjs")"
+          LOCK_VERSION="$(node -p "require('./package-lock.json').version")"
+          LOCK_ROOT_VERSION="$(node -p "require('./package-lock.json').packages[''].version")"
+
+          test "$VERSION" = "0.4.0-beta.4"
+          test "$CREATE_VERSION" = "$VERSION"
+          test "$CREATE_RANGE" = "^$VERSION"
+          test "$LOCK_VERSION" = "$VERSION"
+          test "$LOCK_ROOT_VERSION" = "$VERSION"
+
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish GitHub beta.4 prerelease
+        if: steps.beta4.outputs.needed == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/beta4-notes.md" <<'EOF'
+          ## Resux 0.4.0-beta.4 — Public Beta
+
+          This hotfix repairs serverless framework runtime packaging exposed by the Resux Lab production deployment.
+
+          - Fixes Vercel HTTP 500 caused by a missing Vue runtime dependency used by Resux UI/icons.
+          - Applies the same runtime dependency fix to Netlify.
+          - Packages Vue and its transitive dependencies only when the packaged Resux runtime actually imports Vue.
+          - Includes regression coverage for both Vercel and Netlify.
+          - Keeps the prerelease on the npm `next` channel.
+
+          Install:
+          `npm install resuxjs@next`
+
+          Create an app:
+          `npx create-resuxjs@next my-app`
+          EOF
+
+          gh release create "v0.4.0-beta.4"             --target "$GITHUB_SHA"             --title "Resux v0.4.0-beta.4 — Public Beta"             --notes-file "$RUNNER_TEMP/beta4-notes.md"             --prerelease
+
   validate:
+    if: github.event_name == 'release'
     name: Validate release artifact
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -151,6 +234,7 @@ jobs:
           retention-days: 1
 
   publish:
+    if: github.event_name == 'release'
     name: Publish validated npm artifacts
     needs: validate
     runs-on: ubuntu-latest

@@ -4,6 +4,20 @@ All notable changes to Resux are documented here.
 
 Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaking API changes when they are clearly documented.
 
+## [0.4.0-beta.4] - 2026-09-29
+
+### Serverless runtime packaging
+
+- Fixed Vercel production functions that could return HTTP 500 with `Cannot find package 'vue' imported from .../resuxjs/dist/icons/index.js`.
+- Fixed the equivalent Netlify packaging path so framework runtime dependencies are complete there as well.
+- The serverless framework packager now detects whether the packaged Resux runtime actually imports Vue and, only when needed, copies Vue and its transitive runtime dependency tree into every function.
+- Added regression coverage proving Vercel and Netlify package `vue` and transitive `@vue/shared` when the framework runtime imports Vue, without imposing Vue on minimal framework fixtures that do not require it.
+
+### Validation
+
+- Revalidated Production Quality Gates, Node.js 20.19 and 22, Windows and macOS portability, all template suites, and Node/static/Vercel/Netlify/Cloudflare deployment targets.
+
+
 ## [0.4.0-beta.3] - 2026-09-28
 
 ### Node.js 20.19 compatibility

@@ -21,7 +21,7 @@ jobs:
     name: Bootstrap beta.4 release
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 60
     permissions:
       actions: write
       contents: write
@@ -58,7 +58,17 @@ jobs:
           test "$LOCK_VERSION" = "$VERSION"
           test "$LOCK_ROOT_VERSION" = "$VERSION"
 
-          if gh release view "v$VERSION" >/dev/null 2>&1; then
+          RELEASE_TAG="v$VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            git fetch --force --no-tags origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+            TAG_COMMIT="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+            test "$TAG_COMMIT" = "$GITHUB_SHA" || {
+              echo "Existing tag $RELEASE_TAG points to $TAG_COMMIT, expected $GITHUB_SHA."
+              exit 1
+            }
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "needed=false" >> "$GITHUB_OUTPUT"
           else
             echo "needed=true" >> "$GITHUB_OUTPUT"
@@ -146,6 +156,8 @@ jobs:
 
       - name: Verify release tag and main ancestry
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -168,6 +180,25 @@ jobs:
             echo "Published release ref ${GITHUB_REF} does not match refs/tags/${RELEASE_TAG}."
             exit 1
           }
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            test "${RELEASE_TAG}" = "v0.4.0-beta.4" || {
+              echo "Temporary workflow_dispatch publishing is restricted to v0.4.0-beta.4."
+              exit 1
+            }
+
+            RELEASE_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")"
+            RELEASE_DRAFT="$(node -e 'const data=JSON.parse(process.argv[1]); process.stdout.write(String(Boolean(data.draft)))' "${RELEASE_JSON}")"
+            RELEASE_PUBLISHED_AT="$(node -e 'const data=JSON.parse(process.argv[1]); process.stdout.write(data.published_at ?? "")' "${RELEASE_JSON}")"
+            test "${RELEASE_DRAFT}" = "false" || {
+              echo "Manual dispatch requires a non-draft GitHub Release for ${RELEASE_TAG}."
+              exit 1
+            }
+            test -n "${RELEASE_PUBLISHED_AT}" || {
+              echo "Manual dispatch requires a published GitHub Release for ${RELEASE_TAG}."
+              exit 1
+            }
+          fi
 
           TAG_COMMIT="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
           HEAD_COMMIT="$(git rev-parse HEAD)"

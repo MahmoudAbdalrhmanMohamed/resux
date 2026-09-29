@@ -3,6 +3,7 @@ name: Publish to npm
 on:
   release:
     types: [published]
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -22,6 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      actions: write
       contents: write
 
     steps:
@@ -89,8 +91,16 @@ jobs:
 
           gh release create "v0.4.0-beta.4"             --target "$GITHUB_SHA"             --title "Resux v0.4.0-beta.4 — Public Beta"             --notes-file "$RUNNER_TEMP/beta4-notes.md"             --prerelease
 
+      - name: Dispatch beta.4 publication
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run "npm-publish.yml" --ref "v0.4.0-beta.4"
+
   validate:
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     name: Validate release artifact
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -234,7 +244,7 @@ jobs:
           retention-days: 1
 
   publish:
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     name: Publish validated npm artifacts
     needs: validate
     runs-on: ubuntu-latest

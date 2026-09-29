@@ -1187,8 +1187,9 @@ void loadCompilerDom
 
 
 describe("portable server user-module imports", () => {
-  it("emits relative imports for project composables instead of build-machine file URLs", async () => {
+  it("uses the configured output directory and URL-safe relative specifiers", async () => {
     const root = path.join(os.tmpdir(), `resux-portable-imports-${Date.now()}`);
+    const outDir = path.join(root, ".custom-resux");
     await mkdir(path.join(root, "pages"), { recursive: true });
     await mkdir(path.join(root, "composables"), { recursive: true });
     await writeFile(
@@ -1197,23 +1198,23 @@ describe("portable server user-module imports", () => {
       "utf8",
     );
     await writeFile(
-      path.join(root, "composables", "useThing.ts"),
+      path.join(root, "composables", "use#Thing.ts"),
       'export function useThing() { return "portable"; }\n',
       "utf8",
     );
     await writeFile(
       path.join(root, "pages", "index.vue"),
       `<script setup>
-import { useThing } from "../composables/useThing";
+import { useThing } from "../composables/use#Thing";
 const value = useThing();
 </script>
 <template><main>{{ value }}</main></template>`,
       "utf8",
     );
 
-    await buildProject(root);
+    await buildProject(root, outDir);
 
-    const serverDir = path.join(root, ".resux", "server");
+    const serverDir = path.join(outDir, "server");
     const moduleFiles = (await readdir(serverDir)).filter((name) => /^m\d+\.mjs$/.test(name));
     const moduleSources = await Promise.all(
       moduleFiles.map(async (name) => ({
@@ -1223,11 +1224,10 @@ const value = useThing();
     );
     const pageModule = moduleSources.find((entry) => entry.source.includes("useThing"));
     expect(pageModule).toBeDefined();
-    expect(pageModule?.source).toContain('from "./imported/composables/useThing.mjs"');
-    expect(pageModule?.source).not.toContain(
-      pathToFileURL(path.join(serverDir, "imported", "composables", "useThing.mjs")).href,
-    );
-    expect(await readFile(path.join(serverDir, "imported", "composables", "useThing.mjs"), "utf8"))
+    expect(pageModule?.source).toContain('from "./imported/composables/use%23Thing.mjs"');
+    expect(pageModule?.source).not.toContain("file://");
+    expect(await readFile(path.join(serverDir, "imported", "composables", "use#Thing.mjs"), "utf8"))
       .toContain("function useThing");
+    await import(`${pathToFileURL(path.join(serverDir, "manifest.mjs")).href}?t=${Date.now()}`);
   }, 20000);
 });

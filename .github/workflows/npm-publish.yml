@@ -155,7 +155,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release edit "v0.4.0-beta.4" --draft=false --prerelease
+          gh release edit "v0.4.0-beta.4" --target "$GITHUB_SHA" --draft=false --prerelease
 
       - name: Dispatch beta.4 publication
         if: steps.beta4.outputs.eligible == 'true'

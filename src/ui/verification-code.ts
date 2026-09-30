@@ -1,6 +1,7 @@
 import {
   defineComponent,
   h,
+  mergeProps,
   nextTick,
   onBeforeUnmount,
   onMounted,
@@ -14,8 +15,14 @@ export type VerificationCodeMode = "numeric" | "alphanumeric";
 
 type VerificationCodePhase = "input" | "collapsing" | "verifying" | "success" | "error";
 
-const COLLAPSE_DURATION_MS = 360;
+const CELL_COLLAPSE_DURATION_MS = 340;
+const CELL_COLLAPSE_DELAY_MS = 22;
+const COLLAPSE_BUFFER_MS = 20;
 const DEFAULT_CELL_STEP_PX = 56;
+
+function collapseDurationMs(length: number): number {
+  return CELL_COLLAPSE_DURATION_MS + Math.max(0, length - 1) * CELL_COLLAPSE_DELAY_MS + COLLAPSE_BUFFER_MS;
+}
 
 function normalizedLength(value: number): number {
   if (!Number.isFinite(value)) return 4;
@@ -110,7 +117,7 @@ export const RxVerificationCode = defineComponent({
 
         phase.value = "collapsing";
         clearTransitionTimer();
-        transitionTimer = setTimeout(settleRequestedStatus, COLLAPSE_DURATION_MS);
+        transitionTimer = setTimeout(settleRequestedStatus, collapseDurationMs(normalizedLength(props.length)));
         return;
       }
 
@@ -171,14 +178,22 @@ export const RxVerificationCode = defineComponent({
       const showCells = phase.value === "input" || phase.value === "error" || phase.value === "collapsing";
 
       const rootClass = props.unstyled
-        ? attrs.class
+        ? undefined
         : [
             "rx-verification-code",
             focused.value ? "is-focused" : "",
             phase.value === "error" ? "is-error" : "",
-            phase.value === "collapsing" ? "is-collapsing" : "",
-            attrs.class
+            phase.value === "collapsing" ? "is-collapsing" : ""
           ].filter(Boolean);
+      const editable = phase.value === "input" || phase.value === "error";
+      const {
+        required,
+        form,
+        readonly,
+        "aria-labelledby": ariaLabelledby,
+        "aria-describedby": ariaDescribedby,
+        ...rootAttrs
+      } = attrs;
 
       const input = h("input", {
         ref: inputRef,
@@ -191,10 +206,14 @@ export const RxVerificationCode = defineComponent({
         autocapitalize: mode === "alphanumeric" ? "characters" : "off",
         spellcheck: false,
         disabled: props.disabled,
+        readonly: Boolean(readonly) || !editable,
+        required: Boolean(required),
+        form: typeof form === "string" ? form : undefined,
         name: props.name || undefined,
         "aria-label": props.ariaLabel,
+        "aria-labelledby": ariaLabelledby,
         "aria-invalid": status === "error" ? "true" : undefined,
-        "aria-describedby": status === "error" && props.errorText ? messageId : undefined,
+        "aria-describedby": status === "error" && props.errorText ? messageId : ariaDescribedby,
         style: {
           position: "absolute",
           width: "1px",
@@ -241,7 +260,7 @@ export const RxVerificationCode = defineComponent({
               : {
                   "--rx-otp-shift": `${shift}px`,
                   "--rx-otp-rotate": `${rotate}deg`,
-                  "--rx-otp-delay": `${index * 22}ms`
+                  "--rx-otp-delay": `${index * CELL_COLLAPSE_DELAY_MS}ms`
                 }
           },
           char ? (props.mask ? "•" : char) : "\u00a0"
@@ -310,14 +329,15 @@ export const RxVerificationCode = defineComponent({
 
       return h(
         "div",
-        {
-          ...attrs,
+        mergeProps(rootAttrs, {
           class: rootClass,
           "data-phase": phase.value,
           "data-status": status,
           "data-disabled": props.disabled ? "true" : "false",
+          "data-length": String(length),
+          style: props.unstyled ? undefined : { "--rx-otp-length": String(length) },
           onClick: focusInput
-        },
+        }),
         [
           input,
           showCells
@@ -373,6 +393,7 @@ export const verificationCodeStyles = `
   --rx-verification-cell-text: #0f172a;
   position: relative;
   display: inline-flex;
+  width: min(100%, 42rem);
   flex-direction: column;
   align-items: center;
   gap: 0.75rem;
@@ -389,6 +410,7 @@ export const verificationCodeStyles = `
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
+  width: 100%;
   min-height: 3rem;
   perspective: 700px;
 }
@@ -397,7 +419,11 @@ export const verificationCodeStyles = `
   align-items: center;
   justify-content: center;
   width: 3rem;
-  height: 3rem;
+  max-width: 3rem;
+  min-width: 0;
+  height: auto;
+  aspect-ratio: 1;
+  flex: 1 1 3rem;
   box-sizing: border-box;
   border: 1.5px solid var(--rx-verification-cell-border);
   border-radius: 0.75rem;
@@ -513,8 +539,7 @@ export const verificationCodeStyles = `
     gap: 0.375rem;
   }
   .rx-verification-code-cell {
-    width: 2.65rem;
-    height: 2.65rem;
+    max-width: 2.65rem;
     border-radius: 0.65rem;
   }
 }
@@ -528,5 +553,15 @@ export const verificationCodeStyles = `
     transition-duration: 0.01ms !important;
     transition-delay: 0ms !important;
   }
+}
+`;
+
+
+export const verificationCodeAnimationsDisabledStyles = `
+.rx-verification-code *,
+.rx-verification-code *::before,
+.rx-verification-code *::after {
+  animation: none !important;
+  transition: none !important;
 }
 `;

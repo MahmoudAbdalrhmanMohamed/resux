@@ -3496,8 +3496,16 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       </div>
     `;
     const phases: string[] = [];
+    let resolveComplete!: () => void;
+    const transitionComplete = new Promise<void>((resolve) => {
+      resolveComplete = resolve;
+    });
     window.addEventListener("resux:route-transition", (event) => {
-      phases.push((event as CustomEvent).detail.state);
+      const state = (event as CustomEvent).detail.state;
+      phases.push(state);
+      if (state === "complete") {
+        resolveComplete();
+      }
     });
 
     let resolveFetch!: () => void;
@@ -3551,16 +3559,23 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     expect(loader.dataset.state).toBe("fetching");
     expect(loader.getAttribute("aria-busy")).toBe("true");
     expect(root.getAttribute("data-route-transition")).toBe("loading");
+    expect(root.getAttribute("data-route-transition-state")).toBe("fetching");
     const progressValue = Number(window.document.querySelector("[role='progressbar']")?.getAttribute("aria-valuenow") ?? "0");
     expect(progressValue).toBeGreaterThan(0);
     expect(progressValue).toBeLessThan(100);
+    const progressScale = Number(loader.style.getPropertyValue("--resux-progress-scale"));
+    expect(progressScale).toBeGreaterThan(0);
+    expect(progressScale).toBeLessThan(1);
 
     resolveFetch();
     await waitForHtml(window, "<main>Slow</main>");
+    expect(root.getAttribute("data-route-transition-state")).toBe("swapping");
+    await transitionComplete;
 
     expect(phases).toEqual(expect.arrayContaining(["start", "fetching", "swapping", "complete"]));
     expect(["complete", "idle"]).toContain(loader.dataset.state);
     expect(root.hasAttribute("data-route-transition")).toBe(false);
+    expect(root.hasAttribute("data-route-transition-state")).toBe(false);
   });
 
   it("reveals deferred lazy images only after intersection events", async () => {

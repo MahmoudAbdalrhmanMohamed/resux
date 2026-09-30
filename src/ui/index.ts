@@ -784,7 +784,8 @@ const uiStyles = `
 @media (prefers-reduced-motion: reduce) {
   .rx-animate-fade-up,
   .rx-animate-scale-in,
-  .rx-animate-pulse {
+  .rx-animate-pulse,
+  .rx-skeleton {
     animation: none !important;
   }
 }
@@ -851,6 +852,8 @@ const uiPrimitiveStyles = `
   --rx-control-disabled-bg: #f8fafc;
   --rx-control-accent: #03c8bf;
   --rx-control-ring: rgba(3, 200, 191, 0.2);
+  --rx-control-focus: #0f172a;
+  --rx-control-selected-fg: #027f79;
   --rx-control-danger: #dc2626;
   --rx-control-radius: 0.625rem;
   --rx-control-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
@@ -862,6 +865,8 @@ const uiPrimitiveStyles = `
   --rx-control-border-hover: #475569;
   --rx-control-placeholder: #94a3b8;
   --rx-control-disabled-bg: #111827;
+  --rx-control-focus: #f8fafc;
+  --rx-control-selected-fg: #5eead4;
   --rx-control-shadow: none;
 }
 
@@ -968,7 +973,7 @@ const uiPrimitiveStyles = `
 }
 .rx-select-option:hover, .rx-select-option.selected, .rx-select-option[aria-selected="true"] {
   background: rgba(3, 200, 191, 0.12);
-  color: #027f79;
+  color: var(--rx-control-selected-fg);
 }
 
 .rx-avatar {
@@ -1055,9 +1060,10 @@ const uiPrimitiveStyles = `
   background: var(--rx-control-accent, #03c8bf);
   border-color: var(--rx-control-accent, #03c8bf);
 }
-[dir="rtl"] .rx-switch.checked { --rx-switch-translate: -1.25rem; }
+.rx-switch:dir(rtl).checked { --rx-switch-translate: -1.25rem; }
 .rx-switch:focus-visible {
-  outline: none;
+  outline: 2px solid var(--rx-control-focus, #0f172a);
+  outline-offset: 2px;
   box-shadow: 0 0 0 3px var(--rx-control-ring, rgba(3, 200, 191, 0.2));
 }
 .rx-switch:disabled {

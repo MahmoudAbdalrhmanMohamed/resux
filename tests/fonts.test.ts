@@ -205,7 +205,12 @@ describe("fonts module", () => {
       rel: "stylesheet",
       href: "https://fonts.googleapis.com/css2?family=Inter:wght@400&display=swap",
       media: "print",
-      onload: "this.media='all'"
+      onload: "this.media='all'",
+      "data-resux-font-async": "true"
+    });
+    expect(headList[0].noscript?.[0]?.link?.[0]).toEqual({
+      rel: "stylesheet",
+      href: "https://fonts.googleapis.com/css2?family=Inter:wght@400&display=swap"
     });
   });
 

@@ -362,11 +362,11 @@ export const Icon = defineComponent({
             d: entry.d,
             fill: entry.fill,
             stroke: entry.stroke,
-            strokeWidth: entry.strokeWidth,
-            strokeLinecap: entry.strokeLinecap,
-            strokeLinejoin: entry.strokeLinejoin,
-            fillRule: entry.fillRule || "evenodd",
-            clipRule: entry.clipRule || "evenodd",
+            "stroke-width": entry.strokeWidth,
+            "stroke-linecap": entry.strokeLinecap,
+            "stroke-linejoin": entry.strokeLinejoin,
+            "fill-rule": entry.fillRule || "evenodd",
+            "clip-rule": entry.clipRule || "evenodd",
             opacity: entry.opacity || "1"
           }))
       );

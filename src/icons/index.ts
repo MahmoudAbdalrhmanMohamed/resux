@@ -365,8 +365,8 @@ export const Icon = defineComponent({
             "stroke-width": entry.strokeWidth,
             "stroke-linecap": entry.strokeLinecap,
             "stroke-linejoin": entry.strokeLinejoin,
-            "fill-rule": entry.fillRule || "evenodd",
-            "clip-rule": entry.clipRule || "evenodd",
+            "fill-rule": entry.fillRule || "nonzero",
+            "clip-rule": entry.clipRule || "nonzero",
             opacity: entry.opacity || "1"
           }))
       );

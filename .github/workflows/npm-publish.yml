@@ -72,10 +72,10 @@ jobs:
           if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
             git fetch --force --no-tags origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
             TAG_COMMIT="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
-            test "$TAG_COMMIT" = "$GITHUB_SHA" || {
-              echo "Existing tag $RELEASE_TAG points to $TAG_COMMIT, expected $GITHUB_SHA."
+            if ! git merge-base --is-ancestor "$TAG_COMMIT" "$GITHUB_SHA"; then
+              echo "Existing tag $RELEASE_TAG points to $TAG_COMMIT, which is not an ancestor of current main $GITHUB_SHA."
               exit 1
-            }
+            fi
           fi
 
           if RELEASE_JSON="$(gh release view "$RELEASE_TAG" --json isDraft,publishedAt 2>/dev/null)"; then

@@ -1,6 +1,10 @@
 import { defineComponent, h, onMounted, ref } from "vue";
 import type { ResuxModuleDefinition } from "../kit/index.js";
-import { RxVerificationCode, verificationCodeStyles } from "./verification-code.js";
+import {
+  RxVerificationCode,
+  verificationCodeAnimationsDisabledStyles,
+  verificationCodeStyles
+} from "./verification-code.js";
 
 export { RxVerificationCode } from "./verification-code.js";
 export type { VerificationCodeMode, VerificationCodeStatus } from "./verification-code.js";
@@ -1025,6 +1029,9 @@ const resuxUiModule = {
     }
     if (options.defaultStyles !== false) {
       stylesToInject.push(`${uiPrimitiveStyles}\n${verificationCodeStyles}`);
+      if (options.animations?.enabled === false) {
+        stylesToInject.push(verificationCodeAnimationsDisabledStyles);
+      }
     }
 
     if (stylesToInject.length > 0) {

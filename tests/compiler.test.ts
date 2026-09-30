@@ -1134,6 +1134,58 @@ defineClientEnhancement("imported-helper", async (target) => {
     expect(manifest.appHead.script ?? []).toEqual([]);
   }, 20000);
 
+  it("keeps lazy fonts visible when CSP allows event handlers but blocks inline scripts", async () => {
+    const root = path.join(os.tmpdir(), `resux-csp-lazy-fonts-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Home</main></template>");
+    await writeFile(
+      path.join(root, "resux.config.ts"),
+      `export default defineResuxConfig({
+  modules: [
+    ["resuxjs/fonts", {
+      strategy: "lazy",
+      google: [{ name: "Inter", weights: [400] }]
+    }],
+    ["resux:security", {
+      contentSecurityPolicy: "default-src 'self'; style-src https://fonts.googleapis.com; script-src 'self'; script-src-attr 'unsafe-inline'"
+    }]
+  ]
+})`
+    );
+
+    await buildProject(root);
+    const manifest = await import(`${pathToFileURL(path.join(root, ".resux", "server", "manifest.mjs")).href}?t=${Date.now()}`);
+    const fontStylesheet = manifest.appHead.link.find((link: Record<string, string>) =>
+      link.rel === "stylesheet" && String(link.href).includes("fonts.googleapis.com")
+    );
+
+    expect(fontStylesheet).toBeTruthy();
+    expect(fontStylesheet.media).toBeUndefined();
+    expect(manifest.appHead.script ?? []).toEqual([]);
+  }, 20000);
+
+  it("keeps inlined config CSS before existing head styles", async () => {
+    const root = path.join(os.tmpdir(), `resux-inline-css-head-order-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await mkdir(path.join(root, "public"), { recursive: true });
+    await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Home</main></template>");
+    await writeFile(path.join(root, "public", "app.css"), ".shared{color:red}");
+    await writeFile(
+      path.join(root, "resux.config.ts"),
+      `export default defineResuxConfig({
+  css: ["/app.css"],
+  app: { head: { style: [{ id: "app-head", css: ".shared{color:blue}" }] } },
+  modules: [["resux:performance", { inlineCssMaxBytes: 4096 }]]
+})`
+    );
+
+    await buildProject(root);
+    const manifest = await import(`${pathToFileURL(path.join(root, ".resux", "server", "manifest.mjs")).href}?t=${Date.now()}`);
+
+    expect(manifest.appHead.style[0].css).toBe(".shared{color:red}");
+    expect(manifest.appHead.style[1]).toEqual({ id: "app-head", css: ".shared{color:blue}" });
+  }, 20000);
+
   it("runs tree-shakable UI, icon, and font module subpaths", async () => {
     const root = path.join(os.tmpdir(), `resux-ui-modules-${Date.now()}`);
     await mkdir(path.join(root, "pages"), { recursive: true });

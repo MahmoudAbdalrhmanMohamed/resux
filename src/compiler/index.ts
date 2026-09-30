@@ -3064,47 +3064,96 @@ function createAppHead(
     ? config.app.head
     : {};
   const headObject = typeof head === "object" && head ? head as Record<string, unknown> : {};
-  const links: Array<Record<string, string>> = [];
-  const criticalStyles: Array<{ id: string; css: string }> = [];
   const performanceConfig = readPerformanceRuntimeConfig(config);
+  const csp = readSecurityContentSecurityPolicy(config, headObject);
   const inlineCss = optimizeCss
     && performanceConfig !== null
-    && performanceConfig.inlineCss !== false;
+    && performanceConfig.inlineCss !== false
+    && allowsInlineStyleForCsp(csp);
   const inlineCssMaxBytes = performanceConfig && Number.isFinite(performanceConfig.inlineCssMaxBytes)
     ? Math.max(0, Math.floor(performanceConfig.inlineCssMaxBytes as number))
     : 65_536;
 
-  if (Array.isArray(config.css)) {
-    for (const cssEntry of config.css) {
-      const href = String(cssEntry ?? "").trim();
-      if (!href) {
-        continue;
-      }
-      const inlined = inlineCss
-        ? readInlinePublicCss(appRoot, href, inlineCssMaxBytes)
-        : null;
-      if (inlined) {
-        criticalStyles.push({
-          id: `resux-critical-${createHash("sha256").update(href).digest("hex").slice(0, 12)}`,
-          css: inlined,
-        });
-      } else {
-        links.push({ rel: "stylesheet", href });
-      }
-    }
-  }
+  const cssEntries = collectConfiguredCssEntries(
+    config.css,
+    appRoot,
+    inlineCss ? inlineCssMaxBytes : 0,
+  );
+  const { links: cssLinks, styles: criticalStyles } = splitCssEntriesPreservingOrder(cssEntries);
+  const configuredLinks = Array.isArray(headObject.link)
+    ? headObject.link as Array<Record<string, unknown>>
+    : [];
+  const configuredScripts = Array.isArray(headObject.script)
+    ? headObject.script as Array<Record<string, unknown>>
+    : [];
+  const inlineScriptAllowed = allowsInlineScriptForCsp(csp);
 
   return {
     ...headObject,
     link: [
-      ...(((headObject as { link?: Array<Record<string, string>> }).link) ?? []),
-      ...links,
+      ...normalizeFontLinksForCsp(configuredLinks, inlineScriptAllowed),
+      ...cssLinks,
     ],
     style: [
-      ...(((headObject as { style?: Array<Record<string, unknown> | string> }).style) ?? []),
+      ...((Array.isArray(headObject.style)
+        ? headObject.style
+        : []) as Array<Record<string, unknown> | string>),
       ...criticalStyles,
     ],
+    script: inlineScriptAllowed
+      ? configuredScripts
+      : configuredScripts.filter((entry) => !isResuxFontLoaderScript(entry)),
   };
+}
+
+interface ConfiguredCssEntry {
+  href: string;
+  css: string | null;
+}
+
+function collectConfiguredCssEntries(
+  cssConfig: unknown,
+  appRoot: string,
+  inlineCssMaxBytes: number,
+): ConfiguredCssEntry[] {
+  if (!Array.isArray(cssConfig)) {
+    return [];
+  }
+
+  return cssConfig
+    .map((cssEntry) => String(cssEntry ?? "").trim())
+    .filter(Boolean)
+    .map((href) => ({
+      href,
+      css: inlineCssMaxBytes > 0
+        ? readInlinePublicCss(appRoot, href, inlineCssMaxBytes)
+        : null,
+    }));
+}
+
+function splitCssEntriesPreservingOrder(entries: ConfiguredCssEntry[]): {
+  links: Array<Record<string, string>>;
+  styles: Array<{ id: string; css: string }>;
+} {
+  const lastLinkedCssIndex = entries.reduce(
+    (lastIndex, entry, index) => entry.css === null ? index : lastIndex,
+    -1,
+  );
+  const links: Array<Record<string, string>> = [];
+  const styles: Array<{ id: string; css: string }> = [];
+
+  entries.forEach((entry, index) => {
+    if (entry.css !== null && index > lastLinkedCssIndex) {
+      styles.push({
+        id: `resux-critical-${createHash("sha256").update(entry.href).digest("hex").slice(0, 12)}`,
+        css: entry.css,
+      });
+      return;
+    }
+    links.push({ rel: "stylesheet", href: entry.href });
+  });
+
+  return { links, styles };
 }
 
 function readPerformanceRuntimeConfig(config: ResuxConfig): Record<string, unknown> | null {
@@ -3113,6 +3162,85 @@ function readPerformanceRuntimeConfig(config: ResuxConfig): Record<string, unkno
   return isPlainObject(publicConfig.performanceModule)
     ? publicConfig.performanceModule as Record<string, unknown>
     : null;
+}
+
+function readSecurityContentSecurityPolicy(
+  config: ResuxConfig,
+  head: Record<string, unknown>,
+): string {
+  const runtime = isPlainObject(config.runtimeConfig)
+    ? config.runtimeConfig as Record<string, unknown>
+    : {};
+  const security = isPlainObject(runtime.resuxSecurity)
+    ? runtime.resuxSecurity as Record<string, unknown>
+    : {};
+  const configured = firstString(security.contentSecurityPolicy);
+  if (configured) {
+    return configured;
+  }
+
+  const meta = Array.isArray(head.meta) ? head.meta : [];
+  for (const entry of meta) {
+    if (!isPlainObject(entry)) continue;
+    const httpEquiv = String(entry["http-equiv"] ?? entry.httpEquiv ?? "").trim().toLowerCase();
+    if (httpEquiv !== "content-security-policy") continue;
+    const content = firstString(entry.content);
+    if (content) return content;
+  }
+  return "";
+}
+
+function cspDirectiveSources(csp: string, names: string[]): string[] | null {
+  if (!csp.trim()) {
+    return null;
+  }
+  const directives = new Map<string, string[]>();
+  for (const rawDirective of csp.split(";")) {
+    const tokens = rawDirective.trim().split(/\s+/).filter(Boolean);
+    if (!tokens.length) continue;
+    directives.set(tokens[0].toLowerCase(), tokens.slice(1));
+  }
+  for (const name of names) {
+    const sources = directives.get(name);
+    if (sources) return sources;
+  }
+  return null;
+}
+
+function allowsInlineStyleForCsp(csp: string): boolean {
+  const sources = cspDirectiveSources(csp, ["style-src-elem", "style-src", "default-src"]);
+  return sources === null || sources.includes("'unsafe-inline'");
+}
+
+function allowsInlineScriptForCsp(csp: string): boolean {
+  const sources = cspDirectiveSources(csp, ["script-src-attr", "script-src", "default-src"]);
+  return sources === null || sources.includes("'unsafe-inline'");
+}
+
+function normalizeFontLinksForCsp(
+  links: Array<Record<string, unknown>>,
+  inlineScriptAllowed: boolean,
+): Array<Record<string, unknown>> {
+  if (inlineScriptAllowed) {
+    return links;
+  }
+  return links.map((link) => {
+    const next = { ...link };
+    if (
+      next["data-resux-font-async"] === "true"
+      || next["data-resux-font-lazy"] === "true"
+    ) {
+      delete next.media;
+      delete next.onload;
+      delete next["data-resux-font-async"];
+      delete next["data-resux-font-lazy"];
+    }
+    return next;
+  });
+}
+
+function isResuxFontLoaderScript(entry: Record<string, unknown>): boolean {
+  return entry["data-resux-font-loader"] === "true";
 }
 
 function readInlinePublicCss(appRoot: string, href: string, maxBytes: number): string | null {
@@ -3147,13 +3275,43 @@ function readInlinePublicCss(appRoot: string, href: string, maxBytes: number): s
       continue;
     }
     const css = ts.sys.readFile(candidate);
-    if (typeof css !== "string" || Buffer.byteLength(css, "utf8") > maxBytes) {
+    if (
+      typeof css !== "string"
+      || Buffer.byteLength(css, "utf8") > maxBytes
+      || hasRelativeCssReferences(css)
+    ) {
       continue;
     }
     return css;
   }
 
   return null;
+}
+
+function hasRelativeCssReferences(css: string): boolean {
+  const urlPattern = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)"']+))\s*\)/gi;
+  for (const match of css.matchAll(urlPattern)) {
+    const value = String(match[1] ?? match[2] ?? match[3] ?? "").trim();
+    if (isRelativeCssReference(value)) {
+      return true;
+    }
+  }
+
+  const importPattern = /@import\s+(?:url\(\s*)?(?:"([^"]*)"|'([^']*)'|([^\s;)]+))/gi;
+  for (const match of css.matchAll(importPattern)) {
+    const value = String(match[1] ?? match[2] ?? match[3] ?? "").trim();
+    if (isRelativeCssReference(value)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isRelativeCssReference(value: string): boolean {
+  if (!value || value.startsWith("/") || value.startsWith("#") || value.startsWith("//")) {
+    return false;
+  }
+  return !/^(?:data|blob|https?):/i.test(value);
 }
 
 function scanRuntimeConfigForSecrets(config: Record<string, unknown>, halalConfig: any): void {
@@ -3732,7 +3890,13 @@ const builtinModules: Record<string, BuiltinResuxModule> = {
       }
 
       resux.addRouteRule(routePath, { headers });
-      resux.extendRuntimeConfig({ public: { securityHeaders: true } });
+      resux.extendRuntimeConfig({
+        public: { securityHeaders: true },
+        resuxSecurity: {
+          contentSecurityPolicy: csp ?? "",
+          route: routePath,
+        },
+      });
     }
   },
   performance: {

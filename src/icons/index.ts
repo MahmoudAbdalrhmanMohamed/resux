@@ -186,6 +186,13 @@ export function fetchIconifyIcon(
         .map((match) => ({
           d: readSvgAttribute(match[0], "d").slice(0, 65_536),
           opacity: readSvgAttribute(match[0], "opacity") || undefined,
+          fill: readSvgAttribute(match[0], "fill") || undefined,
+          stroke: readSvgAttribute(match[0], "stroke") || undefined,
+          strokeWidth: readSvgAttribute(match[0], "stroke-width") || undefined,
+          strokeLinecap: readSvgAttribute(match[0], "stroke-linecap") || undefined,
+          strokeLinejoin: readSvgAttribute(match[0], "stroke-linejoin") || undefined,
+          fillRule: readSvgAttribute(match[0], "fill-rule") || undefined,
+          clipRule: readSvgAttribute(match[0], "clip-rule") || undefined,
         }))
         .filter((entry) => Boolean(entry.d));
       if (!paths.length) {
@@ -341,8 +348,13 @@ export const Icon = defineComponent({
           .map((entry, index) => h("path", {
             key: index,
             d: entry.d,
-            fillRule: "evenodd",
-            clipRule: "evenodd",
+            fill: entry.fill,
+            stroke: entry.stroke,
+            strokeWidth: entry.strokeWidth,
+            strokeLinecap: entry.strokeLinecap,
+            strokeLinejoin: entry.strokeLinejoin,
+            fillRule: entry.fillRule || "evenodd",
+            clipRule: entry.clipRule || "evenodd",
             opacity: entry.opacity || "1"
           }))
       );

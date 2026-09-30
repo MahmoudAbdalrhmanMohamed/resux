@@ -1,7 +1,7 @@
 import { defineComponent, h, computed, ref, onMounted, onUnmounted, watch } from "vue";
 import { defineResuxModule } from "../kit/index.js";
 import { useRuntimeConfig } from "../runtime/index.js";
-import { iconRegistry, type IconData } from "./registry.js";
+import { iconRegistry, type IconData, type IconPathData } from "./registry.js";
 
 export interface ResuxIconsModuleOptions {
   collections?: string[];
@@ -187,7 +187,7 @@ export function fetchIconifyIcon(
           const source = match[0];
           const entry = {
             d: readSvgAttribute(source, "d").slice(0, 65_536),
-          } as import("./registry.js").IconPathData;
+          } as IconPathData;
           const attributes = [
             ["opacity", "opacity"],
             ["fill", "fill"],

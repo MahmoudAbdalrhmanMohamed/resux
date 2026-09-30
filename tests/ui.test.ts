@@ -161,11 +161,15 @@ describe("UI & Motion Primitives (resuxjs/ui)", () => {
 
     const css = addedHead[0].style.map((entry: any) => entry.children).join("\n");
     expect(css).toContain("--rx-control-bg: #ffffff");
+    expect(css).toContain("--rx-control-selected-fg: #5eead4");
+    expect(css).toContain("--rx-control-focus: #f8fafc");
     expect(css).toContain(".rx-input:focus-visible");
     expect(css).toContain('.rx-select[aria-expanded="true"]');
-    expect(css).toContain('[dir="rtl"] .rx-switch.checked');
+    expect(css).toContain(".rx-switch:dir(rtl).checked");
     expect(css).toContain("transform: translate3d(var(--rx-switch-translate), 0, 0)");
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(css).toContain(".rx-skeleton");
+    expect(css).toContain("outline: 2px solid var(--rx-control-focus");
   });
 
   it("disables verification-code motion when UI animations are disabled", () => {

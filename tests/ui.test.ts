@@ -146,6 +146,23 @@ describe("UI & Motion Primitives (resuxjs/ui)", () => {
     expect(publicConfigs[0].public.ui.defaultStyles).toBe(true);
   });
 
+  it("disables verification-code motion when UI animations are disabled", () => {
+    const addedHead: any[] = [];
+    const mockResuxContext: any = {
+      addCss() {},
+      addHead(head: any) { addedHead.push(head); },
+      extendRuntimeConfig() {}
+    };
+
+    uiModule.setup(
+      { defaultStyles: true, animations: { enabled: false } },
+      mockResuxContext
+    );
+
+    expect(addedHead).toHaveLength(1);
+    expect(addedHead[0].style.some((entry: any) => entry.children.includes("animation: none !important"))).toBe(true);
+  });
+
   it("omits default primitive styles when defaultStyles is false", () => {
     const addedHead: any[] = [];
     const publicConfigs: any[] = [];

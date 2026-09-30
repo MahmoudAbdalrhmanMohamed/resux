@@ -1,5 +1,13 @@
 import { defineComponent, h, onMounted, ref } from "vue";
 import type { ResuxModuleDefinition } from "../kit/index.js";
+import {
+  RxVerificationCode,
+  verificationCodeAnimationsDisabledStyles,
+  verificationCodeStyles
+} from "./verification-code.js";
+
+export { RxVerificationCode } from "./verification-code.js";
+export type { VerificationCodeMode, VerificationCodeStatus } from "./verification-code.js";
 
 export interface ResuxUiModuleOptions {
   css?: string[];
@@ -742,6 +750,7 @@ export const ResuxSkeleton = RxSkeleton;
 export const ResuxDivider = RxDivider;
 export const ResuxKbd = RxKbd;
 export const ResuxModal = RxModal;
+export const ResuxVerificationCode = RxVerificationCode;
 
 const uiStyles = `
 @keyframes rxFadeUp {
@@ -1019,7 +1028,10 @@ const resuxUiModule = {
       stylesToInject.push(uiStyles);
     }
     if (options.defaultStyles !== false) {
-      stylesToInject.push(uiPrimitiveStyles);
+      stylesToInject.push(`${uiPrimitiveStyles}\n${verificationCodeStyles}`);
+      if (options.animations?.enabled === false) {
+        stylesToInject.push(verificationCodeAnimationsDisabledStyles);
+      }
     }
 
     if (stylesToInject.length > 0) {

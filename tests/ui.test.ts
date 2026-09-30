@@ -23,6 +23,7 @@ import uiModule, {
   ResuxTabs,
   ResuxTextarea,
   ResuxTooltip,
+  ResuxVerificationCode,
   RxAccordion,
   RxAlert,
   RxAutoAnimate,
@@ -46,6 +47,7 @@ import uiModule, {
   RxTabs,
   RxTextarea,
   RxTooltip,
+  RxVerificationCode,
   defineUiTokens,
   isReducedMotion,
   useAnimate,
@@ -87,6 +89,7 @@ describe("UI & Motion Primitives (resuxjs/ui)", () => {
     expect(typeof RxDivider).toBe("object");
     expect(typeof RxKbd).toBe("object");
     expect(typeof RxModal).toBe("object");
+    expect(typeof RxVerificationCode).toBe("object");
 
     // Resux* aliases
     expect(ResuxSelect).toBe(RxSelect);
@@ -112,6 +115,7 @@ describe("UI & Motion Primitives (resuxjs/ui)", () => {
     expect(ResuxModal).toBe(RxModal);
     expect(ResuxMotion).toBe(RxMotion);
     expect(ResuxInput).toBe(RxInput);
+    expect(ResuxVerificationCode).toBe(RxVerificationCode);
   });
 
   it("handles module setup and injects default styles when enabled", () => {
@@ -138,7 +142,25 @@ describe("UI & Motion Primitives (resuxjs/ui)", () => {
 
     expect(addedHead.length).toBe(1);
     expect(addedHead[0].style.length).toBe(2);
+    expect(addedHead[0].style.some((entry: any) => entry.children.includes(".rx-verification-code"))).toBe(true);
     expect(publicConfigs[0].public.ui.defaultStyles).toBe(true);
+  });
+
+  it("disables verification-code motion when UI animations are disabled", () => {
+    const addedHead: any[] = [];
+    const mockResuxContext: any = {
+      addCss() {},
+      addHead(head: any) { addedHead.push(head); },
+      extendRuntimeConfig() {}
+    };
+
+    uiModule.setup(
+      { defaultStyles: true, animations: { enabled: false } },
+      mockResuxContext
+    );
+
+    expect(addedHead).toHaveLength(1);
+    expect(addedHead[0].style.some((entry: any) => entry.children.includes("animation: none !important"))).toBe(true);
   });
 
   it("omits default primitive styles when defaultStyles is false", () => {

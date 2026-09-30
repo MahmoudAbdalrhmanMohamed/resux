@@ -298,9 +298,7 @@ export const RxInput = defineComponent({
   emits: ["update:modelValue"],
   setup(props, { emit, attrs }) {
     return () => {
-      const classes = props.unstyled
-        ? (attrs.class || "")
-        : ["rx-input", attrs.class].filter(Boolean).join(" ");
+      const classes = props.unstyled ? undefined : "rx-input";
       return h("input", mergeProps(attrs, {
         type: props.type,
         value: props.modelValue,
@@ -341,7 +339,7 @@ export const RxSelect = defineComponent({
       }
     };
     return () => {
-      const classes = props.unstyled ? (attrs.class || "") : ["rx-select", attrs.class].filter(Boolean).join(" ");
+      const classes = props.unstyled ? undefined : "rx-select";
       const normalizedOpts = props.options.map((opt) =>
         typeof opt === "string" ? { label: opt, value: opt } : opt
       );
@@ -617,7 +615,7 @@ export const RxTextarea = defineComponent({
   emits: ["update:modelValue"],
   setup(props, { emit, attrs }) {
     return () => {
-      const classes = props.unstyled ? (attrs.class || "") : ["rx-input", "rx-textarea", attrs.class].filter(Boolean).join(" ");
+      const classes = props.unstyled ? undefined : "rx-input rx-textarea";
       return h("textarea", mergeProps(attrs, {
         rows: props.rows,
         value: props.modelValue,
@@ -643,7 +641,9 @@ export const RxSwitch = defineComponent({
       if (!props.disabled) emit("update:modelValue", !props.modelValue);
     };
     return () => {
-      const classes = props.unstyled ? (attrs.class || "") : ["rx-switch", props.modelValue ? "checked" : "", attrs.class].filter(Boolean).join(" ");
+      const classes = props.unstyled
+        ? undefined
+        : ["rx-switch", props.modelValue ? "checked" : ""].filter(Boolean).join(" ");
       return h("button", mergeProps(attrs, {
         type: "button",
         role: "switch",

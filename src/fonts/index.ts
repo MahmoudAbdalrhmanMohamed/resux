@@ -264,7 +264,16 @@ function normalizeSources(
       : inferFontFormat(url);
     sources.push({ url, ...(format ? { format } : {}) });
   }
-  return sources;
+  return sources.sort((left, right) => fontSourcePriority(left.format) - fontSourcePriority(right.format));
+}
+
+function fontSourcePriority(format: ResuxFontSourceInput["format"]): number {
+  if (format === "woff2") return 0;
+  if (format === "woff") return 1;
+  if (format === "opentype") return 2;
+  if (format === "truetype") return 3;
+  if (format === "embedded-opentype") return 4;
+  return 5;
 }
 
 function normalizeFaces(family: ResuxFontFamilyInput): ResuxFontFaceInput[] {
@@ -291,9 +300,33 @@ function escapeCssString(value: string): string {
 function normalizeUnicodeRange(value: unknown): string | null {
   const range = String(value || "").trim();
   if (!range) return null;
-  return /^[Uu]\+[0-9A-Fa-f?]{1,6}(?:-[0-9A-Fa-f]{1,6})?(?:\s*,\s*[Uu]\+[0-9A-Fa-f?]{1,6}(?:-[0-9A-Fa-f]{1,6})?)*$/.test(range)
-    ? range
-    : null;
+  const tokens = range.split(",").map((token) => token.trim()).filter(Boolean);
+  if (!tokens.length) return null;
+
+  const normalized: string[] = [];
+  for (const token of tokens) {
+    const wildcard = /^U\+([0-9A-F]{0,5})(\?{1,6})$/i.exec(token);
+    if (wildcard) {
+      const prefix = wildcard[1];
+      const wildcards = wildcard[2];
+      if (prefix.length + wildcards.length > 6) return null;
+      const min = Number.parseInt((prefix + "0".repeat(wildcards.length)) || "0", 16);
+      const max = Number.parseInt((prefix + "F".repeat(wildcards.length)) || "0", 16);
+      if (max > 0x10FFFF || min > max) return null;
+      normalized.push(`U+${prefix.toUpperCase()}${wildcards}`);
+      continue;
+    }
+
+    const explicit = /^U\+([0-9A-F]{1,6})(?:-([0-9A-F]{1,6}))?$/i.exec(token);
+    if (!explicit) return null;
+    const start = Number.parseInt(explicit[1], 16);
+    const end = explicit[2] ? Number.parseInt(explicit[2], 16) : start;
+    if (start > 0x10FFFF || end > 0x10FFFF || start > end) return null;
+    normalized.push(explicit[2]
+      ? `U+${explicit[1].toUpperCase()}-${explicit[2].toUpperCase()}`
+      : `U+${explicit[1].toUpperCase()}`);
+  }
+  return normalized.join(", ");
 }
 
 function sourceCss(sources: ResuxFontSourceInput[]): string {
@@ -322,8 +355,9 @@ function buildCustomFontStyles(
   families: ResuxFontFamilyInput[],
   options: ResuxFontsModuleOptions,
   headLinks: Array<Record<string, string>>,
-): string {
-  const rules: string[] = [];
+): { initialCss: string; lazyCss: string } {
+  const initialRules: string[] = [];
+  const lazyRules: string[] = [];
   const variables: string[] = [];
   const preloaded = new Set<string>();
 
@@ -343,7 +377,11 @@ function buildCustomFontStyles(
       const display = normalizeDisplay(face.display ?? familyDisplay);
       const weight = normalizeCssWeight(face.weight ?? family.weight);
       const style = normalizeStyle(face.style ?? family.style);
-      const unicodeRange = normalizeUnicodeRange(face.unicodeRange ?? family.unicodeRange);
+      const rawUnicodeRange = face.unicodeRange ?? family.unicodeRange;
+      const unicodeRange = normalizeUnicodeRange(rawUnicodeRange);
+      if (rawUnicodeRange != null && String(rawUnicodeRange).trim() && !unicodeRange) {
+        continue;
+      }
       const declarations = [
         `font-family: "${escapeCssString(familyName)}"`,
         `src: ${sourceCss(sources)}`,
@@ -354,11 +392,12 @@ function buildCustomFontStyles(
       if (unicodeRange) {
         declarations.push(`unicode-range: ${unicodeRange}`);
       }
-      rules.push(`@font-face { ${declarations.join("; ")}; }`);
+      const rule = `@font-face { ${declarations.join("; ")}; }`;
+      (strategy === "lazy" ? lazyRules : initialRules).push(rule);
 
       const shouldPreload = face.preload ?? family.preload ?? strategy === "preload";
       if (!shouldPreload || strategy === "lazy") continue;
-      const preferred = sources.find((source) => source.format === "woff2") ?? sources[0];
+      const preferred = sources[0];
       if (!preferred || preloaded.has(preferred.url)) continue;
       preloaded.add(preferred.url);
       const type = fontMimeType(preferred.format);
@@ -373,9 +412,17 @@ function buildCustomFontStyles(
   }
 
   if (variables.length > 0) {
-    rules.push(`:root { ${variables.join(" ")} }`);
+    initialRules.push(`:root { ${variables.join(" ")} }`);
   }
-  return rules.join("\n");
+  return {
+    initialCss: initialRules.join("\n"),
+    lazyCss: lazyRules.join("\n"),
+  };
+}
+
+function createLazyCustomFontLoader(css: string): string {
+  const serializedCss = JSON.stringify(css);
+  return `(function(){var css=${serializedCss};function load(){if(!css||document.querySelector('style[data-resux-font-lazy-runtime="true"]'))return;var style=document.createElement('style');style.setAttribute('data-resux-font-lazy-runtime','true');style.textContent=css;document.head.appendChild(style);}if(document.readyState==='complete'){load();}else{window.addEventListener('load',load,{once:true});}})();`;
 }
 
 export default defineResuxModule<ResuxFontsModuleOptions>({
@@ -425,16 +472,29 @@ export default defineResuxModule<ResuxFontsModuleOptions>({
     addGoogleFontGroup(groups.lazy, "lazy", headLinks, headScripts, headNoscripts);
 
     const customStyles = buildCustomFontStyles(customFamilies, options, headLinks);
+    if (customStyles.lazyCss) {
+      headScripts.push({
+        "data-resux-font-lazy-custom-loader": "true",
+        innerHTML: createLazyCustomFontLoader(customStyles.lazyCss),
+      });
+    }
 
     if (
       headLinks.length > 0
       || headScripts.length > 0
       || headNoscripts.length > 0
-      || customStyles
+      || customStyles.initialCss
     ) {
       resux.addHead({
         link: headLinks,
-        ...(customStyles ? { style: [{ children: customStyles, "data-resux-font-faces": "true" }] } : {}),
+        ...(customStyles.initialCss ? {
+          style: [{
+            id: "resux-custom-font-faces",
+            css: customStyles.initialCss,
+            children: customStyles.initialCss,
+            "data-resux-font-faces": "true",
+          }],
+        } : {}),
         ...(headScripts.length > 0 ? { script: headScripts } : {}),
         ...(headNoscripts.length > 0 ? { noscript: headNoscripts } : {}),
       });

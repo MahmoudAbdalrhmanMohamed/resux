@@ -4132,11 +4132,11 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       route: { path: "/media", params: {}, query: {} },
     });
 
-    expect(result.html).toContain('poster="/media-test/videos/sample-poster.jpg"');
+    expect(result.html).toMatch(/<video[^>]*\sposter="\/media-test\/videos\/sample-poster\.jpg"/);
     expect(result.html).toContain('data-rx-poster="/media-test/videos/sample-poster.jpg"');
     expect(result.html).toContain('data-rx-video-defer-ready="true"');
     expect(result.html).toContain('data-rx-lazy-src="/media-test/videos/sample-video.mp4"');
-    expect(result.html).not.toContain('src="/media-test/videos/sample-video.mp4"');
+    expect(result.html).not.toMatch(/<video[^>]*\ssrc="/);
   });
 
   it("waits for page-ready before revealing defer-until-page-ready videos", async () => {

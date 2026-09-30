@@ -5,6 +5,33 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+async function buildCompilerFixture(
+  prefix: string,
+  configSource: string,
+  options: {
+    page?: string;
+    publicFiles?: Record<string, string>;
+  } = {},
+) {
+  const root = path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  await mkdir(path.join(root, "pages"), { recursive: true });
+  await writeFile(
+    path.join(root, "pages", "index.vue"),
+    options.page ?? "<template><main>Home</main></template>",
+  );
+  for (const [relativePath, content] of Object.entries(options.publicFiles ?? {})) {
+    const target = path.join(root, "public", relativePath);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, content);
+  }
+  await writeFile(path.join(root, "resux.config.ts"), configSource);
+  await buildProject(root);
+  const manifest = await import(
+    `${pathToFileURL(path.join(root, ".resux", "server", "manifest.mjs")).href}?t=${Date.now()}`
+  );
+  return { root, manifest };
+}
+
 describe("route manifest", () => {
   it("creates Resux-style routes with dynamic params", () => {
     const root = "/app";
@@ -1046,21 +1073,17 @@ defineClientEnhancement("imported-helper", async (target) => {
   }, 20000);
 
   it("inlines small local CSS when the performance module is enabled for production", async () => {
-    const root = path.join(os.tmpdir(), `resux-inline-css-${Date.now()}`);
-    await mkdir(path.join(root, "pages"), { recursive: true });
-    await mkdir(path.join(root, "public"), { recursive: true });
-    await writeFile(path.join(root, "pages", "index.vue"), "<template><main class=\"critical\">Home</main></template>");
-    await writeFile(path.join(root, "public", "app.css"), ".critical{display:block;color:red}");
-    await writeFile(
-      path.join(root, "resux.config.ts"),
+    const { manifest } = await buildCompilerFixture(
+      "resux-inline-css",
       `export default defineResuxConfig({
   css: ["/app.css"],
   modules: [["resux:performance", { inlineCssMaxBytes: 1024 }]]
-})`
+})`,
+      {
+        page: "<template><main class=\"critical\">Home</main></template>",
+        publicFiles: { "app.css": ".critical{display:block;color:red}" },
+      },
     );
-
-    await buildProject(root);
-    const manifest = await import(`${pathToFileURL(path.join(root, ".resux", "server", "manifest.mjs")).href}?t=${Date.now()}`);
 
     expect(manifest.appHead.link).not.toEqual(
       expect.arrayContaining([{ rel: "stylesheet", href: "/app.css" }])
@@ -1075,22 +1098,19 @@ defineClientEnhancement("imported-helper", async (target) => {
   }, 20000);
 
   it("keeps CSS linked when inlining would break relative assets or configured order", async () => {
-    const root = path.join(os.tmpdir(), `resux-inline-css-order-${Date.now()}`);
-    await mkdir(path.join(root, "pages"), { recursive: true });
-    await mkdir(path.join(root, "public", "css"), { recursive: true });
-    await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Home</main></template>");
-    await writeFile(path.join(root, "public", "first.css"), ".first{color:red}");
-    await writeFile(path.join(root, "public", "css", "second.css"), ".second{background:url(./image.png)}");
-    await writeFile(
-      path.join(root, "resux.config.ts"),
+    const { manifest } = await buildCompilerFixture(
+      "resux-inline-css-order",
       `export default defineResuxConfig({
   css: ["/first.css", "/css/second.css"],
   modules: [["resux:performance", { inlineCssMaxBytes: 4096 }]]
-})`
+})`,
+      {
+        publicFiles: {
+          "first.css": ".first{color:red}",
+          "css/second.css": ".second{background:url(./image.png)}",
+        },
+      },
     );
-
-    await buildProject(root);
-    const manifest = await import(`${pathToFileURL(path.join(root, ".resux", "server", "manifest.mjs")).href}?t=${Date.now()}`);
 
     expect(manifest.appHead.link).toEqual(expect.arrayContaining([
       { rel: "stylesheet", href: "/first.css" },
@@ -1102,13 +1122,8 @@ defineClientEnhancement("imported-helper", async (target) => {
   }, 20000);
 
   it("falls back to linked CSS and eager font application under restrictive CSP", async () => {
-    const root = path.join(os.tmpdir(), `resux-csp-assets-${Date.now()}`);
-    await mkdir(path.join(root, "pages"), { recursive: true });
-    await mkdir(path.join(root, "public"), { recursive: true });
-    await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Home</main></template>");
-    await writeFile(path.join(root, "public", "app.css"), ".app{display:block}");
-    await writeFile(
-      path.join(root, "resux.config.ts"),
+    const { manifest } = await buildCompilerFixture(
+      "resux-csp-assets",
       `export default defineResuxConfig({
   css: ["/app.css"],
   modules: [
@@ -1116,11 +1131,9 @@ defineClientEnhancement("imported-helper", async (target) => {
     ["resuxjs/fonts", { google: [{ name: "Inter", weights: [400] }] }],
     ["resux:security", { contentSecurityPolicy: "default-src 'self'; style-src 'self' https://fonts.googleapis.com; script-src 'self'; script-src-attr 'none'" }]
   ]
-})`
+})`,
+      { publicFiles: { "app.css": ".app{display:block}" } },
     );
-
-    await buildProject(root);
-    const manifest = await import(`${pathToFileURL(path.join(root, ".resux", "server", "manifest.mjs")).href}?t=${Date.now()}`);
 
     expect(manifest.appHead.link).toEqual(expect.arrayContaining([
       { rel: "stylesheet", href: "/app.css" }
@@ -1135,11 +1148,8 @@ defineClientEnhancement("imported-helper", async (target) => {
   }, 20000);
 
   it("keeps lazy fonts visible when CSP allows event handlers but blocks inline scripts", async () => {
-    const root = path.join(os.tmpdir(), `resux-csp-lazy-fonts-${Date.now()}`);
-    await mkdir(path.join(root, "pages"), { recursive: true });
-    await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Home</main></template>");
-    await writeFile(
-      path.join(root, "resux.config.ts"),
+    const { manifest } = await buildCompilerFixture(
+      "resux-csp-lazy-fonts",
       `export default defineResuxConfig({
   modules: [
     ["resuxjs/fonts", {
@@ -1150,11 +1160,8 @@ defineClientEnhancement("imported-helper", async (target) => {
       contentSecurityPolicy: "default-src 'self'; style-src https://fonts.googleapis.com; script-src 'self'; script-src-attr 'unsafe-inline'"
     }]
   ]
-})`
+})`,
     );
-
-    await buildProject(root);
-    const manifest = await import(`${pathToFileURL(path.join(root, ".resux", "server", "manifest.mjs")).href}?t=${Date.now()}`);
     const fontStylesheet = manifest.appHead.link.find((link: Record<string, string>) =>
       link.rel === "stylesheet" && String(link.href).includes("fonts.googleapis.com")
     );
@@ -1165,22 +1172,15 @@ defineClientEnhancement("imported-helper", async (target) => {
   }, 20000);
 
   it("keeps inlined config CSS before existing head styles", async () => {
-    const root = path.join(os.tmpdir(), `resux-inline-css-head-order-${Date.now()}`);
-    await mkdir(path.join(root, "pages"), { recursive: true });
-    await mkdir(path.join(root, "public"), { recursive: true });
-    await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Home</main></template>");
-    await writeFile(path.join(root, "public", "app.css"), ".shared{color:red}");
-    await writeFile(
-      path.join(root, "resux.config.ts"),
+    const { manifest } = await buildCompilerFixture(
+      "resux-inline-css-head-order",
       `export default defineResuxConfig({
   css: ["/app.css"],
   app: { head: { style: [{ id: "app-head", css: ".shared{color:blue}" }] } },
   modules: [["resux:performance", { inlineCssMaxBytes: 4096 }]]
-})`
+})`,
+      { publicFiles: { "app.css": ".shared{color:red}" } },
     );
-
-    await buildProject(root);
-    const manifest = await import(`${pathToFileURL(path.join(root, ".resux", "server", "manifest.mjs")).href}?t=${Date.now()}`);
 
     expect(manifest.appHead.style[0].css).toBe(".shared{color:red}");
     expect(manifest.appHead.style[1]).toEqual({ id: "app-head", css: ".shared{color:blue}" });

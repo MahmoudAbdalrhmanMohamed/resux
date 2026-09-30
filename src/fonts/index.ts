@@ -94,6 +94,9 @@ function resolveFamilyStrategy(
   if (input.deferUntilPageLoad === true) {
     return "lazy";
   }
+  if (input.deferUntilPageLoad === false) {
+    return input.strategy ?? options.strategy ?? "preload";
+  }
   if (input.strategy) {
     return input.strategy;
   }

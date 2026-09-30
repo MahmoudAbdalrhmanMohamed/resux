@@ -3086,21 +3086,26 @@ function createAppHead(
   const configuredScripts = Array.isArray(headObject.script)
     ? headObject.script as Array<Record<string, unknown>>
     : [];
-  const inlineScriptAllowed = allowsInlineScriptForCsp(csp);
+  const inlineScriptAttributeAllowed = allowsInlineScriptAttributeForCsp(csp);
+  const inlineScriptElementAllowed = allowsInlineScriptElementForCsp(csp);
 
   return {
     ...headObject,
     link: [
-      ...normalizeFontLinksForCsp(configuredLinks, inlineScriptAllowed),
+      ...normalizeFontLinksForCsp(
+        configuredLinks,
+        inlineScriptAttributeAllowed,
+        inlineScriptElementAllowed,
+      ),
       ...cssLinks,
     ],
     style: [
+      ...criticalStyles,
       ...((Array.isArray(headObject.style)
         ? headObject.style
         : []) as Array<Record<string, unknown> | string>),
-      ...criticalStyles,
     ],
-    script: inlineScriptAllowed
+    script: inlineScriptElementAllowed
       ? configuredScripts
       : configuredScripts.filter((entry) => !isResuxFontLoaderScript(entry)),
   };
@@ -3212,23 +3217,28 @@ function allowsInlineStyleForCsp(csp: string): boolean {
   return sources === null || sources.includes("'unsafe-inline'");
 }
 
-function allowsInlineScriptForCsp(csp: string): boolean {
+function allowsInlineScriptAttributeForCsp(csp: string): boolean {
   const sources = cspDirectiveSources(csp, ["script-src-attr", "script-src", "default-src"]);
+  return sources === null || sources.includes("'unsafe-inline'");
+}
+
+function allowsInlineScriptElementForCsp(csp: string): boolean {
+  const sources = cspDirectiveSources(csp, ["script-src-elem", "script-src", "default-src"]);
   return sources === null || sources.includes("'unsafe-inline'");
 }
 
 function normalizeFontLinksForCsp(
   links: Array<Record<string, unknown>>,
-  inlineScriptAllowed: boolean,
+  inlineScriptAttributeAllowed: boolean,
+  inlineScriptElementAllowed: boolean,
 ): Array<Record<string, unknown>> {
-  if (inlineScriptAllowed) {
-    return links;
-  }
   return links.map((link) => {
     const next = { ...link };
+    const needsInlineAttribute = next["data-resux-font-async"] === "true";
+    const needsInlineScript = next["data-resux-font-lazy"] === "true";
     if (
-      next["data-resux-font-async"] === "true"
-      || next["data-resux-font-lazy"] === "true"
+      (needsInlineAttribute && !inlineScriptAttributeAllowed)
+      || (needsInlineScript && !inlineScriptElementAllowed)
     ) {
       delete next.media;
       delete next.onload;

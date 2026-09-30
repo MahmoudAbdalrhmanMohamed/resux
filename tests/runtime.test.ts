@@ -4553,7 +4553,10 @@ export default createClientComponent({ id: "m0", name: "Counter", file: "Counter
       {
         type: "element",
         tag: "NuxtIcon",
-        attrs: [{ name: "name", value: "material-symbols:mail", kind: "static" }],
+        attrs: [
+          { name: "name", value: "material-symbols:mail", kind: "static" },
+          { name: "class", value: "text-accent", kind: "static" }
+        ],
         children: [],
         events: []
       }
@@ -4571,6 +4574,9 @@ export default createClientComponent({ id: "m0", name: "Counter", file: "Counter
     expect(rendered).toContain('data-icon-name="solar:leaf-outline"');
     expect(rendered).toContain('data-icon-name="ph:check-circle-thin"');
     expect(rendered).toContain('data-icon-name="material-symbols:mail"');
+    expect(rendered).toContain('class="resux-icon text-accent"');
+    expect(rendered).toContain('M20 4H4c-1.1 0-1.99.9-1.99 2');
+    expect(rendered).not.toContain('M12 2L2 22h20L12 2z');
     expect(rendered).toContain('<svg');
   });
 

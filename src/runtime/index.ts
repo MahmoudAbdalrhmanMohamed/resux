@@ -2592,11 +2592,17 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
 }
 [data-rx-loading-indicator] .rx-loading-progress {
   display: block;
-  width: var(--resux-progress, 8%);
+  width: 100%;
   height: 100%;
   background: var(--resux-loader-color, #2563eb);
-  box-shadow: 0 0 18px rgba(37, 99, 235, 0.45);
-  transition: width 160ms ease, background 160ms ease;
+  box-shadow: 0 0 18px color-mix(in srgb, var(--resux-loader-color, #2563eb) 45%, transparent);
+  transform: scaleX(var(--resux-progress-scale, 0.08));
+  transform-origin: left center;
+  will-change: transform;
+  transition: transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1), background-color 160ms ease;
+}
+html[dir="rtl"] [data-rx-loading-indicator] .rx-loading-progress {
+  transform-origin: right center;
 }
 [data-rx-loading-indicator] .rx-loading-slot {
   width: fit-content;
@@ -2616,14 +2622,19 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
 [data-rx-loading-indicator][data-state="complete"] .rx-loading-progress {
   background: #16a34a;
 }
-#__resux[data-route-transition="loading"] {
-  opacity: 0.72;
-  transition: opacity 120ms ease;
+@keyframes rxRouteEnter {
+  from { opacity: 0.72; transform: translate3d(0, 0.35rem, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+#__resux[data-route-transition-state="swapping"] [data-rx-page] > * {
+  animation: rxRouteEnter 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 @media (prefers-reduced-motion: reduce) {
-  [data-rx-loading-indicator] .rx-loading-progress,
-  #__resux[data-route-transition="loading"] {
+  [data-rx-loading-indicator] .rx-loading-progress {
     transition: none;
+  }
+  #__resux[data-route-transition-state="swapping"] [data-rx-page] > * {
+    animation: none;
   }
 }
 </style>`,
@@ -13407,9 +13418,11 @@ function setRouteTransition(state, options = {}) {
     if (state === "idle" || state === "complete" || state === "error") {
       root.removeAttribute("aria-busy");
       root.removeAttribute("data-route-transition");
+      root.removeAttribute("data-route-transition-state");
     } else {
       root.setAttribute("aria-busy", "true");
       root.setAttribute("data-route-transition", "loading");
+      root.setAttribute("data-route-transition-state", state);
     }
   }
 
@@ -13548,6 +13561,7 @@ function updateRouteTransitionUi(loader, state, progress, message) {
 
   loader.dataset.state = state;
   loader.style.setProperty("--resux-progress", progress + "%");
+  loader.style.setProperty("--resux-progress-scale", String(progress / 100));
   loader.setAttribute("aria-busy", state === "idle" || state === "complete" || state === "error" ? "false" : "true");
 
   const progressbar = loader.querySelector("[role='progressbar']");

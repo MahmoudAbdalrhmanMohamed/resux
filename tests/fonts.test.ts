@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest";
 import fontsModule from "../src/fonts/index.js";
 
 function createMockResux() {
-  const headList: Array<{ link?: any[]; script?: any[] }> = [];
+  const headList: Array<{ link?: any[]; script?: any[]; noscript?: any[] }> = [];
   const runtimeConfigs: any[] = [];
 
   return {
     headList,
     runtimeConfigs,
     resux: {
-      addHead(head: { link?: any[]; script?: any[] }) {
+      addHead(head: { link?: any[]; script?: any[]; noscript?: any[] }) {
         headList.push(head);
       },
       extendRuntimeConfig(config: any) {
@@ -45,10 +45,19 @@ describe("fonts module", () => {
         rel: "stylesheet",
         href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Alexandria:wght@300;600&display=swap",
         media: "print",
-        onload: "this.media='all'"
+        onload: "this.media='all'",
+        "data-resux-font-async": "true"
       }
     ]);
     expect(headList[0].script ?? []).toEqual([]);
+    expect(headList[0].noscript).toEqual([
+      {
+        link: [{
+          rel: "stylesheet",
+          href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Alexandria:wght@300;600&display=swap"
+        }]
+      }
+    ]);
 
     expect(runtimeConfigs[0].public.fonts.families).toEqual(["Inter", "Alexandria"]);
     expect(runtimeConfigs[0].public.fonts.familyConfigs).toEqual([
@@ -77,10 +86,21 @@ describe("fonts module", () => {
         rel: "preload",
         as: "style",
         href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Alexandria:wght@300;600&display=swap"
+      },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Alexandria:wght@300;600&display=swap",
+        media: "print",
+        "data-resux-font-lazy": "true"
       }
     ]);
     expect(headList[0].script).toHaveLength(1);
+    expect(headList[0].script![0]["data-resux-font-loader"]).toBe("true");
     expect(headList[0].script![0].innerHTML).toContain("window.addEventListener('load',loadFonts,{once:true})");
+    expect(headList[0].noscript?.[0]?.link?.[0]).toEqual({
+      rel: "stylesheet",
+      href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Alexandria:wght@300;600&display=swap"
+    });
   });
 
   it("allows mixing eager and lazy fonts with per-font control", () => {
@@ -115,11 +135,15 @@ describe("fonts module", () => {
       href: "https://fonts.googleapis.com/css2?family=Alexandria:wght@300;400;600&display=swap"
     });
 
-    // Deferral script for Alexandria
+    // Lazy stylesheet stays non-blocking until the page-load activator runs.
+    expect(links).toContainEqual({
+      rel: "stylesheet",
+      href: "https://fonts.googleapis.com/css2?family=Alexandria:wght@300;400;600&display=swap",
+      media: "print",
+      "data-resux-font-lazy": "true"
+    });
     expect(headList[0].script).toHaveLength(1);
-    expect(headList[0].script![0].innerHTML).toContain(
-      "https://fonts.googleapis.com/css2?family=Alexandria:wght@300;400;600&display=swap"
-    );
+    expect(headList[0].script![0]["data-resux-font-loader"]).toBe("true");
 
     expect(runtimeConfigs[0].public.fonts.familyConfigs).toEqual([
       { name: "Inter", strategy: "eager", deferUntilPageLoad: false },
@@ -150,7 +174,8 @@ describe("fonts module", () => {
       rel: "stylesheet",
       href: "https://fonts.googleapis.com/css2?family=Inter:wght@400&display=swap",
       media: "print",
-      onload: "this.media='all'"
+      onload: "this.media='all'",
+      "data-resux-font-async": "true"
     });
     expect(links).toContainEqual({
       rel: "preload",

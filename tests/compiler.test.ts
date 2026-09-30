@@ -1074,6 +1074,66 @@ defineClientEnhancement("imported-helper", async (target) => {
     expect(manifest.runtimeConfig.public.performanceModule.inlineCssMaxBytes).toBe(1024);
   }, 20000);
 
+  it("keeps CSS linked when inlining would break relative assets or configured order", async () => {
+    const root = path.join(os.tmpdir(), `resux-inline-css-order-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await mkdir(path.join(root, "public", "css"), { recursive: true });
+    await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Home</main></template>");
+    await writeFile(path.join(root, "public", "first.css"), ".first{color:red}");
+    await writeFile(path.join(root, "public", "css", "second.css"), ".second{background:url(./image.png)}");
+    await writeFile(
+      path.join(root, "resux.config.ts"),
+      `export default defineResuxConfig({
+  css: ["/first.css", "/css/second.css"],
+  modules: [["resux:performance", { inlineCssMaxBytes: 4096 }]]
+})`
+    );
+
+    await buildProject(root);
+    const manifest = await import(`${pathToFileURL(path.join(root, ".resux", "server", "manifest.mjs")).href}?t=${Date.now()}`);
+
+    expect(manifest.appHead.link).toEqual(expect.arrayContaining([
+      { rel: "stylesheet", href: "/first.css" },
+      { rel: "stylesheet", href: "/css/second.css" }
+    ]));
+    expect(manifest.appHead.style).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ css: ".first{color:red}" })])
+    );
+  }, 20000);
+
+  it("falls back to linked CSS and eager font application under restrictive CSP", async () => {
+    const root = path.join(os.tmpdir(), `resux-csp-assets-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await mkdir(path.join(root, "public"), { recursive: true });
+    await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Home</main></template>");
+    await writeFile(path.join(root, "public", "app.css"), ".app{display:block}");
+    await writeFile(
+      path.join(root, "resux.config.ts"),
+      `export default defineResuxConfig({
+  css: ["/app.css"],
+  modules: [
+    ["resux:performance", { inlineCssMaxBytes: 4096 }],
+    ["resuxjs/fonts", { google: [{ name: "Inter", weights: [400] }] }],
+    ["resux:security", { contentSecurityPolicy: "default-src 'self'; style-src 'self' https://fonts.googleapis.com; script-src 'self'; script-src-attr 'none'" }]
+  ]
+})`
+    );
+
+    await buildProject(root);
+    const manifest = await import(`${pathToFileURL(path.join(root, ".resux", "server", "manifest.mjs")).href}?t=${Date.now()}`);
+
+    expect(manifest.appHead.link).toEqual(expect.arrayContaining([
+      { rel: "stylesheet", href: "/app.css" }
+    ]));
+    const fontStylesheet = manifest.appHead.link.find((link: Record<string, string>) =>
+      link.rel === "stylesheet" && String(link.href).includes("fonts.googleapis.com")
+    );
+    expect(fontStylesheet).toBeTruthy();
+    expect(fontStylesheet.media).toBeUndefined();
+    expect(fontStylesheet.onload).toBeUndefined();
+    expect(manifest.appHead.script ?? []).toEqual([]);
+  }, 20000);
+
   it("runs tree-shakable UI, icon, and font module subpaths", async () => {
     const root = path.join(os.tmpdir(), `resux-ui-modules-${Date.now()}`);
     await mkdir(path.join(root, "pages"), { recursive: true });

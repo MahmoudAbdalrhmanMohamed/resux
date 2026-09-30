@@ -8117,6 +8117,7 @@ if (typeof globalThis !== "undefined") {
 const routePayloadCache = new Map();
 const routePayloadRequests = new Map();
 const routePayloadFailures = new Map();
+const routeStylePreloadPromises = new Map();
 const ROUTE_PAYLOAD_CACHE_MAX_ENTRIES = 64;
 const ROUTE_PAYLOAD_FAILURE_MAX_ENTRIES = 64;
 const ROUTE_PREFETCH_MAX_IN_FLIGHT = 8;
@@ -13857,6 +13858,7 @@ async function navigateTo(target, options = {}) {
       reason: "navigation",
       force: options.force === true
     });
+    const routeStylesReady = preloadRouteHeadStyles(result?.head);
     if (!ensureRoutePayloadBuildCompatibility(result)) {
       return;
     }
@@ -13904,6 +13906,11 @@ async function navigateTo(target, options = {}) {
       history.replaceState({ __resux: true, path: routePath }, "", nextUrl.href);
     } else {
       history.pushState({ __resux: true, path: routePath }, "", nextUrl.href);
+    }
+
+    await routeStylesReady;
+    if (transitionToken !== routeTransitionToken) {
+      return;
     }
 
     await disposeClientEnhancements();
@@ -14215,7 +14222,14 @@ async function prefetchNavigationTarget(event) {
     ? event.target.closest("a[href]")
     : null;
   const routePath = getPrefetchPath(anchor, event.target);
-  if (!routePath || routePayloadCache.has(routePath) || routePayloadRequests.has(routePath)) {
+  if (!routePath) {
+    return;
+  }
+  if (routePayloadCache.has(routePath)) {
+    await preloadRouteHeadStyles(routePayloadCache.get(routePath)?.head);
+    return;
+  }
+  if (routePayloadRequests.has(routePath)) {
     return;
   }
   if (countInFlightRoutePrefetches() >= ROUTE_PREFETCH_MAX_IN_FLIGHT) {
@@ -14226,7 +14240,8 @@ async function prefetchNavigationTarget(event) {
   }
 
   try {
-    await loadRoute(routePath, { reason: "prefetch" });
+    const result = await loadRoute(routePath, { reason: "prefetch" });
+    await preloadRouteHeadStyles(result?.head);
   } catch (error) {
     logManagedMediaDebug("router-prefetch-failed", {
       path: routePath,
@@ -14668,6 +14683,85 @@ function inferClientPreloadAsFromHint(hint) {
     return "script";
   }
   return undefined;
+}
+
+function resolveClientAssetUrl(value) {
+  const href = String(value || "").trim();
+  if (!href) return "";
+  try {
+    return new URL(href, location.href).href;
+  } catch {
+    return href;
+  }
+}
+
+function findMatchingStylesheet(href) {
+  const target = resolveClientAssetUrl(href);
+  if (!target) return null;
+  for (const link of document.querySelectorAll('link[rel="stylesheet"][href]')) {
+    if (resolveClientAssetUrl(link.getAttribute("href")) === target) {
+      return link;
+    }
+  }
+  return null;
+}
+
+function preloadRouteStyle(link) {
+  const href = String(link?.href || "").trim();
+  if (!href || findMatchingStylesheet(href)) {
+    return Promise.resolve();
+  }
+  const key = resolveClientAssetUrl(href);
+  const pending = routeStylePreloadPromises.get(key);
+  if (pending) {
+    return pending;
+  }
+
+  const promise = new Promise((resolve) => {
+    const preload = document.createElement("link");
+    const supportsPreload = !preload.relList?.supports || preload.relList.supports("preload");
+    if (!supportsPreload) {
+      resolve();
+      return;
+    }
+    preload.rel = "preload";
+    preload.as = "style";
+    preload.href = href;
+    preload.setAttribute("data-rx-route-style-preload", "true");
+    for (const name of ["crossorigin", "integrity", "referrerpolicy"]) {
+      const value = link?.[name];
+      if (value !== undefined && value !== null && value !== false && value !== "") {
+        preload.setAttribute(name, String(value));
+      }
+    }
+
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      preload.removeEventListener("load", finish);
+      preload.removeEventListener("error", finish);
+      preload.remove();
+      resolve();
+    };
+    const timeout = setTimeout(finish, 4000);
+    preload.addEventListener("load", finish, { once: true });
+    preload.addEventListener("error", finish, { once: true });
+    document.head.appendChild(preload);
+  }).finally(() => {
+    routeStylePreloadPromises.delete(key);
+  });
+
+  routeStylePreloadPromises.set(key, promise);
+  return promise;
+}
+
+async function preloadRouteHeadStyles(head) {
+  const styles = normalizeClientHeadLinks(head?.link ?? [])
+    .filter((link) => String(link.rel || "").trim().toLowerCase() === "stylesheet" && link.href);
+  if (!styles.length) return;
+  await Promise.all(styles.map((link) => preloadRouteStyle(link)));
 }
 
 function applyHead(head) {

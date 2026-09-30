@@ -122,13 +122,21 @@ export interface PageMeta {
   meta?: Array<Record<string, string>>;
 }
 
+export type HeadAttributePrimitive = string | number | boolean | null | undefined;
+export type HeadAttributeStyle = Record<string, HeadAttributePrimitive>;
+export type HeadAttributeValue =
+  | HeadAttributePrimitive
+  | HeadAttributeStyle
+  | Array<HeadAttributePrimitive | HeadAttributeStyle>;
+export type HeadAttributes = Record<string, HeadAttributeValue>;
+
 export interface HeadEntry {
   title?: string;
   meta?: Array<Record<string, string>>;
   link?: Array<Record<string, string>>;
   style?: ComponentStyle[];
-  htmlAttrs?: Record<string, string>;
-  bodyAttrs?: Record<string, string>;
+  htmlAttrs?: HeadAttributes;
+  bodyAttrs?: HeadAttributes;
 }
 
 type ReactiveHeadValue<T> =
@@ -7493,9 +7501,76 @@ function escapeStyleContent(css: unknown): string {
   return str.replace(/<\/style/gi, "<\\/style");
 }
 
-function renderAttributes(attributes: Record<string, string>): string {
+function renderHeadStyleValue(value: unknown): string {
+  if (value === null || value === undefined || value === false) {
+    return "";
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => renderHeadStyleValue(entry))
+      .filter(Boolean)
+      .join(";");
+  }
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([property, entry]) => {
+        if (entry === null || entry === undefined || entry === false) {
+          return "";
+        }
+        const cssProperty = property.startsWith("--")
+          ? property
+          : property
+            .replace(/^ms([A-Z])/, (_match, letter: string) => `-ms-${letter.toLowerCase()}`)
+            .replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+        return `${cssProperty}:${String(entry)}`;
+      })
+      .filter(Boolean)
+      .join(";");
+  }
+  return String(value);
+}
+
+function renderHeadClassValue(value: unknown): string {
+  if (value === null || value === undefined || value === false) {
+    return "";
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => renderHeadClassValue(entry))
+      .filter(Boolean)
+      .join(" ");
+  }
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .filter(([, enabled]) => Boolean(enabled))
+      .map(([className]) => className)
+      .join(" ");
+  }
+  return String(value);
+}
+
+function normalizeHeadAttributeValue(key: string, value: unknown): string | null {
+  if (value === null || value === undefined || value === false) {
+    return null;
+  }
+  if (key === "style") {
+    const style = renderHeadStyleValue(value);
+    return style || null;
+  }
+  if (key === "class") {
+    const className = renderHeadClassValue(value);
+    return className || null;
+  }
+  return String(value);
+}
+
+function renderAttributes(attributes: Record<string, unknown>): string {
   return Object.entries(attributes)
-    .map(([key, value]) => `${key}="${escapeAttribute(value)}"`)
+    .map(([key, value]) => {
+      const normalized = normalizeHeadAttributeValue(key, value);
+      return normalized === null ? "" : `${key}="${escapeAttribute(normalized)}"`;
+    })
+    .filter(Boolean)
     .join(" ");
 }
 

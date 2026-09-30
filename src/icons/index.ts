@@ -183,17 +183,29 @@ export function fetchIconifyIcon(
       const viewBox = readSvgAttribute(svgText, "viewBox") || "0 0 24 24";
       const paths = [...svgText.matchAll(/<path\b[^>]*>/gi)]
         .slice(0, 128)
-        .map((match) => ({
-          d: readSvgAttribute(match[0], "d").slice(0, 65_536),
-          opacity: readSvgAttribute(match[0], "opacity") || undefined,
-          fill: readSvgAttribute(match[0], "fill") || undefined,
-          stroke: readSvgAttribute(match[0], "stroke") || undefined,
-          strokeWidth: readSvgAttribute(match[0], "stroke-width") || undefined,
-          strokeLinecap: readSvgAttribute(match[0], "stroke-linecap") || undefined,
-          strokeLinejoin: readSvgAttribute(match[0], "stroke-linejoin") || undefined,
-          fillRule: readSvgAttribute(match[0], "fill-rule") || undefined,
-          clipRule: readSvgAttribute(match[0], "clip-rule") || undefined,
-        }))
+        .map((match) => {
+          const source = match[0];
+          const entry = {
+            d: readSvgAttribute(source, "d").slice(0, 65_536),
+          } as import("./registry.js").IconPathData;
+          const attributes = [
+            ["opacity", "opacity"],
+            ["fill", "fill"],
+            ["stroke", "stroke"],
+            ["stroke-width", "strokeWidth"],
+            ["stroke-linecap", "strokeLinecap"],
+            ["stroke-linejoin", "strokeLinejoin"],
+            ["fill-rule", "fillRule"],
+            ["clip-rule", "clipRule"],
+          ] as const;
+          for (const [attributeName, propertyName] of attributes) {
+            const value = readSvgAttribute(source, attributeName);
+            if (value) {
+              entry[propertyName] = value;
+            }
+          }
+          return entry;
+        })
         .filter((entry) => Boolean(entry.d));
       if (!paths.length) {
         return null;

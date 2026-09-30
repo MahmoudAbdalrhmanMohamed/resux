@@ -136,6 +136,8 @@ export interface HeadEntry {
   meta?: Array<Record<string, string>>;
   link?: Array<Record<string, string>>;
   style?: ComponentStyle[];
+  script?: Array<Record<string, unknown>>;
+  noscript?: Array<Record<string, unknown> | string>;
   htmlAttrs?: HeadAttributes;
   bodyAttrs?: HeadAttributes;
 }
@@ -7223,6 +7225,8 @@ function mergeHead(entries: HeadEntry[]): HeadEntry {
     meta: [],
     link: [],
     style: [],
+    script: [],
+    noscript: [],
     htmlAttrs: {},
     bodyAttrs: {}
   };
@@ -7239,6 +7243,12 @@ function mergeHead(entries: HeadEntry[]): HeadEntry {
     }
     if (entry.style) {
       merged.style!.push(...entry.style);
+    }
+    if (entry.script) {
+      merged.script!.push(...entry.script);
+    }
+    if (entry.noscript) {
+      merged.noscript!.push(...entry.noscript);
     }
     if (entry.htmlAttrs) {
       merged.htmlAttrs = {
@@ -7293,7 +7303,58 @@ function renderHead(head: HeadEntry): string {
     tags.push(`<style data-rx-head="true"${styleIdAttr}>${cssContent}</style>`);
   }
 
+  for (const noscript of head.noscript ?? []) {
+    const rendered = renderHeadNoscript(noscript);
+    if (rendered) tags.push(rendered);
+  }
+
+  for (const script of head.script ?? []) {
+    const rendered = renderHeadScript(script);
+    if (rendered) tags.push(rendered);
+  }
+
   return tags.join("");
+}
+
+function renderHeadScript(entry: Record<string, unknown>): string {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return "";
+  }
+  const attributes = { ...entry };
+  const innerHTML = String(attributes.innerHTML ?? attributes.children ?? "");
+  delete attributes.innerHTML;
+  delete attributes.children;
+  const renderedAttributes = renderAttributes(attributes);
+  const attrText = renderedAttributes ? ` ${renderedAttributes}` : "";
+  return `<script data-rx-head="true"${attrText}>${escapeScriptContent(innerHTML)}</script>`;
+}
+
+function renderHeadNoscript(entry: Record<string, unknown> | string): string {
+  if (typeof entry === "string") {
+    return `<noscript data-rx-head="true">${escapeHtml(entry)}</noscript>`;
+  }
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return "";
+  }
+
+  const links = Array.isArray(entry.link)
+    ? entry.link
+      .filter((link): link is Record<string, unknown> => Boolean(link) && typeof link === "object" && !Array.isArray(link))
+      .map((link) => `<link ${renderAttributes(link)}>`)
+      .join("")
+    : "";
+  const raw = entry.innerHTML === undefined
+    ? ""
+    : escapeNoscriptContent(String(entry.innerHTML));
+  return `<noscript data-rx-head="true">${links}${raw}</noscript>`;
+}
+
+function escapeScriptContent(source: string): string {
+  return source.replace(/<\/script/gi, "<\\/script");
+}
+
+function escapeNoscriptContent(source: string): string {
+  return source.replace(/<\/noscript/gi, "<\\/noscript");
 }
 
 function sortHeadLinksForPriority(links: Record<string, string>[]): Record<string, string>[] {

@@ -1,4 +1,5 @@
 import { getQuery as h3GetQuery, readBody as h3ReadBody, setHeader as h3SetHeader } from "h3";
+import { iconRegistry, type IconData } from "../icons/registry.js";
 import {
   buildLocalePath,
   normalizeI18nRuntimeConfig,
@@ -5348,27 +5349,44 @@ function renderResuxVideo(
 }
 
 function renderResuxIcon(node: ElementTemplateNode, context: RenderTemplateContext, locals: Record<string, unknown>): string {
-  const nameAttr = node.attrs.find(a => a.name === "name" || a.name === "icon");
-  const iconName = nameAttr
-    ? (nameAttr.kind === "static" ? nameAttr.value : String(evaluateExpression(nameAttr.value, context.scope, locals) ?? ""))
+  const props = collectComponentProps(node, context.scope, locals);
+  const iconName = String(props.name ?? props.icon ?? "").trim().toLowerCase();
+  const iconSize = String(props.size ?? "").trim();
+  const className = stringifyAttributeValue("class", props.class ?? "").trim();
+  const customStyle = stringifyAttributeValue("style", props.style ?? "").trim();
+  const registryData = iconRegistry[iconName];
+  const data: IconData = registryData ?? {
+    path: "M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2S2 6.477 2 12s4.477 10 10 10zm0-2a8 8 0 1 1 0-16 8 8 0 0 1 0 16z",
+    opacity: ".35",
+    viewBox: "0 0 24 24"
+  };
+  const sizeStyle = iconSize
+    ? `font-size: ${iconSize}; width: ${iconSize}; height: ${iconSize};`
     : "";
-  const sizeAttr = node.attrs.find(a => a.name === "size");
-  const iconSize = sizeAttr
-    ? (sizeAttr.kind === "static" ? sizeAttr.value : String(evaluateExpression(sizeAttr.value, context.scope, locals) ?? ""))
-    : "";
+  const mergedStyle = [sizeStyle, customStyle].filter(Boolean).join(" ");
 
   const attrs: string[] = [
-    'class="resux-icon"',
+    `class="${escapeAttribute(["resux-icon", className].filter(Boolean).join(" "))}"`,
     `data-icon-name="${escapeAttribute(iconName)}"`
   ];
-
-  if (iconSize) {
-    attrs.push(`style="font-size: ${escapeAttribute(iconSize)}; width: ${escapeAttribute(iconSize)}; height: ${escapeAttribute(iconSize)};"`);
+  if (!registryData) {
+    attrs.push('data-icon-fallback="true"');
   }
-
+  if (mergedStyle) {
+    attrs.push(`style="${escapeAttribute(mergedStyle)}"`);
+  }
+  if (props.title) {
+    attrs.push(`title="${escapeAttribute(String(props.title))}"`);
+  }
   appendStyleScopeAttribute(attrs, context.styleScopeId);
 
-  const svgInside = `<svg data-icon-name="${escapeAttribute(iconName)}" viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M12 2L2 22h20L12 2z"/></svg>`;
+  const paths = (data.paths?.length ? data.paths : [{ d: data.path || "", opacity: data.opacity }])
+    .map((entry) => {
+      const opacity = entry.opacity ? ` opacity="${escapeAttribute(entry.opacity)}"` : "";
+      return `<path d="${escapeAttribute(entry.d)}" fill-rule="evenodd" clip-rule="evenodd"${opacity}></path>`;
+    })
+    .join("");
+  const svgInside = `<svg data-icon-name="${escapeAttribute(iconName)}" viewBox="${escapeAttribute(data.viewBox || "0 0 24 24")}" width="1em" height="1em" fill="currentColor" aria-hidden="true">${paths}</svg>`;
   return `<span ${attrs.join(" ")}>${svgInside}</span>`;
 }
 

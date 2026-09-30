@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import fontsModule from "../src/fonts/index.js";
 
 function createMockResux() {
-  const headList: Array<{ link?: any[]; script?: any[]; noscript?: any[] }> = [];
+  const headList: Array<{ link?: any[]; style?: any[]; script?: any[]; noscript?: any[] }> = [];
   const runtimeConfigs: any[] = [];
 
   return {

@@ -5382,8 +5382,18 @@ function renderResuxIcon(node: ElementTemplateNode, context: RenderTemplateConte
 
   const paths = (data.paths?.length ? data.paths : [{ d: data.path || "", opacity: data.opacity }])
     .map((entry) => {
-      const opacity = entry.opacity ? ` opacity="${escapeAttribute(entry.opacity)}"` : "";
-      return `<path d="${escapeAttribute(entry.d)}" fill-rule="evenodd" clip-rule="evenodd"${opacity}></path>`;
+      const pathAttrs = [
+        `d="${escapeAttribute(entry.d)}"`,
+        `fill-rule="${escapeAttribute(entry.fillRule || "evenodd")}"`,
+        `clip-rule="${escapeAttribute(entry.clipRule || "evenodd")}"`,
+      ];
+      if (entry.opacity) pathAttrs.push(`opacity="${escapeAttribute(entry.opacity)}"`);
+      if (entry.fill) pathAttrs.push(`fill="${escapeAttribute(entry.fill)}"`);
+      if (entry.stroke) pathAttrs.push(`stroke="${escapeAttribute(entry.stroke)}"`);
+      if (entry.strokeWidth) pathAttrs.push(`stroke-width="${escapeAttribute(entry.strokeWidth)}"`);
+      if (entry.strokeLinecap) pathAttrs.push(`stroke-linecap="${escapeAttribute(entry.strokeLinecap)}"`);
+      if (entry.strokeLinejoin) pathAttrs.push(`stroke-linejoin="${escapeAttribute(entry.strokeLinejoin)}"`);
+      return `<path ${pathAttrs.join(" ")}></path>`;
     })
     .join("");
   const svgInside = `<svg data-icon-name="${escapeAttribute(iconName)}" viewBox="${escapeAttribute(data.viewBox || "0 0 24 24")}" width="1em" height="1em" fill="currentColor" aria-hidden="true">${paths}</svg>`;

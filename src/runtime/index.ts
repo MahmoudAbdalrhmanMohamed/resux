@@ -2601,7 +2601,7 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
   will-change: transform;
   transition: transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1), background-color 160ms ease;
 }
-html[dir="rtl"] [data-rx-loading-indicator] .rx-loading-progress {
+[data-rx-loading-indicator]:dir(rtl) .rx-loading-progress {
   transform-origin: right center;
 }
 [data-rx-loading-indicator] .rx-loading-slot {
@@ -13929,8 +13929,8 @@ async function navigateTo(target, options = {}) {
       scrollTo(0, 0);
     }
     if (transitionToken === routeTransitionToken) {
-      setRouteTransition("complete", { path: routePath });
       completed = true;
+      scheduleRouteSwapCompletion(transitionToken, routePath);
     }
   } catch (error) {
     setRouteTransition("error", { path: routePath });
@@ -13942,6 +13942,26 @@ async function navigateTo(target, options = {}) {
     if (!completed && transitionToken === routeTransitionToken) {
       setRouteTransition("idle", { path: routePath });
     }
+  }
+}
+
+function scheduleRouteSwapCompletion(transitionToken, routePath) {
+  const finish = () => {
+    if (transitionToken === routeTransitionToken) {
+      setRouteTransition("complete", { path: routePath });
+    }
+  };
+  const reducedMotion = typeof matchMedia === "function"
+    && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reducedMotion) {
+    finish();
+    return;
+  }
+  const schedule = () => setTimeout(finish, 220);
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(schedule);
+  } else {
+    schedule();
   }
 }
 

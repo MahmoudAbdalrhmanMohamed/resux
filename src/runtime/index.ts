@@ -5386,8 +5386,8 @@ function renderResuxIcon(node: ElementTemplateNode, context: RenderTemplateConte
     .map((entry) => {
       const pathAttrs = [
         `d="${escapeAttribute(entry.d)}"`,
-        `fill-rule="${escapeAttribute(entry.fillRule || "evenodd")}"`,
-        `clip-rule="${escapeAttribute(entry.clipRule || "evenodd")}"`,
+        `fill-rule="${escapeAttribute(entry.fillRule || "nonzero")}"`,
+        `clip-rule="${escapeAttribute(entry.clipRule || "nonzero")}"`,
       ];
       if (entry.opacity) pathAttrs.push(`opacity="${escapeAttribute(entry.opacity)}"`);
       if (entry.fill) pathAttrs.push(`fill="${escapeAttribute(entry.fill)}"`);

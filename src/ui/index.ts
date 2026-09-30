@@ -354,8 +354,7 @@ export const RxSelect = defineComponent({
       }), [
         h("div", {
           class: props.unstyled ? "" : "rx-select-trigger",
-          onClick: toggle,
-          "aria-hidden": "true"
+          onClick: toggle
         }, [
           h("span", selectedObj ? selectedObj.label : props.placeholder),
           h("span", { class: props.unstyled ? "" : "rx-select-arrow" }, "▾")

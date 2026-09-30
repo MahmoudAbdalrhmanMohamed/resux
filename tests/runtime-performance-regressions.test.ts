@@ -203,11 +203,20 @@ export default createClientComponent({ id: "m0", name: "LocaleLayout", file: "Lo
         const isArabic = routePath.startsWith("/ar");
         return new Response(
           JSON.stringify({
-            html: `<div data-rx-layout="default"><main data-rx-page><p>${isArabic ? "Arabic" : "English"}</p></main></div>`,
-            head: { title: isArabic ? "Arabic" : "English" },
+            html: `<div data-rx-layout="default">
+              <button id="refresh-locale" data-rx-on-click="s0:m0:refresh">Refresh locale</button>
+              <span data-rx-text="s0:b0">${isArabic ? "ar:rtl" : "en:ltr"}</span>
+              <main data-rx-page><p>${isArabic ? "Arabic" : "English"}</p></main>
+            </div>`,
+            head: {
+              title: isArabic ? "Arabic" : "English",
+              htmlAttrs: { lang: isArabic ? "ar" : "en", dir: isArabic ? "rtl" : "ltr" },
+            },
             payload: {
               route: { path: isArabic ? "/ar" : "/en", params: {}, query: {} },
-              scopes: {},
+              scopes: {
+                s0: { id: "s0", moduleId: "m0", state: {}, asyncData: {} },
+              },
               modules,
               plugins: [],
               config: { public: { i18n } },
@@ -244,10 +253,16 @@ export default createClientComponent({ id: "m0", name: "LocaleLayout", file: "Lo
 
     await router.replace("/ar");
     await waitForClientRoute("/ar");
+    await waitForClientText(window, "ar:rtl");
+    expect(window.document.documentElement.getAttribute("lang")).toBe("ar");
+    expect(window.document.documentElement.getAttribute("dir")).toBe("rtl");
     await refreshLocale("ar:rtl");
 
     await router.push("/en");
     await waitForClientRoute("/en");
+    await waitForClientText(window, "en:ltr");
+    expect(window.document.documentElement.getAttribute("lang")).toBe("en");
+    expect(window.document.documentElement.getAttribute("dir")).toBe("ltr");
     await refreshLocale("en:ltr");
 
     window.history.back();

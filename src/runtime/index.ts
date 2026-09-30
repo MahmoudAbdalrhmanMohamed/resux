@@ -9886,7 +9886,10 @@ export function useResuxImage() {
 let clientNoPrefixLocaleRef = null;
 
 function readClientI18nConfig() {
-  const runtimeConfig = getClientResuxApp().$config;
+  return normalizeClientI18nConfig(getClientResuxApp().$config);
+}
+
+function normalizeClientI18nConfig(runtimeConfig) {
   const raw = runtimeConfig?.public?.i18n;
   if (!raw || typeof raw !== "object" || !Array.isArray(raw.locales) || raw.locales.length === 0) {
     return null;
@@ -13894,7 +13897,8 @@ async function navigateTo(target, options = {}) {
 
     await disposeClientEnhancements();
     setRouteTransition("swapping", { path: routePath });
-    const preserved = replaceRouteHtml(root, result.html);
+    const preserveLayout = !didClientLocaleChange(previousPayload, nextPayload);
+    const preserved = replaceRouteHtml(root, result.html, preserveLayout);
     globalThis.__RESUX__ = mergeClientGlobalState(
       mergePersistentLayoutPayload(previousPayload, nextPayload, preserved.scopeIds)
     );
@@ -13960,13 +13964,18 @@ function createClientRouter() {
   };
 }
 
-function replaceRouteHtml(root, html) {
+function replaceRouteHtml(root, html, preserveLayout = true) {
   const currentLayout = root.querySelector("[data-rx-layout]");
   const template = document.createElement("template");
   template.innerHTML = html;
   const nextLayout = template.content.querySelector("[data-rx-layout]");
 
-  if (!currentLayout || !nextLayout || currentLayout.getAttribute("data-rx-layout") !== nextLayout.getAttribute("data-rx-layout")) {
+  if (
+    !preserveLayout
+    || !currentLayout
+    || !nextLayout
+    || currentLayout.getAttribute("data-rx-layout") !== nextLayout.getAttribute("data-rx-layout")
+  ) {
     unmountVueIslands(root);
     root.innerHTML = html;
     return { root, scopeIds: new Set() };
@@ -13984,6 +13993,20 @@ function replaceRouteHtml(root, html) {
   unmountVueIslands(currentPage);
   currentPage.innerHTML = nextPage.innerHTML;
   return { root: currentPage, scopeIds: preservedScopeIds };
+}
+
+function didClientLocaleChange(previousPayload, nextPayload) {
+  const config = normalizeClientI18nConfig(
+    nextPayload?.config ?? previousPayload?.config ?? { public: {} }
+  );
+  if (!config || config.strategy === "no_prefix") {
+    return false;
+  }
+
+  const previousPath = previousPayload?.route?.path || "/";
+  const nextPath = nextPayload?.route?.path || previousPath;
+  return resolveClientI18nLocaleCode(config, previousPath)
+    !== resolveClientI18nLocaleCode(config, nextPath);
 }
 
 function mergePersistentLayoutPayload(previousPayload, nextPayload, preservedScopeIds) {

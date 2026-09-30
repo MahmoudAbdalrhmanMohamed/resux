@@ -2595,7 +2595,7 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
   width: 100%;
   height: 100%;
   background: var(--resux-loader-color, #2563eb);
-  box-shadow: 0 0 18px color-mix(in srgb, var(--resux-loader-color, #2563eb) 45%, transparent);
+  box-shadow: 0 0 18px rgba(37, 99, 235, 0.35);
   transform: scaleX(var(--resux-progress-scale, 0.08));
   transform-origin: left center;
   will-change: transform;

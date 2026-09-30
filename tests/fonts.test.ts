@@ -20,7 +20,7 @@ function createMockResux() {
 }
 
 describe("fonts module", () => {
-  it("defaults to eager loading for all fonts", () => {
+  it("defaults to non-blocking preload loading for all fonts", () => {
     const { headList, runtimeConfigs, resux } = createMockResux();
     fontsModule.setup(
       {
@@ -37,16 +37,23 @@ describe("fonts module", () => {
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" },
       {
-        rel: "stylesheet",
+        rel: "preload",
+        as: "style",
         href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Alexandria:wght@300;600&display=swap"
+      },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Alexandria:wght@300;600&display=swap",
+        media: "print",
+        onload: "this.media='all'"
       }
     ]);
     expect(headList[0].script ?? []).toEqual([]);
 
     expect(runtimeConfigs[0].public.fonts.families).toEqual(["Inter", "Alexandria"]);
     expect(runtimeConfigs[0].public.fonts.familyConfigs).toEqual([
-      { name: "Inter", strategy: "eager", deferUntilPageLoad: false },
-      { name: "Alexandria", strategy: "eager", deferUntilPageLoad: false }
+      { name: "Inter", strategy: "preload", deferUntilPageLoad: false },
+      { name: "Alexandria", strategy: "preload", deferUntilPageLoad: false }
     ]);
   });
 
@@ -135,8 +142,15 @@ describe("fonts module", () => {
 
     const links = headList[0].link!;
     expect(links).toContainEqual({
-      rel: "stylesheet",
+      rel: "preload",
+      as: "style",
       href: "https://fonts.googleapis.com/css2?family=Inter:wght@400&display=swap"
+    });
+    expect(links).toContainEqual({
+      rel: "stylesheet",
+      href: "https://fonts.googleapis.com/css2?family=Inter:wght@400&display=swap",
+      media: "print",
+      onload: "this.media='all'"
     });
     expect(links).toContainEqual({
       rel: "preload",
@@ -164,7 +178,9 @@ describe("fonts module", () => {
     });
     expect(links).toContainEqual({
       rel: "stylesheet",
-      href: "https://fonts.googleapis.com/css2?family=Inter:wght@400&display=swap"
+      href: "https://fonts.googleapis.com/css2?family=Inter:wght@400&display=swap",
+      media: "print",
+      onload: "this.media='all'"
     });
   });
 

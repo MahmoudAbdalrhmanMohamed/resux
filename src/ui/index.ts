@@ -1,4 +1,4 @@
-import { defineComponent, h, onMounted, ref } from "vue";
+import { defineComponent, h, mergeProps, onMounted, ref } from "vue";
 import type { ResuxModuleDefinition } from "../kit/index.js";
 import {
   RxVerificationCode,
@@ -301,15 +301,14 @@ export const RxInput = defineComponent({
       const classes = props.unstyled
         ? (attrs.class || "")
         : ["rx-input", attrs.class].filter(Boolean).join(" ");
-      return h("input", {
-        ...attrs,
+      return h("input", mergeProps(attrs, {
         type: props.type,
         value: props.modelValue,
         placeholder: props.placeholder,
         disabled: props.disabled,
         class: classes,
         onInput: (e: Event) => emit("update:modelValue", (e.target as HTMLInputElement).value)
-      });
+      }));
     };
   }
 });
@@ -347,8 +346,19 @@ export const RxSelect = defineComponent({
         typeof opt === "string" ? { label: opt, value: opt } : opt
       );
       const selectedObj = normalizedOpts.find((o) => o.value === props.modelValue);
-      return h("div", { class: classes, tabindex: props.disabled ? -1 : 0, onKeydown: handleKeyDown }, [
-        h("div", { class: props.unstyled ? "" : "rx-select-trigger", onClick: toggle }, [
+      return h("div", mergeProps(attrs, {
+        class: classes,
+        tabindex: props.disabled ? -1 : 0,
+        role: "combobox",
+        "aria-expanded": isOpen.value ? "true" : "false",
+        "aria-disabled": props.disabled ? "true" : undefined,
+        onKeydown: handleKeyDown
+      }), [
+        h("div", {
+          class: props.unstyled ? "" : "rx-select-trigger",
+          onClick: toggle,
+          "aria-hidden": "true"
+        }, [
           h("span", selectedObj ? selectedObj.label : props.placeholder),
           h("span", { class: props.unstyled ? "" : "rx-select-arrow" }, "▾")
         ]),
@@ -364,6 +374,7 @@ export const RxSelect = defineComponent({
                       .filter(Boolean)
                       .join(" "),
                     role: "option",
+                    "aria-selected": opt.value === props.modelValue ? "true" : "false",
                     onClick: () => selectOption(opt.value)
                   },
                   opt.label
@@ -607,15 +618,14 @@ export const RxTextarea = defineComponent({
   setup(props, { emit, attrs }) {
     return () => {
       const classes = props.unstyled ? (attrs.class || "") : ["rx-input", "rx-textarea", attrs.class].filter(Boolean).join(" ");
-      return h("textarea", {
-        ...attrs,
+      return h("textarea", mergeProps(attrs, {
         rows: props.rows,
         value: props.modelValue,
         placeholder: props.placeholder,
         disabled: props.disabled,
         class: classes,
         onInput: (e: Event) => emit("update:modelValue", (e.target as HTMLTextAreaElement).value)
-      });
+      }));
     };
   }
 });
@@ -634,16 +644,15 @@ export const RxSwitch = defineComponent({
     };
     return () => {
       const classes = props.unstyled ? (attrs.class || "") : ["rx-switch", props.modelValue ? "checked" : "", attrs.class].filter(Boolean).join(" ");
-      return h("button", {
-        ...attrs,
+      return h("button", mergeProps(attrs, {
         type: "button",
         role: "switch",
-        "aria-checked": props.modelValue,
+        "aria-checked": props.modelValue ? "true" : "false",
         disabled: props.disabled,
         class: classes,
         onClick: toggle
-      }, [
-        h("span", { class: props.unstyled ? "" : "rx-switch-thumb" })
+      }), [
+        h("span", { class: props.unstyled ? "" : "rx-switch-thumb", "aria-hidden": "true" })
       ]);
     };
   }

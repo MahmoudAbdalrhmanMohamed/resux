@@ -151,6 +151,29 @@ describe("fonts module", () => {
     ]);
   });
 
+  it("allows per-font deferUntilPageLoad: false to override global lazy strategy", () => {
+    const { headList, runtimeConfigs, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        strategy: "lazy",
+        google: [
+          { name: "Inter", weights: [400], deferUntilPageLoad: false },
+          { name: "Alexandria", weights: [400] }
+        ]
+      },
+      resux as any
+    );
+
+    expect(headList[0].link).toContainEqual({
+      rel: "stylesheet",
+      href: "https://fonts.googleapis.com/css2?family=Inter:wght@400&display=swap"
+    });
+    expect(runtimeConfigs[0].public.fonts.familyConfigs).toEqual([
+      { name: "Inter", strategy: "eager", deferUntilPageLoad: false },
+      { name: "Alexandria", strategy: "lazy", deferUntilPageLoad: true }
+    ]);
+  });
+
   it("allows per-font deferUntilPageLoad: false to override global deferUntilPageLoad", () => {
     const { headList, resux } = createMockResux();
     fontsModule.setup(

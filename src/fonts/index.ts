@@ -110,7 +110,8 @@ function addGoogleFontGroup(
   families: ResuxFontFamilyInput[],
   strategy: ResuxFontStrategy,
   headLinks: Array<Record<string, string>>,
-  headScripts: Array<{ innerHTML: string }>,
+  headScripts: Array<Record<string, string>>,
+  headNoscripts: Array<Record<string, unknown>>,
 ): void {
   const normalized = families
     .map((family) => normalizeFamily(family))
@@ -130,18 +131,30 @@ function addGoogleFontGroup(
   }
 
   headLinks.push({ rel: "preload", as: "style", href });
+  headNoscripts.push({
+    link: [{ rel: "stylesheet", href }],
+  });
+
   if (strategy === "preload") {
     headLinks.push({
       rel: "stylesheet",
       href,
       media: "print",
       onload: "this.media='all'",
+      "data-resux-font-async": "true",
     });
     return;
   }
 
+  headLinks.push({
+    rel: "stylesheet",
+    href,
+    media: "print",
+    "data-resux-font-lazy": "true",
+  });
   headScripts.push({
-    innerHTML: `(function(){function loadFonts(){var l=document.createElement('link');l.rel='stylesheet';l.href=${JSON.stringify(href)};document.head.appendChild(l);}if(document.readyState==='complete'){loadFonts();}else{window.addEventListener('load',loadFonts,{once:true});}})();`,
+    "data-resux-font-loader": "true",
+    innerHTML: "(function(){function loadFonts(){document.querySelectorAll('link[data-resux-font-lazy=\"true\"]').forEach(function(link){link.media='all';});}if(document.readyState==='complete'){loadFonts();}else{window.addEventListener('load',loadFonts,{once:true});}})();",
   });
 }
 
@@ -169,7 +182,8 @@ export default defineResuxModule<ResuxFontsModuleOptions>({
     }
 
     const headLinks: Array<Record<string, string>> = [];
-    const headScripts: Array<{ innerHTML: string }> = [];
+    const headScripts: Array<Record<string, string>> = [];
+    const headNoscripts: Array<Record<string, unknown>> = [];
 
     if (options.preconnect !== false) {
       headLinks.push(
@@ -178,14 +192,15 @@ export default defineResuxModule<ResuxFontsModuleOptions>({
       );
     }
 
-    addGoogleFontGroup(groups.eager, "eager", headLinks, headScripts);
-    addGoogleFontGroup(groups.preload, "preload", headLinks, headScripts);
-    addGoogleFontGroup(groups.lazy, "lazy", headLinks, headScripts);
+    addGoogleFontGroup(groups.eager, "eager", headLinks, headScripts, headNoscripts);
+    addGoogleFontGroup(groups.preload, "preload", headLinks, headScripts, headNoscripts);
+    addGoogleFontGroup(groups.lazy, "lazy", headLinks, headScripts, headNoscripts);
 
-    if (headLinks.length > 0 || headScripts.length > 0) {
+    if (headLinks.length > 0 || headScripts.length > 0 || headNoscripts.length > 0) {
       resux.addHead({
         link: headLinks,
         ...(headScripts.length > 0 ? { script: headScripts } : {}),
+        ...(headNoscripts.length > 0 ? { noscript: headNoscripts } : {}),
       });
     }
 

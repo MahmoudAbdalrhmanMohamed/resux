@@ -37,6 +37,10 @@ describe("runtime SSR", () => {
           },
           bodyAttrs: {
             class: () => "overflow-x-hidden",
+            style: {
+              direction: "ltr",
+              overflowX: "hidden",
+            },
           },
         });
         return { locale };
@@ -52,7 +56,7 @@ describe("runtime SSR", () => {
 
     expect(result.head.htmlAttrs?.lang).toBe("en");
     expect(documentHtml).toContain('<html lang="en">');
-    expect(documentHtml).toContain('<body class="overflow-x-hidden">');
+    expect(documentHtml).toContain('<body class="overflow-x-hidden" style="direction:ltr;overflow-x:hidden">');
     expect(documentHtml).not.toContain("[object Object]");
   });
 

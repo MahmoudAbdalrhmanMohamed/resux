@@ -80,7 +80,7 @@ describe("fonts module", () => {
       }
     ]);
     expect(headList[0].script).toHaveLength(1);
-    expect(headList[0].script![0].innerHTML).toContain("window.addEventListener('load',loadFonts)");
+    expect(headList[0].script![0].innerHTML).toContain("window.addEventListener('load',loadFonts,{once:true})");
   });
 
   it("allows mixing eager and lazy fonts with per-font control", () => {

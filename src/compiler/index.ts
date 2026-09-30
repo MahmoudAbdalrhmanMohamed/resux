@@ -672,7 +672,7 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
     await hooks.callHook("build:manifest", { manifest: runtimeArtifacts.manifest as Record<string, unknown>, outDir: absoluteOut });
     await writeFile(
       path.join(absoluteOut, "server", "manifest.mjs"),
-      createServerManifestSource(routes, components, layouts, plugins, middleware, serverMiddleware, serverHandlers, vueIslands, app, error, runtimeConfig, buildOptions),
+      createServerManifestSource(routes, components, layouts, plugins, middleware, serverMiddleware, serverHandlers, vueIslands, app, error, runtimeConfig, buildOptions, absoluteRoot),
       "utf8"
     );
     await writeGeneratedArtifacts(absoluteOut, runtimeArtifacts, buildOptions.vite === "dev");
@@ -2879,7 +2879,8 @@ function createServerManifestSource(
   app?: CompiledComponent,
   error?: CompiledComponent,
   runtimeConfig: Record<string, unknown> = {},
-  buildOptions: BuildOptions = {}
+  buildOptions: BuildOptions = {},
+  appRoot = process.cwd()
 ): string {
   const importSuffix = buildOptions.vite === "dev" ? `?t=${Date.now()}` : "";
   const serverPlugins = plugins.filter((entry) => entry.mode !== "client");
@@ -2964,7 +2965,7 @@ function createServerManifestSource(
       }`;
     })
     .join(",\n");
-  const appHead = createAppHead(runtimeConfig);
+  const appHead = createAppHead(runtimeConfig, appRoot, buildOptions.vite !== "dev");
   const appRuntimeConfig = createRuntimeConfig(runtimeConfig);
   const routeRules = createRouteRules(runtimeConfig);
 
@@ -3053,22 +3054,104 @@ function createMatcher(pattern) {
 `;
 }
 
-function createAppHead(runtimeConfig: Record<string, unknown>) {
+function createAppHead(
+  runtimeConfig: Record<string, unknown>,
+  appRoot: string,
+  optimizeCss: boolean,
+) {
   const config = runtimeConfig as ResuxConfig;
   const head = typeof config.app === "object" && config.app && "head" in config.app
     ? config.app.head
     : {};
-  const links = Array.isArray(config.css)
-    ? config.css.map((href) => ({ rel: "stylesheet", href: String(href) }))
-    : [];
+  const headObject = typeof head === "object" && head ? head as Record<string, unknown> : {};
+  const links: Array<Record<string, string>> = [];
+  const criticalStyles: Array<{ id: string; css: string }> = [];
+  const performanceConfig = readPerformanceRuntimeConfig(config);
+  const inlineCss = optimizeCss && performanceConfig.inlineCss !== false;
+  const inlineCssMaxBytes = Number.isFinite(performanceConfig.inlineCssMaxBytes)
+    ? Math.max(0, Math.floor(performanceConfig.inlineCssMaxBytes as number))
+    : 65_536;
+
+  if (Array.isArray(config.css)) {
+    for (const cssEntry of config.css) {
+      const href = String(cssEntry ?? "").trim();
+      if (!href) {
+        continue;
+      }
+      const inlined = inlineCss
+        ? readInlinePublicCss(appRoot, href, inlineCssMaxBytes)
+        : null;
+      if (inlined) {
+        criticalStyles.push({
+          id: `resux-critical-${createHash("sha256").update(href).digest("hex").slice(0, 12)}`,
+          css: inlined,
+        });
+      } else {
+        links.push({ rel: "stylesheet", href });
+      }
+    }
+  }
 
   return {
-    ...(typeof head === "object" && head ? head : {}),
+    ...headObject,
     link: [
-      ...(((head as { link?: Array<Record<string, string>> })?.link) ?? []),
-      ...links
-    ]
+      ...(((headObject as { link?: Array<Record<string, string>> }).link) ?? []),
+      ...links,
+    ],
+    style: [
+      ...(((headObject as { style?: Array<Record<string, unknown> | string> }).style) ?? []),
+      ...criticalStyles,
+    ],
   };
+}
+
+function readPerformanceRuntimeConfig(config: ResuxConfig): Record<string, unknown> {
+  const runtime = isPlainObject(config.runtimeConfig) ? config.runtimeConfig as Record<string, unknown> : {};
+  const publicConfig = isPlainObject(runtime.public) ? runtime.public as Record<string, unknown> : {};
+  return isPlainObject(publicConfig.performanceModule)
+    ? publicConfig.performanceModule as Record<string, unknown>
+    : {};
+}
+
+function readInlinePublicCss(appRoot: string, href: string, maxBytes: number): string | null {
+  if (
+    maxBytes <= 0
+    || !href.startsWith("/")
+    || href.startsWith("//")
+    || href.includes("..")
+    || /^[a-z][a-z0-9+.-]*:/i.test(href)
+  ) {
+    return null;
+  }
+
+  const pathname = href.split(/[?#]/, 1)[0];
+  if (!pathname.toLowerCase().endsWith(".css")) {
+    return null;
+  }
+
+  const publicRoot = path.resolve(appRoot, "public");
+  const staticRoot = path.resolve(appRoot, "static");
+  const relativePath = pathname.replace(/^\/+/, "");
+  const candidates = [
+    path.resolve(publicRoot, relativePath),
+    path.resolve(staticRoot, relativePath),
+  ];
+
+  for (const candidate of candidates) {
+    const allowedRoot = candidate.startsWith(publicRoot + path.sep) ? publicRoot
+      : candidate.startsWith(staticRoot + path.sep) ? staticRoot
+        : null;
+    if (!allowedRoot || !existsSync(candidate)) {
+      continue;
+    }
+    const css = ts.sys.readFile(candidate);
+    if (typeof css !== "string" || Buffer.byteLength(css, "utf8") > maxBytes) {
+      continue;
+    }
+    return css;
+  }
+
+  return null;
 }
 
 function scanRuntimeConfigForSecrets(config: Record<string, unknown>, halalConfig: any): void {
@@ -3653,11 +3736,17 @@ const builtinModules: Record<string, BuiltinResuxModule> = {
   performance: {
     defaults: {
       assetMaxAge: 31536000,
-      routePayloadNoStore: true
+      routePayloadNoStore: true,
+      inlineCss: true,
+      inlineCssMaxBytes: 65_536
     },
     setup(options, resux) {
       const input = isPlainObject(options) ? options : {};
       const maxAge = Number.isFinite(input.assetMaxAge) ? Math.max(0, Math.floor(input.assetMaxAge as number)) : 31536000;
+      const inlineCss = input.inlineCss !== false;
+      const inlineCssMaxBytes = Number.isFinite(input.inlineCssMaxBytes)
+        ? Math.max(0, Math.floor(input.inlineCssMaxBytes as number))
+        : 65_536;
       const assetCache = { maxAge };
       resux.addRouteRule("/__resux/runtime-client.mjs", { cache: assetCache });
       resux.addRouteRule("/__resux/handlers/**", { cache: assetCache });
@@ -3669,7 +3758,15 @@ const builtinModules: Record<string, BuiltinResuxModule> = {
         resux.addRouteRule("/__resux/route", { cache: false });
       }
 
-      resux.extendRuntimeConfig({ public: { performanceModule: { assetMaxAge: maxAge } } });
+      resux.extendRuntimeConfig({
+        public: {
+          performanceModule: {
+            assetMaxAge: maxAge,
+            inlineCss,
+            inlineCssMaxBytes,
+          },
+        },
+      });
     }
   }
 };

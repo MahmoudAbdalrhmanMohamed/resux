@@ -4353,6 +4353,76 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     expect(routeFetchCalls).toBe(0);
   });
 
+  it("preloads route styles before swapping visible page HTML", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-route-style-preload-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <a href="/styled" id="styled-link">Styled</a>
+        <main>Home</main>
+      </div>
+    `;
+
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      requestAnimationFrame: (callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      },
+      fetch: async () => new Response(
+        JSON.stringify({
+          payload: {
+            route: { path: "/styled", params: {}, query: {} },
+            scopes: {},
+            modules: {},
+            config: { public: {} }
+          },
+          html: '<a href="/styled" id="styled-link">Styled</a><main>Styled</main>',
+          head: {
+            link: [{ rel: "stylesheet", href: "/assets/styled.css" }]
+          }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      ),
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {},
+        config: { public: {} }
+      },
+      __RESUX_INSTALLED__: false
+    });
+
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+
+    const anchor = window.document.getElementById("styled-link") as HTMLAnchorElement;
+    anchor.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+
+    let preload: HTMLLinkElement | null = null;
+    for (let index = 0; index < 30 && !preload; index++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      preload = window.document.querySelector('link[data-rx-route-style-preload="true"]');
+    }
+
+    expect(preload).not.toBeNull();
+    expect(preload?.getAttribute("rel")).toBe("preload");
+    expect(preload?.getAttribute("as")).toBe("style");
+    expect(window.document.getElementById("__resux")?.innerHTML).toContain("<main>Home</main>");
+
+    preload?.dispatchEvent(new window.Event("load"));
+    await waitForHtml(window, "<main>Styled</main>");
+
+    expect(window.document.head.querySelector('link[data-rx-head][rel="stylesheet"][href="/assets/styled.css"]')).not.toBeNull();
+    expect(window.document.querySelector('link[data-rx-route-style-preload="true"]')).toBeNull();
+  });
+
   it("ignores prefetch for media/static links", async () => {
     const tempDir = path.join(os.tmpdir(), `resux-media-prefetch-ignore-${Date.now()}`);
     await mkdir(tempDir, { recursive: true });

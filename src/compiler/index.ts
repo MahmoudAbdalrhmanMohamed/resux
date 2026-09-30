@@ -3067,8 +3067,10 @@ function createAppHead(
   const links: Array<Record<string, string>> = [];
   const criticalStyles: Array<{ id: string; css: string }> = [];
   const performanceConfig = readPerformanceRuntimeConfig(config);
-  const inlineCss = optimizeCss && performanceConfig.inlineCss !== false;
-  const inlineCssMaxBytes = Number.isFinite(performanceConfig.inlineCssMaxBytes)
+  const inlineCss = optimizeCss
+    && performanceConfig !== null
+    && performanceConfig.inlineCss !== false;
+  const inlineCssMaxBytes = performanceConfig && Number.isFinite(performanceConfig.inlineCssMaxBytes)
     ? Math.max(0, Math.floor(performanceConfig.inlineCssMaxBytes as number))
     : 65_536;
 
@@ -3105,12 +3107,12 @@ function createAppHead(
   };
 }
 
-function readPerformanceRuntimeConfig(config: ResuxConfig): Record<string, unknown> {
+function readPerformanceRuntimeConfig(config: ResuxConfig): Record<string, unknown> | null {
   const runtime = isPlainObject(config.runtimeConfig) ? config.runtimeConfig as Record<string, unknown> : {};
   const publicConfig = isPlainObject(runtime.public) ? runtime.public as Record<string, unknown> : {};
   return isPlainObject(publicConfig.performanceModule)
     ? publicConfig.performanceModule as Record<string, unknown>
-    : {};
+    : null;
 }
 
 function readInlinePublicCss(appRoot: string, href: string, maxBytes: number): string | null {

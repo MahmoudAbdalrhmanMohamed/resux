@@ -1040,7 +1040,38 @@ defineClientEnhancement("imported-helper", async (target) => {
     expect(manifest.routeRules["/__resux/route"].cache).toBe(false);
     expect(manifest.runtimeConfig.public.securityHeaders).toBe(true);
     expect(manifest.runtimeConfig.public.performanceModule.assetMaxAge).toBe(120);
+    expect(manifest.runtimeConfig.public.performanceModule.inlineCss).toBe(true);
+    expect(manifest.runtimeConfig.public.performanceModule.inlineCssMaxBytes).toBe(65536);
     expect(manifestJson.routeRules["/__resux/runtime-client.mjs"].cache).toBe(false);
+  }, 20000);
+
+  it("inlines small local CSS when the performance module is enabled for production", async () => {
+    const root = path.join(os.tmpdir(), `resux-inline-css-${Date.now()}`);
+    await mkdir(path.join(root, "pages"), { recursive: true });
+    await mkdir(path.join(root, "public"), { recursive: true });
+    await writeFile(path.join(root, "pages", "index.vue"), "<template><main class=\"critical\">Home</main></template>");
+    await writeFile(path.join(root, "public", "app.css"), ".critical{display:block;color:red}");
+    await writeFile(
+      path.join(root, "resux.config.ts"),
+      `export default defineResuxConfig({
+  css: ["/app.css"],
+  modules: [["resux:performance", { inlineCssMaxBytes: 1024 }]]
+})`
+    );
+
+    await buildProject(root);
+    const manifest = await import(`${pathToFileURL(path.join(root, ".resux", "server", "manifest.mjs")).href}?t=${Date.now()}`);
+
+    expect(manifest.appHead.link).not.toEqual(
+      expect.arrayContaining([{ rel: "stylesheet", href: "/app.css" }])
+    );
+    expect(manifest.appHead.style).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ css: ".critical{display:block;color:red}" })
+      ])
+    );
+    expect(manifest.runtimeConfig.public.performanceModule.inlineCss).toBe(true);
+    expect(manifest.runtimeConfig.public.performanceModule.inlineCssMaxBytes).toBe(1024);
   }, 20000);
 
   it("runs tree-shakable UI, icon, and font module subpaths", async () => {

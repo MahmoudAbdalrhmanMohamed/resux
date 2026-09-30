@@ -3496,8 +3496,16 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       </div>
     `;
     const phases: string[] = [];
+    let resolveComplete!: () => void;
+    const transitionComplete = new Promise<void>((resolve) => {
+      resolveComplete = resolve;
+    });
     window.addEventListener("resux:route-transition", (event) => {
-      phases.push((event as CustomEvent).detail.state);
+      const state = (event as CustomEvent).detail.state;
+      phases.push(state);
+      if (state === "complete") {
+        resolveComplete();
+      }
     });
 
     let resolveFetch!: () => void;
@@ -3561,6 +3569,8 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
 
     resolveFetch();
     await waitForHtml(window, "<main>Slow</main>");
+    expect(root.getAttribute("data-route-transition-state")).toBe("swapping");
+    await transitionComplete;
 
     expect(phases).toEqual(expect.arrayContaining(["start", "fetching", "swapping", "complete"]));
     expect(["complete", "idle"]).toContain(loader.dataset.state);

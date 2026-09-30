@@ -85,24 +85,87 @@ export function googleFont(input: ResuxFontFamilyInput): ResuxFontFamilyInput {
   return input;
 }
 
-function isLazyFamily(input: ResuxFontFamilyInput, options: ResuxFontsModuleOptions): boolean {
-  if (typeof input.deferUntilPageLoad === "boolean") {
-    if (input.deferUntilPageLoad) {
-      return true;
+type ResuxFontStrategy = "eager" | "preload" | "lazy";
+
+function resolveFamilyStrategy(
+  input: ResuxFontFamilyInput,
+  options: ResuxFontsModuleOptions,
+): ResuxFontStrategy {
+  if (input.deferUntilPageLoad === true) {
+    return "lazy";
+  }
+  if (input.deferUntilPageLoad === false) {
+    if (input.strategy) {
+      return input.strategy;
     }
-    return input.strategy === "lazy";
+    return options.strategy === "lazy" ? "eager" : (options.strategy ?? "preload");
   }
   if (input.strategy) {
-    return input.strategy === "lazy";
+    return input.strategy;
   }
-  return options.strategy === "lazy" || options.deferUntilPageLoad === true;
+  if (options.deferUntilPageLoad === true) {
+    return "lazy";
+  }
+  return options.strategy ?? "preload";
+}
+
+function addGoogleFontGroup(
+  families: ResuxFontFamilyInput[],
+  strategy: ResuxFontStrategy,
+  headLinks: Array<Record<string, string>>,
+  headScripts: Array<Record<string, string>>,
+  headNoscripts: Array<Record<string, unknown>>,
+): void {
+  const normalized = families
+    .map((family) => normalizeFamily(family))
+    .filter((family): family is string => Boolean(family));
+  if (!normalized.length) {
+    return;
+  }
+
+  const href = buildGoogleFontsHref(
+    normalized,
+    families.find((family) => family.display)?.display,
+  );
+
+  if (strategy === "eager") {
+    headLinks.push({ rel: "stylesheet", href });
+    return;
+  }
+
+  headLinks.push({ rel: "preload", as: "style", href });
+  headNoscripts.push({
+    link: [{ rel: "stylesheet", href }],
+  });
+
+  if (strategy === "preload") {
+    headLinks.push({
+      rel: "stylesheet",
+      href,
+      media: "print",
+      onload: "this.media='all'",
+      "data-resux-font-async": "true",
+    });
+    return;
+  }
+
+  headLinks.push({
+    rel: "stylesheet",
+    href,
+    media: "print",
+    "data-resux-font-lazy": "true",
+  });
+  headScripts.push({
+    "data-resux-font-loader": "true",
+    innerHTML: "(function(){function loadFonts(){document.querySelectorAll('link[data-resux-font-lazy=\"true\"]').forEach(function(link){link.media='all';});}if(document.readyState==='complete'){loadFonts();}else{window.addEventListener('load',loadFonts,{once:true});}})();",
+  });
 }
 
 export default defineResuxModule<ResuxFontsModuleOptions>({
   defaults: {
     google: [],
     preconnect: true,
-    strategy: "eager",
+    strategy: "preload",
     deferUntilPageLoad: false,
   },
   setup(options, resux) {
@@ -111,66 +174,36 @@ export default defineResuxModule<ResuxFontsModuleOptions>({
       return;
     }
 
-    const eagerGroup: ResuxFontFamilyInput[] = [];
-    const lazyGroup: ResuxFontFamilyInput[] = [];
+    const groups: Record<ResuxFontStrategy, ResuxFontFamilyInput[]> = {
+      eager: [],
+      preload: [],
+      lazy: [],
+    };
 
     for (const family of googleFamilies) {
-      if (isLazyFamily(family, options)) {
-        lazyGroup.push(family);
-      } else {
-        eagerGroup.push(family);
-      }
+      groups[resolveFamilyStrategy(family, options)].push(family);
     }
 
-    const headLinks: Array<{ rel: string; href: string; as?: string; crossorigin?: string }> = [];
-    const headScripts: Array<{ innerHTML: string }> = [];
+    const headLinks: Array<Record<string, string>> = [];
+    const headScripts: Array<Record<string, string>> = [];
+    const headNoscripts: Array<Record<string, unknown>> = [];
 
-    const hasAnyFonts = eagerGroup.length > 0 || lazyGroup.length > 0;
-    if (options.preconnect !== false && hasAnyFonts) {
+    if (options.preconnect !== false) {
       headLinks.push(
         { rel: "preconnect", href: "https://fonts.googleapis.com" },
         { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" },
       );
     }
 
-    if (eagerGroup.length > 0) {
-      const eagerNormalized = eagerGroup
-        .map((family) => normalizeFamily(family))
-        .filter((family): family is string => Boolean(family));
-      if (eagerNormalized.length > 0) {
-        const href = buildGoogleFontsHref(
-          eagerNormalized,
-          eagerGroup.find((family) => family.display)?.display,
-        );
-        const isPreload = eagerGroup.some((family) => family.strategy === "preload")
-          || options.strategy === "preload";
-        if (isPreload) {
-          headLinks.push({ rel: "preload", as: "style", href });
-        }
-        headLinks.push({ rel: "stylesheet", href });
-      }
-    }
+    addGoogleFontGroup(groups.eager, "eager", headLinks, headScripts, headNoscripts);
+    addGoogleFontGroup(groups.preload, "preload", headLinks, headScripts, headNoscripts);
+    addGoogleFontGroup(groups.lazy, "lazy", headLinks, headScripts, headNoscripts);
 
-    if (lazyGroup.length > 0) {
-      const lazyNormalized = lazyGroup
-        .map((family) => normalizeFamily(family))
-        .filter((family): family is string => Boolean(family));
-      if (lazyNormalized.length > 0) {
-        const href = buildGoogleFontsHref(
-          lazyNormalized,
-          lazyGroup.find((family) => family.display)?.display,
-        );
-        headLinks.push({ rel: "preload", as: "style", href });
-        headScripts.push({
-          innerHTML: `(function(){function loadFonts(){var l=document.createElement('link');l.rel='stylesheet';l.href=${JSON.stringify(href)};document.head.appendChild(l);}if(document.readyState==='complete'){loadFonts();}else{window.addEventListener('load',loadFonts);}})();`,
-        });
-      }
-    }
-
-    if (headLinks.length > 0 || headScripts.length > 0) {
+    if (headLinks.length > 0 || headScripts.length > 0 || headNoscripts.length > 0) {
       resux.addHead({
         link: headLinks,
         ...(headScripts.length > 0 ? { script: headScripts } : {}),
+        ...(headNoscripts.length > 0 ? { noscript: headNoscripts } : {}),
       });
     }
 
@@ -181,10 +214,10 @@ export default defineResuxModule<ResuxFontsModuleOptions>({
           families: googleFamilies.map((family) => family.name),
           familyConfigs: googleFamilies.map((family) => ({
             name: family.name,
-            strategy: family.strategy || options.strategy || "eager",
-            deferUntilPageLoad: isLazyFamily(family, options),
+            strategy: resolveFamilyStrategy(family, options),
+            deferUntilPageLoad: resolveFamilyStrategy(family, options) === "lazy",
           })),
-          strategy: options.strategy || "eager",
+          strategy: options.strategy || "preload",
           deferUntilPageLoad: options.deferUntilPageLoad ?? false,
         },
       },

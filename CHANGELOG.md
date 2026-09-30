@@ -4,6 +4,22 @@ All notable changes to Resux are documented here.
 
 Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaking API changes when they are clearly documented.
 
+## [0.4.0-beta.6] - 2026-10-01
+
+### Fonts, icons, and initial rendering
+
+- Fixed built-in Resux icons so SSR renders the real registry SVG instead of a placeholder triangle, preserving icon classes, view boxes, fills, strokes, and presentation attributes.
+- Added missing Idea Store icon coverage and corrected SVG geometry metadata so framework icons match the source application more closely.
+- Changed the Google Fonts default to a non-render-blocking preload strategy with no-script fallback, while automatically falling back to CSP-safe eager application when inline activation is not permitted.
+- Added runtime rendering for head-level script and noscript entries used by framework modules.
+- Added production critical-CSS inlining for small local stylesheets when `resux:performance` is enabled, while preserving restrictive CSP behavior, stylesheet order, and relative asset URL correctness.
+- Kept large, external, relative-asset, development, and CSP-incompatible stylesheets linked instead of applying unsafe loading tricks.
+
+### Validation
+
+- Added regression coverage for SSR icon parity, SVG attributes and view boxes, font preload/no-script behavior, CSP fallback, relative CSS assets, stylesheet ordering, and production critical-CSS inlining.
+- Revalidated the framework CI before publication and kept the Idea Store changes limited to consuming the published framework version.
+
 ## [0.4.0-beta.5] - 2026-09-30
 
 ### Vercel portability and rendering

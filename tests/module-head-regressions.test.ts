@@ -65,8 +65,11 @@ describe("module head composition regressions", () => {
 
     expect(href).toContain("family=");
     expect(href).not.toContain("</script>");
-    expect(script).toContain(JSON.stringify(href));
+    expect(script).toContain("data-resux-font-lazy");
+    expect(script).not.toContain(href);
+    expect(script).not.toContain("</script>");
     expect(script).not.toContain("l.href='https://");
     expect(href).not.toContain("invalid");
+    expect(addedHeads[0].noscript?.[0]?.link?.[0]?.href).toBe(href);
   });
 });

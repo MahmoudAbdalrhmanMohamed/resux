@@ -4534,6 +4534,27 @@ export default createClientComponent({ id: "m0", name: "Counter", file: "Counter
     expect(doc).toContain('<style data-rx-head="true">body { background: black; }</style>');
   });
 
+  it("renders head script and noscript entries used by async font loading", () => {
+    const result = {
+      html: "<div>test</div>",
+      payload: { route: { path: "/", params: {}, query: {} }, scopes: {}, modules: {}, config: {} },
+      head: {
+        script: [{
+          "data-resux-font-loader": "true",
+          innerHTML: "window.__fontLoaded=true;</script><script>alert(1)</script>"
+        }],
+        noscript: [{
+          link: [{ rel: "stylesheet", href: "https://fonts.example.test/font.css" }]
+        }]
+      }
+    };
+    const doc = renderDocument(result as any, "Test Title");
+    expect(doc).toContain('<noscript data-rx-head="true"><link rel="stylesheet" href="https://fonts.example.test/font.css"></noscript>');
+    expect(doc).toContain('data-resux-font-loader="true"');
+    expect(doc).toContain("<\\/script>");
+    expect(doc).not.toContain("</script><script>alert(1)</script>");
+  });
+
   it("renders built-in <Icon>, <ResuxIcon>, and <NuxtIcon> tags without throwing Unknown component error", async () => {
     const template: TemplateNode[] = [
       {
@@ -4553,7 +4574,10 @@ export default createClientComponent({ id: "m0", name: "Counter", file: "Counter
       {
         type: "element",
         tag: "NuxtIcon",
-        attrs: [{ name: "name", value: "material-symbols:mail", kind: "static" }],
+        attrs: [
+          { name: "name", value: "material-symbols:mail", kind: "static" },
+          { name: "class", value: "text-accent", kind: "static" }
+        ],
         children: [],
         events: []
       }
@@ -4571,6 +4595,9 @@ export default createClientComponent({ id: "m0", name: "Counter", file: "Counter
     expect(rendered).toContain('data-icon-name="solar:leaf-outline"');
     expect(rendered).toContain('data-icon-name="ph:check-circle-thin"');
     expect(rendered).toContain('data-icon-name="material-symbols:mail"');
+    expect(rendered).toContain('class="resux-icon text-accent"');
+    expect(rendered).toContain('M20 4H4c-1.1 0-1.99.9-1.99 2');
+    expect(rendered).not.toContain('M12 2L2 22h20L12 2z');
     expect(rendered).toContain('<svg');
   });
 

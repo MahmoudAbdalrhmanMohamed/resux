@@ -672,7 +672,7 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
     await hooks.callHook("build:manifest", { manifest: runtimeArtifacts.manifest as Record<string, unknown>, outDir: absoluteOut });
     await writeFile(
       path.join(absoluteOut, "server", "manifest.mjs"),
-      createServerManifestSource(routes, components, layouts, plugins, middleware, serverMiddleware, serverHandlers, vueIslands, app, error, runtimeConfig, buildOptions),
+      createServerManifestSource(routes, components, layouts, plugins, middleware, serverMiddleware, serverHandlers, vueIslands, app, error, runtimeConfig, buildOptions, absoluteRoot),
       "utf8"
     );
     await writeGeneratedArtifacts(absoluteOut, runtimeArtifacts, buildOptions.vite === "dev");
@@ -2879,7 +2879,8 @@ function createServerManifestSource(
   app?: CompiledComponent,
   error?: CompiledComponent,
   runtimeConfig: Record<string, unknown> = {},
-  buildOptions: BuildOptions = {}
+  buildOptions: BuildOptions = {},
+  appRoot = process.cwd()
 ): string {
   const importSuffix = buildOptions.vite === "dev" ? `?t=${Date.now()}` : "";
   const serverPlugins = plugins.filter((entry) => entry.mode !== "client");
@@ -2964,7 +2965,7 @@ function createServerManifestSource(
       }`;
     })
     .join(",\n");
-  const appHead = createAppHead(runtimeConfig);
+  const appHead = createAppHead(runtimeConfig, appRoot, buildOptions.vite !== "dev");
   const appRuntimeConfig = createRuntimeConfig(runtimeConfig);
   const routeRules = createRouteRules(runtimeConfig);
 
@@ -3053,22 +3054,274 @@ function createMatcher(pattern) {
 `;
 }
 
-function createAppHead(runtimeConfig: Record<string, unknown>) {
+function createAppHead(
+  runtimeConfig: Record<string, unknown>,
+  appRoot: string,
+  optimizeCss: boolean,
+) {
   const config = runtimeConfig as ResuxConfig;
   const head = typeof config.app === "object" && config.app && "head" in config.app
     ? config.app.head
     : {};
-  const links = Array.isArray(config.css)
-    ? config.css.map((href) => ({ rel: "stylesheet", href: String(href) }))
+  const headObject = typeof head === "object" && head ? head as Record<string, unknown> : {};
+  const performanceConfig = readPerformanceRuntimeConfig(config);
+  const csp = readSecurityContentSecurityPolicy(config, headObject);
+  const inlineCss = optimizeCss
+    && performanceConfig !== null
+    && performanceConfig.inlineCss !== false
+    && allowsInlineStyleForCsp(csp);
+  const inlineCssMaxBytes = performanceConfig && Number.isFinite(performanceConfig.inlineCssMaxBytes)
+    ? Math.max(0, Math.floor(performanceConfig.inlineCssMaxBytes as number))
+    : 65_536;
+
+  const cssEntries = collectConfiguredCssEntries(
+    config.css,
+    appRoot,
+    inlineCss ? inlineCssMaxBytes : 0,
+  );
+  const { links: cssLinks, styles: criticalStyles } = splitCssEntriesPreservingOrder(cssEntries);
+  const configuredLinks = Array.isArray(headObject.link)
+    ? headObject.link as Array<Record<string, unknown>>
     : [];
+  const configuredScripts = Array.isArray(headObject.script)
+    ? headObject.script as Array<Record<string, unknown>>
+    : [];
+  const inlineScriptAttributeAllowed = allowsInlineScriptAttributeForCsp(csp);
+  const inlineScriptElementAllowed = allowsInlineScriptElementForCsp(csp);
 
   return {
-    ...(typeof head === "object" && head ? head : {}),
+    ...headObject,
     link: [
-      ...(((head as { link?: Array<Record<string, string>> })?.link) ?? []),
-      ...links
-    ]
+      ...normalizeFontLinksForCsp(
+        configuredLinks,
+        inlineScriptAttributeAllowed,
+        inlineScriptElementAllowed,
+      ),
+      ...cssLinks,
+    ],
+    style: [
+      ...criticalStyles,
+      ...((Array.isArray(headObject.style)
+        ? headObject.style
+        : []) as Array<Record<string, unknown> | string>),
+    ],
+    script: inlineScriptElementAllowed
+      ? configuredScripts
+      : configuredScripts.filter((entry) => !isResuxFontLoaderScript(entry)),
   };
+}
+
+interface ConfiguredCssEntry {
+  href: string;
+  css: string | null;
+}
+
+function collectConfiguredCssEntries(
+  cssConfig: unknown,
+  appRoot: string,
+  inlineCssMaxBytes: number,
+): ConfiguredCssEntry[] {
+  if (!Array.isArray(cssConfig)) {
+    return [];
+  }
+
+  return cssConfig
+    .map((cssEntry) => String(cssEntry ?? "").trim())
+    .filter(Boolean)
+    .map((href) => ({
+      href,
+      css: inlineCssMaxBytes > 0
+        ? readInlinePublicCss(appRoot, href, inlineCssMaxBytes)
+        : null,
+    }));
+}
+
+function splitCssEntriesPreservingOrder(entries: ConfiguredCssEntry[]): {
+  links: Array<Record<string, string>>;
+  styles: Array<{ id: string; css: string }>;
+} {
+  const lastLinkedCssIndex = entries.reduce(
+    (lastIndex, entry, index) => entry.css === null ? index : lastIndex,
+    -1,
+  );
+  const links: Array<Record<string, string>> = [];
+  const styles: Array<{ id: string; css: string }> = [];
+
+  entries.forEach((entry, index) => {
+    if (entry.css !== null && index > lastLinkedCssIndex) {
+      styles.push({
+        id: `resux-critical-${createHash("sha256").update(entry.href).digest("hex").slice(0, 12)}`,
+        css: entry.css,
+      });
+      return;
+    }
+    links.push({ rel: "stylesheet", href: entry.href });
+  });
+
+  return { links, styles };
+}
+
+function readPerformanceRuntimeConfig(config: ResuxConfig): Record<string, unknown> | null {
+  const runtime = isPlainObject(config.runtimeConfig) ? config.runtimeConfig as Record<string, unknown> : {};
+  const publicConfig = isPlainObject(runtime.public) ? runtime.public as Record<string, unknown> : {};
+  return isPlainObject(publicConfig.performanceModule)
+    ? publicConfig.performanceModule as Record<string, unknown>
+    : null;
+}
+
+function readSecurityContentSecurityPolicy(
+  config: ResuxConfig,
+  head: Record<string, unknown>,
+): string {
+  const runtime = isPlainObject(config.runtimeConfig)
+    ? config.runtimeConfig as Record<string, unknown>
+    : {};
+  const security = isPlainObject(runtime.resuxSecurity)
+    ? runtime.resuxSecurity as Record<string, unknown>
+    : {};
+  const configured = firstString(security.contentSecurityPolicy);
+  if (configured) {
+    return configured;
+  }
+
+  const meta = Array.isArray(head.meta) ? head.meta : [];
+  for (const entry of meta) {
+    if (!isPlainObject(entry)) continue;
+    const httpEquiv = String(entry["http-equiv"] ?? entry.httpEquiv ?? "").trim().toLowerCase();
+    if (httpEquiv !== "content-security-policy") continue;
+    const content = firstString(entry.content);
+    if (content) return content;
+  }
+  return "";
+}
+
+function cspDirectiveSources(csp: string, names: string[]): string[] | null {
+  if (!csp.trim()) {
+    return null;
+  }
+  const directives = new Map<string, string[]>();
+  for (const rawDirective of csp.split(";")) {
+    const tokens = rawDirective.trim().split(/\s+/).filter(Boolean);
+    if (!tokens.length) continue;
+    directives.set(tokens[0].toLowerCase(), tokens.slice(1));
+  }
+  for (const name of names) {
+    const sources = directives.get(name);
+    if (sources) return sources;
+  }
+  return null;
+}
+
+function allowsInlineStyleForCsp(csp: string): boolean {
+  const sources = cspDirectiveSources(csp, ["style-src-elem", "style-src", "default-src"]);
+  return sources === null || sources.includes("'unsafe-inline'");
+}
+
+function allowsInlineScriptAttributeForCsp(csp: string): boolean {
+  const sources = cspDirectiveSources(csp, ["script-src-attr", "script-src", "default-src"]);
+  return sources === null || sources.includes("'unsafe-inline'");
+}
+
+function allowsInlineScriptElementForCsp(csp: string): boolean {
+  const sources = cspDirectiveSources(csp, ["script-src-elem", "script-src", "default-src"]);
+  return sources === null || sources.includes("'unsafe-inline'");
+}
+
+function normalizeFontLinksForCsp(
+  links: Array<Record<string, unknown>>,
+  inlineScriptAttributeAllowed: boolean,
+  inlineScriptElementAllowed: boolean,
+): Array<Record<string, unknown>> {
+  return links.map((link) => {
+    const next = { ...link };
+    const needsInlineAttribute = next["data-resux-font-async"] === "true";
+    const needsInlineScript = next["data-resux-font-lazy"] === "true";
+    if (
+      (needsInlineAttribute && !inlineScriptAttributeAllowed)
+      || (needsInlineScript && !inlineScriptElementAllowed)
+    ) {
+      delete next.media;
+      delete next.onload;
+      delete next["data-resux-font-async"];
+      delete next["data-resux-font-lazy"];
+    }
+    return next;
+  });
+}
+
+function isResuxFontLoaderScript(entry: Record<string, unknown>): boolean {
+  return entry["data-resux-font-loader"] === "true";
+}
+
+function readInlinePublicCss(appRoot: string, href: string, maxBytes: number): string | null {
+  if (
+    maxBytes <= 0
+    || !href.startsWith("/")
+    || href.startsWith("//")
+    || href.includes("..")
+    || /^[a-z][a-z0-9+.-]*:/i.test(href)
+  ) {
+    return null;
+  }
+
+  const pathname = href.split(/[?#]/, 1)[0];
+  if (!pathname.toLowerCase().endsWith(".css")) {
+    return null;
+  }
+
+  const publicRoot = path.resolve(appRoot, "public");
+  const staticRoot = path.resolve(appRoot, "static");
+  const relativePath = pathname.replace(/^\/+/, "");
+  const candidates = [
+    path.resolve(publicRoot, relativePath),
+    path.resolve(staticRoot, relativePath),
+  ];
+
+  for (const candidate of candidates) {
+    const allowedRoot = candidate.startsWith(publicRoot + path.sep) ? publicRoot
+      : candidate.startsWith(staticRoot + path.sep) ? staticRoot
+        : null;
+    if (!allowedRoot || !existsSync(candidate)) {
+      continue;
+    }
+    const css = ts.sys.readFile(candidate);
+    if (
+      typeof css !== "string"
+      || Buffer.byteLength(css, "utf8") > maxBytes
+      || hasRelativeCssReferences(css)
+    ) {
+      continue;
+    }
+    return css;
+  }
+
+  return null;
+}
+
+function hasRelativeCssReferences(css: string): boolean {
+  const urlPattern = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)"']+))\s*\)/gi;
+  for (const match of css.matchAll(urlPattern)) {
+    const value = String(match[1] ?? match[2] ?? match[3] ?? "").trim();
+    if (isRelativeCssReference(value)) {
+      return true;
+    }
+  }
+
+  const importPattern = /@import\s+(?:url\(\s*)?(?:"([^"]*)"|'([^']*)'|([^\s;)]+))/gi;
+  for (const match of css.matchAll(importPattern)) {
+    const value = String(match[1] ?? match[2] ?? match[3] ?? "").trim();
+    if (isRelativeCssReference(value)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isRelativeCssReference(value: string): boolean {
+  if (!value || value.startsWith("/") || value.startsWith("#") || value.startsWith("//")) {
+    return false;
+  }
+  return !/^(?:data|blob|https?):/i.test(value);
 }
 
 function scanRuntimeConfigForSecrets(config: Record<string, unknown>, halalConfig: any): void {
@@ -3647,17 +3900,29 @@ const builtinModules: Record<string, BuiltinResuxModule> = {
       }
 
       resux.addRouteRule(routePath, { headers });
-      resux.extendRuntimeConfig({ public: { securityHeaders: true } });
+      resux.extendRuntimeConfig({
+        public: { securityHeaders: true },
+        resuxSecurity: {
+          contentSecurityPolicy: csp ?? "",
+          route: routePath,
+        },
+      });
     }
   },
   performance: {
     defaults: {
       assetMaxAge: 31536000,
-      routePayloadNoStore: true
+      routePayloadNoStore: true,
+      inlineCss: true,
+      inlineCssMaxBytes: 65_536
     },
     setup(options, resux) {
       const input = isPlainObject(options) ? options : {};
       const maxAge = Number.isFinite(input.assetMaxAge) ? Math.max(0, Math.floor(input.assetMaxAge as number)) : 31536000;
+      const inlineCss = input.inlineCss !== false;
+      const inlineCssMaxBytes = Number.isFinite(input.inlineCssMaxBytes)
+        ? Math.max(0, Math.floor(input.inlineCssMaxBytes as number))
+        : 65_536;
       const assetCache = { maxAge };
       resux.addRouteRule("/__resux/runtime-client.mjs", { cache: assetCache });
       resux.addRouteRule("/__resux/handlers/**", { cache: assetCache });
@@ -3669,7 +3934,15 @@ const builtinModules: Record<string, BuiltinResuxModule> = {
         resux.addRouteRule("/__resux/route", { cache: false });
       }
 
-      resux.extendRuntimeConfig({ public: { performanceModule: { assetMaxAge: maxAge } } });
+      resux.extendRuntimeConfig({
+        public: {
+          performanceModule: {
+            assetMaxAge: maxAge,
+            inlineCss,
+            inlineCssMaxBytes,
+          },
+        },
+      });
     }
   }
 };

@@ -1,4 +1,5 @@
 import { getQuery as h3GetQuery, readBody as h3ReadBody, setHeader as h3SetHeader } from "h3";
+import { iconRegistry, type IconData } from "../icons/registry.js";
 import {
   buildLocalePath,
   normalizeI18nRuntimeConfig,
@@ -135,6 +136,8 @@ export interface HeadEntry {
   meta?: Array<Record<string, string>>;
   link?: Array<Record<string, string>>;
   style?: ComponentStyle[];
+  script?: Array<Record<string, unknown>>;
+  noscript?: Array<Record<string, unknown> | string>;
   htmlAttrs?: HeadAttributes;
   bodyAttrs?: HeadAttributes;
 }
@@ -5348,27 +5351,54 @@ function renderResuxVideo(
 }
 
 function renderResuxIcon(node: ElementTemplateNode, context: RenderTemplateContext, locals: Record<string, unknown>): string {
-  const nameAttr = node.attrs.find(a => a.name === "name" || a.name === "icon");
-  const iconName = nameAttr
-    ? (nameAttr.kind === "static" ? nameAttr.value : String(evaluateExpression(nameAttr.value, context.scope, locals) ?? ""))
+  const props = collectComponentProps(node, context.scope, locals);
+  const iconName = String(props.name ?? props.icon ?? "").trim().toLowerCase();
+  const iconSize = String(props.size ?? "").trim();
+  const className = stringifyAttributeValue("class", props.class ?? "").trim();
+  const customStyle = stringifyAttributeValue("style", props.style ?? "").trim();
+  const registryData = iconRegistry[iconName];
+  const data: IconData = registryData ?? {
+    path: "M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2S2 6.477 2 12s4.477 10 10 10zm0-2a8 8 0 1 1 0-16 8 8 0 0 1 0 16z",
+    opacity: ".35",
+    viewBox: "0 0 24 24"
+  };
+  const sizeStyle = iconSize
+    ? `font-size: ${iconSize}; width: ${iconSize}; height: ${iconSize};`
     : "";
-  const sizeAttr = node.attrs.find(a => a.name === "size");
-  const iconSize = sizeAttr
-    ? (sizeAttr.kind === "static" ? sizeAttr.value : String(evaluateExpression(sizeAttr.value, context.scope, locals) ?? ""))
-    : "";
+  const mergedStyle = [sizeStyle, customStyle].filter(Boolean).join(" ");
 
   const attrs: string[] = [
-    'class="resux-icon"',
+    `class="${escapeAttribute(["resux-icon", className].filter(Boolean).join(" "))}"`,
     `data-icon-name="${escapeAttribute(iconName)}"`
   ];
-
-  if (iconSize) {
-    attrs.push(`style="font-size: ${escapeAttribute(iconSize)}; width: ${escapeAttribute(iconSize)}; height: ${escapeAttribute(iconSize)};"`);
+  if (!registryData) {
+    attrs.push('data-icon-fallback="true"');
   }
-
+  if (mergedStyle) {
+    attrs.push(`style="${escapeAttribute(mergedStyle)}"`);
+  }
+  if (props.title) {
+    attrs.push(`title="${escapeAttribute(String(props.title))}"`);
+  }
   appendStyleScopeAttribute(attrs, context.styleScopeId);
 
-  const svgInside = `<svg data-icon-name="${escapeAttribute(iconName)}" viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor"><path d="M12 2L2 22h20L12 2z"/></svg>`;
+  const paths = (data.paths?.length ? data.paths : [{ d: data.path || "", opacity: data.opacity }])
+    .map((entry) => {
+      const pathAttrs = [
+        `d="${escapeAttribute(entry.d)}"`,
+        `fill-rule="${escapeAttribute(entry.fillRule || "nonzero")}"`,
+        `clip-rule="${escapeAttribute(entry.clipRule || "nonzero")}"`,
+      ];
+      if (entry.opacity) pathAttrs.push(`opacity="${escapeAttribute(entry.opacity)}"`);
+      if (entry.fill) pathAttrs.push(`fill="${escapeAttribute(entry.fill)}"`);
+      if (entry.stroke) pathAttrs.push(`stroke="${escapeAttribute(entry.stroke)}"`);
+      if (entry.strokeWidth) pathAttrs.push(`stroke-width="${escapeAttribute(entry.strokeWidth)}"`);
+      if (entry.strokeLinecap) pathAttrs.push(`stroke-linecap="${escapeAttribute(entry.strokeLinecap)}"`);
+      if (entry.strokeLinejoin) pathAttrs.push(`stroke-linejoin="${escapeAttribute(entry.strokeLinejoin)}"`);
+      return `<path ${pathAttrs.join(" ")}></path>`;
+    })
+    .join("");
+  const svgInside = `<svg data-icon-name="${escapeAttribute(iconName)}" viewBox="${escapeAttribute(data.viewBox || "0 0 24 24")}" width="1em" height="1em" fill="currentColor" aria-hidden="true">${paths}</svg>`;
   return `<span ${attrs.join(" ")}>${svgInside}</span>`;
 }
 
@@ -7195,6 +7225,8 @@ function mergeHead(entries: HeadEntry[]): HeadEntry {
     meta: [],
     link: [],
     style: [],
+    script: [],
+    noscript: [],
     htmlAttrs: {},
     bodyAttrs: {}
   };
@@ -7211,6 +7243,12 @@ function mergeHead(entries: HeadEntry[]): HeadEntry {
     }
     if (entry.style) {
       merged.style!.push(...entry.style);
+    }
+    if (entry.script) {
+      merged.script!.push(...entry.script);
+    }
+    if (entry.noscript) {
+      merged.noscript!.push(...entry.noscript);
     }
     if (entry.htmlAttrs) {
       merged.htmlAttrs = {
@@ -7265,7 +7303,58 @@ function renderHead(head: HeadEntry): string {
     tags.push(`<style data-rx-head="true"${styleIdAttr}>${cssContent}</style>`);
   }
 
+  for (const noscript of head.noscript ?? []) {
+    const rendered = renderHeadNoscript(noscript);
+    if (rendered) tags.push(rendered);
+  }
+
+  for (const script of head.script ?? []) {
+    const rendered = renderHeadScript(script);
+    if (rendered) tags.push(rendered);
+  }
+
   return tags.join("");
+}
+
+function renderHeadScript(entry: Record<string, unknown>): string {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return "";
+  }
+  const attributes = { ...entry };
+  const innerHTML = String(attributes.innerHTML ?? attributes.children ?? "");
+  delete attributes.innerHTML;
+  delete attributes.children;
+  const renderedAttributes = renderAttributes(attributes);
+  const attrText = renderedAttributes ? ` ${renderedAttributes}` : "";
+  return `<script data-rx-head="true"${attrText}>${escapeScriptContent(innerHTML)}</script>`;
+}
+
+function renderHeadNoscript(entry: Record<string, unknown> | string): string {
+  if (typeof entry === "string") {
+    return `<noscript data-rx-head="true">${escapeHtml(entry)}</noscript>`;
+  }
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return "";
+  }
+
+  const links = Array.isArray(entry.link)
+    ? entry.link
+      .filter((link): link is Record<string, unknown> => Boolean(link) && typeof link === "object" && !Array.isArray(link))
+      .map((link) => `<link ${renderAttributes(link)}>`)
+      .join("")
+    : "";
+  const raw = entry.innerHTML === undefined
+    ? ""
+    : escapeNoscriptContent(String(entry.innerHTML));
+  return `<noscript data-rx-head="true">${links}${raw}</noscript>`;
+}
+
+function escapeScriptContent(source: string): string {
+  return source.replace(/<\/script/gi, "<\\/script");
+}
+
+function escapeNoscriptContent(source: string): string {
+  return source.replace(/<\/noscript/gi, "<\\/noscript");
 }
 
 function sortHeadLinksForPriority(links: Record<string, string>[]): Record<string, string>[] {

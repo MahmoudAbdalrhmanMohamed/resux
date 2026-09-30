@@ -4,6 +4,19 @@ All notable changes to Resux are documented here.
 
 Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaking API changes when they are clearly documented.
 
+## [0.4.0-beta.6] - 2026-09-30
+
+### Head attribute serialization
+
+- Fixed object-valued `htmlAttrs` and `bodyAttrs` styles rendering as `[object Object]` during SSR.
+- Added CSS style-object serialization with camelCase-to-kebab-case conversion and CSS custom-property preservation.
+- Added class object/array normalization for head attributes and omission of null/undefined/false attribute values.
+- Added regression coverage for the production Idea Store case using `bodyAttrs.style: { direction, overflowX }`.
+
+### Validation
+
+- Revalidated Production Quality Gates, Node.js 20.19 and 22, Windows and macOS portability, all template suites, and Node/static/Vercel/Netlify/Cloudflare deployment targets.
+
 ## [0.4.0-beta.5] - 2026-09-30
 
 ### Vercel portability and rendering

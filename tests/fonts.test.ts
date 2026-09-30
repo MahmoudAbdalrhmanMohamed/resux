@@ -337,6 +337,98 @@ describe("fonts module", () => {
     });
   });
 
+  it("keeps custom font CSS available to client head updates", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        families: [
+          { name: "Ideal Sans", provider: "local", src: "/fonts/ideal.woff2" }
+        ]
+      },
+      resux as any
+    );
+
+    const style = headList[0].style?.[0];
+    expect(style.id).toBe("resux-custom-font-faces");
+    expect(style.css).toContain('@font-face { font-family: "Ideal Sans"');
+    expect(style.children).toBe(style.css);
+  });
+
+  it("defers lazy custom faces until the page load loader runs", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        families: [
+          {
+            name: "Deferred Sans",
+            provider: "local",
+            src: "/fonts/deferred.woff2",
+            strategy: "lazy"
+          }
+        ]
+      },
+      resux as any
+    );
+
+    expect(headList[0].style).toBeUndefined();
+    expect(headList[0].link).toEqual([]);
+    const loader = headList[0].script?.find((entry: any) => entry["data-resux-font-lazy-custom-loader"] === "true");
+    expect(loader?.innerHTML).toContain("data-resux-font-lazy-runtime");
+    expect(loader?.innerHTML).toContain("@font-face");
+    expect(loader?.innerHTML).toContain("/fonts/deferred.woff2");
+  });
+
+  it("orders sources and preloads the same preferred face", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        families: [
+          {
+            name: "Ordered Sans",
+            provider: "local",
+            faces: [{
+              src: [
+                { url: "/fonts/ordered.woff", format: "woff" },
+                { url: "/fonts/ordered.woff2", format: "woff2" }
+              ],
+              preload: true
+            }]
+          }
+        ]
+      },
+      resux as any
+    );
+
+    const css = headList[0].style?.[0]?.children ?? "";
+    expect(css.indexOf("ordered.woff2")).toBeLessThan(css.indexOf("ordered.woff"));
+    expect(headList[0].link).toContainEqual({
+      rel: "preload",
+      as: "font",
+      href: "/fonts/ordered.woff2",
+      crossorigin: "",
+      type: "font/woff2"
+    });
+  });
+
+  it("rejects invalid unicode ranges instead of widening a font face", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        families: [
+          {
+            name: "Subset Sans",
+            provider: "local",
+            src: "/fonts/subset.woff2",
+            unicodeRange: "U+?A"
+          }
+        ]
+      },
+      resux as any
+    );
+
+    expect(headList).toHaveLength(0);
+  });
+
   it("rejects unsafe custom font URLs", () => {
     const { headList, resux } = createMockResux();
     fontsModule.setup(

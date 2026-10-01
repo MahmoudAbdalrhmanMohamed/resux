@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Window } from "happy-dom";
 import { describe, expect, it, vi } from "vitest";
+import { iconRegistry } from "resuxjs/icons";
 import {
   createServerSetupContext,
   defineComponent,
@@ -23,6 +24,55 @@ function nextRuntimeImportQuery() {
 }
 
 describe("runtime SSR", () => {
+  it("renders icon root presentation attributes consistently during SSR", async () => {
+    const name = "audit-suite:ssr-outline";
+    iconRegistry[name] = {
+      path: "M3 3h18v18H3z",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "1.5",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      fillRule: "evenodd",
+      clipRule: "evenodd",
+      opacity: ".7",
+      viewBox: "0 0 24 24",
+    };
+
+    try {
+      const page: ComponentDefinition = defineComponent({
+        id: "m-icon-root-presentation",
+        name: "IconRootPresentation",
+        file: "IconRootPresentation.vue",
+        handlers: [],
+        async script() { return {}; },
+        template: [{
+          type: "element",
+          tag: "Icon",
+          attrs: [{ kind: "static", name: "name", value: name }],
+          events: [],
+          children: [],
+        }],
+      });
+
+      const result = await renderApp({
+        page,
+        route: { path: "/", params: {}, query: {} },
+      });
+
+      expect(result.html).toContain('fill="none"');
+      expect(result.html).toContain('stroke="currentColor"');
+      expect(result.html).toContain('stroke-width="1.5"');
+      expect(result.html).toContain('stroke-linecap="round"');
+      expect(result.html).toContain('fill-rule="evenodd"');
+      expect(result.html).toContain('clip-rule="evenodd"');
+      expect(result.html.match(/opacity=".7"/g)).toHaveLength(1);
+    } finally {
+      delete iconRegistry[name];
+    }
+  });
+
+
   it("unwraps reactive values passed to useHead", async () => {
     const page: ComponentDefinition = defineComponent({
       id: "m-head-ref",

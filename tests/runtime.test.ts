@@ -2613,6 +2613,8 @@ export const clientEnhancements = ["package-error-demo"];
     });
 
     await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+    await waitForCondition(() => Boolean(window.document.getElementById("inner-layout-target")?.querySelector("#layout-menu-action")));
+    expect(window.document.getElementById("layout")?.querySelector("[data-rx-on-click^='s0:']")).toBeNull();
     window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -2725,7 +2727,7 @@ async function script(ctx) {
   function toggle() { visible.value = !visible.value; }
   function ping() { hits.value += 1; }
   function move() { target.value = target.value === "#teleports" ? "#alternate-teleports" : "#teleports"; }
-  function toggleDisabled() { disabled.value = !disabled.value; }
+  function toggleDisabled() { disabled.value = disabled.value === false ? "" : false; }
   return { visible, hits, target, disabled, toggle, ping, move, toggleDisabled };
 }
 export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "TeleportPanel.vue", script, template, handlers: ["toggle", "ping", "move", "toggleDisabled"] });
@@ -4996,12 +4998,21 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     window.document.body.innerHTML = `
       <div id="__resux">
         <span data-rx-layout="default">
-          <section id="layout" data-rx-text="s0:b0">
+          <section id="layout">
             <nav><a href="/about">About</a></nav>
+            <span data-rx-teleport-source="true" data-rx-teleport-to="#outer-layout-target" style="display: contents;">
+              <div id="outer-layout-shell">
+                <span data-rx-teleport-source="true" data-rx-teleport-to="#inner-layout-target" style="display: contents;">
+                  <button id="layout-menu-action" data-rx-on-click="s0:layout:toggle">Menu</button>
+                </span>
+              </div>
+            </span>
             <span data-rx-page=""><main>Home</main></span>
           </section>
         </span>
       </div>
+      <div id="outer-layout-target"></div>
+      <div id="inner-layout-target"></div>
     `;
     const layoutElement = window.document.getElementById("layout");
 
@@ -5015,8 +5026,15 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
         JSON.stringify({
           html: `
             <span data-rx-layout="default">
-              <section id="layout" data-rx-text="s0:b0">
+              <section id="layout">
                 <nav><a href="/">Home</a></nav>
+                <span data-rx-teleport-source="true" data-rx-teleport-to="#outer-layout-target" style="display: contents;">
+                  <div id="outer-layout-shell">
+                    <span data-rx-teleport-source="true" data-rx-teleport-to="#inner-layout-target" style="display: contents;">
+                      <button id="layout-menu-action" data-rx-on-click="s0:layout:toggle">Menu</button>
+                    </span>
+                  </div>
+                </span>
                 <span data-rx-page=""><main>About</main></span>
               </section>
             </span>

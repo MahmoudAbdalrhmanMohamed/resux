@@ -16830,6 +16830,210 @@ function nativeAttributeName(node, name) {
   return name;
 }
 
+const activeCssTransitions = new WeakMap();
+const reactiveBlockTransitionRevisions = new WeakMap();
+
+function transitionBoundaryFor(element) {
+  return element && element.closest ? element.closest("[data-rx-transition]") : null;
+}
+
+function transitionNameFromBoundary(boundary) {
+  const candidate = String(boundary?.getAttribute?.("data-rx-transition") || "v").trim();
+  return /^[A-Za-z0-9_-]+$/.test(candidate) ? candidate : "v";
+}
+
+function transitionReducedMotion() {
+  return typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function cssTimeTokenMs(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return 0;
+  const parsed = Number.parseFloat(normalized);
+  if (!Number.isFinite(parsed)) return 0;
+  return normalized.endsWith("ms") ? parsed : parsed * 1000;
+}
+
+function maxCssMotionTime(durationValue, delayValue) {
+  const durations = String(durationValue || "0s").split(",").map(cssTimeTokenMs);
+  const delays = String(delayValue || "0s").split(",").map(cssTimeTokenMs);
+  const length = Math.max(durations.length, delays.length);
+  let max = 0;
+  for (let index = 0; index < length; index += 1) {
+    const duration = durations[index % durations.length] || 0;
+    const delay = delays[index % delays.length] || 0;
+    max = Math.max(max, duration + delay);
+  }
+  return max;
+}
+
+function cssMotionTime(element) {
+  if (typeof window === "undefined" || typeof window.getComputedStyle !== "function") return 0;
+  const style = window.getComputedStyle(element);
+  return Math.max(
+    maxCssMotionTime(style.transitionDuration, style.transitionDelay),
+    maxCssMotionTime(style.animationDuration, style.animationDelay)
+  );
+}
+
+function cancelCssTransition(element) {
+  const active = activeCssTransitions.get(element);
+  if (active) active.cancel();
+}
+
+function runCssTransition(element, name, phase, onDone) {
+  cancelCssTransition(element);
+  if (!element || !element.classList || transitionReducedMotion()) {
+    onDone?.();
+    return;
+  }
+
+  const fromClass = name + "-" + phase + "-from";
+  const activeClass = name + "-" + phase + "-active";
+  const toClass = name + "-" + phase + "-to";
+  let timer = 0;
+  let cancelled = false;
+
+  const cleanup = () => {
+    element.classList.remove(fromClass, activeClass, toClass);
+  };
+  const finish = () => {
+    if (cancelled) return;
+    cleanup();
+    activeCssTransitions.delete(element);
+    onDone?.();
+  };
+  const cancel = () => {
+    cancelled = true;
+    if (timer) window.clearTimeout(timer);
+    cleanup();
+    if (activeCssTransitions.get(element)?.cancel === cancel) {
+      activeCssTransitions.delete(element);
+    }
+  };
+
+  activeCssTransitions.set(element, { cancel });
+  element.classList.add(fromClass, activeClass);
+  element.getBoundingClientRect?.();
+  element.classList.remove(fromClass);
+  element.classList.add(toClass);
+  timer = window.setTimeout(finish, Math.max(16, cssMotionTime(element) + 32));
+}
+
+function refreshPatchedBlock(element, value) {
+  unmountVueIslands(element);
+  element.innerHTML = value;
+  void mountVueIslands(element);
+  activateDeferredLazyMedia(element);
+  applyReducedMotionVideoPreference(element);
+  initializeManagedVideoControls(element);
+  registerDelegatedEventsFromDom(element);
+}
+
+function transitionChildKey(element) {
+  return element?.getAttribute?.("key") || element?.getAttribute?.("data-key") || "";
+}
+
+function patchTransitionGroup(element, value, boundary, revision) {
+  const name = transitionNameFromBoundary(boundary);
+  const oldChildren = Array.from(element.children || []);
+  oldChildren.forEach(cancelCssTransition);
+  const oldKeys = new Map();
+  for (const child of oldChildren) {
+    const key = transitionChildKey(child);
+    if (key) oldKeys.set(key, child);
+  }
+
+  const template = document.createElement("template");
+  template.innerHTML = value;
+  const nextElements = Array.from(template.content.children || []);
+  const nextKeys = new Set(nextElements.map(transitionChildKey).filter(Boolean));
+  const removed = [...oldKeys.entries()]
+    .filter(([key]) => !nextKeys.has(key))
+    .map(([, child]) => child);
+
+  const commit = () => {
+    if (reactiveBlockTransitionRevisions.get(element) !== revision) return;
+    refreshPatchedBlock(element, value);
+    const nextChildren = Array.from(element.children || []);
+    for (const child of nextChildren) {
+      const key = transitionChildKey(child);
+      if ((key && !oldKeys.has(key)) || (oldChildren.length === 0 && !key)) {
+        runCssTransition(child, name, "enter");
+      }
+    }
+  };
+
+  if (!removed.length || transitionReducedMotion()) {
+    commit();
+    return;
+  }
+
+  let pending = removed.length;
+  const finishOne = () => {
+    pending -= 1;
+    if (pending === 0) commit();
+  };
+  for (const child of removed) {
+    runCssTransition(child, name, "leave", finishOne);
+  }
+}
+
+function patchTransitionBlock(element, value) {
+  const boundary = transitionBoundaryFor(element);
+  if (!boundary) return false;
+
+  const revision = (reactiveBlockTransitionRevisions.get(element) || 0) + 1;
+  reactiveBlockTransitionRevisions.set(element, revision);
+
+  if (boundary.getAttribute("data-rx-transition-group") === "true") {
+    patchTransitionGroup(element, value, boundary, revision);
+    return true;
+  }
+
+  const hadContent = Boolean(element.firstElementChild || String(element.textContent || "").trim());
+  const hasContent = String(value || "").trim().length > 0;
+  const name = transitionNameFromBoundary(boundary);
+  const current = element.firstElementChild;
+  if (current) cancelCssTransition(current);
+
+  if (hadContent && !hasContent && current) {
+    runCssTransition(current, name, "leave", () => {
+      if (reactiveBlockTransitionRevisions.get(element) === revision) {
+        refreshPatchedBlock(element, value);
+      }
+    });
+    return true;
+  }
+
+  refreshPatchedBlock(element, value);
+  if (!hadContent && hasContent) {
+    const entered = element.firstElementChild;
+    if (entered) runCssTransition(entered, name, "enter");
+  }
+  return true;
+}
+
+function patchTransitionVisibility(element, shouldHide) {
+  const boundary = transitionBoundaryFor(element);
+  if (!boundary || boundary.getAttribute("data-rx-transition-group") === "true") return false;
+
+  const name = transitionNameFromBoundary(boundary);
+  cancelCssTransition(element);
+  if (shouldHide) {
+    if (element.hasAttribute("hidden")) return true;
+    runCssTransition(element, name, "leave", () => element.setAttribute("hidden", "true"));
+    return true;
+  }
+
+  const wasHidden = element.hasAttribute("hidden");
+  element.removeAttribute("hidden");
+  if (wasHidden) runCssTransition(element, name, "enter");
+  return true;
+}
+
 function applyPatches(scopeId, patches) {
   let needsLazyImageActivation = false;
   let needsDelegatedEventRegistration = false;
@@ -16842,7 +17046,11 @@ function applyPatches(scopeId, patches) {
     }
     if (patch.type === "attr") {
       document.querySelectorAll('[data-rx-attr-' + patch.id + '="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
-        if (patch.value === "" || patch.value === "false" || patch.value == null) {
+        const removeAttribute = patch.value === "" || patch.value === "false" || patch.value == null;
+        if (patch.attr === "hidden" && patchTransitionVisibility(element, !removeAttribute)) {
+          return;
+        }
+        if (removeAttribute) {
           element.removeAttribute(patch.attr);
           if (patch.attr === "checked" && "checked" in element) {
             element.checked = false;
@@ -16870,6 +17078,9 @@ function applyPatches(scopeId, patches) {
       continue;
     }
     document.querySelectorAll('[data-rx-block="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
+      if (patchTransitionBlock(element, patch.value)) {
+        return;
+      }
       unmountVueIslands(element);
       element.innerHTML = patch.value;
       void mountVueIslands(element);

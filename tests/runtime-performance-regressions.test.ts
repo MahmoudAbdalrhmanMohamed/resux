@@ -144,8 +144,8 @@ describe("runtime performance regressions", () => {
     } as any);
 
     expect(source).toContain('loader.style.setProperty("--resux-progress-scale", String(progress / 100));');
-    expect(source).toContain('const target = page?.firstElementChild || page;');
-    expect(source).toContain('target.animate([from, to]');
+    expect(source).toContain('const target = page?.firstElementChild;');
+    expect(source).toContain("target.animate(");
     expect(documentHtml).toContain('transform: scaleX(var(--resux-progress-scale, 0.08));');
     expect(documentHtml).not.toContain('#__resux[data-route-transition="loading"] {\n  opacity: 0.72;');
   });

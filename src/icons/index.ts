@@ -180,43 +180,10 @@ export function fetchIconifyIcon(
       if (!response.ok) return null;
       const svgText = await readBoundedIconSvg(response);
       if (!svgText) return null;
-      const viewBox = readSvgAttribute(svgText, "viewBox") || "0 0 24 24";
-      const paths = [...svgText.matchAll(/<path\b[^>]*>/gi)]
-        .slice(0, 128)
-        .map((match) => {
-          const source = match[0];
-          const entry = {
-            d: readSvgAttribute(source, "d").slice(0, 65_536),
-          } as IconPathData;
-          const attributes = [
-            ["opacity", "opacity"],
-            ["fill", "fill"],
-            ["stroke", "stroke"],
-            ["stroke-width", "strokeWidth"],
-            ["stroke-linecap", "strokeLinecap"],
-            ["stroke-linejoin", "strokeLinejoin"],
-            ["fill-rule", "fillRule"],
-            ["clip-rule", "clipRule"],
-          ] as const;
-          for (const [attributeName, propertyName] of attributes) {
-            const value = readSvgAttribute(source, attributeName);
-            if (value) {
-              entry[propertyName] = value;
-            }
-          }
-          return entry;
-        })
-        .filter((entry) => Boolean(entry.d));
-      if (!paths.length) {
+      const data = parseFetchedIconSvg(svgText);
+      if (!data) {
         return null;
       }
-      const svgRoot = /<svg\b[^>]*>/i.exec(svgText)?.[0] || "";
-      const data: IconData = {
-        path: paths[0].d,
-        paths,
-        viewBox,
-        ...readSvgPresentationAttributes(svgRoot),
-      };
       rememberFetchedIcon(cacheKey, data);
       return data;
     } catch {
@@ -233,16 +200,9 @@ export function fetchIconifyIcon(
 }
 
 function readSvgAttribute(source: string, name: string): string {
-  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\function readSvgAttribute(source: string, name: string): string {
-  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = new RegExp(
-    String.raw`\b${escapedName}\s*=\s*(?:"([^"]*)"|'([^']*)')`,
-    "i",
-  ).exec(source);
-  return (match?.[1] ?? match?.[2] ?? "").trim();
-}`);
-  const match = new RegExp(
-    String.raw`\b${escapedName}\s*=\s*(?:"([^"]*)"|'([^']*)')`,
+    String.raw`\\b${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`,
     "i",
   ).exec(source);
   return (match?.[1] ?? match?.[2] ?? "").trim();
@@ -262,11 +222,62 @@ function readSvgPresentationAttributes(source: string): Partial<IconData> {
   ] as const;
   for (const [attributeName, propertyName] of attributes) {
     const value = readSvgAttribute(source, attributeName);
-    if (value) {
-      output[propertyName] = value;
-    }
+    if (value) output[propertyName] = value;
   }
   return output;
+}
+
+function inheritedSvgPresentation(source: string): Partial<IconData> {
+  const { opacity: _opacity, ...inherited } = readSvgPresentationAttributes(source);
+  return inherited;
+}
+
+function parseFetchedIconSvg(svgText: string): IconData | null {
+  const svgRoot = /<svg\b[^>]*>/i.exec(svgText)?.[0];
+  if (!svgRoot) return null;
+
+  const rootPresentation = readSvgPresentationAttributes(svgRoot);
+  const inheritedStack: Array<Partial<IconData>> = [inheritedSvgPresentation(svgRoot)];
+  const paths: IconPathData[] = [];
+
+  for (const match of svgText.matchAll(/<\/?(?:svg|g|path)\b[^>]*>/gi)) {
+    const source = match[0];
+    const closing = /^<\//.test(source);
+    const tag = /^<\/?([A-Za-z]+)/.exec(source)?.[1]?.toLowerCase();
+    if (!tag || tag === "svg") continue;
+
+    if (tag === "g") {
+      if (closing) {
+        if (inheritedStack.length > 1) inheritedStack.pop();
+      } else {
+        inheritedStack.push({
+          ...inheritedStack[inheritedStack.length - 1],
+          ...inheritedSvgPresentation(source),
+        });
+        if (/\/\s*>$/.test(source) && inheritedStack.length > 1) {
+          inheritedStack.pop();
+        }
+      }
+      continue;
+    }
+
+    if (closing || paths.length >= 128) continue;
+    const d = readSvgAttribute(source, "d").slice(0, 65_536);
+    if (!d) continue;
+    paths.push({
+      d,
+      ...inheritedStack[inheritedStack.length - 1],
+      ...readSvgPresentationAttributes(source),
+    });
+  }
+
+  if (!paths.length) return null;
+  return {
+    path: paths[0].d,
+    paths,
+    viewBox: readSvgAttribute(svgRoot, "viewBox") || "0 0 24 24",
+    ...rootPresentation,
+  };
 }
 
 export const Icon = defineComponent({
@@ -385,7 +396,7 @@ export const Icon = defineComponent({
           "stroke-linejoin": data.strokeLinejoin,
           "fill-rule": data.fillRule,
           "clip-rule": data.clipRule,
-          opacity: data.opacity,
+          opacity: data.paths?.length ? data.opacity : undefined,
           class: ["inline-block shrink-0 align-middle", props.class].filter(Boolean).join(" "),
           style: { width: sizeValue.value, height: sizeValue.value },
           "aria-hidden": "true",
@@ -402,9 +413,9 @@ export const Icon = defineComponent({
             "stroke-width": entry.strokeWidth,
             "stroke-linecap": entry.strokeLinecap,
             "stroke-linejoin": entry.strokeLinejoin,
-            "fill-rule": entry.fillRule || "nonzero",
-            "clip-rule": entry.clipRule || "nonzero",
-            opacity: entry.opacity || "1"
+            "fill-rule": entry.fillRule || data.fillRule || "nonzero",
+            "clip-rule": entry.clipRule || data.clipRule || "nonzero",
+            opacity: entry.opacity
           }))
       );
     };

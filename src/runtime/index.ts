@@ -15108,11 +15108,7 @@ function renderNode(node, scope, locals, styleScopeId, scopeId, moduleId) {
   return renderElement(node, scope, locals, styleScopeId, scopeId, moduleId);
 }
 
-const unsafeClientTransitionContainerTags = new Set([
-  "area", "base", "body", "br", "col", "embed", "head", "hr", "html", "iframe",
-  "img", "input", "link", "meta", "object", "param", "script", "source", "style",
-  "template", "title", "track", "wbr"
-]);
+const unsafeClientTransitionContainerTags = new Set(${JSON.stringify([...unsafeTransitionContainerTags])});
 
 function normalizeClientTransitionName(value) {
   const candidate = String(value || "v").trim();

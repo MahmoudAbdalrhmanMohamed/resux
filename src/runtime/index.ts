@@ -14308,14 +14308,6 @@ function mountManagedTeleports(root = document) {
   }
 }
 
-function mountDeferredManagedTeleports(root = document) {
-  for (const source of managedTeleportSources(root)) {
-    if (source.getAttribute("data-rx-teleport-defer") === "true") {
-      syncManagedTeleportSource(source);
-    }
-  }
-}
-
 function cleanupManagedTeleportSource(source) {
   const content = managedTeleportContent.get(source);
   if (!content) return;
@@ -17609,7 +17601,11 @@ function applyPatches(scopeId, patches) {
             element.checked = true;
           }
         }
-        if (patch.attr === "data-rx-teleport-to" || patch.attr === "data-rx-teleport-disabled") {
+        if (
+          patch.attr === "data-rx-teleport-to"
+          || patch.attr === "data-rx-teleport-disabled"
+          || patch.attr === "data-rx-teleport-defer"
+        ) {
           syncManagedTeleportSource(element);
         }
       });
@@ -17640,6 +17636,10 @@ function applyPatches(scopeId, patches) {
       needsDelegatedEventRegistration = true;
     });
   }
+  // Retry after the full patch batch so deferred Teleports can resolve targets
+  // created by a later patch in the same reactive tick.
+  mountManagedTeleports(document);
+
   if (needsLazyImageActivation) {
     activateDeferredLazyMedia();
     applyReducedMotionVideoPreference();

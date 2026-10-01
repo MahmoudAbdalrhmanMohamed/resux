@@ -4,7 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
-import { getClientRuntimeSource } from "../src/runtime/index.js";
+import { getClientRuntimeSource, renderDocument } from "../src/runtime/index.js";
 
 async function waitForClientText(window: Window, expected: string) {
   const deadline = Date.now() + 2_000;
@@ -133,6 +133,21 @@ describe("runtime performance regressions", () => {
     expect(source).toContain("countInFlightRoutePrefetches() >= ROUTE_PREFETCH_MAX_IN_FLIGHT");
     expect(source).toContain("setBoundedRouteMapEntry(routePayloadCache, key, result, ROUTE_PAYLOAD_CACHE_MAX_ENTRIES);");
     expect(source).toContain("}, ROUTE_PAYLOAD_FAILURE_MAX_ENTRIES);");
+  });
+
+  it("keeps route transitions compositor-only and avoids dimming the entire app", () => {
+    const source = getClientRuntimeSource();
+    const documentHtml = renderDocument({
+      html: "<main>Home</main>",
+      head: {},
+      payload: { route: { path: "/", params: {}, query: {} }, scopes: {}, modules: {} }
+    } as any);
+
+    expect(source).toContain('loader.style.setProperty("--resux-progress-scale", String(progress / 100));');
+    expect(source).toContain('const target = page?.firstElementChild;');
+    expect(source).toContain("target.animate(");
+    expect(documentHtml).toContain('transform: scaleX(var(--resux-progress-scale, 0.08));');
+    expect(documentHtml).not.toContain('#__resux[data-route-transition="loading"] {\n  opacity: 0.72;');
   });
 
   it("hydrates i18n from public route payload config without module side effects", () => {

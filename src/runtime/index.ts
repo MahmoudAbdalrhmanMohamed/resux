@@ -2592,11 +2592,17 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
 }
 [data-rx-loading-indicator] .rx-loading-progress {
   display: block;
-  width: var(--resux-progress, 8%);
+  width: 100%;
   height: 100%;
+  transform: scaleX(var(--resux-progress-scale, 0.08));
+  transform-origin: left center;
+  will-change: transform;
   background: var(--resux-loader-color, #2563eb);
   box-shadow: 0 0 18px rgba(37, 99, 235, 0.45);
-  transition: width 160ms ease, background 160ms ease;
+  transition: transform 160ms ease, background 160ms ease;
+}
+html[dir="rtl"] [data-rx-loading-indicator] .rx-loading-progress {
+  transform-origin: right center;
 }
 [data-rx-loading-indicator] .rx-loading-slot {
   width: fit-content;
@@ -2616,13 +2622,8 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
 [data-rx-loading-indicator][data-state="complete"] .rx-loading-progress {
   background: #16a34a;
 }
-#__resux[data-route-transition="loading"] {
-  opacity: 0.72;
-  transition: opacity 120ms ease;
-}
 @media (prefers-reduced-motion: reduce) {
-  [data-rx-loading-indicator] .rx-loading-progress,
-  #__resux[data-route-transition="loading"] {
+  [data-rx-loading-indicator] .rx-loading-progress {
     transition: none;
   }
 }
@@ -13551,6 +13552,7 @@ function updateRouteTransitionUi(loader, state, progress, message) {
 
   loader.dataset.state = state;
   loader.style.setProperty("--resux-progress", progress + "%");
+  loader.style.setProperty("--resux-progress-scale", String(progress / 100));
   loader.setAttribute("aria-busy", state === "idle" || state === "complete" || state === "error" ? "false" : "true");
 
   const progressbar = loader.querySelector("[role='progressbar']");
@@ -13904,6 +13906,7 @@ async function navigateTo(target, options = {}) {
     );
     getClientResuxApp(globalThis.__RESUX__.route);
     applyHead(result.head);
+    animateRouteSwap(preserved.root);
     clearScopeCacheExcept(preserved.scopeIds);
     void resumePendingAsyncData();
     void mountVueIslands(preserved.root);
@@ -13993,6 +13996,25 @@ function replaceRouteHtml(root, html, preserveLayout = true) {
   unmountVueIslands(currentPage);
   currentPage.innerHTML = nextPage.innerHTML;
   return { root: currentPage, scopeIds: preservedScopeIds };
+}
+
+function animateRouteSwap(root) {
+  const page = root?.matches?.("[data-rx-page]") ? root : root?.querySelector?.("[data-rx-page]");
+  const target = page?.firstElementChild;
+  if (
+    !target
+    || typeof target.animate !== "function"
+    || window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
+  ) {
+    return;
+  }
+  target.animate(
+    [
+      { opacity: 0.86, transform: "translate3d(0, 8px, 0)" },
+      { opacity: 1, transform: "translate3d(0, 0, 0)" }
+    ],
+    { duration: 180, easing: "cubic-bezier(0.22, 1, 0.36, 1)" }
+  );
 }
 
 function didClientLocaleChange(previousPayload, nextPayload) {

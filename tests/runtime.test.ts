@@ -95,6 +95,43 @@ describe("runtime SSR", () => {
     expect(result.html).not.toContain("[object Object]");
   });
 
+
+  it("renders Vue-style transition boundaries without native transition tags and retains false-state patch markers", async () => {
+    const page: ComponentDefinition = defineComponent({
+      id: "m-transition-ssr",
+      name: "TransitionSsrPage",
+      file: "TransitionSsrPage.vue",
+      handlers: [],
+      async script(ctx) {
+        const visible = ctx.useState("visible", () => true);
+        return { visible };
+      },
+      template: [{
+        type: "element",
+        tag: "transition",
+        attrs: [{ kind: "static", name: "name", value: "fade" }],
+        events: [],
+        children: [{
+          type: "element",
+          tag: "div",
+          attrs: [{ kind: "dynamic", name: "hidden", value: "!visible.value", bindingId: "b0" }],
+          events: [],
+          children: [{ type: "text", value: "Panel" }],
+        }],
+      }],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/", params: {}, query: {} },
+    });
+
+    expect(result.html).toContain('data-rx-transition="fade"');
+    expect(result.html).toContain('data-rx-attr-b0="s0:b0"');
+    expect(result.html).not.toContain("<transition");
+    expect(result.html).not.toContain('hidden="false"');
+  });
+
   it("renders HTML and serialized state without eagerly loading handler chunks", async () => {
     const page: ComponentDefinition = defineComponent({
       id: "m0",
@@ -2378,6 +2415,99 @@ export const clientEnhancements = ["package-error-demo"];
     expect(fetchCalls).toBe(0);
     expect(window.location.pathname).toBe("/");
     expect(window.document.getElementById("__resux")?.innerHTML).toContain("<main>Home</main>");
+  });
+
+  it("animates conditional blocks and keeps inserted resumable handlers fully scoped", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-transition-block-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const handlerFile = path.join(tempDir, "transition-handler.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+    const runtimeUrl = pathToFileURL(runtimeFile).href;
+
+    await writeFile(
+      handlerFile,
+      `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "toggle" }], children: [{ type: "text", value: "Toggle" }] },
+  { type: "element", tag: "transition", attrs: [{ kind: "static", name: "name", value: "fade" }], events: [], children: [
+    { type: "element", tag: "div", attrs: [], events: [], if: { expression: "visible.value", blockId: "b0" }, children: [
+      { type: "element", tag: "button", attrs: [{ kind: "dynamic", name: "disabled", value: "locked.value", bindingId: "b1" }], events: [{ name: "click", handler: "ping" }], children: [
+        { type: "interpolation", expression: "hits.value", bindingId: "b2" }
+      ] }
+    ] }
+  ] }
+];
+async function script(ctx) {
+  const visible = ctx.useState("visible", () => false);
+  const locked = ctx.useState("locked", () => false);
+  const hits = ctx.useState("hits", () => 0);
+  function toggle() { visible.value = !visible.value; }
+  function ping() { hits.value += 1; }
+  return { visible, locked, hits, toggle, ping };
+}
+export default createClientComponent({ id: "m0", name: "TransitionPanel", file: "TransitionPanel.vue", script, template, handlers: ["toggle", "ping"] });
+`,
+      "utf8",
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.head.innerHTML = `<style>
+      .fade-enter-active,.fade-leave-active{transition:opacity .04s linear}
+      .fade-enter-from,.fade-leave-to{opacity:0}
+      .fade-enter-to,.fade-leave-from{opacity:1}
+    </style>`;
+    window.document.body.innerHTML = `
+      <button id="toggle" data-rx-on-click="s0:m0:toggle">Toggle</button>
+      <span data-rx-transition="fade" style="display: contents;">
+        <span data-rx-block="s0:b0" style="display: contents;"></span>
+      </span>
+    `;
+
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      scrollTo: () => undefined,
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {
+          s0: {
+            id: "s0",
+            moduleId: "m0",
+            state: { visible: false, locked: false, hits: 0 },
+            asyncData: {},
+          },
+        },
+        modules: { m0: pathToFileURL(handlerFile).href },
+      },
+      __RESUX_APP__: undefined,
+      __RESUX_ROUTER__: undefined,
+      __RESUX_INSTALLED__: false,
+    });
+
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+    window.document.getElementById("toggle")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+
+    await waitForCondition(() => Boolean(window.document.querySelector('[data-rx-on-click="s0:m0:ping"]')));
+    const inserted = window.document.querySelector('[data-rx-on-click="s0:m0:ping"]') as HTMLElement;
+    expect(inserted).toBeTruthy();
+    expect(inserted.getAttribute("data-rx-attr-b1")).toBe("s0:b1");
+    expect(window.document.querySelector('[data-rx-text="s0:b2"]')?.textContent).toBe("0");
+
+    inserted.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+    await waitForCondition(() => (globalThis as any).__RESUX__.scopes.s0.state.hits === 1);
+    expect((globalThis as any).__RESUX__.scopes.s0.state.hits).toBe(1);
+    expect(window.document.querySelector('[data-rx-text="s0:b2"]')?.textContent).toBe("1");
+
+    window.document.getElementById("toggle")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+    await waitForCondition(() => !window.document.querySelector('[data-rx-on-click="s0:m0:ping"]'));
+    expect(window.document.querySelector('[data-rx-block="s0:b0"]')?.textContent).toBe("");
   });
 
   it("resumes pending async data and patches skeleton blocks", async () => {

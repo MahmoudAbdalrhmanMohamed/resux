@@ -15396,6 +15396,10 @@ function normalizeClientTeleportTarget(value) {
   return candidate && candidate.length <= 512 ? candidate : "#teleports";
 }
 
+function isClientTeleportBooleanEnabled(value) {
+  return value === true || value === "true" || value === "";
+}
+
 function normalizeClientTransitionName(value) {
   const candidate = String(value || "v").trim();
   return /^[A-Za-z0-9_-]+$/.test(candidate) ? candidate : "v";

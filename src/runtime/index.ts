@@ -16994,12 +16994,34 @@ function maxCssMotionTime(durationValue, delayValue) {
   return max;
 }
 
+function cssAnimationIterationToken(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized || normalized === "infinite") return 1;
+  const parsed = Number.parseFloat(normalized);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 1;
+}
+
+function maxCssAnimationTime(durationValue, delayValue, iterationValue) {
+  const durations = String(durationValue || "0s").split(",").map(cssTimeTokenMs);
+  const delays = String(delayValue || "0s").split(",").map(cssTimeTokenMs);
+  const iterations = String(iterationValue || "1").split(",").map(cssAnimationIterationToken);
+  const length = Math.max(durations.length, delays.length, iterations.length);
+  let max = 0;
+  for (let index = 0; index < length; index += 1) {
+    const duration = durations[index % durations.length] || 0;
+    const delay = delays[index % delays.length] || 0;
+    const iterationsCount = iterations[index % iterations.length] ?? 1;
+    max = Math.max(max, delay + duration * iterationsCount);
+  }
+  return max;
+}
+
 function cssMotionTime(element) {
   if (typeof window === "undefined" || typeof window.getComputedStyle !== "function") return 0;
   const style = window.getComputedStyle(element);
   return Math.max(
     maxCssMotionTime(style.transitionDuration, style.transitionDelay),
-    maxCssMotionTime(style.animationDuration, style.animationDelay)
+    maxCssAnimationTime(style.animationDuration, style.animationDelay, style.animationIterationCount)
   );
 }
 
@@ -17063,6 +17085,13 @@ function transitionChildKey(element) {
 
 function patchTransitionGroup(element, value, boundary, revision) {
   const name = transitionNameFromBoundary(boundary);
+  for (const stale of Array.from(element.children || [])) {
+    if (stale.getAttribute?.("data-rx-transition-leaving") !== "true") continue;
+    cancelCssTransition(stale);
+    unmountVueIslands(stale);
+    stale.remove();
+  }
+
   const oldChildren = Array.from(element.children || []);
   oldChildren.forEach(cancelCssTransition);
   const oldKeys = new Map();
@@ -17079,30 +17108,37 @@ function patchTransitionGroup(element, value, boundary, revision) {
     .filter(([key]) => !nextKeys.has(key))
     .map(([, child]) => child);
 
-  const commit = () => {
-    if (reactiveBlockTransitionRevisions.get(element) !== revision) return;
-    refreshPatchedBlock(element, value);
-    const nextChildren = Array.from(element.children || []);
-    for (const child of nextChildren) {
-      const key = transitionChildKey(child);
-      if ((key && !oldKeys.has(key)) || (oldChildren.length === 0 && !key)) {
-        runCssTransition(child, name, "enter");
-      }
-    }
-  };
+  for (const child of removed) {
+    child.remove();
+  }
 
-  if (!removed.length || transitionReducedMotion()) {
-    commit();
+  if (reactiveBlockTransitionRevisions.get(element) !== revision) return;
+  refreshPatchedBlock(element, value);
+
+  const nextChildren = Array.from(element.children || []);
+  for (const child of nextChildren) {
+    const key = transitionChildKey(child);
+    if ((key && !oldKeys.has(key)) || (oldChildren.length === 0 && !key)) {
+      runCssTransition(child, name, "enter");
+    }
+  }
+
+  if (!removed.length) return;
+
+  if (transitionReducedMotion()) {
+    for (const child of removed) {
+      unmountVueIslands(child);
+    }
     return;
   }
 
-  let pending = removed.length;
-  const finishOne = () => {
-    pending -= 1;
-    if (pending === 0) commit();
-  };
   for (const child of removed) {
-    runCssTransition(child, name, "leave", finishOne);
+    child.setAttribute("data-rx-transition-leaving", "true");
+    element.appendChild(child);
+    runCssTransition(child, name, "leave", () => {
+      unmountVueIslands(child);
+      child.remove();
+    });
   }
 }
 

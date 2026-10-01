@@ -288,6 +288,7 @@ export const RxBadge = defineComponent({
 
 export const RxInput = defineComponent({
   name: "RxInput",
+  inheritAttrs: false,
   props: {
     modelValue: { type: [String, Number], default: "" },
     type: { type: String, default: "text" },
@@ -310,6 +311,7 @@ export const RxInput = defineComponent({
 
 export const RxSelect = defineComponent({
   name: "RxSelect",
+  inheritAttrs: false,
   props: {
     modelValue: { type: [String, Number], default: "" },
     options: {
@@ -327,24 +329,32 @@ export const RxSelect = defineComponent({
         typeof option === "string" ? { label: option, value: option, disabled: false } : option
       );
       const { class: attrClass, style: attrStyle, ...controlAttrs } = attrs as Record<string, unknown>;
-      const selectedValue = props.modelValue == null ? "" : String(props.modelValue);
+      const selectedIndex = normalizedOptions.findIndex((option) => Object.is(option.value, props.modelValue));
+      const placeholderOffset = props.placeholder ? 1 : 0;
       const select = h("select", mergeProps(controlAttrs, {
-        value: selectedValue,
         disabled: props.disabled,
         class: props.unstyled ? attrClass : "rx-select-native",
         onChange: (event: Event) => {
-          const rawValue = (event.target as HTMLSelectElement).value;
-          const selected = normalizedOptions.find((option) => String(option.value) === rawValue);
-          emit("update:modelValue", selected ? selected.value : rawValue);
+          const optionIndex = (event.target as HTMLSelectElement).selectedIndex - placeholderOffset;
+          const selected = normalizedOptions[optionIndex];
+          if (selected) {
+            emit("update:modelValue", selected.value);
+          }
         }
       }), [
         props.placeholder
-          ? h("option", { value: "", disabled: true, hidden: selectedValue !== "" }, props.placeholder)
+          ? h("option", {
+              value: "",
+              disabled: true,
+              hidden: selectedIndex >= 0,
+              selected: selectedIndex < 0
+            }, props.placeholder)
           : null,
-        ...normalizedOptions.map((option) =>
+        ...normalizedOptions.map((option, index) =>
           h("option", {
             value: String(option.value),
-            disabled: option.disabled === true
+            disabled: option.disabled === true,
+            selected: index === selectedIndex
           }, option.label)
         )
       ]);
@@ -374,6 +384,7 @@ function formatDatePickerValue(value: string | Date): string {
 
 export const RxDatePicker = defineComponent({
   name: "RxDatePicker",
+  inheritAttrs: false,
   props: {
     modelValue: { type: [String, Date], default: "" },
     placeholder: { type: String, default: "Select date" },
@@ -583,6 +594,7 @@ export const RxTabs = defineComponent({
 
 export const RxTextarea = defineComponent({
   name: "RxTextarea",
+  inheritAttrs: false,
   props: {
     modelValue: { type: String, default: "" },
     rows: { type: Number, default: 3 },
@@ -605,6 +617,7 @@ export const RxTextarea = defineComponent({
 
 export const RxSwitch = defineComponent({
   name: "RxSwitch",
+  inheritAttrs: false,
   props: {
     modelValue: { type: Boolean, default: false },
     disabled: { type: Boolean, default: false },

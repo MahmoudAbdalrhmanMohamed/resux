@@ -14261,6 +14261,7 @@ function replaceRouteHtml(root, html, preserveLayout = true) {
   const currentPage = currentLayout.querySelector("[data-rx-page]");
   const nextPage = nextLayout.querySelector("[data-rx-page]");
   if (!currentPage || !nextPage) {
+    cleanupManagedTeleports(root);
     unmountVueIslands(root);
     root.innerHTML = html;
     return { root, scopeIds: new Set() };
@@ -14374,6 +14375,16 @@ function collectScopeIds(root, exclude) {
     }
     collectScopeIdFromElement(element, ids);
   }
+
+  for (const source of managedTeleportSources(root)) {
+    if (exclude && (source === exclude || exclude.contains(source))) continue;
+    const content = managedTeleportContent.get(source);
+    if (!content) continue;
+    for (const element of [content, ...Array.from(content.querySelectorAll ? content.querySelectorAll("*") : [])]) {
+      collectScopeIdFromElement(element, ids);
+    }
+  }
+
   return ids;
 }
 

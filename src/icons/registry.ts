@@ -14,6 +14,13 @@ export interface IconData {
   path?: string;
   paths?: IconPathData[];
   opacity?: string;
+  fill?: string;
+  stroke?: string;
+  strokeWidth?: string;
+  strokeLinecap?: string;
+  strokeLinejoin?: string;
+  fillRule?: string;
+  clipRule?: string;
   viewBox?: string;
 }
 

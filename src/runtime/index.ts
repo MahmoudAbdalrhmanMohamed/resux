@@ -14476,26 +14476,38 @@ async function hotUpdateActiveScopes() {
   }));
 }
 
+function collectScopeIdsFromTeleportRange(source, ids, visitedTeleports) {
+  if (!source || visitedTeleports.has(source)) return;
+  visitedTeleports.add(source);
+  const content = managedTeleportContent.get(source);
+  if (!content) return;
+
+  for (const node of managedTeleportRangeNodes(content)) {
+    if (node.nodeType !== 1) continue;
+    collectScopeIdFromElement(node, ids);
+    if (node.matches?.("[data-rx-teleport-source='true']")) {
+      collectScopeIdsFromTeleportRange(node, ids, visitedTeleports);
+    }
+    for (const element of Array.from(node.querySelectorAll ? node.querySelectorAll("*") : [])) {
+      collectScopeIdFromElement(element, ids);
+      if (element.matches?.("[data-rx-teleport-source='true']")) {
+        collectScopeIdsFromTeleportRange(element, ids, visitedTeleports);
+      }
+    }
+  }
+}
+
 function collectScopeIds(root, exclude) {
   const ids = new Set();
+  const visitedTeleports = new Set();
 
   for (const element of [root, ...Array.from(root.querySelectorAll ? root.querySelectorAll("*") : [])]) {
     if (exclude && (element === exclude || exclude.contains(element))) {
       continue;
     }
     collectScopeIdFromElement(element, ids);
-  }
-
-  for (const source of managedTeleportSources(root)) {
-    if (exclude && (source === exclude || exclude.contains(source))) continue;
-    const content = managedTeleportContent.get(source);
-    if (!content) continue;
-    for (const node of managedTeleportRangeNodes(content)) {
-      if (node.nodeType !== 1) continue;
-      collectScopeIdFromElement(node, ids);
-      for (const element of Array.from(node.querySelectorAll ? node.querySelectorAll("*") : [])) {
-        collectScopeIdFromElement(element, ids);
-      }
+    if (element.matches?.("[data-rx-teleport-source='true']")) {
+      collectScopeIdsFromTeleportRange(element, ids, visitedTeleports);
     }
   }
 

@@ -10961,10 +10961,10 @@ export function createClientComponent(definition) {
       } else {
         await handler(event);
       }
-      return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId, scopeRecord.scopeId);
+      return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId, scopeRecord.scopeId, definition.id);
     },
     render(scopeRecord) {
-      return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId, scopeRecord.scopeId);
+      return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId, scopeRecord.scopeId, definition.id);
     },
     serialize(scopeRecord) {
       return {
@@ -14973,13 +14973,13 @@ function appendImportRevision(modulePath, revision) {
   return modulePath + separator + "t=" + encodeURIComponent(String(revision));
 }
 
-function renderClientPatches(template, scope, styleScopeId, scopeId) {
+function renderClientPatches(template, scope, styleScopeId, scopeId, moduleId) {
   const patches = [];
-  collectPatches(template, scope, {}, patches, styleScopeId, scopeId);
+  collectPatches(template, scope, {}, patches, styleScopeId, scopeId, moduleId);
   return patches;
 }
 
-function collectPatches(nodes, scope, locals, patches, styleScopeId, scopeId) {
+function collectPatches(nodes, scope, locals, patches, styleScopeId, scopeId, moduleId) {
   for (const node of nodes) {
     if (node.type === "interpolation") {
       patches.push({ type: "text", id: node.bindingId, value: stringifyValue(evaluateExpression(node.expression, scope, locals)) });
@@ -14989,11 +14989,11 @@ function collectPatches(nodes, scope, locals, patches, styleScopeId, scopeId) {
       continue;
     }
     if (node.for) {
-      patches.push({ type: "block", id: node.for.blockId, value: renderNode(node, scope, locals, styleScopeId, scopeId).replace(/^<span[^>]*>|<\/span>$/g, "") });
+      patches.push({ type: "block", id: node.for.blockId, value: renderNode(node, scope, locals, styleScopeId, scopeId, moduleId).replace(/^<span[^>]*>|<\/span>$/g, "") });
       continue;
     }
     if (node.if) {
-      patches.push({ type: "block", id: node.if.blockId, value: renderNode(node, scope, locals, styleScopeId, scopeId).replace(/^<span[^>]*>|<\/span>$/g, "") });
+      patches.push({ type: "block", id: node.if.blockId, value: renderNode(node, scope, locals, styleScopeId, scopeId, moduleId).replace(/^<span[^>]*>|<\/span>$/g, "") });
       continue;
     }
     if (node.html) {
@@ -15007,11 +15007,11 @@ function collectPatches(nodes, scope, locals, patches, styleScopeId, scopeId) {
         }
       }
     }
-    collectPatches(node.children, scope, locals, patches, styleScopeId, scopeId);
+    collectPatches(node.children, scope, locals, patches, styleScopeId, scopeId, moduleId);
   }
 }
 
-function renderNode(node, scope, locals, styleScopeId, scopeId) {
+function renderNode(node, scope, locals, styleScopeId, scopeId, moduleId) {
   if (node.type === "text") {
     return escapeHtml(node.value);
   }
@@ -15024,21 +15024,35 @@ function renderNode(node, scope, locals, styleScopeId, scopeId) {
       ? items.map((item, index) => {
           const nextLocals = { ...locals, [node.for.value]: item };
           if (node.for.index) nextLocals[node.for.index] = index;
-          return renderElement({ ...node, for: undefined, if: undefined }, scope, nextLocals, styleScopeId, scopeId);
+          return renderElement({ ...node, for: undefined, if: undefined }, scope, nextLocals, styleScopeId, scopeId, moduleId);
         }).join("")
       : "";
     return '<span data-rx-block="' + scopeId + ':' + node.for.blockId + '" style="display: contents;">' + rendered + '</span>';
   }
   if (node.if) {
     const rendered = evaluateExpression(node.if.expression, scope, locals)
-      ? renderElement({ ...node, if: undefined }, scope, locals, styleScopeId, scopeId)
+      ? renderElement({ ...node, if: undefined }, scope, locals, styleScopeId, scopeId, moduleId)
       : "";
     return '<span data-rx-block="' + scopeId + ':' + node.if.blockId + '" style="display: contents;">' + rendered + '</span>';
   }
-  return renderElement(node, scope, locals, styleScopeId, scopeId);
+  return renderElement(node, scope, locals, styleScopeId, scopeId, moduleId);
 }
 
-function renderElement(node, scope, locals, styleScopeId, scopeId) {
+function renderElement(node, scope, locals, styleScopeId, scopeId, moduleId) {
+  const normalizedTag = String(node.tag || "").toLowerCase();
+  if (normalizedTag === "transition" || normalizedTag === "transition-group") {
+    const nameAttr = node.attrs.find((attr) => attr.name === "name");
+    const rawName = nameAttr
+      ? (nameAttr.kind === "static" ? nameAttr.value : evaluateExpression(nameAttr.value, scope, locals))
+      : "v";
+    const candidate = String(rawName || "v").trim();
+    const name = /^[A-Za-z0-9_-]+$/.test(candidate) ? candidate : "v";
+    const groupAttr = normalizedTag === "transition-group" ? ' data-rx-transition-group="true"' : "";
+    const children = node.children
+      .map((child) => renderNode(child, scope, locals, styleScopeId, scopeId, moduleId))
+      .join("");
+    return '<span data-rx-transition="' + escapeAttribute(name) + '"' + groupAttr + ' style="display: contents;">' + children + '</span>';
+  }
   if (node.tag === "ResuxImg") {
     return renderClientResuxImg(node, scope, locals, styleScopeId);
   }
@@ -15068,7 +15082,7 @@ function renderElement(node, scope, locals, styleScopeId, scopeId) {
     }
   }
   for (const event of node.events) {
-    attrs.push('data-rx-on-' + event.name + '="' + scopeId + ':' + event.handler + '"');
+    attrs.push('data-rx-on-' + event.name + '="' + scopeId + ':' + moduleId + ':' + event.handler + '"');
     if (event.locals && event.locals.length) {
       const eventLocals = {};
       for (const name of event.locals) {
@@ -15089,7 +15103,7 @@ function renderElement(node, scope, locals, styleScopeId, scopeId) {
   const attrText = attrs.length ? " " + attrs.join(" ") : "";
   const children = node.html
     ? sanitizeHtml(evaluateExpression(node.html.expression, scope, locals))
-    : node.children.map((child) => renderNode(child, scope, locals, styleScopeId, scopeId)).join("");
+    : node.children.map((child) => renderNode(child, scope, locals, styleScopeId, scopeId, moduleId)).join("");
   return "<" + tag + attrText + ">" + children + "</" + tag + ">";
 }
 

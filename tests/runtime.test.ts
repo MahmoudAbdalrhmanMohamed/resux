@@ -3007,6 +3007,74 @@ export default createClientComponent({ id: "m0", name: "DeferredTeleport", file:
     expect(window.document.getElementById("late-target")?.firstElementChild?.id).toBe("deferred-content");
   });
 
+  it("cleans Teleports owned by removed TransitionGroup children", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-transition-group-teleport",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "removeFirst" }], children: [{ type: "text", value: "Remove" }] },
+  { type: "element", tag: "transition-group", attrs: [
+    { kind: "static", name: "name", value: "list" },
+    { kind: "static", name: "tag", value: "div" }
+  ], events: [], children: [
+    { type: "element", tag: "article", attrs: [{ kind: "dynamic", name: "key", value: "item" }], events: [], for: { source: "items.value", value: "item", blockId: "b0" }, children: [
+      { type: "element", tag: "teleport", attrs: [{ kind: "static", name: "to", value: "#portals" }], events: [], children: [
+        { type: "element", tag: "div", attrs: [{ kind: "dynamic", name: "id", value: '"portal-" + item', bindingId: "b2" }], events: [], children: [
+          { type: "interpolation", expression: "item", bindingId: "b1" }
+        ] }
+      ] }
+    ] }
+  ] }
+];
+async function script(ctx) {
+  const items = ctx.useState("items", () => [1, 2]);
+  function removeFirst() { items.value = [2]; }
+  return { items, removeFirst };
+}
+export default createClientComponent({ id: "m0", name: "TransitionTeleportList", file: "TransitionTeleportList.vue", script, template, handlers: ["removeFirst"] });
+`,
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.head.innerHTML = `<style>
+      .list-enter-active,.list-leave-active{transition:opacity .04s linear}
+      .list-enter-from,.list-leave-to{opacity:0}
+    </style>`;
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <button id="remove-first" data-rx-on-click="s0:m0:removeFirst">Remove</button>
+        <div data-rx-transition="list" data-rx-transition-group="true" data-rx-block="s0:b0">
+          <article key="1">
+            <span data-rx-teleport-source="true" data-rx-teleport-to="#portals" style="display: contents;">
+              <div id="portal-1"><span data-rx-text="s0:b1">1</span></div>
+            </span>
+          </article>
+          <article key="2">
+            <span data-rx-teleport-source="true" data-rx-teleport-to="#portals" style="display: contents;">
+              <div id="portal-2"><span data-rx-text="s0:b1">2</span></div>
+            </span>
+          </article>
+        </div>
+      </div>
+      <div id="portals"></div>
+    `;
+
+    installClientRuntimeFixture(window, { items: [1, 2] }, handlerUrl);
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+
+    const portals = window.document.getElementById("portals")!;
+    await waitForCondition(() => Boolean(portals.querySelector("#portal-1") && portals.querySelector("#portal-2")));
+
+    window.document.getElementById("remove-first")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+
+    await waitForCondition(() => !portals.querySelector("#portal-1"), 500);
+    await waitForCondition(() => Boolean(portals.querySelector("#portal-2")), 500);
+    expect(portals.querySelector("#portal-1")).toBeNull();
+    expect(portals.querySelector("#portal-2")).toBeTruthy();
+  });
+
   it("commits keyed TransitionGroup additions immediately while removed items leave", async () => {
     const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
       "resux-transition-group",

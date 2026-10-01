@@ -41,6 +41,78 @@ describe("icon runtime regressions", () => {
     ]);
   });
 
+  it("preserves root SVG presentation attributes for outline icons", async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 4h16v16H4z"/>
+      </svg>`,
+      { status: 200 },
+    ));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await fetchIconifyIcon(
+      "audit-suite:outline-root",
+      "https://icons.example.test",
+    );
+
+    expect(result).toMatchObject({
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "1.75",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      paths: [{ d: "M4 4h16v16H4z" }],
+    });
+  });
+
+  it("does not confuse prefixed SVG attributes with exact presentation attributes", async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      `<svg viewBox="0 0 24 24">
+        <path fill-opacity=".3" data-d="M9 9h1v1z" d="M2 2h20v20H2z"/>
+      </svg>`,
+      { status: 200 },
+    ));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await fetchIconifyIcon(
+      "audit-suite:exact-attrs",
+      "https://icons.example.test",
+    );
+
+    expect(result?.paths?.[0]).toMatchObject({
+      d: "M2 2h20v20H2z",
+    });
+    expect(result?.paths?.[0]?.opacity).toBeUndefined();
+  });
+
+  it("preserves inherited group presentation overrides when flattening SVG paths", async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      `<svg viewBox="0 0 24 24" fill="none" fill-rule="evenodd">
+        <g fill="currentColor" stroke="currentColor" stroke-width="2">
+          <path d="M3 3h18v18H3z"/>
+        </g>
+      </svg>`,
+      { status: 200 },
+    ));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await fetchIconifyIcon(
+      "audit-suite:group-inheritance",
+      "https://icons.example.test",
+    );
+
+    expect(result?.fill).toBe("none");
+    expect(result?.fillRule).toBe("evenodd");
+    expect(result?.paths?.[0]).toMatchObject({
+      d: "M3 3h18v18H3z",
+      fill: "currentColor",
+      stroke: "currentColor",
+      strokeWidth: "2",
+      fillRule: "evenodd",
+    });
+  });
+
   it("deduplicates concurrent requests per provider and icon", async () => {
     let resolveResponse!: (value: { ok: boolean; text: () => Promise<string> }) => void;
     const response = new Promise<{ ok: boolean; text: () => Promise<string> }>((resolve) => {

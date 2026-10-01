@@ -15419,22 +15419,25 @@ function renderElement(node, scope, locals, styleScopeId, scopeId, moduleId) {
   if (normalizedTag === "teleport") {
     const toAttr = node.attrs.find((attr) => attr.name === "to");
     const disabledAttr = node.attrs.find((attr) => attr.name === "disabled");
+    const deferAttr = node.attrs.find((attr) => attr.name === "defer");
     const rawTarget = toAttr
       ? (toAttr.kind === "static" ? toAttr.value : evaluateExpression(toAttr.value, scope, locals))
       : "#teleports";
-    const disabled = disabledAttr
-      ? (disabledAttr.kind === "static"
-        ? disabledAttr.value === "" || disabledAttr.value === "true"
-        : Boolean(evaluateExpression(disabledAttr.value, scope, locals)))
+    const rawDisabled = disabledAttr
+      ? (disabledAttr.kind === "static" ? disabledAttr.value : evaluateExpression(disabledAttr.value, scope, locals))
+      : false;
+    const rawDefer = deferAttr
+      ? (deferAttr.kind === "static" ? deferAttr.value : evaluateExpression(deferAttr.value, scope, locals))
       : false;
     const attrs = [
       'data-rx-teleport-source="true"',
       'data-rx-teleport-to="' + escapeAttribute(normalizeClientTeleportTarget(rawTarget)) + '"',
       'style="display: contents;"'
     ];
-    if (disabled) attrs.push('data-rx-teleport-disabled="true"');
+    if (isClientTeleportBooleanEnabled(rawDisabled)) attrs.push('data-rx-teleport-disabled="true"');
+    if (isClientTeleportBooleanEnabled(rawDefer)) attrs.push('data-rx-teleport-defer="true"');
     for (const attr of node.attrs) {
-      if (attr.kind === "dynamic" && attr.bindingId && (attr.name === "to" || attr.name === "disabled")) {
+      if (attr.kind === "dynamic" && attr.bindingId && (attr.name === "to" || attr.name === "disabled" || attr.name === "defer")) {
         attrs.push('data-rx-attr-' + attr.bindingId + '="' + scopeId + ':' + attr.bindingId + '"');
       }
     }

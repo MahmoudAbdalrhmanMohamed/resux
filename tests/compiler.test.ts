@@ -429,7 +429,8 @@ const visible = useState("visible", () => true)
     expect(template).toContain('"name":"to","value":"#teleports"');
     expect(template).toContain('"tag":"transition"');
     expect(template).toContain('"name":"name","value":"fade"');
-    expect(template).toContain('"expression":"visible.value"');
+    expect(template).toContain('"expression":"__rx_expr_0"');
+    expect(component.expressions?.some((entry) => entry.transformed === "visible.value")).toBe(true);
   });
 
   it("compiles v-text into a resumable text binding", () => {

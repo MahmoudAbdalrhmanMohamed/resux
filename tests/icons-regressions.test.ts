@@ -41,6 +41,31 @@ describe("icon runtime regressions", () => {
     ]);
   });
 
+  it("preserves root SVG presentation attributes for outline icons", async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 4h16v16H4z"/>
+      </svg>`,
+      { status: 200 },
+    ));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await fetchIconifyIcon(
+      "audit-suite:outline-root",
+      "https://icons.example.test",
+    );
+
+    expect(result).toMatchObject({
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "1.75",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      paths: [{ d: "M4 4h16v16H4z" }],
+    });
+  });
+
   it("deduplicates concurrent requests per provider and icon", async () => {
     let resolveResponse!: (value: { ok: boolean; text: () => Promise<string> }) => void;
     const response = new Promise<{ ok: boolean; text: () => Promise<string> }>((resolve) => {

@@ -2633,6 +2633,7 @@ html[dir="rtl"] [data-rx-loading-indicator] .rx-loading-progress {
     '<div id="__resux">',
     result.html,
     "</div>",
+    '<div id="teleports"></div>',
     needsClientRuntime
       ? ((options.isStatic || (typeof process !== "undefined" && process.env?.RESUX_STATIC))
         ? `<script>window.__RESUX__=${payload};window.__RESUX_STATIC__=true;</script>`
@@ -4016,6 +4017,41 @@ function renderTransitionBoundary(
   return `<${tag} ${attrs.join(" ")}>${children}</${tag}>`;
 }
 
+function isTeleportBoundaryTag(tag: string): boolean {
+  return String(tag || "").toLowerCase() === "teleport";
+}
+
+function normalizeTeleportTarget(value: unknown): string {
+  const candidate = String(value || "#teleports").trim();
+  return candidate && candidate.length <= 512 ? candidate : "#teleports";
+}
+
+function renderTeleportBoundary(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+  children: string,
+): string {
+  const props = collectComponentProps(node, context.scope, locals);
+  const target = normalizeTeleportTarget(props.to);
+  const disabled = props.disabled === true || props.disabled === "true";
+  const attrs = [
+    'data-rx-teleport-source="true"',
+    `data-rx-teleport-to="${escapeAttribute(target)}"`,
+    'style="display: contents;"',
+  ];
+  if (disabled) attrs.push('data-rx-teleport-disabled="true"');
+
+  for (const attr of node.attrs) {
+    if (attr.kind !== "dynamic" || !attr.bindingId) continue;
+    if (attr.name === "to" || attr.name === "disabled") {
+      attrs.push(`data-rx-attr-${attr.bindingId}="${context.scopeId}:${attr.bindingId}"`);
+    }
+  }
+
+  return `<span ${attrs.join(" ")}>${children}</span>`;
+}
+
 function renderElement(node: ElementTemplateNode, context: RenderTemplateContext, locals: Record<string, unknown>): string {
   if (node.tag === "ResuxPage") {
     if (!context.renderPage) {
@@ -4031,6 +4067,15 @@ function renderElement(node: ElementTemplateNode, context: RenderTemplateContext
 
   if (node.tag === "slot") {
     throw new Error("<slot> must be rendered by renderTemplateNodesAsync.");
+  }
+
+  if (isTeleportBoundaryTag(node.tag)) {
+    return renderTeleportBoundary(
+      node,
+      context,
+      locals,
+      renderTemplateNodes(node.children, context, locals),
+    );
   }
 
   if (isTransitionBoundaryTag(node.tag)) {
@@ -4257,6 +4302,15 @@ async function renderElementAsync(
 
   if (node.tag === "slot") {
     return context.renderSlot ? context.renderSlot() : "";
+  }
+
+  if (isTeleportBoundaryTag(node.tag)) {
+    return renderTeleportBoundary(
+      node,
+      context,
+      locals,
+      await renderTemplateNodesAsync(node.children, context, renderComponent, locals),
+    );
   }
 
   if (isTransitionBoundaryTag(node.tag)) {
@@ -7901,7 +7955,26 @@ function collectPatches(
       });
     }
 
-    if (isTransitionBoundaryTag(node.tag)) {
+    if (isTeleportBoundaryTag(node.tag)) {
+      for (const attr of node.attrs) {
+        if (attr.kind !== "dynamic" || !attr.bindingId) continue;
+        if (attr.name === "to") {
+          patches.push({
+            type: "attr",
+            id: attr.bindingId,
+            attr: "data-rx-teleport-to",
+            value: normalizeTeleportTarget(evaluateExpression(attr.value, scope, locals))
+          });
+        } else if (attr.name === "disabled") {
+          patches.push({
+            type: "attr",
+            id: attr.bindingId,
+            attr: "data-rx-teleport-disabled",
+            value: stringifyValue(evaluateExpression(attr.value, scope, locals))
+          });
+        }
+      }
+    } else if (isTransitionBoundaryTag(node.tag)) {
       for (const attr of node.attrs) {
         if (attr.name === "name" && attr.kind === "dynamic" && attr.bindingId) {
           patches.push({

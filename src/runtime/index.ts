@@ -2132,6 +2132,7 @@ const EAGER_CLIENT_RUNTIME_HTML_ATTRIBUTES = [
   "data-rx-lazy-image",
   "data-rx-lazy-video",
   "data-resux-img",
+  "data-rx-teleport-source",
 ] as const;
 
 const EAGER_CLIENT_RUNTIME_HTML_ATTRIBUTE_PREFIXES = [

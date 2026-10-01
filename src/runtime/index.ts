@@ -4100,10 +4100,12 @@ function collectNativeElementAttributes(
     }
 
     const value = evaluateExpression(attr.value, context.scope, locals);
+    if (attr.bindingId) {
+      attrs.push(`data-rx-attr-${attr.bindingId}="${context.scopeId}:${attr.bindingId}"`);
+    }
     if (value === false || value === null || value === undefined) continue;
 
-    const marker = attr.bindingId ? ` data-rx-attr-${attr.bindingId}="${context.scopeId}:${attr.bindingId}"` : "";
-    attrs.push(`${attrName}="${escapeAttribute(stringifyAttributeValue(attrName, value))}"${marker}`);
+    attrs.push(`${attrName}="${escapeAttribute(stringifyAttributeValue(attrName, value))}"`);
   }
 
   for (const event of node.events) {
@@ -10947,7 +10949,7 @@ export function createClientComponent(definition) {
       const scope = await definition.script(setupContext);
       serializedScope.globalStateKeys = [...globalStateKeys];
       await Promise.allSettled(mountedCallbacks.map((callback) => callback()));
-      return { scope, props, stateRefs, globalStateKeys, asyncDataRefs, pendingCompletions };
+      return { scopeId: serializedScope.id, scope, props, stateRefs, globalStateKeys, asyncDataRefs, pendingCompletions };
     },
     async run(scopeRecord, handlerName, event, eventLocals = {}) {
       const handler = scopeRecord.scope[handlerName];
@@ -10959,10 +10961,10 @@ export function createClientComponent(definition) {
       } else {
         await handler(event);
       }
-      return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId);
+      return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId, scopeRecord.scopeId);
     },
     render(scopeRecord) {
-      return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId);
+      return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId, scopeRecord.scopeId);
     },
     serialize(scopeRecord) {
       return {
@@ -14971,13 +14973,13 @@ function appendImportRevision(modulePath, revision) {
   return modulePath + separator + "t=" + encodeURIComponent(String(revision));
 }
 
-function renderClientPatches(template, scope, styleScopeId) {
+function renderClientPatches(template, scope, styleScopeId, scopeId) {
   const patches = [];
-  collectPatches(template, scope, {}, patches, styleScopeId);
+  collectPatches(template, scope, {}, patches, styleScopeId, scopeId);
   return patches;
 }
 
-function collectPatches(nodes, scope, locals, patches, styleScopeId) {
+function collectPatches(nodes, scope, locals, patches, styleScopeId, scopeId) {
   for (const node of nodes) {
     if (node.type === "interpolation") {
       patches.push({ type: "text", id: node.bindingId, value: stringifyValue(evaluateExpression(node.expression, scope, locals)) });
@@ -14987,11 +14989,11 @@ function collectPatches(nodes, scope, locals, patches, styleScopeId) {
       continue;
     }
     if (node.for) {
-      patches.push({ type: "block", id: node.for.blockId, value: renderNode(node, scope, locals, styleScopeId).replace(/^<span[^>]*>|<\/span>$/g, "") });
+      patches.push({ type: "block", id: node.for.blockId, value: renderNode(node, scope, locals, styleScopeId, scopeId).replace(/^<span[^>]*>|<\/span>$/g, "") });
       continue;
     }
     if (node.if) {
-      patches.push({ type: "block", id: node.if.blockId, value: renderNode(node, scope, locals, styleScopeId).replace(/^<span[^>]*>|<\/span>$/g, "") });
+      patches.push({ type: "block", id: node.if.blockId, value: renderNode(node, scope, locals, styleScopeId, scopeId).replace(/^<span[^>]*>|<\/span>$/g, "") });
       continue;
     }
     if (node.html) {
@@ -15005,16 +15007,16 @@ function collectPatches(nodes, scope, locals, patches, styleScopeId) {
         }
       }
     }
-    collectPatches(node.children, scope, locals, patches, styleScopeId);
+    collectPatches(node.children, scope, locals, patches, styleScopeId, scopeId);
   }
 }
 
-function renderNode(node, scope, locals, styleScopeId) {
+function renderNode(node, scope, locals, styleScopeId, scopeId) {
   if (node.type === "text") {
     return escapeHtml(node.value);
   }
   if (node.type === "interpolation") {
-    return '<span data-rx-text=":' + node.bindingId + '">' + escapeHtml(stringifyValue(evaluateExpression(node.expression, scope, locals))) + '</span>';
+    return '<span data-rx-text="' + scopeId + ':' + node.bindingId + '">' + escapeHtml(stringifyValue(evaluateExpression(node.expression, scope, locals))) + '</span>';
   }
   if (node.for) {
     const items = evaluateExpression(node.for.source, scope, locals);
@@ -15022,21 +15024,21 @@ function renderNode(node, scope, locals, styleScopeId) {
       ? items.map((item, index) => {
           const nextLocals = { ...locals, [node.for.value]: item };
           if (node.for.index) nextLocals[node.for.index] = index;
-          return renderElement({ ...node, for: undefined, if: undefined }, scope, nextLocals, styleScopeId);
+          return renderElement({ ...node, for: undefined, if: undefined }, scope, nextLocals, styleScopeId, scopeId);
         }).join("")
       : "";
-    return '<span data-rx-block=":' + node.for.blockId + '" style="display: contents;">' + rendered + '</span>';
+    return '<span data-rx-block="' + scopeId + ':' + node.for.blockId + '" style="display: contents;">' + rendered + '</span>';
   }
   if (node.if) {
     const rendered = evaluateExpression(node.if.expression, scope, locals)
-      ? renderElement({ ...node, if: undefined }, scope, locals, styleScopeId)
+      ? renderElement({ ...node, if: undefined }, scope, locals, styleScopeId, scopeId)
       : "";
-    return '<span data-rx-block=":' + node.if.blockId + '" style="display: contents;">' + rendered + '</span>';
+    return '<span data-rx-block="' + scopeId + ':' + node.if.blockId + '" style="display: contents;">' + rendered + '</span>';
   }
-  return renderElement(node, scope, locals, styleScopeId);
+  return renderElement(node, scope, locals, styleScopeId, scopeId);
 }
 
-function renderElement(node, scope, locals, styleScopeId) {
+function renderElement(node, scope, locals, styleScopeId, scopeId) {
   if (node.tag === "ResuxImg") {
     return renderClientResuxImg(node, scope, locals, styleScopeId);
   }
@@ -15057,14 +15059,16 @@ function renderElement(node, scope, locals, styleScopeId) {
       attrs.push(attrName + '="' + escapeAttribute(attr.value) + '"');
     } else {
       const value = evaluateExpression(attr.value, scope, locals);
+      if (attr.bindingId) {
+        attrs.push('data-rx-attr-' + attr.bindingId + '="' + scopeId + ':' + attr.bindingId + '"');
+      }
       if (value !== false && value !== null && value !== undefined) {
-        const marker = attr.bindingId ? ' data-rx-attr-' + attr.bindingId + '=":' + attr.bindingId + '"' : "";
-        attrs.push(attrName + '="' + escapeAttribute(stringifyAttributeValue(attrName, value)) + '"' + marker);
+        attrs.push(attrName + '="' + escapeAttribute(stringifyAttributeValue(attrName, value)) + '"');
       }
     }
   }
   for (const event of node.events) {
-    attrs.push('data-rx-on-' + event.name + '=":' + event.handler + '"');
+    attrs.push('data-rx-on-' + event.name + '="' + scopeId + ':' + event.handler + '"');
     if (event.locals && event.locals.length) {
       const eventLocals = {};
       for (const name of event.locals) {
@@ -15077,7 +15081,7 @@ function renderElement(node, scope, locals, styleScopeId) {
     }
   }
   if (node.html) {
-    attrs.push('data-rx-html-' + node.html.bindingId + '=":' + node.html.bindingId + '"');
+    attrs.push('data-rx-html-' + node.html.bindingId + '="' + scopeId + ':' + node.html.bindingId + '"');
   }
   if (styleScopeId) {
     attrs.push(styleScopeId + '=""');
@@ -15085,7 +15089,7 @@ function renderElement(node, scope, locals, styleScopeId) {
   const attrText = attrs.length ? " " + attrs.join(" ") : "";
   const children = node.html
     ? sanitizeHtml(evaluateExpression(node.html.expression, scope, locals))
-    : node.children.map((child) => renderNode(child, scope, locals, styleScopeId)).join("");
+    : node.children.map((child) => renderNode(child, scope, locals, styleScopeId, scopeId)).join("");
   return "<" + tag + attrText + ">" + children + "</" + tag + ">";
 }
 

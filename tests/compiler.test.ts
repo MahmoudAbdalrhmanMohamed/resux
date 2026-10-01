@@ -411,7 +411,7 @@ function save() {
 const visible = useState("visible", () => true)
 </script>
 <template>
-  <teleport to="#teleports" disabled>
+  <teleport to="#teleports" disabled defer>
     <transition name="fade">
       <div v-if="visible">Overlay</div>
     </transition>
@@ -428,6 +428,7 @@ const visible = useState("visible", () => true)
     expect(template).toContain('"tag":"teleport"');
     expect(template).toContain('"name":"to","value":"#teleports"');
     expect(template).toContain('"name":"disabled","value":""');
+    expect(template).toContain('"name":"defer","value":""');
     expect(template).toContain('"tag":"transition"');
     expect(template).toContain('"name":"name","value":"fade"');
     expect(template).toContain('"expression":"__rx_expr_0"');

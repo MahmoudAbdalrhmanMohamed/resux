@@ -13999,32 +13999,31 @@ function replaceRouteHtml(root, html, preserveLayout = true) {
 }
 
 function animateRouteSwap(root) {
-  if (
-    !root
-    || typeof window === "undefined"
-    || window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
-  ) {
+  if (!root || typeof window === "undefined" || window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
     return;
   }
 
   const page = root.matches?.("[data-rx-page]")
     ? root
     : root.querySelector?.("[data-rx-page]") || root;
-  if (!page || typeof page.animate !== "function") {
+  const target = page?.firstElementChild || page;
+  if (!target || typeof target.animate !== "function") {
     return;
   }
 
+  const canTranslate = target !== page || window.getComputedStyle?.(target)?.display !== "inline";
+  const from = canTranslate
+    ? { opacity: 0.86, transform: "translate3d(0, 8px, 0)" }
+    : { opacity: 0.86 };
+  const to = canTranslate
+    ? { opacity: 1, transform: "translate3d(0, 0, 0)" }
+    : { opacity: 1 };
+
   try {
-    page.animate(
-      [
-        { opacity: 0.86, transform: "translate3d(0, 8px, 0)" },
-        { opacity: 1, transform: "translate3d(0, 0, 0)" }
-      ],
-      {
-        duration: 180,
-        easing: "cubic-bezier(0.22, 1, 0.36, 1)"
-      }
-    );
+    target.animate([from, to], {
+      duration: 180,
+      easing: "cubic-bezier(0.22, 1, 0.36, 1)"
+    });
   } catch {}
 }
 

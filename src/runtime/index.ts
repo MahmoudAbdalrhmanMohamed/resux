@@ -17480,6 +17480,7 @@ function patchTransitionGroup(element, value, boundary, revision) {
     .map(([, child]) => child);
 
   for (const child of removed) {
+    cleanupManagedTeleports(child);
     child.remove();
   }
 

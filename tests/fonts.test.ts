@@ -400,7 +400,11 @@ describe("fonts module", () => {
     );
 
     const css = headList[0].style?.[0]?.children ?? "";
-    expect(css.indexOf("ordered.woff2")).toBeLessThan(css.indexOf("ordered.woff"));
+    const woff2Source = 'url("/fonts/ordered.woff2") format("woff2")';
+    const woffSource = 'url("/fonts/ordered.woff") format("woff")';
+    expect(css.indexOf(woff2Source)).toBeGreaterThanOrEqual(0);
+    expect(css.indexOf(woffSource)).toBeGreaterThanOrEqual(0);
+    expect(css.indexOf(woff2Source)).toBeLessThan(css.indexOf(woffSource));
     expect(headList[0].link).toContainEqual({
       rel: "preload",
       as: "font",

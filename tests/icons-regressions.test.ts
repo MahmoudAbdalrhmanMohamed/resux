@@ -66,6 +66,33 @@ describe("icon runtime regressions", () => {
     });
   });
 
+  it("preserves inherited group presentation overrides when flattening SVG paths", async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      `<svg viewBox="0 0 24 24" fill="none" fill-rule="evenodd">
+        <g fill="currentColor" stroke="currentColor" stroke-width="2">
+          <path d="M3 3h18v18H3z"/>
+        </g>
+      </svg>`,
+      { status: 200 },
+    ));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await fetchIconifyIcon(
+      "audit-suite:group-inheritance",
+      "https://icons.example.test",
+    );
+
+    expect(result?.fill).toBe("none");
+    expect(result?.fillRule).toBe("evenodd");
+    expect(result?.paths?.[0]).toMatchObject({
+      d: "M3 3h18v18H3z",
+      fill: "currentColor",
+      stroke: "currentColor",
+      strokeWidth: "2",
+      fillRule: "evenodd",
+    });
+  });
+
   it("deduplicates concurrent requests per provider and icon", async () => {
     let resolveResponse!: (value: { ok: boolean; text: () => Promise<string> }) => void;
     const response = new Promise<{ ok: boolean; text: () => Promise<string> }>((resolve) => {

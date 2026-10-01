@@ -135,6 +135,17 @@ describe("runtime performance regressions", () => {
     expect(source).toContain("}, ROUTE_PAYLOAD_FAILURE_MAX_ENTRIES);");
   });
 
+  it("keeps route transitions compositor-only and avoids dimming the entire app", () => {
+    const source = getClientRuntimeSource();
+
+    expect(source).toContain('loader.style.setProperty("--resux-progress-scale", String(progress / 100));');
+    expect(source).toContain('transform: scaleX(var(--resux-progress-scale, 0.08));');
+    expect(source).toContain('function animateRouteSwap(root)');
+    expect(source).toContain('transform: "translate3d(0, 8px, 0)"');
+    expect(source).toContain('window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches');
+    expect(source).not.toContain('#__resux[data-route-transition="loading"] {\n  opacity: 0.72;');
+  });
+
   it("hydrates i18n from public route payload config without module side effects", () => {
     const source = getClientRuntimeSource();
     expect(source).toContain("function useClientI18n(routeOverride)");

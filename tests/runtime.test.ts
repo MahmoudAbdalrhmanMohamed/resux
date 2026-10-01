@@ -22,6 +22,44 @@ function nextRuntimeImportQuery() {
   return `${Date.now()}-${runtimeImportCounter}`;
 }
 
+async function createClientRuntimeFixture(
+  prefix: string,
+  moduleSource: (runtimeUrl: string) => string,
+): Promise<{ runtimeUrl: string; handlerUrl: string }> {
+  const tempDir = path.join(os.tmpdir(), `${prefix}-${Date.now()}-${runtimeImportCounter + 1}`);
+  await mkdir(tempDir, { recursive: true });
+  const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+  const handlerFile = path.join(tempDir, "handler.mjs");
+  await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+  const runtimeUrl = pathToFileURL(runtimeFile).href;
+  await writeFile(handlerFile, moduleSource(runtimeUrl), "utf8");
+  return { runtimeUrl, handlerUrl: pathToFileURL(handlerFile).href };
+}
+
+function installClientRuntimeFixture(
+  window: Window,
+  state: Record<string, unknown>,
+  handlerUrl: string,
+): void {
+  Object.assign(globalThis, {
+    document: window.document,
+    window,
+    location: window.location,
+    history: window.history,
+    scrollTo: () => undefined,
+    __RESUX__: {
+      route: { path: "/", params: {}, query: {} },
+      scopes: {
+        s0: { id: "s0", moduleId: "m0", state, asyncData: {} },
+      },
+      modules: { m0: handlerUrl },
+    },
+    __RESUX_APP__: undefined,
+    __RESUX_ROUTER__: undefined,
+    __RESUX_INSTALLED__: false,
+  });
+}
+
 describe("runtime SSR", () => {
   it("unwraps reactive values passed to useHead", async () => {
     const page: ComponentDefinition = defineComponent({
@@ -2461,16 +2499,9 @@ export const clientEnhancements = ["package-error-demo"];
   });
 
   it("animates conditional blocks and keeps inserted resumable handlers fully scoped", async () => {
-    const tempDir = path.join(os.tmpdir(), `resux-transition-block-${Date.now()}`);
-    await mkdir(tempDir, { recursive: true });
-    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
-    const handlerFile = path.join(tempDir, "transition-handler.mjs");
-    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
-    const runtimeUrl = pathToFileURL(runtimeFile).href;
-
-    await writeFile(
-      handlerFile,
-      `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-transition-block",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
 const template = [
   { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "toggle" }], children: [{ type: "text", value: "Toggle" }] },
   { type: "element", tag: "transition", attrs: [{ kind: "dynamic", name: "name", value: "effect.value", bindingId: "b3" }], events: [], children: [
@@ -2493,7 +2524,6 @@ async function script(ctx) {
 }
 export default createClientComponent({ id: "m0", name: "TransitionPanel", file: "TransitionPanel.vue", script, template, handlers: ["toggle", "ping", "swapEffect"] });
 `,
-      "utf8",
     );
 
     const window = new Window({ url: "http://localhost/" });
@@ -2508,28 +2538,11 @@ export default createClientComponent({ id: "m0", name: "TransitionPanel", file: 
       <span data-rx-transition="fade" data-rx-attr-b3="s0:b3" data-rx-block="s0:b0" style="display: contents;"></span>
     `;
 
-    Object.assign(globalThis, {
-      document: window.document,
+    installClientRuntimeFixture(
       window,
-      location: window.location,
-      history: window.history,
-      scrollTo: () => undefined,
-      __RESUX__: {
-        route: { path: "/", params: {}, query: {} },
-        scopes: {
-          s0: {
-            id: "s0",
-            moduleId: "m0",
-            state: { visible: false, locked: false, hits: 0, effect: "fade" },
-            asyncData: {},
-          },
-        },
-        modules: { m0: pathToFileURL(handlerFile).href },
-      },
-      __RESUX_APP__: undefined,
-      __RESUX_ROUTER__: undefined,
-      __RESUX_INSTALLED__: false,
-    });
+      { visible: false, locked: false, hits: 0, effect: "fade" },
+      handlerUrl,
+    );
 
     await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
     window.document.getElementById("toggle")!.dispatchEvent(
@@ -2561,16 +2574,9 @@ export default createClientComponent({ id: "m0", name: "TransitionPanel", file: 
   });
 
   it("commits keyed TransitionGroup additions immediately while removed items leave", async () => {
-    const tempDir = path.join(os.tmpdir(), `resux-transition-group-${Date.now()}`);
-    await mkdir(tempDir, { recursive: true });
-    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
-    const handlerFile = path.join(tempDir, "transition-group-handler.mjs");
-    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
-    const runtimeUrl = pathToFileURL(runtimeFile).href;
-
-    await writeFile(
-      handlerFile,
-      `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-transition-group",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
 const template = [
   { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "swap" }], children: [{ type: "text", value: "Swap" }] },
   { type: "element", tag: "transition-group", attrs: [{ kind: "static", name: "name", value: "list" }, { kind: "static", name: "tag", value: "ul" }], events: [], children: [
@@ -2586,7 +2592,6 @@ async function script(ctx) {
 }
 export default createClientComponent({ id: "m0", name: "TransitionList", file: "TransitionList.vue", script, template, handlers: ["swap"] });
 `,
-      "utf8",
     );
 
     const window = new Window({ url: "http://localhost/" });
@@ -2601,28 +2606,7 @@ export default createClientComponent({ id: "m0", name: "TransitionList", file: "
       </ul>
     `;
 
-    Object.assign(globalThis, {
-      document: window.document,
-      window,
-      location: window.location,
-      history: window.history,
-      scrollTo: () => undefined,
-      __RESUX__: {
-        route: { path: "/", params: {}, query: {} },
-        scopes: {
-          s0: {
-            id: "s0",
-            moduleId: "m0",
-            state: { items: [1, 2] },
-            asyncData: {},
-          },
-        },
-        modules: { m0: pathToFileURL(handlerFile).href },
-      },
-      __RESUX_APP__: undefined,
-      __RESUX_ROUTER__: undefined,
-      __RESUX_INSTALLED__: false,
-    });
+    installClientRuntimeFixture(window, { items: [1, 2] }, handlerUrl);
 
     await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
     window.document.getElementById("swap")!.dispatchEvent(

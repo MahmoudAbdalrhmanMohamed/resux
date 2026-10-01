@@ -207,8 +207,49 @@ describe("UI & Motion Primitives (resuxjs/ui)", () => {
     expect(select.props.required).toBe(true);
     expect(select.props.class).toBe("rx-select-native");
 
-    select.props.onChange({ target: { value: "966" } });
+    select.props.onChange({ target: { selectedIndex: 2 } });
     expect(emitted).toContainEqual(["update:modelValue", 966]);
+  });
+
+  it("preserves distinct numeric and string select values", () => {
+    const emitted: Array<[string, unknown]> = [];
+    const component = RxSelect as unknown as {
+      setup: (
+        props: {
+          modelValue: string | number;
+          options: Array<{ label: string; value: string | number }>;
+          placeholder: string;
+          disabled: boolean;
+          unstyled: boolean;
+        },
+        context: { emit: (event: string, value: unknown) => void; attrs: Record<string, unknown> },
+      ) => () => any;
+    };
+
+    const render = component.setup(
+      {
+        modelValue: "1",
+        options: [
+          { label: "Number", value: 1 },
+          { label: "String", value: "1" }
+        ],
+        placeholder: "",
+        disabled: false,
+        unstyled: true
+      },
+      {
+        emit: (event, value) => emitted.push([event, value]),
+        attrs: { name: "typed-value" }
+      }
+    );
+
+    const select = render();
+    expect(select.children[0].props.selected).toBe(false);
+    expect(select.children[1].props.selected).toBe(true);
+    select.props.onChange({ target: { selectedIndex: 0 } });
+    select.props.onChange({ target: { selectedIndex: 1 } });
+    expect(emitted).toContainEqual(["update:modelValue", 1]);
+    expect(emitted).toContainEqual(["update:modelValue", "1"]);
   });
 
   it("keeps RxSwitch semantic, RTL-styleable, and preserves consumer click listeners", () => {

@@ -166,9 +166,28 @@ function resolveProvider(input: ResuxFontFamilyInput): ResuxFontProvider {
   if (input.provider === "local" || input.provider === "remote" || input.provider === "google") {
     return input.provider;
   }
-  return input.src || (Array.isArray(input.faces) && input.faces.length > 0)
-    ? "local"
-    : "google";
+  const urls = fontFamilySourceUrls(input);
+  if (urls.length > 0) {
+    return urls.every((url) => /^https?:\/\//i.test(url.trim())) ? "remote" : "local";
+  }
+  return "google";
+}
+
+function fontFamilySourceUrls(input: ResuxFontFamilyInput): string[] {
+  const faces = Array.isArray(input.faces) && input.faces.length > 0
+    ? input.faces
+    : input.src ? [{ src: input.src }] : [];
+  const urls: string[] = [];
+  for (const face of faces) {
+    const entries = Array.isArray(face.src) ? face.src : [face.src];
+    for (const entry of entries) {
+      const url = typeof entry === "string" ? entry : entry?.url;
+      if (typeof url === "string" && url.trim()) {
+        urls.push(url.trim());
+      }
+    }
+  }
+  return urls;
 }
 
 function addGoogleFontGroup(
@@ -225,7 +244,7 @@ function addGoogleFontGroup(
 
 function normalizeSourceUrl(value: unknown): string | null {
   const url = String(value || "").trim();
-  if (!url || /^(?:javascript|vbscript):/i.test(url)) {
+  if (!url || /[\u0000-\u001F\u007F]/.test(url) || /^(?:javascript|vbscript):/i.test(url)) {
     return null;
   }
   if (

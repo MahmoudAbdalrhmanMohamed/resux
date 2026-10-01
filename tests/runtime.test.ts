@@ -4,7 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Window } from "happy-dom";
 import { describe, expect, it, vi } from "vitest";
-import { iconRegistry } from "resuxjs/icons";
+import { iconRegistry } from "../src/icons/registry.js";
 import {
   createServerSetupContext,
   defineComponent,

@@ -210,10 +210,12 @@ export function fetchIconifyIcon(
       if (!paths.length) {
         return null;
       }
+      const svgRoot = /<svg\b[^>]*>/i.exec(svgText)?.[0] || "";
       const data: IconData = {
         path: paths[0].d,
         paths,
         viewBox,
+        ...readSvgPresentationAttributes(svgRoot),
       };
       rememberFetchedIcon(cacheKey, data);
       return data;
@@ -231,12 +233,40 @@ export function fetchIconifyIcon(
 }
 
 function readSvgAttribute(source: string, name: string): string {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\function readSvgAttribute(source: string, name: string): string {
   const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
   const match = new RegExp(
     String.raw`\b${escapedName}\s*=\s*(?:"([^"]*)"|'([^']*)')`,
     "i",
   ).exec(source);
   return (match?.[1] ?? match?.[2] ?? "").trim();
+}`);
+  const match = new RegExp(
+    String.raw`\b${escapedName}\s*=\s*(?:"([^"]*)"|'([^']*)')`,
+    "i",
+  ).exec(source);
+  return (match?.[1] ?? match?.[2] ?? "").trim();
+}
+
+function readSvgPresentationAttributes(source: string): Partial<IconData> {
+  const output: Partial<IconData> = {};
+  const attributes = [
+    ["opacity", "opacity"],
+    ["fill", "fill"],
+    ["stroke", "stroke"],
+    ["stroke-width", "strokeWidth"],
+    ["stroke-linecap", "strokeLinecap"],
+    ["stroke-linejoin", "strokeLinejoin"],
+    ["fill-rule", "fillRule"],
+    ["clip-rule", "clipRule"],
+  ] as const;
+  for (const [attributeName, propertyName] of attributes) {
+    const value = readSvgAttribute(source, attributeName);
+    if (value) {
+      output[propertyName] = value;
+    }
+  }
+  return output;
 }
 
 export const Icon = defineComponent({
@@ -348,7 +378,14 @@ export const Icon = defineComponent({
           viewBox: data.viewBox || "0 0 24 24",
           width: sizeValue.value,
           height: sizeValue.value,
-          fill: "currentColor",
+          fill: data.fill || "currentColor",
+          stroke: data.stroke,
+          "stroke-width": data.strokeWidth,
+          "stroke-linecap": data.strokeLinecap,
+          "stroke-linejoin": data.strokeLinejoin,
+          "fill-rule": data.fillRule,
+          "clip-rule": data.clipRule,
+          opacity: data.opacity,
           class: ["inline-block shrink-0 align-middle", props.class].filter(Boolean).join(" "),
           style: { width: sizeValue.value, height: sizeValue.value },
           "aria-hidden": "true",

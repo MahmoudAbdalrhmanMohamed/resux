@@ -3942,6 +3942,32 @@ function resolveComponentDefinition(
   return undefined;
 }
 
+function isTransitionBoundaryTag(tag: string): boolean {
+  const normalized = String(tag || "").toLowerCase();
+  return normalized === "transition" || normalized === "transition-group";
+}
+
+function transitionBoundaryName(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+): string {
+  const props = collectComponentProps(node, context.scope, locals);
+  const candidate = String(props.name || "v").trim();
+  return /^[A-Za-z0-9_-]+$/.test(candidate) ? candidate : "v";
+}
+
+function renderTransitionBoundary(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+  children: string,
+): string {
+  const name = transitionBoundaryName(node, context, locals);
+  const group = String(node.tag || "").toLowerCase() === "transition-group";
+  return `<span data-rx-transition="${escapeAttribute(name)}"${group ? ' data-rx-transition-group="true"' : ""} style="display: contents;">${children}</span>`;
+}
+
 function renderElement(node: ElementTemplateNode, context: RenderTemplateContext, locals: Record<string, unknown>): string {
   if (node.tag === "ResuxPage") {
     if (!context.renderPage) {
@@ -3957,6 +3983,15 @@ function renderElement(node: ElementTemplateNode, context: RenderTemplateContext
 
   if (node.tag === "slot") {
     throw new Error("<slot> must be rendered by renderTemplateNodesAsync.");
+  }
+
+  if (isTransitionBoundaryTag(node.tag)) {
+    return renderTransitionBoundary(
+      node,
+      context,
+      locals,
+      renderTemplateNodes(node.children, context, locals),
+    );
   }
 
   if (node.tag === "ResuxLink" || node.tag === "NuxtLink" || node.tag === "RouterLink") {
@@ -4172,6 +4207,15 @@ async function renderElementAsync(
 
   if (node.tag === "slot") {
     return context.renderSlot ? context.renderSlot() : "";
+  }
+
+  if (isTransitionBoundaryTag(node.tag)) {
+    return renderTransitionBoundary(
+      node,
+      context,
+      locals,
+      await renderTemplateNodesAsync(node.children, context, renderComponent, locals),
+    );
   }
 
   if (node.tag === "ResuxLink" || node.tag === "NuxtLink" || node.tag === "RouterLink") {

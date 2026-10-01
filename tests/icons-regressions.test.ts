@@ -66,6 +66,26 @@ describe("icon runtime regressions", () => {
     });
   });
 
+  it("does not confuse prefixed SVG attributes with exact presentation attributes", async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      `<svg viewBox="0 0 24 24">
+        <path fill-opacity=".3" data-d="M9 9h1v1z" d="M2 2h20v20H2z"/>
+      </svg>`,
+      { status: 200 },
+    ));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await fetchIconifyIcon(
+      "audit-suite:exact-attrs",
+      "https://icons.example.test",
+    );
+
+    expect(result?.paths?.[0]).toMatchObject({
+      d: "M2 2h20v20H2z",
+    });
+    expect(result?.paths?.[0]?.opacity).toBeUndefined();
+  });
+
   it("preserves inherited group presentation overrides when flattening SVG paths", async () => {
     const fetchMock = vi.fn(async () => new Response(
       `<svg viewBox="0 0 24 24" fill="none" fill-rule="evenodd">

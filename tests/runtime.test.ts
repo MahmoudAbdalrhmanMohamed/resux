@@ -297,6 +297,7 @@ describe("runtime SSR", () => {
     expect(result.html).toContain('data-rx-teleport-to="#teleports"');
     expect(result.html).not.toContain("<teleport");
     expect(documentHtml).toContain('<div id="teleports"></div>');
+    expect(documentHtml).toContain('<script type="module" src="/__resux/runtime-client.mjs"></script>');
   });
 
   it("renders HTML and serialized state without eagerly loading handler chunks", async () => {

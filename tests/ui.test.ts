@@ -143,6 +143,7 @@ describe("UI & Motion Primitives (resuxjs/ui)", () => {
     expect(addedHead.length).toBe(1);
     expect(addedHead[0].style.length).toBe(2);
     expect(addedHead[0].style.some((entry: any) => entry.children.includes(".rx-verification-code"))).toBe(true);
+    expect(addedHead[0].style.every((entry: any) => entry.id && entry.css === entry.children)).toBe(true);
     expect(publicConfigs[0].public.ui.defaultStyles).toBe(true);
   });
 
@@ -161,6 +162,84 @@ describe("UI & Motion Primitives (resuxjs/ui)", () => {
 
     expect(addedHead).toHaveLength(1);
     expect(addedHead[0].style.some((entry: any) => entry.children.includes("animation: none !important"))).toBe(true);
+  });
+
+  it("renders RxSelect as a native-backed accessible form control", () => {
+    const emitted: Array<[string, unknown]> = [];
+    const component = RxSelect as unknown as {
+      setup: (
+        props: {
+          modelValue: string | number;
+          options: Array<string | { label: string; value: string | number; disabled?: boolean }>;
+          placeholder: string;
+          disabled: boolean;
+          unstyled: boolean;
+        },
+        context: { emit: (event: string, value: unknown) => void; attrs: Record<string, unknown> },
+      ) => () => any;
+    };
+
+    const render = component.setup(
+      {
+        modelValue: "",
+        options: [
+          { label: "Egypt", value: "eg" },
+          { label: "Saudi Arabia", value: 966 }
+        ],
+        placeholder: "Country",
+        disabled: false,
+        unstyled: false
+      },
+      {
+        emit: (event, value) => emitted.push([event, value]),
+        attrs: { name: "country", required: true, class: "consumer-class" }
+      }
+    );
+
+    const wrapper = render();
+    expect(wrapper.type).toBe("div");
+    expect(wrapper.props.class).toContain("rx-select");
+    expect(wrapper.props.class).toContain("consumer-class");
+
+    const select = wrapper.children[0];
+    expect(select.type).toBe("select");
+    expect(select.props.name).toBe("country");
+    expect(select.props.required).toBe(true);
+    expect(select.props.class).toBe("rx-select-native");
+
+    select.props.onChange({ target: { value: "966" } });
+    expect(emitted).toContainEqual(["update:modelValue", 966]);
+  });
+
+  it("keeps RxSwitch semantic, RTL-styleable, and preserves consumer click listeners", () => {
+    const emitted: Array<[string, unknown]> = [];
+    let consumerClicks = 0;
+    const component = RxSwitch as unknown as {
+      setup: (
+        props: { modelValue: boolean; disabled: boolean; unstyled: boolean },
+        context: { emit: (event: string, value: unknown) => void; attrs: Record<string, unknown> },
+      ) => () => any;
+    };
+
+    const render = component.setup(
+      { modelValue: false, disabled: false, unstyled: false },
+      {
+        emit: (event, value) => emitted.push([event, value]),
+        attrs: { onClick: () => { consumerClicks += 1; }, "aria-label": "Notifications" }
+      }
+    );
+
+    const button = render();
+    expect(button.type).toBe("button");
+    expect(button.props.role).toBe("switch");
+    expect(button.props["aria-checked"]).toBe("false");
+    expect(button.props["data-state"]).toBe("unchecked");
+    expect(button.props["aria-label"]).toBe("Notifications");
+
+    const clickHandlers = Array.isArray(button.props.onClick) ? button.props.onClick : [button.props.onClick];
+    for (const handler of clickHandlers) handler();
+    expect(consumerClicks).toBe(1);
+    expect(emitted).toContainEqual(["update:modelValue", true]);
   });
 
   it("omits default primitive styles when defaultStyles is false", () => {

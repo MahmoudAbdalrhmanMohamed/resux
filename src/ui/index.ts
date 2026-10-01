@@ -1,4 +1,4 @@
-import { defineComponent, h, onMounted, ref } from "vue";
+import { defineComponent, h, mergeProps, onMounted, ref } from "vue";
 import type { ResuxModuleDefinition } from "../kit/index.js";
 import {
   RxVerificationCode,
@@ -288,6 +288,7 @@ export const RxBadge = defineComponent({
 
 export const RxInput = defineComponent({
   name: "RxInput",
+  inheritAttrs: false,
   props: {
     modelValue: { type: [String, Number], default: "" },
     type: { type: String, default: "text" },
@@ -297,80 +298,78 @@ export const RxInput = defineComponent({
   },
   emits: ["update:modelValue"],
   setup(props, { emit, attrs }) {
-    return () => {
-      const classes = props.unstyled
-        ? (attrs.class || "")
-        : ["rx-input", attrs.class].filter(Boolean).join(" ");
-      return h("input", {
-        ...attrs,
-        type: props.type,
-        value: props.modelValue,
-        placeholder: props.placeholder,
-        disabled: props.disabled,
-        class: classes,
-        onInput: (e: Event) => emit("update:modelValue", (e.target as HTMLInputElement).value)
-      });
-    };
+    return () => h("input", mergeProps(attrs, {
+      type: props.type,
+      value: props.modelValue,
+      placeholder: props.placeholder,
+      disabled: props.disabled,
+      class: props.unstyled ? undefined : "rx-input",
+      onInput: (event: Event) => emit("update:modelValue", (event.target as HTMLInputElement).value)
+    }));
   }
 });
 
 export const RxSelect = defineComponent({
   name: "RxSelect",
+  inheritAttrs: false,
   props: {
     modelValue: { type: [String, Number], default: "" },
-    options: { type: Array as () => Array<string | { label: string; value: string | number }>, default: () => [] },
+    options: {
+      type: Array as () => Array<string | { label: string; value: string | number; disabled?: boolean }>,
+      default: () => []
+    },
     placeholder: { type: String, default: "Select an option" },
     disabled: { type: Boolean, default: false },
     unstyled: { type: Boolean, default: false }
   },
   emits: ["update:modelValue"],
   setup(props, { emit, attrs }) {
-    const isOpen = ref(false);
-    const toggle = () => {
-      if (!props.disabled) isOpen.value = !isOpen.value;
-    };
-    const selectOption = (val: string | number) => {
-      emit("update:modelValue", val);
-      isOpen.value = false;
-    };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        toggle();
-      } else if (e.key === "Escape") {
-        isOpen.value = false;
-      }
-    };
     return () => {
-      const classes = props.unstyled ? (attrs.class || "") : ["rx-select", attrs.class].filter(Boolean).join(" ");
-      const normalizedOpts = props.options.map((opt) =>
-        typeof opt === "string" ? { label: opt, value: opt } : opt
+      const normalizedOptions = props.options.map((option) =>
+        typeof option === "string" ? { label: option, value: option, disabled: false } : option
       );
-      const selectedObj = normalizedOpts.find((o) => o.value === props.modelValue);
-      return h("div", { class: classes, tabindex: props.disabled ? -1 : 0, onKeydown: handleKeyDown }, [
-        h("div", { class: props.unstyled ? "" : "rx-select-trigger", onClick: toggle }, [
-          h("span", selectedObj ? selectedObj.label : props.placeholder),
-          h("span", { class: props.unstyled ? "" : "rx-select-arrow" }, "▾")
-        ]),
-        isOpen.value
-          ? h(
-              "ul",
-              { class: props.unstyled ? "" : "rx-select-dropdown", role: "listbox" },
-              normalizedOpts.map((opt) =>
-                h(
-                  "li",
-                  {
-                    class: [props.unstyled ? "" : "rx-select-option", opt.value === props.modelValue ? "selected" : ""]
-                      .filter(Boolean)
-                      .join(" "),
-                    role: "option",
-                    onClick: () => selectOption(opt.value)
-                  },
-                  opt.label
-                )
-              )
-            )
-          : null
+      const { class: attrClass, style: attrStyle, ...controlAttrs } = attrs as Record<string, unknown>;
+      const selectedIndex = normalizedOptions.findIndex((option) => Object.is(option.value, props.modelValue));
+      const placeholderOffset = props.placeholder ? 1 : 0;
+      const select = h("select", mergeProps(controlAttrs, {
+        disabled: props.disabled,
+        class: props.unstyled ? attrClass : "rx-select-native",
+        onChange: (event: Event) => {
+          const optionIndex = (event.target as HTMLSelectElement).selectedIndex - placeholderOffset;
+          const selected = normalizedOptions[optionIndex];
+          if (selected) {
+            emit("update:modelValue", selected.value);
+          }
+        }
+      }), [
+        props.placeholder
+          ? h("option", {
+              value: "",
+              disabled: true,
+              hidden: selectedIndex >= 0,
+              selected: selectedIndex < 0
+            }, props.placeholder)
+          : null,
+        ...normalizedOptions.map((option, index) =>
+          h("option", {
+            value: String(option.value),
+            disabled: option.disabled === true,
+            selected: index === selectedIndex
+          }, option.label)
+        )
+      ]);
+
+      if (props.unstyled) {
+        return select;
+      }
+
+      return h("div", {
+        class: ["rx-select", attrClass].filter(Boolean),
+        style: attrStyle,
+        "data-disabled": props.disabled ? "true" : "false"
+      }, [
+        select,
+        h("span", { class: "rx-select-arrow", "aria-hidden": "true" }, "▾")
       ]);
     };
   }
@@ -385,24 +384,23 @@ function formatDatePickerValue(value: string | Date): string {
 
 export const RxDatePicker = defineComponent({
   name: "RxDatePicker",
+  inheritAttrs: false,
   props: {
     modelValue: { type: [String, Date], default: "" },
     placeholder: { type: String, default: "Select date" },
+    disabled: { type: Boolean, default: false },
     unstyled: { type: Boolean, default: false }
   },
   emits: ["update:modelValue"],
   setup(props, { emit, attrs }) {
-    return () => {
-      const classes = props.unstyled ? (attrs.class || "") : ["rx-input", "rx-datepicker", attrs.class].filter(Boolean).join(" ");
-      return h("input", {
-        ...attrs,
-        type: "date",
-        value: formatDatePickerValue(props.modelValue),
-        placeholder: props.placeholder,
-        class: classes,
-        onInput: (e: Event) => emit("update:modelValue", (e.target as HTMLInputElement).value)
-      });
-    };
+    return () => h("input", mergeProps(attrs, {
+      type: "date",
+      value: formatDatePickerValue(props.modelValue),
+      placeholder: props.placeholder,
+      disabled: props.disabled,
+      class: props.unstyled ? undefined : ["rx-input", "rx-datepicker"],
+      onInput: (event: Event) => emit("update:modelValue", (event.target as HTMLInputElement).value)
+    }));
   }
 });
 
@@ -596,6 +594,7 @@ export const RxTabs = defineComponent({
 
 export const RxTextarea = defineComponent({
   name: "RxTextarea",
+  inheritAttrs: false,
   props: {
     modelValue: { type: String, default: "" },
     rows: { type: Number, default: 3 },
@@ -605,23 +604,20 @@ export const RxTextarea = defineComponent({
   },
   emits: ["update:modelValue"],
   setup(props, { emit, attrs }) {
-    return () => {
-      const classes = props.unstyled ? (attrs.class || "") : ["rx-input", "rx-textarea", attrs.class].filter(Boolean).join(" ");
-      return h("textarea", {
-        ...attrs,
-        rows: props.rows,
-        value: props.modelValue,
-        placeholder: props.placeholder,
-        disabled: props.disabled,
-        class: classes,
-        onInput: (e: Event) => emit("update:modelValue", (e.target as HTMLTextAreaElement).value)
-      });
-    };
+    return () => h("textarea", mergeProps(attrs, {
+      rows: props.rows,
+      value: props.modelValue,
+      placeholder: props.placeholder,
+      disabled: props.disabled,
+      class: props.unstyled ? undefined : ["rx-input", "rx-textarea"],
+      onInput: (event: Event) => emit("update:modelValue", (event.target as HTMLTextAreaElement).value)
+    }));
   }
 });
 
 export const RxSwitch = defineComponent({
   name: "RxSwitch",
+  inheritAttrs: false,
   props: {
     modelValue: { type: Boolean, default: false },
     disabled: { type: Boolean, default: false },
@@ -632,20 +628,17 @@ export const RxSwitch = defineComponent({
     const toggle = () => {
       if (!props.disabled) emit("update:modelValue", !props.modelValue);
     };
-    return () => {
-      const classes = props.unstyled ? (attrs.class || "") : ["rx-switch", props.modelValue ? "checked" : "", attrs.class].filter(Boolean).join(" ");
-      return h("button", {
-        ...attrs,
-        type: "button",
-        role: "switch",
-        "aria-checked": props.modelValue,
-        disabled: props.disabled,
-        class: classes,
-        onClick: toggle
-      }, [
-        h("span", { class: props.unstyled ? "" : "rx-switch-thumb" })
-      ]);
-    };
+    return () => h("button", mergeProps(attrs, {
+      type: "button",
+      role: "switch",
+      "aria-checked": String(props.modelValue),
+      "data-state": props.modelValue ? "checked" : "unchecked",
+      disabled: props.disabled,
+      class: props.unstyled ? undefined : ["rx-switch", props.modelValue ? "checked" : ""],
+      onClick: toggle
+    }), [
+      h("span", { class: props.unstyled ? undefined : "rx-switch-thumb", "aria-hidden": "true" })
+    ]);
   }
 });
 
@@ -827,54 +820,80 @@ const uiPrimitiveStyles = `
 .rx-badge-danger { background-color: rgba(239, 68, 68, 0.2); color: #f87171; }
 .rx-badge-info { background-color: rgba(59, 130, 246, 0.2); color: #60a5fa; }
 
-.rx-input {
+.rx-input,
+.rx-select-native {
   width: 100%;
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.375rem;
-  background-color: #0f172a;
-  border: 1px solid #334155;
-  color: #f8fafc;
-  font-size: 0.875rem;
+  min-height: 2.75rem;
+  box-sizing: border-box;
+  padding: 0.625rem 0.8rem;
+  border-radius: 0.625rem;
+  background: var(--rx-control-bg, #ffffff);
+  border: 1px solid var(--rx-control-border, #cbd5e1);
+  color: var(--rx-control-text, #0f172a);
+  font: inherit;
+  font-size: 0.9375rem;
+  line-height: 1.4;
   outline: none;
-  transition: border-color 0.2s ease;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
 }
-.rx-input:focus { border-color: #03c8bf; }
-
+.rx-input::placeholder {
+  color: var(--rx-control-placeholder, #94a3b8);
+  opacity: 1;
+}
+.rx-input:hover:not(:disabled):not([readonly]),
+.rx-select:not([data-disabled="true"]):hover .rx-select-native {
+  border-color: var(--rx-control-border-hover, #94a3b8);
+}
+.rx-input:focus,
+.rx-input:focus-visible,
+.rx-select-native:focus,
+.rx-select-native:focus-visible {
+  border-color: var(--rx-control-accent, #03c8bf);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rx-control-accent, #03c8bf) 18%, transparent);
+}
+.rx-input[aria-invalid="true"],
+.rx-select-native[aria-invalid="true"] {
+  border-color: var(--rx-control-danger, #dc2626);
+}
+.rx-input[aria-invalid="true"]:focus,
+.rx-select-native[aria-invalid="true"]:focus {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rx-control-danger, #dc2626) 15%, transparent);
+}
+.rx-input:disabled,
+.rx-select[data-disabled="true"] .rx-select-native {
+  cursor: not-allowed;
+  opacity: 0.62;
+  background: var(--rx-control-disabled-bg, #f8fafc);
+}
+.rx-input[readonly] {
+  background: var(--rx-control-readonly-bg, #f8fafc);
+}
+.rx-textarea {
+  min-height: 7rem;
+  resize: vertical;
+}
 .rx-select {
   position: relative;
   width: 100%;
-  border-radius: 0.375rem;
-  background-color: #0f172a;
-  border: 1px solid #334155;
-  color: #f8fafc;
-  font-size: 0.875rem;
+}
+.rx-select-native {
+  appearance: none;
+  padding-inline-end: 2.5rem;
   cursor: pointer;
-  outline: none;
 }
-.rx-select-trigger {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.5rem 0.75rem;
-}
-.rx-select-dropdown {
+.rx-select-arrow {
   position: absolute;
-  top: 100%;
-  left: 0; right: 0;
-  margin-top: 0.25rem;
-  background-color: #1e293b;
-  border: 1px solid #334155;
-  border-radius: 0.375rem;
-  list-style: none;
-  padding: 0.25rem 0;
-  z-index: 100;
+  inset-inline-end: 0.85rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--rx-control-muted, #64748b);
+  pointer-events: none;
+  line-height: 1;
+  transition: transform 160ms ease, color 160ms ease;
 }
-.rx-select-option {
-  padding: 0.5rem 0.75rem;
-}
-.rx-select-option:hover, .rx-select-option.selected {
-  background-color: rgba(3, 200, 191, 0.15);
-  color: #03c8bf;
+.rx-select:focus-within .rx-select-arrow {
+  color: var(--rx-control-accent, #03c8bf);
 }
 
 .rx-avatar {
@@ -940,25 +959,51 @@ const uiPrimitiveStyles = `
 
 .rx-switch {
   position: relative;
-  width: 2.75rem;
-  height: 1.5rem;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  width: 3rem;
+  height: 1.75rem;
+  box-sizing: border-box;
+  padding: 0.1875rem;
+  border: 1px solid var(--rx-switch-border, #cbd5e1);
   border-radius: 9999px;
-  background-color: #334155;
-  border: none;
+  background: var(--rx-switch-off, #e2e8f0);
   cursor: pointer;
-  transition: background-color 0.2s ease;
-  padding: 0.125rem;
+  outline: none;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08);
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
 }
-.rx-switch.checked { background-color: #03c8bf; }
+.rx-switch:hover:not(:disabled) {
+  border-color: var(--rx-switch-border-hover, #94a3b8);
+}
+.rx-switch:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rx-switch-accent, #03c8bf) 20%, transparent);
+}
+.rx-switch.checked {
+  background: var(--rx-switch-accent, #03c8bf);
+  border-color: var(--rx-switch-accent, #03c8bf);
+}
+.rx-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
 .rx-switch-thumb {
   display: block;
   width: 1.25rem;
   height: 1.25rem;
   border-radius: 9999px;
-  background-color: #ffffff;
-  transition: transform 0.2s ease;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.28);
+  transform: translate3d(0, 0, 0);
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
-.rx-switch.checked .rx-switch-thumb { transform: translateX(1.25rem); }
+.rx-switch.checked .rx-switch-thumb {
+  transform: translate3d(1.25rem, 0, 0);
+}
+[dir="rtl"] .rx-switch.checked .rx-switch-thumb {
+  transform: translate3d(-1.25rem, 0, 0);
+}
 
 .rx-skeleton {
   background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
@@ -1036,7 +1081,11 @@ const resuxUiModule = {
 
     if (stylesToInject.length > 0) {
       resux.addHead({
-        style: stylesToInject.map((children) => ({ children }))
+        style: stylesToInject.map((css, index) => ({
+          id: `resux-ui-${index}`,
+          css,
+          children: css
+        }))
       });
     }
 

@@ -5386,8 +5386,8 @@ function renderResuxIcon(node: ElementTemplateNode, context: RenderTemplateConte
     .map((entry) => {
       const pathAttrs = [
         `d="${escapeAttribute(entry.d)}"`,
-        `fill-rule="${escapeAttribute(entry.fillRule || "nonzero")}"`,
-        `clip-rule="${escapeAttribute(entry.clipRule || "nonzero")}"`,
+        `fill-rule="${escapeAttribute(entry.fillRule || data.fillRule || "nonzero")}"`,
+        `clip-rule="${escapeAttribute(entry.clipRule || data.clipRule || "nonzero")}"`,
       ];
       if (entry.opacity) pathAttrs.push(`opacity="${escapeAttribute(entry.opacity)}"`);
       if (entry.fill) pathAttrs.push(`fill="${escapeAttribute(entry.fill)}"`);
@@ -5398,7 +5398,23 @@ function renderResuxIcon(node: ElementTemplateNode, context: RenderTemplateConte
       return `<path ${pathAttrs.join(" ")}></path>`;
     })
     .join("");
-  const svgInside = `<svg data-icon-name="${escapeAttribute(iconName)}" viewBox="${escapeAttribute(data.viewBox || "0 0 24 24")}" width="1em" height="1em" fill="currentColor" aria-hidden="true">${paths}</svg>`;
+  const svgAttrs = [
+    `data-icon-name="${escapeAttribute(iconName)}"`,
+    `viewBox="${escapeAttribute(data.viewBox || "0 0 24 24")}"`,
+    'width="1em"',
+    'height="1em"',
+    `fill="${escapeAttribute(data.fill || "currentColor")}"`,
+    'aria-hidden="true"',
+  ];
+  if (data.stroke) svgAttrs.push(`stroke="${escapeAttribute(data.stroke)}"`);
+  if (data.strokeWidth) svgAttrs.push(`stroke-width="${escapeAttribute(data.strokeWidth)}"`);
+  if (data.strokeLinecap) svgAttrs.push(`stroke-linecap="${escapeAttribute(data.strokeLinecap)}"`);
+  if (data.strokeLinejoin) svgAttrs.push(`stroke-linejoin="${escapeAttribute(data.strokeLinejoin)}"`);
+  if (data.fillRule) svgAttrs.push(`fill-rule="${escapeAttribute(data.fillRule)}"`);
+  if (data.clipRule) svgAttrs.push(`clip-rule="${escapeAttribute(data.clipRule)}"`);
+  if (data.opacity && data.paths?.length) svgAttrs.push(`opacity="${escapeAttribute(data.opacity)}"`);
+
+  const svgInside = `<svg ${svgAttrs.join(" ")}>${paths}</svg>`;
   return `<span ${attrs.join(" ")}>${svgInside}</span>`;
 }
 

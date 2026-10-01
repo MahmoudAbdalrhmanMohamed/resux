@@ -14163,6 +14163,7 @@ function createClientRouter() {
   };
 }
 
+const XHTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
 const managedTeleportContent = new WeakMap();
 
 function managedTeleportSources(root = document) {
@@ -14198,19 +14199,67 @@ function managedTeleportRangeNodes(content) {
   return nodes;
 }
 
+function managedTeleportRangeMarkup(content) {
+  const container = document.createElement("div");
+  for (const node of managedTeleportRangeNodes(content)) {
+    container.appendChild(node.cloneNode(true));
+  }
+  return container.innerHTML;
+}
+
+function parseManagedTeleportMarkup(markup, target) {
+  const namespace = target?.namespaceURI || XHTML_NAMESPACE;
+  if (namespace === XHTML_NAMESPACE) {
+    const template = document.createElement("template");
+    template.innerHTML = markup;
+    return Array.from(template.content.childNodes);
+  }
+
+  const wrapperName = namespace === "http://www.w3.org/2000/svg"
+    ? "svg"
+    : namespace === "http://www.w3.org/1998/Math/MathML"
+      ? "math"
+      : (target?.localName || "g");
+  const wrapper = document.createElementNS(namespace, wrapperName);
+  wrapper.innerHTML = markup;
+  return Array.from(wrapper.childNodes);
+}
+
+function normalizeManagedTeleportNamespace(content, target) {
+  const nodes = managedTeleportRangeNodes(content);
+  const firstElement = nodes.find((node) => node.nodeType === 1);
+  const targetNamespace = target?.namespaceURI || XHTML_NAMESPACE;
+  if (!firstElement || firstElement.namespaceURI === targetNamespace) {
+    return;
+  }
+
+  const markup = managedTeleportRangeMarkup(content);
+  for (const node of nodes) {
+    if (node.nodeType === 1) {
+      cleanupManagedTeleports(node);
+      unmountVueIslands(node);
+    }
+    node.remove();
+  }
+  for (const node of parseManagedTeleportMarkup(markup, target)) {
+    content.end.parentNode?.insertBefore(node, content.end);
+  }
+}
+
 function moveManagedTeleportRange(content, target) {
   if (!content?.start || !content?.end || !target) return;
-  if (content.start.parentNode === target && content.end.parentNode === target) return;
-
-  const fragment = document.createDocumentFragment();
-  let node = content.start;
-  while (node) {
-    const next = node.nextSibling;
-    fragment.appendChild(node);
-    if (node === content.end) break;
-    node = next;
+  if (content.start.parentNode !== target || content.end.parentNode !== target) {
+    const fragment = document.createDocumentFragment();
+    let node = content.start;
+    while (node) {
+      const next = node.nextSibling;
+      fragment.appendChild(node);
+      if (node === content.end) break;
+      node = next;
+    }
+    target.appendChild(fragment);
   }
-  target.appendChild(fragment);
+  normalizeManagedTeleportNamespace(content, target);
 }
 
 function restoreManagedTeleport(source, content) {
@@ -14242,12 +14291,11 @@ function syncManagedTeleportSource(source) {
   if (!content) {
     const start = document.createComment("resux-teleport-start");
     const end = document.createComment("resux-teleport-end");
-    target.appendChild(start);
-    while (source.firstChild) {
-      target.appendChild(source.firstChild);
-    }
-    target.appendChild(end);
-    managedTeleportContent.set(source, { start, end });
+    source.insertBefore(start, source.firstChild);
+    source.appendChild(end);
+    const nextContent = { start, end };
+    managedTeleportContent.set(source, nextContent);
+    moveManagedTeleportRange(nextContent, target);
     return;
   }
 
@@ -14257,6 +14305,14 @@ function syncManagedTeleportSource(source) {
 function mountManagedTeleports(root = document) {
   for (const source of managedTeleportSources(root)) {
     syncManagedTeleportSource(source);
+  }
+}
+
+function mountDeferredManagedTeleports(root = document) {
+  for (const source of managedTeleportSources(root)) {
+    if (source.getAttribute("data-rx-teleport-defer") === "true") {
+      syncManagedTeleportSource(source);
+    }
   }
 }
 

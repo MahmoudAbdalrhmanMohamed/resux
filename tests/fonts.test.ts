@@ -433,6 +433,35 @@ describe("fonts module", () => {
     expect(headList).toHaveLength(0);
   });
 
+  it("infers remote provider metadata for absolute HTTP font sources", () => {
+    const { runtimeConfigs, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        families: [
+          { name: "CDN Sans", src: "https://cdn.example.test/cdn-sans.woff2" }
+        ]
+      },
+      resux as any
+    );
+
+    expect(runtimeConfigs[0].public.fonts.provider).toBe("remote");
+    expect(runtimeConfigs[0].public.fonts.providers).toEqual(["remote"]);
+  });
+
+  it("rejects custom font URLs containing raw control characters", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        families: [
+          { name: "Control Sans", provider: "remote", src: "https://cdn.example.test/font\tname.woff2" }
+        ]
+      },
+      resux as any
+    );
+
+    expect(headList).toHaveLength(0);
+  });
+
   it("rejects unsafe custom font URLs", () => {
     const { headList, resux } = createMockResux();
     fontsModule.setup(

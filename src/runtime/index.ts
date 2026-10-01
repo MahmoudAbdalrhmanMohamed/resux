@@ -5140,7 +5140,7 @@ function renderResuxVideo(
   }
 
   const initialPoster = deferLazy
-    ? undefined
+    ? (placeholderSrc ?? (deferUntilPageReady ? poster : undefined))
     : (placeholderSrc ?? poster);
   if (initialPoster) {
     attrs.push(`poster="${escapeAttribute(initialPoster)}"`);
@@ -15610,7 +15610,7 @@ function renderClientResuxVideo(node, scope, locals, styleScopeId) {
     attrs.push('data-resux-placeholder-active="true"');
   }
   const initialPoster = deferLazy
-    ? undefined
+    ? (placeholderSrc || (deferUntilPageReady ? poster : undefined))
     : (placeholderSrc || poster);
   if (initialPoster) {
     attrs.push('poster="' + escapeAttribute(initialPoster) + '"');

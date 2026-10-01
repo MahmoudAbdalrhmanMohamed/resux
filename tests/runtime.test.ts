@@ -4101,6 +4101,44 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     expect(playCalls).toBeGreaterThan(0);
   });
 
+  it("keeps the poster visible while a page-ready video source stays deferred", async () => {
+    const page = defineComponent({
+      id: "m-video-page-ready-poster",
+      name: "VideoPageReadyPosterPage",
+      file: "VideoPageReadyPosterPage.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [
+        {
+          type: "element",
+          tag: "ResuxVideo",
+          attrs: [
+            { kind: "static", name: "src", value: "/media-test/videos/sample-video.mp4" },
+            { kind: "static", name: "poster", value: "/media-test/videos/sample-poster.jpg" },
+            { kind: "static", name: "deferUntilPageReady", value: "true" },
+            { kind: "static", name: "hero", value: "true" },
+            { kind: "static", name: "controls", value: "false" },
+          ],
+          events: [],
+          children: [],
+        },
+      ],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/media", params: {}, query: {} },
+    });
+
+    expect(result.html).toMatch(/<video[^>]*\sposter="\/media-test\/videos\/sample-poster\.jpg"/);
+    expect(result.html).toContain('data-rx-poster="/media-test/videos/sample-poster.jpg"');
+    expect(result.html).toContain('data-rx-video-defer-ready="true"');
+    expect(result.html).toContain('data-rx-lazy-src="/media-test/videos/sample-video.mp4"');
+    expect(result.html).not.toMatch(/<video[^>]*\ssrc="/);
+  });
+
   it("waits for page-ready before revealing defer-until-page-ready videos", async () => {
     const tempDir = path.join(os.tmpdir(), `resux-video-page-ready-${Date.now()}`);
     await mkdir(tempDir, { recursive: true });

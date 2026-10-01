@@ -2665,7 +2665,12 @@ export default createClientComponent({ id: "m0", name: "TransitionPanel", file: 
       (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
 const template = [
   { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "toggle" }], children: [{ type: "text", value: "Toggle" }] },
-  { type: "element", tag: "teleport", attrs: [{ kind: "static", name: "to", value: "#teleports" }], events: [], children: [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "move" }], children: [{ type: "text", value: "Move" }] },
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "toggleDisabled" }], children: [{ type: "text", value: "Placement" }] },
+  { type: "element", tag: "teleport", attrs: [
+    { kind: "dynamic", name: "to", value: "target.value", bindingId: "b2" },
+    { kind: "dynamic", name: "disabled", value: "disabled.value", bindingId: "b3" }
+  ], events: [], children: [
     { type: "element", tag: "transition", attrs: [{ kind: "static", name: "name", value: "fade" }], events: [], children: [
       { type: "element", tag: "div", attrs: [], events: [], if: { expression: "visible.value", blockId: "b0" }, children: [
         { type: "element", tag: "button", attrs: [{ kind: "static", name: "id", value: "teleported-action" }], events: [{ name: "click", handler: "ping" }], children: [
@@ -2678,11 +2683,15 @@ const template = [
 async function script(ctx) {
   const visible = ctx.useState("visible", () => false);
   const hits = ctx.useState("hits", () => 0);
+  const target = ctx.useState("target", () => "#teleports");
+  const disabled = ctx.useState("disabled", () => false);
   function toggle() { visible.value = !visible.value; }
   function ping() { hits.value += 1; }
-  return { visible, hits, toggle, ping };
+  function move() { target.value = target.value === "#teleports" ? "#alternate-teleports" : "#teleports"; }
+  function toggleDisabled() { disabled.value = !disabled.value; }
+  return { visible, hits, target, disabled, toggle, ping, move, toggleDisabled };
 }
-export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "TeleportPanel.vue", script, template, handlers: ["toggle", "ping"] });
+export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "TeleportPanel.vue", script, template, handlers: ["toggle", "ping", "move", "toggleDisabled"] });
 `,
     );
 
@@ -2694,14 +2703,27 @@ export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "T
     window.document.body.innerHTML = `
       <div id="__resux">
         <button id="toggle" data-rx-on-click="s0:m0:toggle">Toggle</button>
-        <span data-rx-teleport-source="true" data-rx-teleport-to="#teleports" style="display: contents;">
+        <button id="move" data-rx-on-click="s0:m0:move">Move</button>
+        <button id="placement" data-rx-on-click="s0:m0:toggleDisabled">Placement</button>
+        <span
+          data-rx-teleport-source="true"
+          data-rx-teleport-to="#teleports"
+          data-rx-attr-b2="s0:b2"
+          data-rx-attr-b3="s0:b3"
+          style="display: contents;"
+        >
           <span data-rx-transition="fade" data-rx-block="s0:b0" style="display: contents;"></span>
         </span>
       </div>
       <div id="teleports"></div>
+      <div id="alternate-teleports"></div>
     `;
 
-    installClientRuntimeFixture(window, { visible: false, hits: 0 }, handlerUrl);
+    installClientRuntimeFixture(
+      window,
+      { visible: false, hits: 0, target: "#teleports", disabled: false },
+      handlerUrl,
+    );
     await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
 
     const source = window.document.querySelector("[data-rx-teleport-source='true']") as HTMLElement;
@@ -2727,6 +2749,27 @@ export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "T
     );
     await waitForCondition(() => !window.document.getElementById("teleported-action"), 500);
     expect(window.document.getElementById("teleported-action")).toBeNull();
+
+    window.document.getElementById("move")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+    const alternateTarget = window.document.getElementById("alternate-teleports")!;
+    await waitForCondition(() => Boolean(alternateTarget.querySelector("[data-rx-teleport-content='true']")));
+    expect(target.querySelector("[data-rx-teleport-content='true']")).toBeNull();
+
+    window.document.getElementById("placement")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+    await waitForCondition(() => Boolean(source.querySelector("[data-rx-transition='fade']")));
+    expect(alternateTarget.querySelector("[data-rx-teleport-content='true']")).toBeNull();
+    expect(source.getAttribute("data-rx-teleport-disabled")).toBe("true");
+
+    window.document.getElementById("placement")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+    await waitForCondition(() => Boolean(alternateTarget.querySelector("[data-rx-teleport-content='true']")));
+    expect(source.childNodes).toHaveLength(0);
+    expect(source.hasAttribute("data-rx-teleport-disabled")).toBe(false);
   });
 
   it("commits keyed TransitionGroup additions immediately while removed items leave", async () => {

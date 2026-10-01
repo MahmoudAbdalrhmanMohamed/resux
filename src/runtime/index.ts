@@ -3947,14 +3947,42 @@ function isTransitionBoundaryTag(tag: string): boolean {
   return normalized === "transition" || normalized === "transition-group";
 }
 
+const unsafeTransitionContainerTags = new Set([
+  "area", "base", "body", "br", "col", "embed", "head", "hr", "html", "iframe",
+  "img", "input", "link", "meta", "object", "param", "script", "source", "style",
+  "template", "title", "track", "wbr",
+]);
+
+function normalizeTransitionName(value: unknown): string {
+  const candidate = String(value || "v").trim();
+  return /^[A-Za-z0-9_-]+$/.test(candidate) ? candidate : "v";
+}
+
 function transitionBoundaryName(
   node: ElementTemplateNode,
   context: RenderTemplateContext,
   locals: Record<string, unknown>,
 ): string {
-  const props = collectComponentProps(node, context.scope, locals);
-  const candidate = String(props.name || "v").trim();
-  return /^[A-Za-z0-9_-]+$/.test(candidate) ? candidate : "v";
+  return normalizeTransitionName(collectComponentProps(node, context.scope, locals).name);
+}
+
+function transitionBoundaryTag(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+): string {
+  if (String(node.tag || "").toLowerCase() !== "transition-group") return "span";
+  const candidate = String(collectComponentProps(node, context.scope, locals).tag || "").trim().toLowerCase();
+  if (!candidate || !/^[a-z][a-z0-9-]*$/.test(candidate) || unsafeTransitionContainerTags.has(candidate)) {
+    return "span";
+  }
+  return candidate;
+}
+
+function directTransitionBlock(node: ElementTemplateNode): ElementTemplateNode | null {
+  if (node.children.length !== 1) return null;
+  const child = node.children[0];
+  return child.type === "element" && (child.for || child.if) ? child : null;
 }
 
 function renderTransitionBoundary(
@@ -3965,7 +3993,26 @@ function renderTransitionBoundary(
 ): string {
   const name = transitionBoundaryName(node, context, locals);
   const group = String(node.tag || "").toLowerCase() === "transition-group";
-  return `<span data-rx-transition="${escapeAttribute(name)}"${group ? ' data-rx-transition-group="true"' : ""} style="display: contents;">${children}</span>`;
+  const tag = transitionBoundaryTag(node, context, locals);
+  const attrs = [`data-rx-transition="${escapeAttribute(name)}"`];
+  if (group) attrs.push('data-rx-transition-group="true"');
+
+  const nameAttr = node.attrs.find((attr) => attr.name === "name");
+  if (nameAttr?.kind === "dynamic" && nameAttr.bindingId) {
+    attrs.push(`data-rx-attr-${nameAttr.bindingId}="${context.scopeId}:${nameAttr.bindingId}"`);
+  }
+
+  const blockChild = directTransitionBlock(node);
+  if (blockChild) {
+    const blockId = blockChild.for?.blockId || blockChild.if?.blockId;
+    if (blockId) {
+      attrs.push(`data-rx-block="${context.scopeId}:${blockId}"`);
+      children = children.replace(/^<span[^>]*>|<\/span>$/g, "");
+    }
+  }
+
+  if (tag === "span") attrs.push('style="display: contents;"');
+  return `<${tag} ${attrs.join(" ")}>${children}</${tag}>`;
 }
 
 function renderElement(node: ElementTemplateNode, context: RenderTemplateContext, locals: Record<string, unknown>): string {
@@ -7837,7 +7884,18 @@ function collectPatches(
       });
     }
 
-    if (node.tag !== "ResuxImg" && node.tag !== "ResuxPicture" && node.tag !== "ResuxVideo") {
+    if (isTransitionBoundaryTag(node.tag)) {
+      for (const attr of node.attrs) {
+        if (attr.name === "name" && attr.kind === "dynamic" && attr.bindingId) {
+          patches.push({
+            type: "attr",
+            id: attr.bindingId,
+            attr: "data-rx-transition",
+            value: normalizeTransitionName(evaluateExpression(attr.value, scope, locals))
+          });
+        }
+      }
+    } else if (node.tag !== "ResuxImg" && node.tag !== "ResuxPicture" && node.tag !== "ResuxVideo") {
       for (const attr of node.attrs) {
         if (attr.kind === "dynamic" && attr.bindingId) {
           patches.push({
@@ -14999,7 +15057,19 @@ function collectPatches(nodes, scope, locals, patches, styleScopeId, scopeId, mo
     if (node.html) {
       patches.push({ type: "html", id: node.html.bindingId, value: sanitizeHtml(evaluateExpression(node.html.expression, scope, locals)) });
     }
-    if (node.tag !== "ResuxImg" && node.tag !== "ResuxPicture" && node.tag !== "ResuxVideo") {
+    const normalizedTag = String(node.tag || "").toLowerCase();
+    if (normalizedTag === "transition" || normalizedTag === "transition-group") {
+      for (const attr of node.attrs) {
+        if (attr.name === "name" && attr.kind === "dynamic" && attr.bindingId) {
+          patches.push({
+            type: "attr",
+            id: attr.bindingId,
+            attr: "data-rx-transition",
+            value: normalizeClientTransitionName(evaluateExpression(attr.value, scope, locals))
+          });
+        }
+      }
+    } else if (node.tag !== "ResuxImg" && node.tag !== "ResuxPicture" && node.tag !== "ResuxVideo") {
       for (const attr of node.attrs) {
         if (attr.kind === "dynamic" && attr.bindingId) {
           const attrName = nativeAttributeName(node, attr.name);
@@ -15038,20 +15108,61 @@ function renderNode(node, scope, locals, styleScopeId, scopeId, moduleId) {
   return renderElement(node, scope, locals, styleScopeId, scopeId, moduleId);
 }
 
+const unsafeClientTransitionContainerTags = new Set([
+  "area", "base", "body", "br", "col", "embed", "head", "hr", "html", "iframe",
+  "img", "input", "link", "meta", "object", "param", "script", "source", "style",
+  "template", "title", "track", "wbr"
+]);
+
+function normalizeClientTransitionName(value) {
+  const candidate = String(value || "v").trim();
+  return /^[A-Za-z0-9_-]+$/.test(candidate) ? candidate : "v";
+}
+
+function normalizeClientTransitionTag(value) {
+  const candidate = String(value || "").trim().toLowerCase();
+  if (!candidate || !/^[a-z][a-z0-9-]*$/.test(candidate) || unsafeClientTransitionContainerTags.has(candidate)) {
+    return "span";
+  }
+  return candidate;
+}
+
 function renderElement(node, scope, locals, styleScopeId, scopeId, moduleId) {
   const normalizedTag = String(node.tag || "").toLowerCase();
   if (normalizedTag === "transition" || normalizedTag === "transition-group") {
+    const group = normalizedTag === "transition-group";
     const nameAttr = node.attrs.find((attr) => attr.name === "name");
     const rawName = nameAttr
       ? (nameAttr.kind === "static" ? nameAttr.value : evaluateExpression(nameAttr.value, scope, locals))
       : "v";
-    const candidate = String(rawName || "v").trim();
-    const name = /^[A-Za-z0-9_-]+$/.test(candidate) ? candidate : "v";
-    const groupAttr = normalizedTag === "transition-group" ? ' data-rx-transition-group="true"' : "";
-    const children = node.children
+    const name = normalizeClientTransitionName(rawName);
+    const tagAttr = group ? node.attrs.find((attr) => attr.name === "tag") : null;
+    const rawTag = tagAttr
+      ? (tagAttr.kind === "static" ? tagAttr.value : evaluateExpression(tagAttr.value, scope, locals))
+      : "";
+    const tag = group ? normalizeClientTransitionTag(rawTag) : "span";
+    const attrs = ['data-rx-transition="' + escapeAttribute(name) + '"'];
+    if (group) attrs.push('data-rx-transition-group="true"');
+    if (nameAttr && nameAttr.kind === "dynamic" && nameAttr.bindingId) {
+      attrs.push('data-rx-attr-' + nameAttr.bindingId + '="' + scopeId + ':' + nameAttr.bindingId + '"');
+    }
+
+    const blockChild = node.children.length === 1 && node.children[0]?.type === "element"
+      && (node.children[0].for || node.children[0].if)
+      ? node.children[0]
+      : null;
+    let children = node.children
       .map((child) => renderNode(child, scope, locals, styleScopeId, scopeId, moduleId))
       .join("");
-    return '<span data-rx-transition="' + escapeAttribute(name) + '"' + groupAttr + ' style="display: contents;">' + children + '</span>';
+    if (blockChild) {
+      const blockId = blockChild.for?.blockId || blockChild.if?.blockId;
+      if (blockId) {
+        attrs.push('data-rx-block="' + scopeId + ':' + blockId + '"');
+        children = children.replace(/^<span[^>]*>|<\/span>$/g, "");
+      }
+    }
+    if (tag === "span") attrs.push('style="display: contents;"');
+    return "<" + tag + " " + attrs.join(" ") + ">" + children + "</" + tag + ">";
   }
   if (node.tag === "ResuxImg") {
     return renderClientResuxImg(node, scope, locals, styleScopeId);

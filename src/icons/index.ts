@@ -201,7 +201,7 @@ export function fetchIconifyIcon(
 
 function readSvgAttribute(source: string, name: string): string {
   const escapedName = name.replace(/[.*+?^\${}()|[\]\\]/g, "\\$&");
-  const pattern = "\\b" + escapedName + "\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')";
+  const pattern = "(?:^|\\s)" + escapedName + "\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')";
   const match = new RegExp(pattern, "i").exec(source);
   return (match?.[1] ?? match?.[2] ?? "").trim();
 }

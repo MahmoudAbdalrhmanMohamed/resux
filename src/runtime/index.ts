@@ -11291,6 +11291,7 @@ async function initializeClientRuntime() {
     return;
   }
   void resumePendingAsyncData();
+  mountManagedTeleports(document);
   void mountVueIslands();
   activateDeferredLazyMedia();
   applyManagedVideoDefaultSpeeds();
@@ -14102,6 +14103,7 @@ async function navigateTo(target, options = {}) {
     animateRouteSwap(preserved.root);
     clearScopeCacheExcept(preserved.scopeIds);
     void resumePendingAsyncData();
+    mountManagedTeleports(preserved.root);
     void mountVueIslands(preserved.root);
     activateDeferredLazyMedia(preserved.root);
     applyManagedVideoDefaultSpeeds(preserved.root);
@@ -14160,6 +14162,84 @@ function createClientRouter() {
   };
 }
 
+const managedTeleportContent = new WeakMap();
+
+function managedTeleportSources(root = document) {
+  const sources = [];
+  if (root?.matches?.("[data-rx-teleport-source='true']")) {
+    sources.push(root);
+  }
+  if (root?.querySelectorAll) {
+    sources.push(...root.querySelectorAll("[data-rx-teleport-source='true']"));
+  }
+  return sources;
+}
+
+function managedTeleportTarget(source) {
+  const selector = source.getAttribute("data-rx-teleport-to") || "#teleports";
+  try {
+    return document.querySelector(selector);
+  } catch {
+    return null;
+  }
+}
+
+function restoreManagedTeleport(source, content) {
+  if (!content) return;
+  while (content.firstChild) {
+    source.appendChild(content.firstChild);
+  }
+  content.remove();
+  managedTeleportContent.delete(source);
+}
+
+function syncManagedTeleportSource(source) {
+  if (!source?.isConnected) return;
+  const disabled = source.getAttribute("data-rx-teleport-disabled") === "true";
+  const content = managedTeleportContent.get(source);
+
+  if (disabled) {
+    restoreManagedTeleport(source, content);
+    return;
+  }
+
+  const target = managedTeleportTarget(source);
+  if (!target || target === source || source.contains(target)) {
+    restoreManagedTeleport(source, content);
+    return;
+  }
+
+  let destination = content;
+  if (!destination) {
+    destination = document.createElement("span");
+    destination.setAttribute("data-rx-teleport-content", "true");
+    destination.style.display = "contents";
+    while (source.firstChild) {
+      destination.appendChild(source.firstChild);
+    }
+    managedTeleportContent.set(source, destination);
+  }
+  if (destination.parentNode !== target) {
+    target.appendChild(destination);
+  }
+}
+
+function mountManagedTeleports(root = document) {
+  for (const source of managedTeleportSources(root)) {
+    syncManagedTeleportSource(source);
+  }
+}
+
+function cleanupManagedTeleports(root) {
+  for (const source of managedTeleportSources(root)) {
+    const content = managedTeleportContent.get(source);
+    if (!content) continue;
+    unmountVueIslands(content);
+    content.remove();
+    managedTeleportContent.delete(source);
+  }
+}
+
 function replaceRouteHtml(root, html, preserveLayout = true) {
   const currentLayout = root.querySelector("[data-rx-layout]");
   const template = document.createElement("template");
@@ -14172,6 +14252,7 @@ function replaceRouteHtml(root, html, preserveLayout = true) {
     || !nextLayout
     || currentLayout.getAttribute("data-rx-layout") !== nextLayout.getAttribute("data-rx-layout")
   ) {
+    cleanupManagedTeleports(root);
     unmountVueIslands(root);
     root.innerHTML = html;
     return { root, scopeIds: new Set() };
@@ -14186,6 +14267,7 @@ function replaceRouteHtml(root, html, preserveLayout = true) {
   }
 
   const preservedScopeIds = collectScopeIds(currentLayout, currentPage);
+  cleanupManagedTeleports(currentPage);
   unmountVueIslands(currentPage);
   currentPage.innerHTML = nextPage.innerHTML;
   return { root: currentPage, scopeIds: preservedScopeIds };
@@ -15169,7 +15251,26 @@ function collectPatches(nodes, scope, locals, patches, styleScopeId, scopeId, mo
       patches.push({ type: "html", id: node.html.bindingId, value: sanitizeHtml(evaluateExpression(node.html.expression, scope, locals)) });
     }
     const normalizedTag = String(node.tag || "").toLowerCase();
-    if (normalizedTag === "transition" || normalizedTag === "transition-group") {
+    if (normalizedTag === "teleport") {
+      for (const attr of node.attrs) {
+        if (attr.kind !== "dynamic" || !attr.bindingId) continue;
+        if (attr.name === "to") {
+          patches.push({
+            type: "attr",
+            id: attr.bindingId,
+            attr: "data-rx-teleport-to",
+            value: normalizeClientTeleportTarget(evaluateExpression(attr.value, scope, locals))
+          });
+        } else if (attr.name === "disabled") {
+          patches.push({
+            type: "attr",
+            id: attr.bindingId,
+            attr: "data-rx-teleport-disabled",
+            value: stringifyValue(evaluateExpression(attr.value, scope, locals))
+          });
+        }
+      }
+    } else if (normalizedTag === "transition" || normalizedTag === "transition-group") {
       for (const attr of node.attrs) {
         if (attr.name === "name" && attr.kind === "dynamic" && attr.bindingId) {
           patches.push({
@@ -15221,6 +15322,11 @@ function renderNode(node, scope, locals, styleScopeId, scopeId, moduleId) {
 
 const unsafeClientTransitionContainerTags = new Set(${JSON.stringify([...unsafeTransitionContainerTags])});
 
+function normalizeClientTeleportTarget(value) {
+  const candidate = String(value || "#teleports").trim();
+  return candidate && candidate.length <= 512 ? candidate : "#teleports";
+}
+
 function normalizeClientTransitionName(value) {
   const candidate = String(value || "v").trim();
   return /^[A-Za-z0-9_-]+$/.test(candidate) ? candidate : "v";
@@ -15236,6 +15342,33 @@ function normalizeClientTransitionTag(value) {
 
 function renderElement(node, scope, locals, styleScopeId, scopeId, moduleId) {
   const normalizedTag = String(node.tag || "").toLowerCase();
+  if (normalizedTag === "teleport") {
+    const toAttr = node.attrs.find((attr) => attr.name === "to");
+    const disabledAttr = node.attrs.find((attr) => attr.name === "disabled");
+    const rawTarget = toAttr
+      ? (toAttr.kind === "static" ? toAttr.value : evaluateExpression(toAttr.value, scope, locals))
+      : "#teleports";
+    const disabled = disabledAttr
+      ? (disabledAttr.kind === "static"
+        ? disabledAttr.value === "" || disabledAttr.value === "true"
+        : Boolean(evaluateExpression(disabledAttr.value, scope, locals)))
+      : false;
+    const attrs = [
+      'data-rx-teleport-source="true"',
+      'data-rx-teleport-to="' + escapeAttribute(normalizeClientTeleportTarget(rawTarget)) + '"',
+      'style="display: contents;"'
+    ];
+    if (disabled) attrs.push('data-rx-teleport-disabled="true"');
+    for (const attr of node.attrs) {
+      if (attr.kind === "dynamic" && attr.bindingId && (attr.name === "to" || attr.name === "disabled")) {
+        attrs.push('data-rx-attr-' + attr.bindingId + '="' + scopeId + ':' + attr.bindingId + '"');
+      }
+    }
+    const children = node.children
+      .map((child) => renderNode(child, scope, locals, styleScopeId, scopeId, moduleId))
+      .join("");
+    return '<span ' + attrs.join(" ") + '>' + children + '</span>';
+  }
   if (normalizedTag === "transition" || normalizedTag === "transition-group") {
     const group = normalizedTag === "transition-group";
     const nameAttr = node.attrs.find((attr) => attr.name === "name");
@@ -17177,8 +17310,10 @@ function runCssTransition(element, name, phase, onDone) {
 }
 
 function refreshPatchedBlock(element, value) {
+  cleanupManagedTeleports(element);
   unmountVueIslands(element);
   element.innerHTML = value;
+  mountManagedTeleports(element);
   void mountVueIslands(element);
   activateDeferredLazyMedia(element);
   applyReducedMotionVideoPreference(element);
@@ -17332,13 +17467,18 @@ function applyPatches(scopeId, patches) {
             element.checked = true;
           }
         }
+        if (patch.attr === "data-rx-teleport-to" || patch.attr === "data-rx-teleport-disabled") {
+          syncManagedTeleportSource(element);
+        }
       });
       continue;
     }
     if (patch.type === "html") {
       document.querySelectorAll('[data-rx-html-' + patch.id + '="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
+        cleanupManagedTeleports(element);
         unmountVueIslands(element);
         element.innerHTML = patch.value;
+        mountManagedTeleports(element);
         void mountVueIslands(element);
         needsLazyImageActivation = true;
         needsDelegatedEventRegistration = true;
@@ -17349,8 +17489,10 @@ function applyPatches(scopeId, patches) {
       if (patchTransitionBlock(element, patch.value)) {
         return;
       }
+      cleanupManagedTeleports(element);
       unmountVueIslands(element);
       element.innerHTML = patch.value;
+      mountManagedTeleports(element);
       void mountVueIslands(element);
       needsLazyImageActivation = true;
       needsDelegatedEventRegistration = true;

@@ -3943,6 +3943,79 @@ function resolveComponentDefinition(
   return undefined;
 }
 
+function isTransitionBoundaryTag(tag: string): boolean {
+  const normalized = String(tag || "").toLowerCase();
+  return normalized === "transition" || normalized === "transition-group";
+}
+
+const unsafeTransitionContainerTags = new Set([
+  "area", "base", "body", "br", "col", "embed", "head", "hr", "html", "iframe",
+  "img", "input", "link", "meta", "object", "param", "script", "source", "style",
+  "template", "title", "track", "wbr",
+]);
+
+function normalizeTransitionName(value: unknown): string {
+  const candidate = String(value || "v").trim();
+  return /^[A-Za-z0-9_-]+$/.test(candidate) ? candidate : "v";
+}
+
+function transitionBoundaryName(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+): string {
+  return normalizeTransitionName(collectComponentProps(node, context.scope, locals).name);
+}
+
+function transitionBoundaryTag(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+): string {
+  if (String(node.tag || "").toLowerCase() !== "transition-group") return "span";
+  const candidate = String(collectComponentProps(node, context.scope, locals).tag || "").trim().toLowerCase();
+  if (!candidate || !/^[a-z][a-z0-9-]*$/.test(candidate) || unsafeTransitionContainerTags.has(candidate)) {
+    return "span";
+  }
+  return candidate;
+}
+
+function directTransitionBlock(node: ElementTemplateNode): ElementTemplateNode | null {
+  if (node.children.length !== 1) return null;
+  const child = node.children[0];
+  return child.type === "element" && (child.for || child.if) ? child : null;
+}
+
+function renderTransitionBoundary(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+  children: string,
+): string {
+  const name = transitionBoundaryName(node, context, locals);
+  const group = String(node.tag || "").toLowerCase() === "transition-group";
+  const tag = transitionBoundaryTag(node, context, locals);
+  const attrs = [`data-rx-transition="${escapeAttribute(name)}"`];
+  if (group) attrs.push('data-rx-transition-group="true"');
+
+  const nameAttr = node.attrs.find((attr) => attr.name === "name");
+  if (nameAttr?.kind === "dynamic" && nameAttr.bindingId) {
+    attrs.push(`data-rx-attr-${nameAttr.bindingId}="${context.scopeId}:${nameAttr.bindingId}"`);
+  }
+
+  const blockChild = directTransitionBlock(node);
+  if (blockChild) {
+    const blockId = blockChild.for?.blockId || blockChild.if?.blockId;
+    if (blockId) {
+      attrs.push(`data-rx-block="${context.scopeId}:${blockId}"`);
+      children = children.replace(/^<span[^>]*>|<\/span>$/g, "");
+    }
+  }
+
+  if (tag === "span") attrs.push('style="display: contents;"');
+  return `<${tag} ${attrs.join(" ")}>${children}</${tag}>`;
+}
+
 function renderElement(node: ElementTemplateNode, context: RenderTemplateContext, locals: Record<string, unknown>): string {
   if (node.tag === "ResuxPage") {
     if (!context.renderPage) {
@@ -3958,6 +4031,15 @@ function renderElement(node: ElementTemplateNode, context: RenderTemplateContext
 
   if (node.tag === "slot") {
     throw new Error("<slot> must be rendered by renderTemplateNodesAsync.");
+  }
+
+  if (isTransitionBoundaryTag(node.tag)) {
+    return renderTransitionBoundary(
+      node,
+      context,
+      locals,
+      renderTemplateNodes(node.children, context, locals),
+    );
   }
 
   if (node.tag === "ResuxLink" || node.tag === "NuxtLink" || node.tag === "RouterLink") {
@@ -4066,10 +4148,12 @@ function collectNativeElementAttributes(
     }
 
     const value = evaluateExpression(attr.value, context.scope, locals);
+    if (attr.bindingId) {
+      attrs.push(`data-rx-attr-${attr.bindingId}="${context.scopeId}:${attr.bindingId}"`);
+    }
     if (value === false || value === null || value === undefined) continue;
 
-    const marker = attr.bindingId ? ` data-rx-attr-${attr.bindingId}="${context.scopeId}:${attr.bindingId}"` : "";
-    attrs.push(`${attrName}="${escapeAttribute(stringifyAttributeValue(attrName, value))}"${marker}`);
+    attrs.push(`${attrName}="${escapeAttribute(stringifyAttributeValue(attrName, value))}"`);
   }
 
   for (const event of node.events) {
@@ -4173,6 +4257,15 @@ async function renderElementAsync(
 
   if (node.tag === "slot") {
     return context.renderSlot ? context.renderSlot() : "";
+  }
+
+  if (isTransitionBoundaryTag(node.tag)) {
+    return renderTransitionBoundary(
+      node,
+      context,
+      locals,
+      await renderTemplateNodesAsync(node.children, context, renderComponent, locals),
+    );
   }
 
   if (node.tag === "ResuxLink" || node.tag === "NuxtLink" || node.tag === "RouterLink") {
@@ -7792,7 +7885,18 @@ function collectPatches(
       });
     }
 
-    if (node.tag !== "ResuxImg" && node.tag !== "ResuxPicture" && node.tag !== "ResuxVideo") {
+    if (isTransitionBoundaryTag(node.tag)) {
+      for (const attr of node.attrs) {
+        if (attr.name === "name" && attr.kind === "dynamic" && attr.bindingId) {
+          patches.push({
+            type: "attr",
+            id: attr.bindingId,
+            attr: "data-rx-transition",
+            value: normalizeTransitionName(evaluateExpression(attr.value, scope, locals))
+          });
+        }
+      }
+    } else if (node.tag !== "ResuxImg" && node.tag !== "ResuxPicture" && node.tag !== "ResuxVideo") {
       for (const attr of node.attrs) {
         if (attr.kind === "dynamic" && attr.bindingId) {
           patches.push({
@@ -10904,7 +11008,7 @@ export function createClientComponent(definition) {
       const scope = await definition.script(setupContext);
       serializedScope.globalStateKeys = [...globalStateKeys];
       await Promise.allSettled(mountedCallbacks.map((callback) => callback()));
-      return { scope, props, stateRefs, globalStateKeys, asyncDataRefs, pendingCompletions };
+      return { scopeId: serializedScope.id, scope, props, stateRefs, globalStateKeys, asyncDataRefs, pendingCompletions };
     },
     async run(scopeRecord, handlerName, event, eventLocals = {}) {
       const handler = scopeRecord.scope[handlerName];
@@ -10916,10 +11020,10 @@ export function createClientComponent(definition) {
       } else {
         await handler(event);
       }
-      return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId);
+      return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId, scopeRecord.scopeId, definition.id);
     },
     render(scopeRecord) {
-      return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId);
+      return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId, scopeRecord.scopeId, definition.id);
     },
     serialize(scopeRecord) {
       return {
@@ -14949,13 +15053,13 @@ function appendImportRevision(modulePath, revision) {
   return modulePath + separator + "t=" + encodeURIComponent(String(revision));
 }
 
-function renderClientPatches(template, scope, styleScopeId) {
+function renderClientPatches(template, scope, styleScopeId, scopeId, moduleId) {
   const patches = [];
-  collectPatches(template, scope, {}, patches, styleScopeId);
+  collectPatches(template, scope, {}, patches, styleScopeId, scopeId, moduleId);
   return patches;
 }
 
-function collectPatches(nodes, scope, locals, patches, styleScopeId) {
+function collectPatches(nodes, scope, locals, patches, styleScopeId, scopeId, moduleId) {
   for (const node of nodes) {
     if (node.type === "interpolation") {
       patches.push({ type: "text", id: node.bindingId, value: stringifyValue(evaluateExpression(node.expression, scope, locals)) });
@@ -14965,17 +15069,29 @@ function collectPatches(nodes, scope, locals, patches, styleScopeId) {
       continue;
     }
     if (node.for) {
-      patches.push({ type: "block", id: node.for.blockId, value: renderNode(node, scope, locals, styleScopeId).replace(/^<span[^>]*>|<\/span>$/g, "") });
+      patches.push({ type: "block", id: node.for.blockId, value: renderNode(node, scope, locals, styleScopeId, scopeId, moduleId).replace(/^<span[^>]*>|<\/span>$/g, "") });
       continue;
     }
     if (node.if) {
-      patches.push({ type: "block", id: node.if.blockId, value: renderNode(node, scope, locals, styleScopeId).replace(/^<span[^>]*>|<\/span>$/g, "") });
+      patches.push({ type: "block", id: node.if.blockId, value: renderNode(node, scope, locals, styleScopeId, scopeId, moduleId).replace(/^<span[^>]*>|<\/span>$/g, "") });
       continue;
     }
     if (node.html) {
       patches.push({ type: "html", id: node.html.bindingId, value: sanitizeHtml(evaluateExpression(node.html.expression, scope, locals)) });
     }
-    if (node.tag !== "ResuxImg" && node.tag !== "ResuxPicture" && node.tag !== "ResuxVideo") {
+    const normalizedTag = String(node.tag || "").toLowerCase();
+    if (normalizedTag === "transition" || normalizedTag === "transition-group") {
+      for (const attr of node.attrs) {
+        if (attr.name === "name" && attr.kind === "dynamic" && attr.bindingId) {
+          patches.push({
+            type: "attr",
+            id: attr.bindingId,
+            attr: "data-rx-transition",
+            value: normalizeClientTransitionName(evaluateExpression(attr.value, scope, locals))
+          });
+        }
+      }
+    } else if (node.tag !== "ResuxImg" && node.tag !== "ResuxPicture" && node.tag !== "ResuxVideo") {
       for (const attr of node.attrs) {
         if (attr.kind === "dynamic" && attr.bindingId) {
           const attrName = nativeAttributeName(node, attr.name);
@@ -14983,16 +15099,16 @@ function collectPatches(nodes, scope, locals, patches, styleScopeId) {
         }
       }
     }
-    collectPatches(node.children, scope, locals, patches, styleScopeId);
+    collectPatches(node.children, scope, locals, patches, styleScopeId, scopeId, moduleId);
   }
 }
 
-function renderNode(node, scope, locals, styleScopeId) {
+function renderNode(node, scope, locals, styleScopeId, scopeId, moduleId) {
   if (node.type === "text") {
     return escapeHtml(node.value);
   }
   if (node.type === "interpolation") {
-    return '<span data-rx-text=":' + node.bindingId + '">' + escapeHtml(stringifyValue(evaluateExpression(node.expression, scope, locals))) + '</span>';
+    return '<span data-rx-text="' + scopeId + ':' + node.bindingId + '">' + escapeHtml(stringifyValue(evaluateExpression(node.expression, scope, locals))) + '</span>';
   }
   if (node.for) {
     const items = evaluateExpression(node.for.source, scope, locals);
@@ -15000,21 +15116,72 @@ function renderNode(node, scope, locals, styleScopeId) {
       ? items.map((item, index) => {
           const nextLocals = { ...locals, [node.for.value]: item };
           if (node.for.index) nextLocals[node.for.index] = index;
-          return renderElement({ ...node, for: undefined, if: undefined }, scope, nextLocals, styleScopeId);
+          return renderElement({ ...node, for: undefined, if: undefined }, scope, nextLocals, styleScopeId, scopeId, moduleId);
         }).join("")
       : "";
-    return '<span data-rx-block=":' + node.for.blockId + '" style="display: contents;">' + rendered + '</span>';
+    return '<span data-rx-block="' + scopeId + ':' + node.for.blockId + '" style="display: contents;">' + rendered + '</span>';
   }
   if (node.if) {
     const rendered = evaluateExpression(node.if.expression, scope, locals)
-      ? renderElement({ ...node, if: undefined }, scope, locals, styleScopeId)
+      ? renderElement({ ...node, if: undefined }, scope, locals, styleScopeId, scopeId, moduleId)
       : "";
-    return '<span data-rx-block=":' + node.if.blockId + '" style="display: contents;">' + rendered + '</span>';
+    return '<span data-rx-block="' + scopeId + ':' + node.if.blockId + '" style="display: contents;">' + rendered + '</span>';
   }
-  return renderElement(node, scope, locals, styleScopeId);
+  return renderElement(node, scope, locals, styleScopeId, scopeId, moduleId);
 }
 
-function renderElement(node, scope, locals, styleScopeId) {
+const unsafeClientTransitionContainerTags = new Set(${JSON.stringify([...unsafeTransitionContainerTags])});
+
+function normalizeClientTransitionName(value) {
+  const candidate = String(value || "v").trim();
+  return /^[A-Za-z0-9_-]+$/.test(candidate) ? candidate : "v";
+}
+
+function normalizeClientTransitionTag(value) {
+  const candidate = String(value || "").trim().toLowerCase();
+  if (!candidate || !/^[a-z][a-z0-9-]*$/.test(candidate) || unsafeClientTransitionContainerTags.has(candidate)) {
+    return "span";
+  }
+  return candidate;
+}
+
+function renderElement(node, scope, locals, styleScopeId, scopeId, moduleId) {
+  const normalizedTag = String(node.tag || "").toLowerCase();
+  if (normalizedTag === "transition" || normalizedTag === "transition-group") {
+    const group = normalizedTag === "transition-group";
+    const nameAttr = node.attrs.find((attr) => attr.name === "name");
+    const rawName = nameAttr
+      ? (nameAttr.kind === "static" ? nameAttr.value : evaluateExpression(nameAttr.value, scope, locals))
+      : "v";
+    const name = normalizeClientTransitionName(rawName);
+    const tagAttr = group ? node.attrs.find((attr) => attr.name === "tag") : null;
+    const rawTag = tagAttr
+      ? (tagAttr.kind === "static" ? tagAttr.value : evaluateExpression(tagAttr.value, scope, locals))
+      : "";
+    const tag = group ? normalizeClientTransitionTag(rawTag) : "span";
+    const attrs = ['data-rx-transition="' + escapeAttribute(name) + '"'];
+    if (group) attrs.push('data-rx-transition-group="true"');
+    if (nameAttr && nameAttr.kind === "dynamic" && nameAttr.bindingId) {
+      attrs.push('data-rx-attr-' + nameAttr.bindingId + '="' + scopeId + ':' + nameAttr.bindingId + '"');
+    }
+
+    const blockChild = node.children.length === 1 && node.children[0]?.type === "element"
+      && (node.children[0].for || node.children[0].if)
+      ? node.children[0]
+      : null;
+    let children = node.children
+      .map((child) => renderNode(child, scope, locals, styleScopeId, scopeId, moduleId))
+      .join("");
+    if (blockChild) {
+      const blockId = blockChild.for?.blockId || blockChild.if?.blockId;
+      if (blockId) {
+        attrs.push('data-rx-block="' + scopeId + ':' + blockId + '"');
+        children = children.replace(/^<span[^>]*>|<\/span>$/g, "");
+      }
+    }
+    if (tag === "span") attrs.push('style="display: contents;"');
+    return "<" + tag + " " + attrs.join(" ") + ">" + children + "</" + tag + ">";
+  }
   if (node.tag === "ResuxImg") {
     return renderClientResuxImg(node, scope, locals, styleScopeId);
   }
@@ -15035,14 +15202,16 @@ function renderElement(node, scope, locals, styleScopeId) {
       attrs.push(attrName + '="' + escapeAttribute(attr.value) + '"');
     } else {
       const value = evaluateExpression(attr.value, scope, locals);
+      if (attr.bindingId) {
+        attrs.push('data-rx-attr-' + attr.bindingId + '="' + scopeId + ':' + attr.bindingId + '"');
+      }
       if (value !== false && value !== null && value !== undefined) {
-        const marker = attr.bindingId ? ' data-rx-attr-' + attr.bindingId + '=":' + attr.bindingId + '"' : "";
-        attrs.push(attrName + '="' + escapeAttribute(stringifyAttributeValue(attrName, value)) + '"' + marker);
+        attrs.push(attrName + '="' + escapeAttribute(stringifyAttributeValue(attrName, value)) + '"');
       }
     }
   }
   for (const event of node.events) {
-    attrs.push('data-rx-on-' + event.name + '=":' + event.handler + '"');
+    attrs.push('data-rx-on-' + event.name + '="' + scopeId + ':' + moduleId + ':' + event.handler + '"');
     if (event.locals && event.locals.length) {
       const eventLocals = {};
       for (const name of event.locals) {
@@ -15055,7 +15224,7 @@ function renderElement(node, scope, locals, styleScopeId) {
     }
   }
   if (node.html) {
-    attrs.push('data-rx-html-' + node.html.bindingId + '=":' + node.html.bindingId + '"');
+    attrs.push('data-rx-html-' + node.html.bindingId + '="' + scopeId + ':' + node.html.bindingId + '"');
   }
   if (styleScopeId) {
     attrs.push(styleScopeId + '=""');
@@ -15063,7 +15232,7 @@ function renderElement(node, scope, locals, styleScopeId) {
   const attrText = attrs.length ? " " + attrs.join(" ") : "";
   const children = node.html
     ? sanitizeHtml(evaluateExpression(node.html.expression, scope, locals))
-    : node.children.map((child) => renderNode(child, scope, locals, styleScopeId)).join("");
+    : node.children.map((child) => renderNode(child, scope, locals, styleScopeId, scopeId, moduleId)).join("");
   return "<" + tag + attrText + ">" + children + "</" + tag + ">";
 }
 
@@ -16804,6 +16973,246 @@ function nativeAttributeName(node, name) {
   return name;
 }
 
+const activeCssTransitions = new WeakMap();
+const reactiveBlockTransitionRevisions = new WeakMap();
+
+function transitionBoundaryFor(element) {
+  return element && element.closest ? element.closest("[data-rx-transition]") : null;
+}
+
+function transitionNameFromBoundary(boundary) {
+  const candidate = String(boundary?.getAttribute?.("data-rx-transition") || "v").trim();
+  return /^[A-Za-z0-9_-]+$/.test(candidate) ? candidate : "v";
+}
+
+function transitionReducedMotion() {
+  return typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function cssTimeTokenMs(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return 0;
+  const parsed = Number.parseFloat(normalized);
+  if (!Number.isFinite(parsed)) return 0;
+  return normalized.endsWith("ms") ? parsed : parsed * 1000;
+}
+
+function maxCssMotionTime(durationValue, delayValue) {
+  const durations = String(durationValue || "0s").split(",").map(cssTimeTokenMs);
+  const delays = String(delayValue || "0s").split(",").map(cssTimeTokenMs);
+  const length = Math.max(durations.length, delays.length);
+  let max = 0;
+  for (let index = 0; index < length; index += 1) {
+    const duration = durations[index % durations.length] || 0;
+    const delay = delays[index % delays.length] || 0;
+    max = Math.max(max, duration + delay);
+  }
+  return max;
+}
+
+function cssAnimationIterationToken(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized || normalized === "infinite") return 1;
+  const parsed = Number.parseFloat(normalized);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 1;
+}
+
+function maxCssAnimationTime(durationValue, delayValue, iterationValue) {
+  const durations = String(durationValue || "0s").split(",").map(cssTimeTokenMs);
+  const delays = String(delayValue || "0s").split(",").map(cssTimeTokenMs);
+  const iterations = String(iterationValue || "1").split(",").map(cssAnimationIterationToken);
+  const length = Math.max(durations.length, delays.length, iterations.length);
+  let max = 0;
+  for (let index = 0; index < length; index += 1) {
+    const duration = durations[index % durations.length] || 0;
+    const delay = delays[index % delays.length] || 0;
+    const iterationsCount = iterations[index % iterations.length] ?? 1;
+    max = Math.max(max, delay + duration * iterationsCount);
+  }
+  return max;
+}
+
+function cssMotionTime(element) {
+  if (typeof window === "undefined" || typeof window.getComputedStyle !== "function") return 0;
+  const style = window.getComputedStyle(element);
+  return Math.max(
+    maxCssMotionTime(style.transitionDuration, style.transitionDelay),
+    maxCssAnimationTime(style.animationDuration, style.animationDelay, style.animationIterationCount)
+  );
+}
+
+function cancelCssTransition(element) {
+  const active = activeCssTransitions.get(element);
+  if (active) active.cancel();
+}
+
+function runCssTransition(element, name, phase, onDone) {
+  cancelCssTransition(element);
+  if (!element || !element.classList || transitionReducedMotion()) {
+    onDone?.();
+    return;
+  }
+
+  const fromClass = name + "-" + phase + "-from";
+  const activeClass = name + "-" + phase + "-active";
+  const toClass = name + "-" + phase + "-to";
+  let timer = 0;
+  let cancelled = false;
+
+  const cleanup = () => {
+    element.classList.remove(fromClass, activeClass, toClass);
+  };
+  const finish = () => {
+    if (cancelled) return;
+    cleanup();
+    activeCssTransitions.delete(element);
+    onDone?.();
+  };
+  const cancel = () => {
+    cancelled = true;
+    if (timer) window.clearTimeout(timer);
+    cleanup();
+    if (activeCssTransitions.get(element)?.cancel === cancel) {
+      activeCssTransitions.delete(element);
+    }
+  };
+
+  activeCssTransitions.set(element, { cancel });
+  element.classList.add(fromClass, activeClass);
+  element.getBoundingClientRect?.();
+  element.classList.remove(fromClass);
+  element.classList.add(toClass);
+  timer = window.setTimeout(finish, Math.max(16, cssMotionTime(element) + 32));
+}
+
+function refreshPatchedBlock(element, value) {
+  unmountVueIslands(element);
+  element.innerHTML = value;
+  void mountVueIslands(element);
+  activateDeferredLazyMedia(element);
+  applyReducedMotionVideoPreference(element);
+  initializeManagedVideoControls(element);
+  registerDelegatedEventsFromDom(element);
+}
+
+function transitionChildKey(element) {
+  return element?.getAttribute?.("key") || element?.getAttribute?.("data-key") || "";
+}
+
+function patchTransitionGroup(element, value, boundary, revision) {
+  const name = transitionNameFromBoundary(boundary);
+  for (const stale of Array.from(element.children || [])) {
+    if (stale.getAttribute?.("data-rx-transition-leaving") !== "true") continue;
+    cancelCssTransition(stale);
+    unmountVueIslands(stale);
+    stale.remove();
+  }
+
+  const oldChildren = Array.from(element.children || []);
+  oldChildren.forEach(cancelCssTransition);
+  const oldKeys = new Map();
+  for (const child of oldChildren) {
+    const key = transitionChildKey(child);
+    if (key) oldKeys.set(key, child);
+  }
+
+  const template = document.createElement("template");
+  template.innerHTML = value;
+  const nextElements = Array.from(template.content.children || []);
+  const nextKeys = new Set(nextElements.map(transitionChildKey).filter(Boolean));
+  const removed = [...oldKeys.entries()]
+    .filter(([key]) => !nextKeys.has(key))
+    .map(([, child]) => child);
+
+  for (const child of removed) {
+    child.remove();
+  }
+
+  if (reactiveBlockTransitionRevisions.get(element) !== revision) return;
+  refreshPatchedBlock(element, value);
+
+  const nextChildren = Array.from(element.children || []);
+  for (const child of nextChildren) {
+    const key = transitionChildKey(child);
+    if ((key && !oldKeys.has(key)) || (oldChildren.length === 0 && !key)) {
+      runCssTransition(child, name, "enter");
+    }
+  }
+
+  if (!removed.length) return;
+
+  if (transitionReducedMotion()) {
+    for (const child of removed) {
+      unmountVueIslands(child);
+    }
+    return;
+  }
+
+  for (const child of removed) {
+    child.setAttribute("data-rx-transition-leaving", "true");
+    element.appendChild(child);
+    runCssTransition(child, name, "leave", () => {
+      unmountVueIslands(child);
+      child.remove();
+    });
+  }
+}
+
+function patchTransitionBlock(element, value) {
+  const boundary = transitionBoundaryFor(element);
+  if (!boundary) return false;
+
+  const revision = (reactiveBlockTransitionRevisions.get(element) || 0) + 1;
+  reactiveBlockTransitionRevisions.set(element, revision);
+
+  if (boundary.getAttribute("data-rx-transition-group") === "true") {
+    patchTransitionGroup(element, value, boundary, revision);
+    return true;
+  }
+
+  const hadContent = Boolean(element.firstElementChild || String(element.textContent || "").trim());
+  const hasContent = String(value || "").trim().length > 0;
+  const name = transitionNameFromBoundary(boundary);
+  const current = element.firstElementChild;
+  if (current) cancelCssTransition(current);
+
+  if (hadContent && !hasContent && current) {
+    runCssTransition(current, name, "leave", () => {
+      if (reactiveBlockTransitionRevisions.get(element) === revision) {
+        refreshPatchedBlock(element, value);
+      }
+    });
+    return true;
+  }
+
+  refreshPatchedBlock(element, value);
+  if (!hadContent && hasContent) {
+    const entered = element.firstElementChild;
+    if (entered) runCssTransition(entered, name, "enter");
+  }
+  return true;
+}
+
+function patchTransitionVisibility(element, shouldHide) {
+  const boundary = transitionBoundaryFor(element);
+  if (!boundary || boundary.getAttribute("data-rx-transition-group") === "true") return false;
+
+  const name = transitionNameFromBoundary(boundary);
+  cancelCssTransition(element);
+  if (shouldHide) {
+    if (element.hasAttribute("hidden")) return true;
+    runCssTransition(element, name, "leave", () => element.setAttribute("hidden", "true"));
+    return true;
+  }
+
+  const wasHidden = element.hasAttribute("hidden");
+  element.removeAttribute("hidden");
+  if (wasHidden) runCssTransition(element, name, "enter");
+  return true;
+}
+
 function applyPatches(scopeId, patches) {
   let needsLazyImageActivation = false;
   let needsDelegatedEventRegistration = false;
@@ -16816,7 +17225,11 @@ function applyPatches(scopeId, patches) {
     }
     if (patch.type === "attr") {
       document.querySelectorAll('[data-rx-attr-' + patch.id + '="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
-        if (patch.value === "" || patch.value === "false" || patch.value == null) {
+        const removeAttribute = patch.value === "" || patch.value === "false" || patch.value == null;
+        if (patch.attr === "hidden" && patchTransitionVisibility(element, !removeAttribute)) {
+          return;
+        }
+        if (removeAttribute) {
           element.removeAttribute(patch.attr);
           if (patch.attr === "checked" && "checked" in element) {
             element.checked = false;
@@ -16844,6 +17257,9 @@ function applyPatches(scopeId, patches) {
       continue;
     }
     document.querySelectorAll('[data-rx-block="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
+      if (patchTransitionBlock(element, patch.value)) {
+        return;
+      }
       unmountVueIslands(element);
       element.innerHTML = patch.value;
       void mountVueIslands(element);

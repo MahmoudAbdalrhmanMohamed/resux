@@ -22,6 +22,44 @@ function nextRuntimeImportQuery() {
   return `${Date.now()}-${runtimeImportCounter}`;
 }
 
+async function createClientRuntimeFixture(
+  prefix: string,
+  moduleSource: (runtimeUrl: string) => string,
+): Promise<{ runtimeUrl: string; handlerUrl: string }> {
+  const tempDir = path.join(os.tmpdir(), `${prefix}-${Date.now()}-${runtimeImportCounter + 1}`);
+  await mkdir(tempDir, { recursive: true });
+  const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+  const handlerFile = path.join(tempDir, "handler.mjs");
+  await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+  const runtimeUrl = pathToFileURL(runtimeFile).href;
+  await writeFile(handlerFile, moduleSource(runtimeUrl), "utf8");
+  return { runtimeUrl, handlerUrl: pathToFileURL(handlerFile).href };
+}
+
+function installClientRuntimeFixture(
+  window: Window,
+  state: Record<string, unknown>,
+  handlerUrl: string,
+): void {
+  Object.assign(globalThis, {
+    document: window.document,
+    window,
+    location: window.location,
+    history: window.history,
+    scrollTo: () => undefined,
+    __RESUX__: {
+      route: { path: "/", params: {}, query: {} },
+      scopes: {
+        s0: { id: "s0", moduleId: "m0", state, asyncData: {} },
+      },
+      modules: { m0: handlerUrl },
+    },
+    __RESUX_APP__: undefined,
+    __RESUX_ROUTER__: undefined,
+    __RESUX_INSTALLED__: false,
+  });
+}
+
 describe("runtime SSR", () => {
   it("unwraps reactive values passed to useHead", async () => {
     const page: ComponentDefinition = defineComponent({
@@ -93,6 +131,86 @@ describe("runtime SSR", () => {
     expect(result.html).toContain('"ok": true');
     expect(result.html).toContain('"framework": "resux"');
     expect(result.html).not.toContain("[object Object]");
+  });
+
+
+  it("renders Vue-style transition boundaries without native transition tags and retains false-state patch markers", async () => {
+    const page: ComponentDefinition = defineComponent({
+      id: "m-transition-ssr",
+      name: "TransitionSsrPage",
+      file: "TransitionSsrPage.vue",
+      handlers: [],
+      async script(ctx) {
+        const visible = ctx.useState("visible", () => true);
+        const effect = ctx.useState("effect", () => "fade");
+        return { visible, effect };
+      },
+      template: [{
+        type: "element",
+        tag: "transition",
+        attrs: [{ kind: "dynamic", name: "name", value: "effect.value", bindingId: "b-name" }],
+        events: [],
+        children: [{
+          type: "element",
+          tag: "div",
+          attrs: [{ kind: "dynamic", name: "hidden", value: "!visible.value", bindingId: "b0" }],
+          events: [],
+          children: [{ type: "text", value: "Panel" }],
+        }],
+      }],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/", params: {}, query: {} },
+    });
+
+    expect(result.html).toContain('data-rx-transition="fade"');
+    expect(result.html).toContain('data-rx-attr-b-name="s0:b-name"');
+    expect(result.html).toContain('data-rx-attr-b0="s0:b0"');
+    expect(result.html).not.toContain("<transition");
+    expect(result.html).not.toContain('hidden="false"');
+  });
+
+  it("honors TransitionGroup tag and keeps a direct reactive list marker on the semantic container", async () => {
+    const page: ComponentDefinition = defineComponent({
+      id: "m-transition-group-ssr",
+      name: "TransitionGroupSsrPage",
+      file: "TransitionGroupSsrPage.vue",
+      handlers: [],
+      async script(ctx) {
+        const items = ctx.useState("items", () => [1, 2]);
+        return { items };
+      },
+      template: [{
+        type: "element",
+        tag: "transition-group",
+        attrs: [
+          { kind: "static", name: "name", value: "list" },
+          { kind: "static", name: "tag", value: "ul" }
+        ],
+        events: [],
+        children: [{
+          type: "element",
+          tag: "li",
+          attrs: [{ kind: "dynamic", name: "key", value: "item" }],
+          events: [],
+          for: { source: "items.value", value: "item", blockId: "b-list" },
+          children: [{ type: "interpolation", expression: "item", bindingId: "b-item" }],
+        }],
+      }],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/", params: {}, query: {} },
+    });
+
+    expect(result.html).toContain('<ul data-rx-transition="list" data-rx-transition-group="true" data-rx-block="s0:b-list">');
+    expect(result.html).toContain('<li key="1">');
+    expect(result.html).toContain('<li key="2">');
+    expect(result.html).not.toContain('<span data-rx-block="s0:b-list"');
+    expect(getClientRuntimeSource()).toContain("style.animationIterationCount");
   });
 
   it("renders HTML and serialized state without eagerly loading handler chunks", async () => {
@@ -2378,6 +2496,131 @@ export const clientEnhancements = ["package-error-demo"];
     expect(fetchCalls).toBe(0);
     expect(window.location.pathname).toBe("/");
     expect(window.document.getElementById("__resux")?.innerHTML).toContain("<main>Home</main>");
+  });
+
+  it("animates conditional blocks and keeps inserted resumable handlers fully scoped", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-transition-block",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "toggle" }], children: [{ type: "text", value: "Toggle" }] },
+  { type: "element", tag: "transition", attrs: [{ kind: "dynamic", name: "name", value: "effect.value", bindingId: "b3" }], events: [], children: [
+    { type: "element", tag: "div", attrs: [], events: [], if: { expression: "visible.value", blockId: "b0" }, children: [
+      { type: "element", tag: "button", attrs: [{ kind: "dynamic", name: "disabled", value: "locked.value", bindingId: "b1" }], events: [{ name: "click", handler: "ping" }], children: [
+        { type: "interpolation", expression: "hits.value", bindingId: "b2" }
+      ] }
+    ] }
+  ] }
+];
+async function script(ctx) {
+  const visible = ctx.useState("visible", () => false);
+  const locked = ctx.useState("locked", () => false);
+  const hits = ctx.useState("hits", () => 0);
+  const effect = ctx.useState("effect", () => "fade");
+  function toggle() { visible.value = !visible.value; }
+  function ping() { hits.value += 1; }
+  function swapEffect() { effect.value = "slide"; }
+  return { visible, locked, hits, effect, toggle, ping, swapEffect };
+}
+export default createClientComponent({ id: "m0", name: "TransitionPanel", file: "TransitionPanel.vue", script, template, handlers: ["toggle", "ping", "swapEffect"] });
+`,
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.head.innerHTML = `<style>
+      .fade-enter-active,.fade-leave-active{transition:opacity .04s linear}
+      .fade-enter-from,.fade-leave-to{opacity:0}
+      .fade-enter-to,.fade-leave-from{opacity:1}
+    </style>`;
+    window.document.body.innerHTML = `
+      <button id="toggle" data-rx-on-click="s0:m0:toggle">Toggle</button>
+      <button id="effect" data-rx-on-click="s0:m0:swapEffect">Effect</button>
+      <span data-rx-transition="fade" data-rx-attr-b3="s0:b3" data-rx-block="s0:b0" style="display: contents;"></span>
+    `;
+
+    installClientRuntimeFixture(
+      window,
+      { visible: false, locked: false, hits: 0, effect: "fade" },
+      handlerUrl,
+    );
+
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+    window.document.getElementById("toggle")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+
+    await waitForCondition(() => Boolean(window.document.querySelector('[data-rx-on-click="s0:m0:ping"]')));
+    const inserted = window.document.querySelector('[data-rx-on-click="s0:m0:ping"]') as HTMLElement;
+    expect(inserted).toBeTruthy();
+    expect(inserted.getAttribute("data-rx-attr-b1")).toBe("s0:b1");
+    expect(window.document.querySelector('[data-rx-text="s0:b2"]')?.textContent).toBe("0");
+
+    inserted.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+    await waitForCondition(() => (globalThis as any).__RESUX__.scopes.s0.state.hits === 1);
+    expect((globalThis as any).__RESUX__.scopes.s0.state.hits).toBe(1);
+    expect(window.document.querySelector('[data-rx-text="s0:b2"]')?.textContent).toBe("1");
+
+    window.document.getElementById("toggle")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+    await waitForCondition(() => !window.document.querySelector('[data-rx-on-click="s0:m0:ping"]'));
+    expect(window.document.querySelector('[data-rx-block="s0:b0"]')?.textContent).toBe("");
+
+    window.document.getElementById("effect")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+    await waitForCondition(() => window.document.querySelector('[data-rx-block="s0:b0"]')?.getAttribute("data-rx-transition") === "slide");
+    expect(window.document.querySelector('[data-rx-block="s0:b0"]')?.getAttribute("data-rx-transition")).toBe("slide");
+  });
+
+  it("commits keyed TransitionGroup additions immediately while removed items leave", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-transition-group",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "swap" }], children: [{ type: "text", value: "Swap" }] },
+  { type: "element", tag: "transition-group", attrs: [{ kind: "static", name: "name", value: "list" }, { kind: "static", name: "tag", value: "ul" }], events: [], children: [
+    { type: "element", tag: "li", attrs: [{ kind: "dynamic", name: "key", value: "item" }], events: [], for: { source: "items.value", value: "item", blockId: "b0" }, children: [
+      { type: "interpolation", expression: "item", bindingId: "b1" }
+    ] }
+  ] }
+];
+async function script(ctx) {
+  const items = ctx.useState("items", () => [1, 2]);
+  function swap() { items.value = [2, 3]; }
+  return { items, swap };
+}
+export default createClientComponent({ id: "m0", name: "TransitionList", file: "TransitionList.vue", script, template, handlers: ["swap"] });
+`,
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.head.innerHTML = `<style>
+      .list-enter-active,.list-leave-active{transition:opacity .05s linear}
+      .list-enter-from,.list-leave-to{opacity:0}
+    </style>`;
+    window.document.body.innerHTML = `
+      <button id="swap" data-rx-on-click="s0:m0:swap">Swap</button>
+      <ul data-rx-transition="list" data-rx-transition-group="true" data-rx-block="s0:b0">
+        <li key="1">1</li><li key="2">2</li>
+      </ul>
+    `;
+
+    installClientRuntimeFixture(window, { items: [1, 2] }, handlerUrl);
+
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+    window.document.getElementById("swap")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+
+    await waitForCondition(() => Boolean(window.document.querySelector('li[key="3"]')));
+    expect(window.document.querySelector('li[key="3"]')?.textContent).toContain("3");
+    expect(window.document.querySelector('li[key="1"][data-rx-transition-leaving="true"]')).toBeTruthy();
+
+    await waitForCondition(() => !window.document.querySelector('li[key="1"]'), 500);
+    expect(window.document.querySelector('li[key="1"]')).toBeNull();
+    expect(window.document.querySelector('li[key="2"]')).toBeTruthy();
+    expect(window.document.querySelector('li[key="3"]')).toBeTruthy();
   });
 
   it("resumes pending async data and patches skeleton blocks", async () => {

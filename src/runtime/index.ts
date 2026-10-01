@@ -4035,7 +4035,7 @@ function renderTeleportBoundary(
 ): string {
   const props = collectComponentProps(node, context.scope, locals);
   const target = normalizeTeleportTarget(props.to);
-  const disabled = props.disabled === true || props.disabled === "true";
+  const disabled = props.disabled === true || props.disabled === "true" || props.disabled === "";
   const attrs = [
     'data-rx-teleport-source="true"',
     `data-rx-teleport-to="${escapeAttribute(target)}"`,
@@ -11293,12 +11293,7 @@ async function initializeClientRuntime() {
   }
   void resumePendingAsyncData();
   mountManagedTeleports(document);
-  void mountVueIslands();
-  activateDeferredLazyMedia();
-  applyManagedVideoDefaultSpeeds();
-  applyReducedMotionVideoPreference();
-  initializeManagedVideoControls();
-  registerDelegatedEventsFromDom(document);
+  initializeManagedRuntimeContent(document);
 }
 
 function activateDeferredLazyMedia(root = document) {
@@ -14105,12 +14100,7 @@ async function navigateTo(target, options = {}) {
     clearScopeCacheExcept(preserved.scopeIds);
     void resumePendingAsyncData();
     mountManagedTeleports(preserved.root);
-    void mountVueIslands(preserved.root);
-    activateDeferredLazyMedia(preserved.root);
-    applyManagedVideoDefaultSpeeds(preserved.root);
-    applyReducedMotionVideoPreference(preserved.root);
-    initializeManagedVideoControls(preserved.root);
-    registerDelegatedEventsFromDom(preserved.root);
+    initializeManagedRuntimeContent(document);
 
     if (!options.preserveScroll && nextUrl.hash) {
       document.getElementById(nextUrl.hash.slice(1))?.scrollIntoView();
@@ -14185,12 +14175,41 @@ function managedTeleportTarget(source) {
   }
 }
 
+function managedTeleportRangeNodes(content) {
+  const nodes = [];
+  if (!content?.start || !content?.end || content.start.parentNode !== content.end.parentNode) {
+    return nodes;
+  }
+  let node = content.start.nextSibling;
+  while (node && node !== content.end) {
+    nodes.push(node);
+    node = node.nextSibling;
+  }
+  return nodes;
+}
+
+function moveManagedTeleportRange(content, target) {
+  if (!content?.start || !content?.end || !target) return;
+  if (content.start.parentNode === target && content.end.parentNode === target) return;
+
+  const fragment = document.createDocumentFragment();
+  let node = content.start;
+  while (node) {
+    const next = node.nextSibling;
+    fragment.appendChild(node);
+    if (node === content.end) break;
+    node = next;
+  }
+  target.appendChild(fragment);
+}
+
 function restoreManagedTeleport(source, content) {
   if (!content) return;
-  while (content.firstChild) {
-    source.appendChild(content.firstChild);
+  for (const node of managedTeleportRangeNodes(content)) {
+    source.appendChild(node);
   }
-  content.remove();
+  content.start?.remove();
+  content.end?.remove();
   managedTeleportContent.delete(source);
 }
 
@@ -14210,19 +14229,19 @@ function syncManagedTeleportSource(source) {
     return;
   }
 
-  let destination = content;
-  if (!destination) {
-    destination = document.createElement("span");
-    destination.setAttribute("data-rx-teleport-content", "true");
-    destination.style.display = "contents";
+  if (!content) {
+    const start = document.createComment("resux-teleport-start");
+    const end = document.createComment("resux-teleport-end");
+    target.appendChild(start);
     while (source.firstChild) {
-      destination.appendChild(source.firstChild);
+      target.appendChild(source.firstChild);
     }
-    managedTeleportContent.set(source, destination);
+    target.appendChild(end);
+    managedTeleportContent.set(source, { start, end });
+    return;
   }
-  if (destination.parentNode !== target) {
-    target.appendChild(destination);
-  }
+
+  moveManagedTeleportRange(content, target);
 }
 
 function mountManagedTeleports(root = document) {
@@ -14231,14 +14250,38 @@ function mountManagedTeleports(root = document) {
   }
 }
 
+function cleanupManagedTeleportSource(source) {
+  const content = managedTeleportContent.get(source);
+  if (!content) return;
+
+  const nodes = managedTeleportRangeNodes(content);
+  for (const node of nodes) {
+    if (node.nodeType === 1) {
+      cleanupManagedTeleports(node);
+      unmountVueIslands(node);
+    }
+  }
+  for (const node of nodes) {
+    node.remove();
+  }
+  content.start?.remove();
+  content.end?.remove();
+  managedTeleportContent.delete(source);
+}
+
 function cleanupManagedTeleports(root) {
   for (const source of managedTeleportSources(root)) {
-    const content = managedTeleportContent.get(source);
-    if (!content) continue;
-    unmountVueIslands(content);
-    content.remove();
-    managedTeleportContent.delete(source);
+    cleanupManagedTeleportSource(source);
   }
+}
+
+function initializeManagedRuntimeContent(root = document) {
+  void mountVueIslands(root);
+  activateDeferredLazyMedia(root);
+  applyManagedVideoDefaultSpeeds(root);
+  applyReducedMotionVideoPreference(root);
+  initializeManagedVideoControls(root);
+  registerDelegatedEventsFromDom(root);
 }
 
 function replaceRouteHtml(root, html, preserveLayout = true) {
@@ -14381,8 +14424,12 @@ function collectScopeIds(root, exclude) {
     if (exclude && (source === exclude || exclude.contains(source))) continue;
     const content = managedTeleportContent.get(source);
     if (!content) continue;
-    for (const element of [content, ...Array.from(content.querySelectorAll ? content.querySelectorAll("*") : [])]) {
-      collectScopeIdFromElement(element, ids);
+    for (const node of managedTeleportRangeNodes(content)) {
+      if (node.nodeType !== 1) continue;
+      collectScopeIdFromElement(node, ids);
+      for (const element of Array.from(node.querySelectorAll ? node.querySelectorAll("*") : [])) {
+        collectScopeIdFromElement(element, ids);
+      }
     }
   }
 
@@ -17326,11 +17373,7 @@ function refreshPatchedBlock(element, value) {
   unmountVueIslands(element);
   element.innerHTML = value;
   mountManagedTeleports(element);
-  void mountVueIslands(element);
-  activateDeferredLazyMedia(element);
-  applyReducedMotionVideoPreference(element);
-  initializeManagedVideoControls(element);
-  registerDelegatedEventsFromDom(element);
+  initializeManagedRuntimeContent(document);
 }
 
 function transitionChildKey(element) {
@@ -17491,7 +17534,7 @@ function applyPatches(scopeId, patches) {
         unmountVueIslands(element);
         element.innerHTML = patch.value;
         mountManagedTeleports(element);
-        void mountVueIslands(element);
+        void mountVueIslands(document);
         needsLazyImageActivation = true;
         needsDelegatedEventRegistration = true;
       });
@@ -17505,7 +17548,7 @@ function applyPatches(scopeId, patches) {
       unmountVueIslands(element);
       element.innerHTML = patch.value;
       mountManagedTeleports(element);
-      void mountVueIslands(element);
+      void mountVueIslands(document);
       needsLazyImageActivation = true;
       needsDelegatedEventRegistration = true;
     });

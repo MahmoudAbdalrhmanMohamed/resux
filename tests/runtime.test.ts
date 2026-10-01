@@ -2613,8 +2613,6 @@ export const clientEnhancements = ["package-error-demo"];
     });
 
     await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
-    await waitForCondition(() => Boolean(window.document.getElementById("inner-layout-target")?.querySelector("#layout-menu-action")));
-    expect(window.document.getElementById("layout")?.querySelector("[data-rx-on-click^='s0:']")).toBeNull();
     window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -5213,6 +5211,8 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     });
 
     await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+    await waitForCondition(() => Boolean(window.document.getElementById("inner-layout-target")?.querySelector("#layout-menu-action")));
+    expect(window.document.getElementById("layout")?.querySelector("[data-rx-on-click^='s0:']")).toBeNull();
     window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await waitForHtml(window, "<main>About</main>");
 

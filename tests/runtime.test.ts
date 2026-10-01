@@ -2928,6 +2928,85 @@ export default createClientComponent({ id: "m0", name: "PatchedTeleportIsland", 
     expect(island.getAttribute("data-rx-vue-error")).toBe("missing");
   });
 
+  it("recreates Teleport children in an SVG target namespace", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-svg-teleport",
+      () => "export default {};",
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <span data-rx-teleport-source="true" data-rx-teleport-to="#svg-target" style="display: contents;">
+          <circle id="teleported-circle" cx="12" cy="12" r="6"></circle>
+        </span>
+      </div>
+      <svg id="svg-target" viewBox="0 0 24 24"></svg>
+    `;
+
+    installClientRuntimeFixture(window, {}, handlerUrl);
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+
+    const target = window.document.getElementById("svg-target")!;
+    await waitForCondition(() => Boolean(target.querySelector("#teleported-circle")));
+    const circle = target.querySelector("#teleported-circle")!;
+    expect(circle.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    expect(target.firstElementChild).toBe(circle);
+  });
+
+  it("resolves a deferred Teleport after a later patch creates its target in the same tick", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-deferred-teleport",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "show" }], children: [{ type: "text", value: "Show" }] },
+  { type: "element", tag: "div", attrs: [], events: [], if: { expression: "showTeleport.value", blockId: "b0" }, children: [
+    { type: "element", tag: "teleport", attrs: [
+      { kind: "static", name: "to", value: "#late-target" },
+      { kind: "static", name: "defer", value: "" }
+    ], events: [], children: [
+      { type: "element", tag: "p", attrs: [{ kind: "static", name: "id", value: "deferred-content" }], events: [], children: [{ type: "text", value: "Deferred" }] }
+    ] }
+  ] },
+  { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "late-target" }], events: [], if: { expression: "showTarget.value", blockId: "b1" }, children: [] }
+];
+async function script(ctx) {
+  const showTeleport = ctx.useState("showTeleport", () => false);
+  const showTarget = ctx.useState("showTarget", () => false);
+  function show() {
+    showTeleport.value = true;
+    showTarget.value = true;
+  }
+  return { showTeleport, showTarget, show };
+}
+export default createClientComponent({ id: "m0", name: "DeferredTeleport", file: "DeferredTeleport.vue", script, template, handlers: ["show"] });
+`,
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <button id="show-deferred" data-rx-on-click="s0:m0:show">Show</button>
+        <span data-rx-block="s0:b0" style="display: contents;"></span>
+        <span data-rx-block="s0:b1" style="display: contents;"></span>
+      </div>
+    `;
+
+    installClientRuntimeFixture(window, { showTeleport: false, showTarget: false }, handlerUrl);
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+
+    window.document.getElementById("show-deferred")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+
+    await waitForCondition(() => Boolean(window.document.getElementById("late-target")));
+    await waitForCondition(() => Boolean(window.document.getElementById("late-target")?.querySelector("#deferred-content")));
+    const source = window.document.querySelector("[data-rx-teleport-defer='true']") as HTMLElement;
+    expect(source).toBeTruthy();
+    expect(source.childNodes).toHaveLength(0);
+    expect(window.document.getElementById("late-target")?.firstElementChild?.id).toBe("deferred-content");
+  });
+
   it("commits keyed TransitionGroup additions immediately while removed items leave", async () => {
     const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
       "resux-transition-group",

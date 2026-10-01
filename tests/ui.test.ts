@@ -244,8 +244,9 @@ describe("UI & Motion Primitives (resuxjs/ui)", () => {
     );
 
     const select = render();
-    expect(select.children[0].props.selected).toBe(false);
-    expect(select.children[1].props.selected).toBe(true);
+    const options = select.children.filter(Boolean);
+    expect(options[0].props.selected).toBe(false);
+    expect(options[1].props.selected).toBe(true);
     select.props.onChange({ target: { selectedIndex: 0 } });
     select.props.onChange({ target: { selectedIndex: 1 } });
     expect(emitted).toContainEqual(["update:modelValue", 1]);

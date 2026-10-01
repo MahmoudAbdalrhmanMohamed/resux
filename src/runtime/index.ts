@@ -11246,6 +11246,9 @@ function installResux() {
   document.addEventListener("pause", handleManagedVideoPlaybackState, true);
   registerDelegatedEventsFromDom(document);
   document.addEventListener("resux:page:finish", () => {
+    if (!collectDeclaredClientEnhancementElements(document).length) {
+      return;
+    }
     void scanClientEnhancements(document);
   });
   if (typeof window !== "undefined" && typeof history !== "undefined" && typeof location !== "undefined") {

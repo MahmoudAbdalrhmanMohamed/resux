@@ -4027,6 +4027,10 @@ function normalizeTeleportTarget(value: unknown): string {
   return candidate && candidate.length <= 512 ? candidate : "#teleports";
 }
 
+function isTeleportBooleanEnabled(value: unknown): boolean {
+  return value === true || value === "true" || value === "";
+}
+
 function renderTeleportBoundary(
   node: ElementTemplateNode,
   context: RenderTemplateContext,
@@ -4035,17 +4039,19 @@ function renderTeleportBoundary(
 ): string {
   const props = collectComponentProps(node, context.scope, locals);
   const target = normalizeTeleportTarget(props.to);
-  const disabled = props.disabled === true || props.disabled === "true" || props.disabled === "";
+  const disabled = isTeleportBooleanEnabled(props.disabled);
+  const defer = isTeleportBooleanEnabled(props.defer);
   const attrs = [
     'data-rx-teleport-source="true"',
     `data-rx-teleport-to="${escapeAttribute(target)}"`,
     'style="display: contents;"',
   ];
   if (disabled) attrs.push('data-rx-teleport-disabled="true"');
+  if (defer) attrs.push('data-rx-teleport-defer="true"');
 
   for (const attr of node.attrs) {
     if (attr.kind !== "dynamic" || !attr.bindingId) continue;
-    if (attr.name === "to" || attr.name === "disabled") {
+    if (attr.name === "to" || attr.name === "disabled" || attr.name === "defer") {
       attrs.push(`data-rx-attr-${attr.bindingId}="${context.scopeId}:${attr.bindingId}"`);
     }
   }

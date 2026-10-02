@@ -2238,7 +2238,10 @@ function hasEagerClientRuntimeWork(
   enhancementTriggers: ClientEnhancementTrigger[],
   vueIslandTriggers: ClientEnhancementTrigger[],
 ): boolean {
-  if (EAGER_CLIENT_RUNTIME_HTML_ATTRIBUTES.some((attribute) => htmlHasAttribute(result.html, attribute))) {
+  if (
+    EAGER_CLIENT_RUNTIME_HTML_ATTRIBUTES.some((attribute) => htmlHasAttribute(result.html, attribute))
+    || result.html.includes("<!--resux-teleport-source:")
+  ) {
     return true;
   }
 
@@ -14194,6 +14197,16 @@ function isManagedTeleportElementSource(source) {
 }
 
 function decodeManagedTeleportSourceMetadata(source) {
+  if (isManagedTeleportElementSource(source)) {
+    return {
+      to: source.getAttribute("data-rx-teleport-to") || "#teleports",
+      disabled: source.getAttribute("data-rx-teleport-disabled") === "true",
+      defer: source.hasAttribute("data-rx-teleport-defer"),
+      bindings: {},
+      html: ""
+    };
+  }
+
   const cached = managedTeleportSourceMetadataCache.get(source);
   if (cached) return cached;
   let metadata = {
@@ -14217,14 +14230,6 @@ function decodeManagedTeleportSourceMetadata(source) {
     } catch {
       // Leave malformed source comments inert and pointed at the standard target.
     }
-  } else if (isManagedTeleportElementSource(source)) {
-    metadata = {
-      to: source.getAttribute("data-rx-teleport-to") || "#teleports",
-      disabled: source.getAttribute("data-rx-teleport-disabled") === "true",
-      defer: source.hasAttribute("data-rx-teleport-defer"),
-      bindings: {},
-      html: ""
-    };
   }
   managedTeleportSourceMetadataCache.set(source, metadata);
   return metadata;

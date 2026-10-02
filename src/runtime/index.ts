@@ -15824,12 +15824,14 @@ function collectPatches(nodes, scope, locals, patches, styleScopeId, scopeId, mo
             value: normalizeClientTeleportTarget(evaluateExpression(attr.value, scope, locals))
           });
         } else if (attr.name === "disabled" || attr.name === "defer") {
-          const enabled = isClientTeleportBooleanEnabled(evaluateExpression(attr.value, scope, locals));
+          const patchAttr = attr.name === "disabled"
+            ? "data-rx-teleport-disabled"
+            : "data-rx-teleport-defer";
           patches.push({
             type: "attr",
             id: attr.bindingId,
-            attr: attr.name === "disabled" ? "data-rx-teleport-disabled" : "data-rx-teleport-defer",
-            value: enabled ? "true" : ""
+            attr: patchAttr,
+            value: isClientTeleportBooleanEnabled(evaluateExpression(attr.value, scope, locals)) ? "true" : ""
           });
         }
       }

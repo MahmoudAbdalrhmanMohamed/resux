@@ -2325,6 +2325,9 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
   };
   const renderedBodyAttrs = renderAttributes(mergedHead.bodyAttrs ?? {});
   const bodyOpenTag = renderedBodyAttrs ? `<body ${renderedBodyAttrs}>` : "<body>";
+  const defaultTeleportTarget = /\bid\s*=\s*(?:"teleports"|'teleports'|teleports)(?:\s|\/?>)/i.test(result.html)
+    ? ""
+    : '<div id="teleports"></div>';
   return [
     "<!doctype html>",
     `<html ${renderAttributes(htmlAttrs)}>`,
@@ -2637,7 +2640,7 @@ html[dir="rtl"] [data-rx-loading-indicator] .rx-loading-progress {
     '<div id="__resux">',
     result.html,
     "</div>",
-    '<div id="teleports"></div>',
+    defaultTeleportTarget,
     needsClientRuntime
       ? ((options.isStatic || (typeof process !== "undefined" && process.env?.RESUX_STATIC))
         ? `<script>window.__RESUX__=${payload};window.__RESUX_STATIC__=true;</script>`
@@ -10814,7 +10817,9 @@ async function refreshScopesForGlobalState(changedKeys) {
     return keys.some((key) => changedKeys.has(key));
   });
 
-  await Promise.allSettled(affectedScopes.map(async ([scopeId, scopeRecord]) => {
+  beginManagedTeleportPatchBatch();
+  try {
+    await Promise.allSettled(affectedScopes.map(async ([scopeId, scopeRecord]) => {
     const serializedScope = payload.scopes[scopeId];
     if (!serializedScope) {
       return;
@@ -10836,7 +10841,9 @@ async function refreshScopesForGlobalState(changedKeys) {
       console.error("[resux:global-state] Failed to refresh scope " + scopeId + ".", error);
     }
   }));
-  flushDeferredManagedTeleports();
+  } finally {
+    endManagedTeleportPatchBatch();
+  }
 }
 
 function normalizeComponentRegistryKey(key, apiName) {
@@ -14177,6 +14184,8 @@ function createClientRouter() {
 }
 
 const XHTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+const MATHML_NAMESPACE = "http://www.w3.org/1998/Math/MathML";
 const MANAGED_TELEPORT_SOURCE_PREFIX = "resux-teleport-source:";
 const MANAGED_TELEPORT_END_MARKER = "resux-teleport-end";
 const managedTeleportContent = new WeakMap();
@@ -14185,6 +14194,8 @@ const managedTeleportSourceMetadataCache = new WeakMap();
 const managedTeleportSourceBindingKeys = new WeakMap();
 const managedTeleportBindingSources = new Map();
 const deferredManagedTeleportSources = new Set();
+let managedTeleportPatchBatchDepth = 0;
+let managedTeleportFlushRequested = false;
 
 function isManagedTeleportCommentSource(source) {
   return source?.nodeType === 8
@@ -14378,6 +14389,17 @@ function managedTeleportTarget(source) {
   }
 }
 
+function managedTeleportSourceContainsTarget(source, target) {
+  if (!target) return false;
+  if (source?.contains?.(target)) return true;
+  if (!isManagedTeleportCommentSource(source) && !isManagedTeleportTemplateSource(source)) {
+    return false;
+  }
+  return managedTeleportInlineNodes(source).some((node) =>
+    node === target || Boolean(node.nodeType === 1 && node.contains?.(target))
+  );
+}
+
 function managedTeleportRangeNodes(content) {
   const nodes = [];
   if (!content?.start || !content?.end || content.start.parentNode !== content.end.parentNode) {
@@ -14461,11 +14483,24 @@ function restoreManagedTeleportsWithinContent(content) {
   }
 }
 
+function managedTeleportElementMatchesNamespace(element, targetNamespace) {
+  if (targetNamespace !== XHTML_NAMESPACE) {
+    return element.namespaceURI === targetNamespace;
+  }
+  if (element.localName === "svg") {
+    return element.namespaceURI === SVG_NAMESPACE;
+  }
+  if (element.localName === "math") {
+    return element.namespaceURI === MATHML_NAMESPACE;
+  }
+  return element.namespaceURI === XHTML_NAMESPACE;
+}
+
 function normalizeManagedTeleportNamespace(content, target) {
   const nodes = managedTeleportRangeNodes(content);
   const elements = nodes.filter((node) => node.nodeType === 1);
   const targetNamespace = target?.namespaceURI || XHTML_NAMESPACE;
-  if (!elements.some((element) => element.namespaceURI !== targetNamespace)) {
+  if (elements.every((element) => managedTeleportElementMatchesNamespace(element, targetNamespace))) {
     return false;
   }
 
@@ -14607,7 +14642,7 @@ function syncManagedTeleportSource(source, options = {}) {
   const metadata = decodeManagedTeleportSourceMetadata(source);
   const disabled = Boolean(metadata.disabled);
   const target = managedTeleportTarget(source);
-  const sourceContainsTarget = Boolean(source?.contains && source.contains(target));
+  const sourceContainsTarget = managedTeleportSourceContainsTarget(source, target);
   const validTarget = Boolean(target && target !== source && !sourceContainsTarget);
   let content = managedTeleportContent.get(source);
 
@@ -14656,12 +14691,31 @@ function mountManagedTeleports(root = document, options = {}) {
 }
 
 function flushDeferredManagedTeleports() {
+  if (managedTeleportPatchBatchDepth > 0) {
+    managedTeleportFlushRequested = true;
+    return;
+  }
+  managedTeleportFlushRequested = false;
   const pending = [...deferredManagedTeleportSources];
   deferredManagedTeleportSources.clear();
   for (const source of pending) {
     if (source?.isConnected) {
       syncManagedTeleportSource(source, { deferMissingTarget: false });
     }
+  }
+}
+
+function beginManagedTeleportPatchBatch() {
+  managedTeleportPatchBatchDepth += 1;
+}
+
+function endManagedTeleportPatchBatch() {
+  managedTeleportPatchBatchDepth = Math.max(0, managedTeleportPatchBatchDepth - 1);
+  if (
+    managedTeleportPatchBatchDepth === 0
+    && (managedTeleportFlushRequested || deferredManagedTeleportSources.size > 0)
+  ) {
+    flushDeferredManagedTeleports();
   }
 }
 
@@ -14732,6 +14786,11 @@ function cleanupManagedTeleportSource(source) {
   if (!content) return;
 
   const nodes = managedTeleportRangeNodes(content);
+  for (const nestedSource of nestedManagedTeleportSources(content).reverse()) {
+    if (nestedSource !== source) {
+      cleanupManagedTeleportSource(nestedSource);
+    }
+  }
   for (const node of nodes) {
     if (node.nodeType === 1) {
       cleanupManagedTeleports(node);
@@ -14867,7 +14926,9 @@ async function hotUpdateActiveScopes() {
     return;
   }
 
-  await Promise.all([...scopeCache.entries()].map(async ([scopeId, scopeRecord]) => {
+  beginManagedTeleportPatchBatch();
+  try {
+    await Promise.all([...scopeCache.entries()].map(async ([scopeId, scopeRecord]) => {
     const serializedScope = payload.scopes[scopeId];
     if (!serializedScope) {
       scopeCache.delete(scopeId);
@@ -14888,7 +14949,9 @@ async function hotUpdateActiveScopes() {
     payload.scopes[scopeId].asyncData = serialized.asyncData;
     applyPatches(scopeId, patches, { flushDeferredTeleports: false });
   }));
-  flushDeferredManagedTeleports();
+  } finally {
+    endManagedTeleportPatchBatch();
+  }
 }
 
 function collectScopeIdsFromTeleportRange(source, ids, visitedTeleports) {
@@ -15736,7 +15799,9 @@ async function resumePendingAsyncData() {
     return;
   }
 
-  await Promise.all(Object.entries(payload.scopes).map(async ([scopeId, serializedScope]) => {
+  beginManagedTeleportPatchBatch();
+  try {
+    await Promise.all(Object.entries(payload.scopes).map(async ([scopeId, serializedScope]) => {
     if (!hasPendingAsyncData(serializedScope)) {
       return;
     }
@@ -15765,7 +15830,9 @@ async function resumePendingAsyncData() {
     payload.scopes[scopeId].asyncData = serialized.asyncData;
     applyPatches(scopeId, patches, { flushDeferredTeleports: false });
   }));
-  flushDeferredManagedTeleports();
+  } finally {
+    endManagedTeleportPatchBatch();
+  }
 }
 
 function hasPendingAsyncData(serializedScope) {

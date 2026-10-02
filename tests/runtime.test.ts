@@ -414,6 +414,13 @@ describe("runtime SSR", () => {
         },
         {
           type: "element",
+          tag: "div",
+          attrs: [{ kind: "static", name: "id", value: "teleports" }],
+          events: [],
+          children: [],
+        },
+        {
+          type: "element",
           tag: "table",
           attrs: [],
           events: [],
@@ -459,6 +466,7 @@ describe("runtime SSR", () => {
     expect(tableSource?.metadata.html).toContain('id="teleported-row"');
     expect(result.html).not.toContain("<span data-rx-teleport-source");
     expect(result.html).not.toContain("<template data-rx-teleport-source");
+    expect(renderDocument(result).match(/id="teleports"/g)).toHaveLength(1);
   });
 
   it("applies Vue Boolean semantics to static and bound Teleport disabled props during SSR", async () => {
@@ -2890,6 +2898,7 @@ const template = [
     { kind: "dynamic", name: "to", value: "target.value", bindingId: "b2" },
     { kind: "dynamic", name: "disabled", value: "disabled.value", bindingId: "b3" }
   ], events: [], children: [
+    { type: "element", tag: "svg", attrs: [{ kind: "static", name: "id", value: "teleported-icon" }], events: [], children: [] },
     { type: "element", tag: "transition", attrs: [{ kind: "static", name: "name", value: "fade" }], events: [], children: [
       { type: "element", tag: "div", attrs: [], events: [], if: { expression: "visible.value", blockId: "b0" }, children: [
         { type: "element", tag: "button", attrs: [{ kind: "static", name: "id", value: "teleported-action" }], events: [{ name: "click", handler: "ping" }], children: [
@@ -2931,6 +2940,7 @@ export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "T
           data-rx-attr-b3="s0:b3"
           style="display: contents;"
         >
+          <svg id="teleported-icon"></svg>
           <span data-rx-transition="fade" data-rx-block="s0:b0" style="display: contents;"></span>
         </span>
       </div>
@@ -2951,6 +2961,8 @@ export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "T
     const source = window.document.querySelector("[data-rx-teleport-source='true']") as HTMLElement;
     const target = window.document.getElementById("teleports")!;
     await waitForCondition(() => Boolean(target.querySelector("[data-rx-transition='fade']")));
+    const teleportedIcon = target.querySelector("#teleported-icon");
+    expect(teleportedIcon?.namespaceURI).toBe("http://www.w3.org/2000/svg");
     expect(source.childNodes).toHaveLength(0);
     expect(target.firstElementChild?.getAttribute("data-rx-transition")).toBe("fade");
     expect(target.querySelector("[data-rx-teleport-content='true']")).toBeNull();
@@ -2959,6 +2971,7 @@ export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "T
       new window.MouseEvent("click", { bubbles: true, button: 0 }),
     );
     await waitForCondition(() => Boolean(window.document.getElementById("teleported-action")));
+    expect(target.querySelector("#teleported-icon")).toBe(teleportedIcon);
 
     const action = window.document.getElementById("teleported-action")!;
     expect(target.contains(action)).toBe(true);
@@ -2978,7 +2991,8 @@ export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "T
     );
     const alternateTarget = window.document.getElementById("alternate-teleports")!;
     await waitForCondition(() => Boolean(alternateTarget.querySelector("[data-rx-transition='fade']")));
-    expect(alternateTarget.firstElementChild?.getAttribute("data-rx-transition")).toBe("fade");
+    expect(alternateTarget.querySelector("#teleported-icon")).toBe(teleportedIcon);
+    expect(alternateTarget.querySelector("[data-rx-transition='fade']")?.getAttribute("data-rx-transition")).toBe("fade");
     expect(target.querySelector("[data-rx-transition='fade']")).toBeNull();
 
     window.document.getElementById("placement")!.dispatchEvent(
@@ -3002,61 +3016,50 @@ export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "T
       "resux-nested-teleport",
       (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
 const template = [
-  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "hide" }], children: [{ type: "text", value: "Hide" }] },
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "toggle" }], children: [{ type: "text", value: "Toggle" }] },
   { type: "element", tag: "div", attrs: [], events: [], if: { expression: "show.value", blockId: "b0" }, children: [
     { type: "element", tag: "teleport", attrs: [{ kind: "static", name: "to", value: "#outer-target" }], events: [], children: [
-      { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "outer-shell" }], events: [], children: [
-        { type: "element", tag: "teleport", attrs: [{ kind: "static", name: "to", value: "#inner-target" }], events: [], children: [
-          { type: "element", tag: "button", attrs: [{ kind: "static", name: "id", value: "nested-action" }], events: [{ name: "click", handler: "ping" }], children: [
-            { type: "interpolation", expression: "hits.value", bindingId: "b1" }
-          ] }
+      { type: "element", tag: "teleport", attrs: [{ kind: "static", name: "to", value: "#inner-target" }], events: [], children: [
+        { type: "element", tag: "button", attrs: [{ kind: "static", name: "id", value: "nested-action" }], events: [{ name: "click", handler: "ping" }], children: [
+          { type: "interpolation", expression: "hits.value", bindingId: "b1" }
         ] }
       ] }
     ] }
   ] }
 ];
 async function script(ctx) {
-  const show = ctx.useState("show", () => true);
+  const show = ctx.useState("show", () => false);
   const hits = ctx.useState("hits", () => 0);
-  function hide() { show.value = false; }
+  function toggle() { show.value = !show.value; }
   function ping() { hits.value += 1; }
-  return { show, hits, hide, ping };
+  return { show, hits, toggle, ping };
 }
-export default createClientComponent({ id: "m0", name: "NestedTeleport", file: "NestedTeleport.vue", script, template, handlers: ["hide", "ping"] });
+export default createClientComponent({ id: "m0", name: "NestedTeleport", file: "NestedTeleport.vue", script, template, handlers: ["toggle", "ping"] });
 `,
     );
 
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML = `
       <div id="__resux">
-        <button id="hide" data-rx-on-click="s0:m0:hide">Hide</button>
-        <span data-rx-block="s0:b0" style="display: contents;">
-          <div>
-            <span data-rx-teleport-source="true" data-rx-teleport-to="#outer-target" style="display: contents;">
-              <div id="outer-shell">
-                <span data-rx-teleport-source="true" data-rx-teleport-to="#inner-target" style="display: contents;">
-                  <button id="nested-action" data-rx-on-click="s0:m0:ping"><span data-rx-text="s0:b1">0</span></button>
-                </span>
-              </div>
-            </span>
-          </div>
-        </span>
+        <button id="toggle-nested" data-rx-on-click="s0:m0:toggle">Toggle</button>
+        <span data-rx-block="s0:b0" style="display: contents;"></span>
       </div>
       <div id="outer-target"></div>
       <div id="inner-target"></div>
     `;
 
-    installClientRuntimeFixture(window, { show: true, hits: 0 }, handlerUrl);
+    installClientRuntimeFixture(window, { show: false, hits: 0 }, handlerUrl);
     await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
 
     const outerTarget = window.document.getElementById("outer-target")!;
     const innerTarget = window.document.getElementById("inner-target")!;
-    await waitForCondition(() => Boolean(outerTarget.querySelector("#outer-shell")));
+    const toggle = window.document.getElementById("toggle-nested")!;
+    toggle.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await waitForCondition(() => Boolean(innerTarget.querySelector("#nested-action")));
-    expect(outerTarget.firstElementChild?.id).toBe("outer-shell");
+    expect(managedTeleportCommentRecords(window.document.body).length).toBeGreaterThanOrEqual(2);
     expect(innerTarget.firstElementChild?.id).toBe("nested-action");
 
-    window.document.getElementById("hide")!.dispatchEvent(
+    toggle.dispatchEvent(
       new window.MouseEvent("click", { bubbles: true, button: 0 }),
     );
     await waitForCondition(() => !window.document.getElementById("nested-action"));

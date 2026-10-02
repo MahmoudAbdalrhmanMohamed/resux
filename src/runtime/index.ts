@@ -14569,19 +14569,15 @@ function ensureManagedTeleportTargetRange(source, target) {
 }
 
 function initializeRestoredManagedTeleportNodes(nodes, parent, options = {}) {
-  const sources = [];
-  const seen = new Set();
-  const add = (source) => {
-    if (!source || seen.has(source)) return;
-    seen.add(source);
-    sources.push(source);
-  };
+  const sources = new Set();
   for (const node of nodes) {
     if (isManagedTeleportCommentSource(node) || isManagedTeleportElementSource(node)) {
-      add(node);
+      sources.add(node);
     }
     if (node.nodeType === 1) {
-      for (const source of managedTeleportSources(node)) add(source);
+      for (const source of managedTeleportSources(node)) {
+        sources.add(source);
+      }
     }
   }
   for (const source of sources) {

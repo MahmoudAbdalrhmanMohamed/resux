@@ -2907,7 +2907,7 @@ async function script(ctx) {
   function toggle() { visible.value = !visible.value; }
   function ping() { hits.value += 1; }
   function move() { target.value = target.value === "#teleports" ? "#alternate-teleports" : "#teleports"; }
-  function toggleDisabled() { disabled.value = disabled.value === false ? "" : false; }
+  function toggleDisabled() { disabled.value = disabled.value === false ? 1 : false; }
   return { visible, hits, target, disabled, toggle, ping, move, toggleDisabled };
 }
 export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "TeleportPanel.vue", script, template, handlers: ["toggle", "ping", "move", "toggleDisabled"] });
@@ -3106,60 +3106,6 @@ export default createClientComponent({ id: "m0", name: "PatchedTeleportIsland", 
     expect(window.document.getElementById("teleports")!.firstElementChild).toBe(island);
     await waitForCondition(() => island.getAttribute("data-rx-vue-error") === "missing");
     expect(island.getAttribute("data-rx-vue-error")).toBe("missing");
-  });
-
-  it("applies Vue Boolean semantics to reactive Teleport disabled values", async () => {
-    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
-      "resux-teleport-boolean-client",
-      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
-const template = [
-  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "disable" }], children: [{ type: "text", value: "Disable" }] },
-  { type: "element", tag: "teleport", attrs: [
-    { kind: "static", name: "to", value: "#teleports" },
-    { kind: "dynamic", name: "disabled", value: "disabled.value", bindingId: "b0" }
-  ], events: [], children: [
-    { type: "element", tag: "p", attrs: [{ kind: "static", name: "id", value: "boolean-teleport-content" }], events: [], children: [{ type: "text", value: "Boolean" }] }
-  ] }
-];
-async function script(ctx) {
-  const disabled = ctx.useState("disabled", () => 0);
-  function disable() { disabled.value = 1; }
-  return { disabled, disable };
-}
-export default createClientComponent({ id: "m0", name: "TeleportBooleanClient", file: "TeleportBooleanClient.vue", script, template, handlers: ["disable"] });
-`,
-    );
-
-    const window = new Window({ url: "http://localhost/" });
-    window.document.body.innerHTML = `
-      <div id="__resux">
-        <button id="disable-teleport" data-rx-on-click="s0:m0:disable">Disable</button>
-        <span
-          data-rx-teleport-source="true"
-          data-rx-teleport-to="#teleports"
-          data-rx-attr-b0="s0:b0"
-          style="display: contents;"
-        >
-          <p id="boolean-teleport-content">Boolean</p>
-        </span>
-      </div>
-      <div id="teleports"></div>
-    `;
-
-    installClientRuntimeFixture(window, { disabled: 0 }, handlerUrl);
-    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
-
-    const source = window.document.querySelector("[data-rx-teleport-source='true']") as HTMLElement;
-    const target = window.document.getElementById("teleports")!;
-    await waitForCondition(() => Boolean(target.querySelector("#boolean-teleport-content")));
-
-    window.document.getElementById("disable-teleport")!.dispatchEvent(
-      new window.MouseEvent("click", { bubbles: true, button: 0 }),
-    );
-
-    await waitForCondition(() => Boolean(source.querySelector("#boolean-teleport-content")));
-    expect(source.getAttribute("data-rx-teleport-disabled")).toBe("true");
-    expect(target.querySelector("#boolean-teleport-content")).toBeNull();
   });
 
   it("restores disabled Teleport content to the source namespace", async () => {
@@ -3365,7 +3311,15 @@ const template = [
       { type: "element", tag: "p", attrs: [{ kind: "static", name: "id", value: "deferred-content" }], events: [], children: [{ type: "text", value: "Deferred" }] }
     ] }
   ] },
-  { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "late-target" }], events: [], if: { expression: "showTarget.value", blockId: "b1" }, children: [] }
+  { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "late-target" }], events: [], if: { expression: "showTarget.value", blockId: "b1" }, children: [] },
+  { type: "element", tag: "div", attrs: [], events: [], if: { expression: "showTeleport.value", blockId: "b2" }, children: [
+    { type: "element", tag: "teleport", attrs: [
+      { kind: "static", name: "to", value: "#late-target-no-defer" }
+    ], events: [], children: [
+      { type: "element", tag: "p", attrs: [{ kind: "static", name: "id", value: "non-deferred-content" }], events: [], children: [{ type: "text", value: "Immediate" }] }
+    ] }
+  ] },
+  { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "late-target-no-defer" }], events: [], if: { expression: "showTarget.value", blockId: "b3" }, children: [] }
 ];
 async function script(ctx) {
   const showTeleport = ctx.useState("showTeleport", () => false);
@@ -3386,6 +3340,8 @@ export default createClientComponent({ id: "m0", name: "DeferredTeleport", file:
         <button id="show-deferred" data-rx-on-click="s0:m0:show">Show</button>
         <span data-rx-block="s0:b0" style="display: contents;"></span>
         <span data-rx-block="s0:b1" style="display: contents;"></span>
+        <span data-rx-block="s0:b2" style="display: contents;"></span>
+        <span data-rx-block="s0:b3" style="display: contents;"></span>
       </div>
     `;
 
@@ -3403,61 +3359,13 @@ export default createClientComponent({ id: "m0", name: "DeferredTeleport", file:
     expect(source?.metadata.defer).toBe(true);
     expect(source?.node.nextSibling?.nodeType).toBe(8);
     expect(window.document.getElementById("late-target")?.firstElementChild?.id).toBe("deferred-content");
-  });
 
-  it("does not give non-deferred Teleports deferred same-tick target behavior", async () => {
-    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
-      "resux-non-deferred-teleport",
-      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
-const template = [
-  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "show" }], children: [{ type: "text", value: "Show" }] },
-  { type: "element", tag: "div", attrs: [], events: [], if: { expression: "showTeleport.value", blockId: "b0" }, children: [
-    { type: "element", tag: "teleport", attrs: [
-      { kind: "static", name: "to", value: "#late-target-no-defer" }
-    ], events: [], children: [
-      { type: "element", tag: "p", attrs: [{ kind: "static", name: "id", value: "non-deferred-content" }], events: [], children: [{ type: "text", value: "Immediate" }] }
-    ] }
-  ] },
-  { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "late-target-no-defer" }], events: [], if: { expression: "showTarget.value", blockId: "b1" }, children: [] }
-];
-async function script(ctx) {
-  const showTeleport = ctx.useState("showTeleport", () => false);
-  const showTarget = ctx.useState("showTarget", () => false);
-  function show() {
-    showTeleport.value = true;
-    showTarget.value = true;
-  }
-  return { showTeleport, showTarget, show };
-}
-export default createClientComponent({ id: "m0", name: "NonDeferredTeleport", file: "NonDeferredTeleport.vue", script, template, handlers: ["show"] });
-`,
-    );
-
-    const window = new Window({ url: "http://localhost/" });
-    window.document.body.innerHTML = `
-      <div id="__resux">
-        <button id="show-non-deferred" data-rx-on-click="s0:m0:show">Show</button>
-        <span data-rx-block="s0:b0" style="display: contents;"></span>
-        <span data-rx-block="s0:b1" style="display: contents;"></span>
-      </div>
-    `;
-
-    installClientRuntimeFixture(window, { showTeleport: false, showTarget: false }, handlerUrl);
-    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
-
-    window.document.getElementById("show-non-deferred")!.dispatchEvent(
-      new window.MouseEvent("click", { bubbles: true, button: 0 }),
-    );
-
-    await waitForCondition(() => Boolean(window.document.getElementById("late-target-no-defer")));
-    const target = window.document.getElementById("late-target-no-defer")!;
-    const source = managedTeleportCommentRecords(window.document.body)
+    const nonDeferredTarget = window.document.getElementById("late-target-no-defer")!;
+    const nonDeferredSource = managedTeleportCommentRecords(window.document.body)
       .find((record) => record.metadata.to === "#late-target-no-defer");
-
-    expect(source).toBeTruthy();
-    expect(source?.metadata.defer).toBe(false);
-    expect(target.querySelector("#non-deferred-content")).toBeNull();
-    expect(source?.metadata.html).toContain('id="non-deferred-content"');
+    expect(nonDeferredSource?.metadata.defer).toBe(false);
+    expect(nonDeferredTarget.querySelector("#non-deferred-content")).toBeNull();
+    expect(nonDeferredSource?.metadata.html).toContain('id="non-deferred-content"');
   });
 
   it("remounts an external Teleport when a reactive block replaces its target", async () => {

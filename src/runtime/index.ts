@@ -14424,6 +14424,15 @@ function managedTeleportRangeMarkup(content) {
 function parseManagedTeleportMarkup(markup, target) {
   const namespace = target?.namespaceURI || XHTML_NAMESPACE;
   if (namespace === XHTML_NAMESPACE) {
+    if (typeof document.createRange === "function") {
+      try {
+        const range = document.createRange();
+        range.selectNodeContents(target);
+        return Array.from(range.createContextualFragment(markup).childNodes);
+      } catch {
+        // Fall through to template parsing when contextual fragments are unavailable.
+      }
+    }
     const template = document.createElement("template");
     template.innerHTML = markup;
     return Array.from(template.content.childNodes);
@@ -15877,26 +15886,23 @@ function collectPatches(nodes, scope, locals, patches, styleScopeId, scopeId, mo
     }
     const normalizedTag = String(node.tag || "").toLowerCase();
     if (normalizedTag === "teleport") {
+      const teleportAttrNames = {
+        to: "data-rx-teleport-to",
+        disabled: "data-rx-teleport-disabled",
+        defer: "data-rx-teleport-defer"
+      };
       for (const attr of node.attrs) {
-        if (attr.kind !== "dynamic" || !attr.bindingId) continue;
-        if (attr.name === "to") {
-          patches.push({
-            type: "attr",
-            id: attr.bindingId,
-            attr: "data-rx-teleport-to",
-            value: normalizeClientTeleportTarget(evaluateExpression(attr.value, scope, locals))
-          });
-        } else if (attr.name === "disabled" || attr.name === "defer") {
-          const patchAttr = attr.name === "disabled"
-            ? "data-rx-teleport-disabled"
-            : "data-rx-teleport-defer";
-          patches.push({
-            type: "attr",
-            id: attr.bindingId,
-            attr: patchAttr,
-            value: isClientTeleportBooleanEnabled(evaluateExpression(attr.value, scope, locals)) ? "true" : ""
-          });
-        }
+        const patchAttr = teleportAttrNames[attr.name];
+        if (attr.kind !== "dynamic" || !attr.bindingId || !patchAttr) continue;
+        const rawValue = evaluateExpression(attr.value, scope, locals);
+        patches.push({
+          type: "attr",
+          id: attr.bindingId,
+          attr: patchAttr,
+          value: attr.name === "to"
+            ? normalizeClientTeleportTarget(rawValue)
+            : (isClientTeleportBooleanEnabled(rawValue) ? "true" : "")
+        });
       }
     } else if (normalizedTag === "transition" || normalizedTag === "transition-group") {
       for (const attr of node.attrs) {

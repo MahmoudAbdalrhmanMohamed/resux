@@ -469,6 +469,33 @@ describe("runtime SSR", () => {
     expect(renderDocument(result).match(/id="teleports"/g)).toHaveLength(1);
   });
 
+  it("parses Teleport rows in their tbody target context", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-table-context",
+      () => "export default {};",
+    );
+    const metadata = encodeURIComponent(JSON.stringify({
+      to: "#table-target",
+      disabled: false,
+      defer: false,
+      bindings: {},
+      html: '<tr id="teleported-row"><td>Row</td></tr>',
+    })).replaceAll("-", "%2D");
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux"><!--resux-teleport-source:${metadata}--><!--resux-teleport-end--></div>
+      <table><tbody id="table-target"></tbody></table>
+    `;
+
+    installClientRuntimeFixture(window, {}, handlerUrl);
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+
+    const target = window.document.getElementById("table-target")!;
+    await waitForCondition(() => Boolean(target.querySelector("#teleported-row")));
+    expect(target.firstElementChild?.localName).toBe("tr");
+    expect(target.querySelector("#teleported-row")?.parentElement).toBe(target);
+  });
+
   it("applies Vue Boolean semantics to static and bound Teleport disabled props during SSR", async () => {
     const page: ComponentDefinition = defineComponent({
       id: "m-teleport-boolean-ssr",

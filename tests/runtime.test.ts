@@ -2943,7 +2943,10 @@ export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "T
       { visible: false, hits: 0, target: "#teleports", disabled: false },
       handlerUrl,
     );
+    let pageFinishCount = 0;
+    window.document.addEventListener("resux:page:finish", () => { pageFinishCount += 1; });
     await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+    expect(pageFinishCount).toBe(1);
 
     const source = window.document.querySelector("[data-rx-teleport-source='true']") as HTMLElement;
     const target = window.document.getElementById("teleports")!;
@@ -3217,6 +3220,7 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
     window.document.body.innerHTML = `
       <div id="__resux">
         <span data-rx-teleport-source="true" data-rx-teleport-to="#svg-target" style="display: contents;">
+          <svg id="teleported-svg"></svg>
           <circle id="teleported-circle" cx="12" cy="12" r="6"></circle>
         </span>
       </div>
@@ -3228,9 +3232,11 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
 
     const target = window.document.getElementById("svg-target")!;
     await waitForCondition(() => Boolean(target.querySelector("#teleported-circle")));
+    const svg = target.querySelector("#teleported-svg")!;
     const circle = target.querySelector("#teleported-circle")!;
+    expect(svg.namespaceURI).toBe("http://www.w3.org/2000/svg");
     expect(circle.namespaceURI).toBe("http://www.w3.org/2000/svg");
-    expect(target.firstElementChild).toBe(circle);
+    expect(target.firstElementChild).toBe(svg);
   });
 
   it("reinitializes managed content after a Teleport changes target namespaces", async () => {

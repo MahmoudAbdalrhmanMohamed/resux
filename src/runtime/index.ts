@@ -11317,7 +11317,7 @@ async function initializeClientRuntime() {
   initializeManagedRuntimeContent(document);
 }
 
-function activateDeferredLazyMedia(root = document) {
+function activateDeferredLazyMedia(root = document, options = {}) {
   cleanupDetachedLazyMedia();
   activateDeferredLazyImages(root);
   activateDeferredLazyVideos(root);
@@ -11326,7 +11326,9 @@ function activateDeferredLazyMedia(root = document) {
     const lazyVideos = root?.querySelectorAll ? root.querySelectorAll("video[data-rx-lazy-video='true']").length : 0;
     logManagedMediaDebug("media-activation", { lazyImages, lazyVideos });
   }
-  dispatchPageReadyEvent(root);
+  if (options.dispatchPageEvents !== false) {
+    dispatchPageReadyEvent(root);
+  }
 }
 
 function applyManagedVideoDefaultSpeeds(root = document) {
@@ -14178,6 +14180,7 @@ const XHTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
 const MANAGED_TELEPORT_SOURCE_PREFIX = "resux-teleport-source:";
 const MANAGED_TELEPORT_END_MARKER = "resux-teleport-end";
 const managedTeleportContent = new WeakMap();
+const managedTeleportMountedSources = new Set();
 const managedTeleportSourceMetadataCache = new WeakMap();
 const managedTeleportSourceBindingKeys = new WeakMap();
 const managedTeleportBindingSources = new Map();
@@ -14460,9 +14463,9 @@ function restoreManagedTeleportsWithinContent(content) {
 
 function normalizeManagedTeleportNamespace(content, target) {
   const nodes = managedTeleportRangeNodes(content);
-  const firstElement = nodes.find((node) => node.nodeType === 1);
+  const elements = nodes.filter((node) => node.nodeType === 1);
   const targetNamespace = target?.namespaceURI || XHTML_NAMESPACE;
-  if (!firstElement || firstElement.namespaceURI === targetNamespace) {
+  if (!elements.some((element) => element.namespaceURI !== targetNamespace)) {
     return false;
   }
 
@@ -14488,7 +14491,7 @@ function initializeManagedTeleportContent(content, options = {}) {
   for (const source of nestedManagedTeleportSources(content)) {
     syncManagedTeleportSource(source, options);
   }
-  initializeManagedRuntimeContent(root);
+  initializeManagedRuntimeContent(root, { dispatchPageEvents: false });
 }
 
 function moveManagedTeleportRange(content, target, options = {}) {
@@ -14525,6 +14528,7 @@ function ensureManagedTeleportTargetRange(source, target) {
   if (!content) {
     content = createManagedTeleportTargetRange(target);
     managedTeleportContent.set(source, content);
+    managedTeleportMountedSources.add(source);
   }
   return content;
 }
@@ -14548,7 +14552,7 @@ function initializeRestoredManagedTeleportNodes(nodes, parent, options = {}) {
   for (const source of sources) {
     syncManagedTeleportSource(source, options);
   }
-  initializeManagedRuntimeContent(parent);
+  initializeManagedRuntimeContent(parent, { dispatchPageEvents: false });
 }
 
 function restoreManagedTeleport(source, content, options = {}) {
@@ -14581,6 +14585,7 @@ function restoreManagedTeleport(source, content, options = {}) {
   content.start?.remove();
   content.end?.remove();
   managedTeleportContent.delete(source);
+  managedTeleportMountedSources.delete(source);
   if (recreated) initializeRestoredManagedTeleportNodes(nodes, parent, options);
 }
 
@@ -14692,14 +14697,23 @@ function restorePreservedManagedTeleportFromRoot(source, replacedRoot, visited, 
   }
 }
 
-function preparePreservedManagedTeleports(scopeRoot, replacedRoot) {
+function prepareManagedTeleportsForTargetReplacement(replacedRoot, sourceScopeRoot = null) {
   const visited = new Set();
   const restoredSources = new Set();
-  for (const source of managedTeleportSources(scopeRoot)) {
+  for (const source of [...managedTeleportMountedSources]) {
+    if (!source?.isConnected) {
+      managedTeleportMountedSources.delete(source);
+      continue;
+    }
     if (replacedRoot.contains?.(source)) continue;
+    if (sourceScopeRoot && source !== sourceScopeRoot && !sourceScopeRoot.contains?.(source)) continue;
     restorePreservedManagedTeleportFromRoot(source, replacedRoot, visited, restoredSources);
   }
   return [...restoredSources];
+}
+
+function preparePreservedManagedTeleports(scopeRoot, replacedRoot) {
+  return prepareManagedTeleportsForTargetReplacement(replacedRoot, scopeRoot);
 }
 
 function remountPreparedManagedTeleports(sources, options = {}) {
@@ -14730,6 +14744,7 @@ function cleanupManagedTeleportSource(source) {
   content.start?.remove();
   content.end?.remove();
   managedTeleportContent.delete(source);
+  managedTeleportMountedSources.delete(source);
 }
 
 function cleanupManagedTeleports(root) {
@@ -14738,9 +14753,9 @@ function cleanupManagedTeleports(root) {
   }
 }
 
-function initializeManagedRuntimeContent(root = document) {
+function initializeManagedRuntimeContent(root = document, options = {}) {
   void mountVueIslands(root);
-  activateDeferredLazyMedia(root);
+  activateDeferredLazyMedia(root, { dispatchPageEvents: options.dispatchPageEvents !== false });
   applyManagedVideoDefaultSpeeds(root);
   applyReducedMotionVideoPreference(root);
   initializeManagedVideoControls(root);
@@ -14871,13 +14886,19 @@ async function hotUpdateActiveScopes() {
     payload.scopes[scopeId].props = serialized.props;
     payload.scopes[scopeId].state = serialized.state;
     payload.scopes[scopeId].asyncData = serialized.asyncData;
-    applyPatches(scopeId, patches);
+    applyPatches(scopeId, patches, { flushDeferredTeleports: false });
   }));
+  flushDeferredManagedTeleports();
 }
 
 function collectScopeIdsFromTeleportRange(source, ids, visitedTeleports) {
   if (!source || visitedTeleports.has(source)) return;
   visitedTeleports.add(source);
+  const metadata = decodeManagedTeleportSourceMetadata(source);
+  for (const binding of Object.values(metadata.bindings || {})) {
+    const scopeId = String(binding || "").split(":")[0];
+    if (scopeId) ids.add(scopeId);
+  }
   const content = managedTeleportContent.get(source);
   if (!content) return;
 
@@ -15742,8 +15763,9 @@ async function resumePendingAsyncData() {
     payload.scopes[scopeId].props = serialized.props;
     payload.scopes[scopeId].state = serialized.state;
     payload.scopes[scopeId].asyncData = serialized.asyncData;
-    applyPatches(scopeId, patches);
+    applyPatches(scopeId, patches, { flushDeferredTeleports: false });
   }));
+  flushDeferredManagedTeleports();
 }
 
 function hasPendingAsyncData(serializedScope) {
@@ -17865,8 +17887,11 @@ function runCssTransition(element, name, phase, onDone) {
   timer = window.setTimeout(finish, Math.max(16, cssMotionTime(element) + 32));
 }
 
-function replaceManagedRuntimeHtml(element, value) {
-  const externalTeleportSources = preparePreservedManagedTeleports(document, element);
+function replaceManagedRuntimeHtml(element, value, preparedTeleportSources = []) {
+  const externalTeleportSources = [
+    ...preparedTeleportSources,
+    ...prepareManagedTeleportsForTargetReplacement(element),
+  ];
   cleanupManagedTeleports(element);
   unmountVueIslands(element);
   element.innerHTML = value;
@@ -17908,13 +17933,18 @@ function patchTransitionGroup(element, value, boundary, revision) {
     .filter(([key]) => !nextKeys.has(key))
     .map(([, child]) => child);
 
+  const externalTeleportSources = new Set();
   for (const child of removed) {
+    for (const source of prepareManagedTeleportsForTargetReplacement(child)) {
+      externalTeleportSources.add(source);
+    }
     cleanupManagedTeleports(child);
     child.remove();
   }
 
   if (reactiveBlockTransitionRevisions.get(element) !== revision) return;
-  refreshPatchedBlock(element, value);
+  replaceManagedRuntimeHtml(element, value, [...externalTeleportSources]);
+  initializeManagedRuntimeContent(document);
 
   const nextChildren = Array.from(element.children || []);
   for (const child of nextChildren) {

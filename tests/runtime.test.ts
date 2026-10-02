@@ -61,6 +61,16 @@ function installClientRuntimeFixture(
   });
 }
 
+async function renderRuntimePage(page: ComponentDefinition) {
+  const result = await renderApp({
+    page,
+    route: { path: "/", params: {}, query: {} },
+  });
+  const parsed = new Window({ url: "http://localhost/" });
+  parsed.document.body.innerHTML = result.html;
+  return { result, parsed };
+}
+
 type ManagedTeleportCommentRecord = {
   node: Comment;
   metadata: {
@@ -436,12 +446,7 @@ describe("runtime SSR", () => {
       ],
     });
 
-    const result = await renderApp({
-      page,
-      route: { path: "/", params: {}, query: {} },
-    });
-    const parsed = new Window({ url: "http://localhost/" });
-    parsed.document.body.innerHTML = result.html;
+    const { result, parsed } = await renderRuntimePage(page);
 
     const select = parsed.document.getElementById("teleport-select")!;
     const tableBody = parsed.document.getElementById("teleport-body")!;
@@ -501,12 +506,7 @@ describe("runtime SSR", () => {
       ],
     });
 
-    const result = await renderApp({
-      page,
-      route: { path: "/", params: {}, query: {} },
-    });
-    const parsed = new Window({ url: "http://localhost/" });
-    parsed.document.body.innerHTML = result.html;
+    const { result, parsed } = await renderRuntimePage(page);
 
     const records = managedTeleportCommentRecords(parsed.document.body);
     const staticSource = records.find((record) => record.metadata.to === "#static-disabled");

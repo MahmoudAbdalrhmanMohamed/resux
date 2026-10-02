@@ -61,6 +61,39 @@ function installClientRuntimeFixture(
   });
 }
 
+type ManagedTeleportCommentRecord = {
+  node: Comment;
+  metadata: {
+    to?: string;
+    disabled?: boolean;
+    defer?: boolean;
+    bindings?: Record<string, string>;
+    html?: string;
+  };
+};
+
+function managedTeleportCommentRecords(root: Node): ManagedTeleportCommentRecord[] {
+  const records: ManagedTeleportCommentRecord[] = [];
+  const visit = (node: Node) => {
+    if (node.nodeType === 8) {
+      const comment = node as Comment;
+      const prefix = "resux-teleport-source:";
+      if (comment.data.startsWith(prefix)) {
+        records.push({
+          node: comment,
+          metadata: JSON.parse(decodeURIComponent(comment.data.slice(prefix.length))),
+        });
+      }
+    }
+    for (const child of Array.from(node.childNodes)) {
+      visit(child);
+    }
+  };
+  visit(root);
+  return records;
+}
+
+
 describe("runtime SSR", () => {
   it("renders icon root presentation attributes consistently during SSR", async () => {
     const name = "audit-suite:ssr-outline";
@@ -293,9 +326,11 @@ describe("runtime SSR", () => {
     });
     const documentHtml = renderDocument(result);
 
-    expect(result.html).toContain('data-rx-teleport-source="true"');
-    expect(result.html).toContain('data-rx-teleport-to="#teleports"');
+    expect(result.html).toContain("<!--resux-teleport-source:");
     expect(result.html).not.toContain("<teleport");
+    const parsed = new Window({ url: "http://localhost/" });
+    parsed.document.body.innerHTML = result.html;
+    expect(managedTeleportCommentRecords(parsed.document.body)[0]?.metadata.to).toBe("#teleports");
     expect(documentHtml).toContain('<div id="teleports"></div>');
     expect(documentHtml).toContain('<script type="module" src="/__resux/runtime-client.mjs"></script>');
   });
@@ -332,7 +367,9 @@ describe("runtime SSR", () => {
       route: { path: "/", params: {}, query: {} },
     });
 
-    expect(result.html).toContain('data-rx-teleport-disabled="true"');
+    const parsed = new Window({ url: "http://localhost/" });
+    parsed.document.body.innerHTML = result.html;
+    expect(managedTeleportCommentRecords(parsed.document.body)[0]?.metadata.disabled).toBe(true);
     expect(result.html).toContain('id="inline-overlay"');
   });
 
@@ -406,18 +443,17 @@ describe("runtime SSR", () => {
     const parsed = new Window({ url: "http://localhost/" });
     parsed.document.body.innerHTML = result.html;
 
-    const selectSource = parsed.document.querySelector(
-      "#teleport-select > template[data-rx-teleport-source='true']",
-    ) as HTMLTemplateElement | null;
-    const tableSource = parsed.document.querySelector(
-      "#teleport-body > template[data-rx-teleport-source='true']",
-    ) as HTMLTemplateElement | null;
+    const select = parsed.document.getElementById("teleport-select")!;
+    const tableBody = parsed.document.getElementById("teleport-body")!;
+    const selectSource = managedTeleportCommentRecords(select)[0];
+    const tableSource = managedTeleportCommentRecords(tableBody)[0];
 
-    expect(selectSource).toBeTruthy();
-    expect(selectSource?.content.querySelector("#teleported-option")).toBeTruthy();
-    expect(tableSource).toBeTruthy();
-    expect(tableSource?.content.querySelector("#teleported-row")).toBeTruthy();
+    expect(selectSource?.metadata.to).toBe("#select-target");
+    expect(selectSource?.metadata.html).toContain('id="teleported-option"');
+    expect(tableSource?.metadata.to).toBe("#table-target");
+    expect(tableSource?.metadata.html).toContain('id="teleported-row"');
     expect(result.html).not.toContain("<span data-rx-teleport-source");
+    expect(result.html).not.toContain("<template data-rx-teleport-source");
   });
 
   it("applies Vue Boolean semantics to static and bound Teleport disabled props during SSR", async () => {
@@ -472,19 +508,14 @@ describe("runtime SSR", () => {
     const parsed = new Window({ url: "http://localhost/" });
     parsed.document.body.innerHTML = result.html;
 
-    const staticSource = parsed.document.querySelector(
-      'template[data-rx-teleport-to="#static-disabled"]',
-    );
-    const truthySource = parsed.document.querySelector(
-      'template[data-rx-teleport-to="#truthy-disabled"]',
-    );
-    const falsySource = parsed.document.querySelector(
-      'template[data-rx-teleport-to="#falsy-disabled"]',
-    );
+    const records = managedTeleportCommentRecords(parsed.document.body);
+    const staticSource = records.find((record) => record.metadata.to === "#static-disabled");
+    const truthySource = records.find((record) => record.metadata.to === "#truthy-disabled");
+    const falsySource = records.find((record) => record.metadata.to === "#falsy-disabled");
 
-    expect(staticSource?.getAttribute("data-rx-teleport-disabled")).toBe("true");
-    expect(truthySource?.getAttribute("data-rx-teleport-disabled")).toBe("true");
-    expect(falsySource?.hasAttribute("data-rx-teleport-disabled")).toBe(false);
+    expect(staticSource?.metadata.disabled).toBe(true);
+    expect(truthySource?.metadata.disabled).toBe(true);
+    expect(falsySource?.metadata.disabled).toBe(false);
   });
 
   it("renders HTML and serialized state without eagerly loading handler chunks", async () => {
@@ -3268,9 +3299,10 @@ export default createClientComponent({ id: "m0", name: "DeferredTeleport", file:
 
     await waitForCondition(() => Boolean(window.document.getElementById("late-target")));
     await waitForCondition(() => Boolean(window.document.getElementById("late-target")?.querySelector("#deferred-content")));
-    const source = window.document.querySelector("[data-rx-teleport-defer='true']") as HTMLElement;
-    expect(source).toBeTruthy();
-    expect(source.childNodes).toHaveLength(0);
+    const source = managedTeleportCommentRecords(window.document.body)
+      .find((record) => record.metadata.to === "#late-target");
+    expect(source?.metadata.defer).toBe(true);
+    expect(source?.node.nextSibling?.nodeType).toBe(8);
     expect(window.document.getElementById("late-target")?.firstElementChild?.id).toBe("deferred-content");
   });
 
@@ -3320,13 +3352,13 @@ export default createClientComponent({ id: "m0", name: "NonDeferredTeleport", fi
 
     await waitForCondition(() => Boolean(window.document.getElementById("late-target-no-defer")));
     const target = window.document.getElementById("late-target-no-defer")!;
-    const source = window.document.querySelector(
-      'template[data-rx-teleport-to="#late-target-no-defer"]',
-    ) as HTMLTemplateElement | null;
+    const source = managedTeleportCommentRecords(window.document.body)
+      .find((record) => record.metadata.to === "#late-target-no-defer");
 
     expect(source).toBeTruthy();
+    expect(source?.metadata.defer).toBe(false);
     expect(target.querySelector("#non-deferred-content")).toBeNull();
-    expect(source?.content.querySelector("#non-deferred-content")).toBeTruthy();
+    expect(source?.metadata.html).toContain('id="non-deferred-content"');
   });
 
   it("cleans Teleports owned by removed TransitionGroup children", async () => {

@@ -4031,6 +4031,10 @@ function isTeleportBooleanEnabled(value: unknown): boolean {
   return value === "" || Boolean(value);
 }
 
+function encodeTeleportSourceMetadata(value: Record<string, unknown>): string {
+  return encodeURIComponent(JSON.stringify(value)).replaceAll("-", "%2D");
+}
+
 function renderTeleportBoundary(
   node: ElementTemplateNode,
   context: RenderTemplateContext,
@@ -4041,23 +4045,24 @@ function renderTeleportBoundary(
   const target = normalizeTeleportTarget(props.to);
   const disabled = isTeleportBooleanEnabled(props.disabled);
   const defer = isTeleportBooleanEnabled(props.defer);
-  const attrs = [
-    'data-rx-teleport-source="true"',
-    `data-rx-teleport-to="${escapeAttribute(target)}"`,
-    'style="display: contents;"',
-  ];
-  if (disabled) attrs.push('data-rx-teleport-disabled="true"');
-  if (defer) attrs.push('data-rx-teleport-defer="true"');
+  const bindings: Record<string, string> = {};
 
   for (const attr of node.attrs) {
     if (attr.kind !== "dynamic" || !attr.bindingId) continue;
     if (attr.name === "to" || attr.name === "disabled" || attr.name === "defer") {
-      attrs.push(`data-rx-attr-${attr.bindingId}="${context.scopeId}:${attr.bindingId}"`);
+      bindings[attr.bindingId] = `${context.scopeId}:${attr.bindingId}`;
     }
   }
 
-  const source = `<template ${attrs.join(" ")}>${disabled ? "" : children}</template>`;
-  const end = '<template data-rx-teleport-end="true"></template>';
+  const metadata = encodeTeleportSourceMetadata({
+    to: target,
+    disabled,
+    defer,
+    bindings,
+    html: disabled ? "" : children,
+  });
+  const source = `<!--resux-teleport-source:${metadata}-->`;
+  const end = "<!--resux-teleport-end-->";
   return disabled ? `${source}${children}${end}` : `${source}${end}`;
 }
 
@@ -14166,16 +14171,144 @@ function createClientRouter() {
 }
 
 const XHTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
+const MANAGED_TELEPORT_SOURCE_PREFIX = "resux-teleport-source:";
+const MANAGED_TELEPORT_END_MARKER = "resux-teleport-end";
 const managedTeleportContent = new WeakMap();
+const managedTeleportSourceMetadataCache = new WeakMap();
+const managedTeleportSourceBindingKeys = new WeakMap();
+const managedTeleportBindingSources = new Map();
 const deferredManagedTeleportSources = new Set();
+
+function isManagedTeleportCommentSource(source) {
+  return source?.nodeType === 8
+    && String(source.data || "").startsWith(MANAGED_TELEPORT_SOURCE_PREFIX);
+}
+
+function isManagedTeleportCommentEnd(source) {
+  return source?.nodeType === 8
+    && String(source.data || "") === MANAGED_TELEPORT_END_MARKER;
+}
+
+function isManagedTeleportElementSource(source) {
+  return Boolean(source?.matches?.("[data-rx-teleport-source='true']"));
+}
+
+function decodeManagedTeleportSourceMetadata(source) {
+  const cached = managedTeleportSourceMetadataCache.get(source);
+  if (cached) return cached;
+  let metadata = {
+    to: "#teleports",
+    disabled: false,
+    defer: false,
+    bindings: {},
+    html: ""
+  };
+  if (isManagedTeleportCommentSource(source)) {
+    try {
+      const encoded = String(source.data || "").slice(MANAGED_TELEPORT_SOURCE_PREFIX.length);
+      const parsed = JSON.parse(decodeURIComponent(encoded));
+      metadata = {
+        to: normalizeClientTeleportTarget(parsed?.to),
+        disabled: Boolean(parsed?.disabled),
+        defer: Boolean(parsed?.defer),
+        bindings: parsed?.bindings && typeof parsed.bindings === "object" ? parsed.bindings : {},
+        html: typeof parsed?.html === "string" ? parsed.html : ""
+      };
+    } catch {
+      // Leave malformed source comments inert and pointed at the standard target.
+    }
+  } else if (isManagedTeleportElementSource(source)) {
+    metadata = {
+      to: source.getAttribute("data-rx-teleport-to") || "#teleports",
+      disabled: source.getAttribute("data-rx-teleport-disabled") === "true",
+      defer: source.hasAttribute("data-rx-teleport-defer"),
+      bindings: {},
+      html: ""
+    };
+  }
+  managedTeleportSourceMetadataCache.set(source, metadata);
+  return metadata;
+}
+
+function unregisterManagedTeleportSourceBindings(source) {
+  const keys = managedTeleportSourceBindingKeys.get(source);
+  if (!keys) return;
+  for (const key of keys) {
+    const sources = managedTeleportBindingSources.get(key);
+    if (!sources) continue;
+    sources.delete(source);
+    if (sources.size === 0) {
+      managedTeleportBindingSources.delete(key);
+    }
+  }
+  managedTeleportSourceBindingKeys.delete(source);
+}
+
+function registerManagedTeleportSourceBindings(source) {
+  if (!isManagedTeleportCommentSource(source)) return;
+  unregisterManagedTeleportSourceBindings(source);
+  const metadata = decodeManagedTeleportSourceMetadata(source);
+  const keys = new Set();
+  for (const value of Object.values(metadata.bindings || {})) {
+    const key = String(value || "");
+    if (!key) continue;
+    keys.add(key);
+    let sources = managedTeleportBindingSources.get(key);
+    if (!sources) {
+      sources = new Set();
+      managedTeleportBindingSources.set(key, sources);
+    }
+    sources.add(source);
+  }
+  managedTeleportSourceBindingKeys.set(source, keys);
+}
+
+function managedTeleportSourcesForBinding(key) {
+  const sources = managedTeleportBindingSources.get(key);
+  if (!sources) return [];
+  const active = [];
+  for (const source of [...sources]) {
+    if (!source?.isConnected) {
+      sources.delete(source);
+      continue;
+    }
+    active.push(source);
+  }
+  if (sources.size === 0) {
+    managedTeleportBindingSources.delete(key);
+  }
+  return active;
+}
 
 function managedTeleportSources(root = document) {
   const sources = [];
-  if (root?.matches?.("[data-rx-teleport-source='true']")) {
-    sources.push(root);
+  const seen = new Set();
+  const addSource = (source) => {
+    if (!source || seen.has(source)) return;
+    seen.add(source);
+    sources.push(source);
+    registerManagedTeleportSourceBindings(source);
+  };
+
+  if (isManagedTeleportCommentSource(root) || isManagedTeleportElementSource(root)) {
+    addSource(root);
   }
   if (root?.querySelectorAll) {
-    sources.push(...root.querySelectorAll("[data-rx-teleport-source='true']"));
+    for (const source of root.querySelectorAll("[data-rx-teleport-source='true']")) {
+      addSource(source);
+    }
+  }
+
+  const ownerDocument = root?.nodeType === 9 ? root : root?.ownerDocument || document;
+  if (ownerDocument?.createTreeWalker && root?.nodeType) {
+    const walker = ownerDocument.createTreeWalker(root, 128);
+    let node = walker.nextNode();
+    while (node) {
+      if (isManagedTeleportCommentSource(node)) {
+        addSource(node);
+      }
+      node = walker.nextNode();
+    }
   }
   return sources;
 }
@@ -14185,6 +14318,21 @@ function isManagedTeleportTemplateSource(source) {
 }
 
 function managedTeleportSourceEnd(source) {
+  if (isManagedTeleportCommentSource(source)) {
+    let depth = 0;
+    let node = source.nextSibling;
+    while (node) {
+      if (isManagedTeleportCommentSource(node)) {
+        depth += 1;
+      } else if (isManagedTeleportCommentEnd(node)) {
+        if (depth === 0) return node;
+        depth -= 1;
+      }
+      node = node.nextSibling;
+    }
+    return null;
+  }
+
   if (!isManagedTeleportTemplateSource(source)) return null;
   let depth = 0;
   let node = source.nextSibling;
@@ -14212,16 +14360,8 @@ function managedTeleportInlineNodes(source) {
   return nodes;
 }
 
-function managedTeleportInitialNodes(source) {
-  if (isManagedTeleportTemplateSource(source)) {
-    const templateNodes = Array.from(source.content?.childNodes ?? []);
-    return templateNodes.length ? templateNodes : managedTeleportInlineNodes(source);
-  }
-  return Array.from(source.childNodes ?? []);
-}
-
 function managedTeleportTarget(source) {
-  const selector = source.getAttribute("data-rx-teleport-to") || "#teleports";
+  const selector = decodeManagedTeleportSourceMetadata(source).to || "#teleports";
   try {
     return document.querySelector(selector);
   } catch {
@@ -14268,13 +14408,43 @@ function parseManagedTeleportMarkup(markup, target) {
   return Array.from(wrapper.childNodes);
 }
 
-function restoreManagedTeleportsWithinContent(content) {
-  const nestedSources = [];
-  for (const node of managedTeleportRangeNodes(content)) {
-    if (node.nodeType !== 1) continue;
-    nestedSources.push(...managedTeleportSources(node));
+function managedTeleportInitialNodes(source, target) {
+  if (isManagedTeleportCommentSource(source)) {
+    const inlineNodes = managedTeleportInlineNodes(source);
+    if (inlineNodes.length) return inlineNodes;
+    const markup = decodeManagedTeleportSourceMetadata(source).html || "";
+    return markup ? parseManagedTeleportMarkup(markup, target) : [];
   }
-  for (const source of nestedSources.reverse()) {
+  if (isManagedTeleportTemplateSource(source)) {
+    const templateNodes = Array.from(source.content?.childNodes ?? []);
+    return templateNodes.length ? templateNodes : managedTeleportInlineNodes(source);
+  }
+  return Array.from(source.childNodes ?? []);
+}
+
+function nestedManagedTeleportSources(content) {
+  const sources = [];
+  const seen = new Set();
+  const add = (source) => {
+    if (!source || seen.has(source)) return;
+    seen.add(source);
+    sources.push(source);
+  };
+  for (const node of managedTeleportRangeNodes(content)) {
+    if (isManagedTeleportCommentSource(node) || isManagedTeleportElementSource(node)) {
+      add(node);
+    }
+    if (node.nodeType === 1) {
+      for (const source of managedTeleportSources(node)) {
+        add(source);
+      }
+    }
+  }
+  return sources;
+}
+
+function restoreManagedTeleportsWithinContent(content) {
+  for (const source of nestedManagedTeleportSources(content).reverse()) {
     const nestedContent = managedTeleportContent.get(source);
     if (!nestedContent) continue;
     restoreManagedTeleportsWithinContent(nestedContent);
@@ -14307,15 +14477,15 @@ function normalizeManagedTeleportNamespace(content, target) {
 }
 
 function initializeManagedTeleportContent(content, options = {}) {
-  for (const node of managedTeleportRangeNodes(content)) {
-    if (node.nodeType !== 1) continue;
-    mountManagedTeleports(node, options);
-    initializeManagedRuntimeContent(node);
-  }
+  const root = content?.start?.parentNode;
+  if (!root) return;
+  mountManagedTeleports(root, options);
+  initializeManagedRuntimeContent(root);
 }
 
 function moveManagedTeleportRange(content, target, options = {}) {
   if (!content?.start || !content?.end || !target) return;
+  let moved = false;
   if (content.start.parentNode !== target || content.end.parentNode !== target) {
     const fragment = document.createDocumentFragment();
     let node = content.start;
@@ -14326,8 +14496,10 @@ function moveManagedTeleportRange(content, target, options = {}) {
       node = next;
     }
     target.appendChild(fragment);
+    moved = true;
   }
-  if (normalizeManagedTeleportNamespace(content, target)) {
+  const recreated = normalizeManagedTeleportNamespace(content, target);
+  if (moved || recreated) {
     initializeManagedTeleportContent(content, options);
   }
 }
@@ -14335,7 +14507,7 @@ function moveManagedTeleportRange(content, target, options = {}) {
 function restoreManagedTeleport(source, content) {
   if (!content) return;
   const nodes = managedTeleportRangeNodes(content);
-  if (isManagedTeleportTemplateSource(source)) {
+  if (isManagedTeleportCommentSource(source) || isManagedTeleportTemplateSource(source)) {
     const end = managedTeleportSourceEnd(source);
     const parent = end?.parentNode || source.parentNode;
     const reference = end || source.nextSibling;
@@ -14357,7 +14529,8 @@ function syncManagedTeleportSource(source, options = {}) {
     deferredManagedTeleportSources.delete(source);
     return;
   }
-  const disabled = source.getAttribute("data-rx-teleport-disabled") === "true";
+  const metadata = decodeManagedTeleportSourceMetadata(source);
+  const disabled = Boolean(metadata.disabled);
   const content = managedTeleportContent.get(source);
 
   if (disabled) {
@@ -14367,11 +14540,12 @@ function syncManagedTeleportSource(source, options = {}) {
   }
 
   const target = managedTeleportTarget(source);
-  if (!target || target === source || source.contains(target)) {
+  const sourceContainsTarget = Boolean(source?.contains && source.contains(target));
+  if (!target || target === source || sourceContainsTarget) {
     if (
       !target
       && options.deferMissingTarget === true
-      && source.hasAttribute("data-rx-teleport-defer")
+      && Boolean(metadata.defer)
     ) {
       deferredManagedTeleportSources.add(source);
     } else {
@@ -14386,7 +14560,7 @@ function syncManagedTeleportSource(source, options = {}) {
     const start = document.createComment("resux-teleport-start");
     const end = document.createComment("resux-teleport-end");
     target.appendChild(start);
-    for (const node of managedTeleportInitialNodes(source)) {
+    for (const node of managedTeleportInitialNodes(source, target)) {
       target.appendChild(node);
     }
     target.appendChild(end);
@@ -14416,8 +14590,48 @@ function flushDeferredManagedTeleports() {
   }
 }
 
+function updateManagedTeleportCommentSource(source, attr, value) {
+  if (!isManagedTeleportCommentSource(source)) return;
+  const metadata = decodeManagedTeleportSourceMetadata(source);
+  if (attr === "data-rx-teleport-to") {
+    metadata.to = normalizeClientTeleportTarget(value);
+  } else if (attr === "data-rx-teleport-disabled") {
+    metadata.disabled = value === "true";
+  } else if (attr === "data-rx-teleport-defer") {
+    metadata.defer = value === "true";
+  }
+  source.data = MANAGED_TELEPORT_SOURCE_PREFIX + encodeClientTeleportSourceMetadata(metadata);
+  managedTeleportSourceMetadataCache.set(source, metadata);
+  registerManagedTeleportSourceBindings(source);
+}
+
+function restorePreservedManagedTeleportFromRoot(source, replacedRoot, visited = new Set()) {
+  if (!source || visited.has(source)) return;
+  visited.add(source);
+  const content = managedTeleportContent.get(source);
+  if (!content) return;
+
+  for (const nestedSource of nestedManagedTeleportSources(content)) {
+    restorePreservedManagedTeleportFromRoot(nestedSource, replacedRoot, visited);
+  }
+
+  const parent = content.start?.parentNode;
+  if (parent && (parent === replacedRoot || replacedRoot.contains?.(parent))) {
+    restoreManagedTeleport(source, content);
+  }
+}
+
+function preparePreservedManagedTeleports(layoutRoot, replacedRoot) {
+  const visited = new Set();
+  for (const source of managedTeleportSources(layoutRoot)) {
+    if (replacedRoot.contains?.(source)) continue;
+    restorePreservedManagedTeleportFromRoot(source, replacedRoot, visited);
+  }
+}
+
 function cleanupManagedTeleportSource(source) {
   deferredManagedTeleportSources.delete(source);
+  unregisterManagedTeleportSourceBindings(source);
   const content = managedTeleportContent.get(source);
   if (!content) return;
 
@@ -14478,6 +14692,7 @@ function replaceRouteHtml(root, html, preserveLayout = true) {
     return { root, scopeIds: new Set() };
   }
 
+  preparePreservedManagedTeleports(currentLayout, currentPage);
   const preservedScopeIds = collectScopeIds(currentLayout, currentPage);
   cleanupManagedTeleports(currentPage);
   unmountVueIslands(currentPage);
@@ -14584,16 +14799,16 @@ function collectScopeIdsFromTeleportRange(source, ids, visitedTeleports) {
   if (!content) return;
 
   for (const node of managedTeleportRangeNodes(content)) {
+    if (isManagedTeleportCommentSource(node) || isManagedTeleportElementSource(node)) {
+      collectScopeIdsFromTeleportRange(node, ids, visitedTeleports);
+    }
     if (node.nodeType !== 1) continue;
     collectScopeIdFromElement(node, ids);
-    if (node.matches?.("[data-rx-teleport-source='true']")) {
-      collectScopeIdsFromTeleportRange(node, ids, visitedTeleports);
+    for (const nestedSource of managedTeleportSources(node)) {
+      collectScopeIdsFromTeleportRange(nestedSource, ids, visitedTeleports);
     }
     for (const element of Array.from(node.querySelectorAll ? node.querySelectorAll("*") : [])) {
       collectScopeIdFromElement(element, ids);
-      if (element.matches?.("[data-rx-teleport-source='true']")) {
-        collectScopeIdsFromTeleportRange(element, ids, visitedTeleports);
-      }
     }
   }
 }
@@ -14607,9 +14822,13 @@ function collectScopeIds(root, exclude) {
       continue;
     }
     collectScopeIdFromElement(element, ids);
-    if (element.matches?.("[data-rx-teleport-source='true']")) {
-      collectScopeIdsFromTeleportRange(element, ids, visitedTeleports);
+  }
+
+  for (const source of managedTeleportSources(root)) {
+    if (exclude && exclude.contains?.(source)) {
+      continue;
     }
+    collectScopeIdsFromTeleportRange(source, ids, visitedTeleports);
   }
 
   return ids;
@@ -15570,6 +15789,10 @@ function isClientTeleportBooleanEnabled(value) {
   return value === "" || Boolean(value);
 }
 
+function encodeClientTeleportSourceMetadata(value) {
+  return encodeURIComponent(JSON.stringify(value)).replaceAll("-", "%2D");
+}
+
 function normalizeClientTransitionName(value) {
   const candidate = String(value || "v").trim();
   return /^[A-Za-z0-9_-]+$/.test(candidate) ? candidate : "v";
@@ -15598,24 +15821,25 @@ function renderElement(node, scope, locals, styleScopeId, scopeId, moduleId) {
     const rawDefer = deferAttr
       ? (deferAttr.kind === "static" ? deferAttr.value : evaluateExpression(deferAttr.value, scope, locals))
       : false;
-    const attrs = [
-      'data-rx-teleport-source="true"',
-      'data-rx-teleport-to="' + escapeAttribute(normalizeClientTeleportTarget(rawTarget)) + '"',
-      'style="display: contents;"'
-    ];
-    if (isClientTeleportBooleanEnabled(rawDisabled)) attrs.push('data-rx-teleport-disabled="true"');
-    if (isClientTeleportBooleanEnabled(rawDefer)) attrs.push('data-rx-teleport-defer="true"');
+    const disabled = isClientTeleportBooleanEnabled(rawDisabled);
+    const bindings = {};
     for (const attr of node.attrs) {
       if (attr.kind === "dynamic" && attr.bindingId && (attr.name === "to" || attr.name === "disabled" || attr.name === "defer")) {
-        attrs.push('data-rx-attr-' + attr.bindingId + '="' + scopeId + ':' + attr.bindingId + '"');
+        bindings[attr.bindingId] = scopeId + ":" + attr.bindingId;
       }
     }
     const children = node.children
       .map((child) => renderNode(child, scope, locals, styleScopeId, scopeId, moduleId))
       .join("");
-    const disabled = isClientTeleportBooleanEnabled(rawDisabled);
-    const source = '<template ' + attrs.join(" ") + '>' + (disabled ? "" : children) + '</template>';
-    const end = '<template data-rx-teleport-end="true"></template>';
+    const metadata = encodeClientTeleportSourceMetadata({
+      to: normalizeClientTeleportTarget(rawTarget),
+      disabled,
+      defer: isClientTeleportBooleanEnabled(rawDefer),
+      bindings,
+      html: disabled ? "" : children
+    });
+    const source = "<!--resux-teleport-source:" + metadata + "-->";
+    const end = "<!--resux-teleport-end-->";
     return disabled ? source + children + end : source + end;
   }
   if (normalizedTag === "transition" || normalizedTag === "transition-group") {
@@ -17694,6 +17918,17 @@ function applyPatches(scopeId, patches) {
       continue;
     }
     if (patch.type === "attr") {
+      if (
+        patch.attr === "data-rx-teleport-to"
+        || patch.attr === "data-rx-teleport-disabled"
+        || patch.attr === "data-rx-teleport-defer"
+      ) {
+        const bindingKey = scopeId + ":" + patch.id;
+        for (const source of managedTeleportSourcesForBinding(bindingKey)) {
+          updateManagedTeleportCommentSource(source, patch.attr, patch.value);
+          syncManagedTeleportSource(source, { deferMissingTarget: true });
+        }
+      }
       document.querySelectorAll('[data-rx-attr-' + patch.id + '="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
         const removeAttribute = patch.value === "" || patch.value === "false" || patch.value == null;
         if (patch.attr === "hidden" && patchTransitionVisibility(element, !removeAttribute)) {

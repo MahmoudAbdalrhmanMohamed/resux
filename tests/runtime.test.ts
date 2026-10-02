@@ -3162,6 +3162,105 @@ export default createClientComponent({ id: "m0", name: "TeleportBooleanClient", 
     expect(target.querySelector("#boolean-teleport-content")).toBeNull();
   });
 
+  it("restores disabled Teleport content to the source namespace", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-restore-namespace",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "disable" }], children: [{ type: "text", value: "Disable" }] },
+  { type: "element", tag: "teleport", attrs: [
+    { kind: "static", name: "to", value: "#svg-target" },
+    { kind: "dynamic", name: "disabled", value: "disabled.value", bindingId: "b0" }
+  ], events: [], children: [
+    { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "restore-namespace-node" }], events: [], children: [{ type: "text", value: "Restored" }] }
+  ] }
+];
+async function script(ctx) {
+  const disabled = ctx.useState("disabled", () => false);
+  function disable() { disabled.value = true; }
+  return { disabled, disable };
+}
+export default createClientComponent({ id: "m0", name: "RestoreNamespace", file: "RestoreNamespace.vue", script, template, handlers: ["disable"] });
+`,
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <button id="disable-namespace" data-rx-on-click="s0:m0:disable">Disable</button>
+        <span data-rx-teleport-source="true" data-rx-teleport-to="#svg-target" data-rx-attr-b0="s0:b0" style="display: contents;">
+          <div id="restore-namespace-node">Restored</div>
+        </span>
+      </div>
+      <svg id="svg-target"></svg>
+    `;
+
+    installClientRuntimeFixture(window, { disabled: false }, handlerUrl);
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+
+    const source = window.document.querySelector("[data-rx-teleport-source='true']") as HTMLElement;
+    const svgTarget = window.document.getElementById("svg-target")!;
+    await waitForCondition(() => Boolean(svgTarget.querySelector("#restore-namespace-node")));
+    expect(svgTarget.querySelector("#restore-namespace-node")?.namespaceURI).toBe("http://www.w3.org/2000/svg");
+
+    window.document.getElementById("disable-namespace")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+    await waitForCondition(() => Boolean(source.querySelector("#restore-namespace-node")));
+    expect(source.querySelector("#restore-namespace-node")?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
+  });
+
+  it("preserves target order when an earlier Teleport starts disabled", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-disabled-order",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "enableFirst" }], children: [{ type: "text", value: "Enable" }] },
+  { type: "element", tag: "teleport", attrs: [
+    { kind: "static", name: "to", value: "#ordered-target" },
+    { kind: "dynamic", name: "disabled", value: "firstDisabled.value", bindingId: "b0" }
+  ], events: [], children: [
+    { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "first-teleport" }], events: [], children: [{ type: "text", value: "First" }] }
+  ] },
+  { type: "element", tag: "teleport", attrs: [{ kind: "static", name: "to", value: "#ordered-target" }], events: [], children: [
+    { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "second-teleport" }], events: [], children: [{ type: "text", value: "Second" }] }
+  ] }
+];
+async function script(ctx) {
+  const firstDisabled = ctx.useState("firstDisabled", () => true);
+  function enableFirst() { firstDisabled.value = false; }
+  return { firstDisabled, enableFirst };
+}
+export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "TeleportOrder.vue", script, template, handlers: ["enableFirst"] });
+`,
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <button id="enable-first" data-rx-on-click="s0:m0:enableFirst">Enable</button>
+        <span data-rx-teleport-source="true" data-rx-teleport-to="#ordered-target" data-rx-teleport-disabled="true" data-rx-attr-b0="s0:b0" style="display: contents;">
+          <div id="first-teleport">First</div>
+        </span>
+        <span data-rx-teleport-source="true" data-rx-teleport-to="#ordered-target" style="display: contents;">
+          <div id="second-teleport">Second</div>
+        </span>
+      </div>
+      <div id="ordered-target"></div>
+    `;
+
+    installClientRuntimeFixture(window, { firstDisabled: true }, handlerUrl);
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+
+    const target = window.document.getElementById("ordered-target")!;
+    await waitForCondition(() => Boolean(target.querySelector("#second-teleport")));
+    window.document.getElementById("enable-first")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+    await waitForCondition(() => Boolean(target.querySelector("#first-teleport")));
+    expect(Array.from(target.children).map((element) => element.id)).toEqual(["first-teleport", "second-teleport"]);
+  });
+
   it("recreates Teleport children in an SVG target namespace", async () => {
     const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
       "resux-svg-teleport",
@@ -3359,6 +3458,61 @@ export default createClientComponent({ id: "m0", name: "NonDeferredTeleport", fi
     expect(source?.metadata.defer).toBe(false);
     expect(target.querySelector("#non-deferred-content")).toBeNull();
     expect(source?.metadata.html).toContain('id="non-deferred-content"');
+  });
+
+  it("remounts an external Teleport when a reactive block replaces its target", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-external-teleport-target",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "replace" }], children: [{ type: "text", value: "Replace" }] },
+  { type: "element", tag: "teleport", attrs: [{ kind: "static", name: "to", value: "#replaceable-target" }], events: [], children: [
+    { type: "element", tag: "p", attrs: [{ kind: "static", name: "id", value: "external-teleport-content" }], events: [], children: [{ type: "text", value: "External" }] }
+  ] },
+  { type: "element", tag: "section", attrs: [], events: [], if: { expression: "visible.value", blockId: "b0" }, children: [
+    { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "replaceable-target" }], events: [], children: [] }
+  ] }
+];
+async function script(ctx) {
+  const visible = ctx.useState("visible", () => true);
+  function replace() {
+    visible.value = false;
+    queueMicrotask(() => { visible.value = true; });
+  }
+  return { visible, replace };
+}
+export default createClientComponent({ id: "m0", name: "ExternalTeleportTarget", file: "ExternalTeleportTarget.vue", script, template, handlers: ["replace"] });
+`,
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <button id="replace-target" data-rx-on-click="s0:m0:replace">Replace</button>
+        <span data-rx-teleport-source="true" data-rx-teleport-to="#replaceable-target" style="display: contents;">
+          <p id="external-teleport-content">External</p>
+        </span>
+        <span data-rx-block="s0:b0" style="display: contents;">
+          <section><div id="replaceable-target"></div></section>
+        </span>
+      </div>
+    `;
+
+    installClientRuntimeFixture(window, { visible: true }, handlerUrl);
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+
+    await waitForCondition(() => Boolean(window.document.getElementById("replaceable-target")?.querySelector("#external-teleport-content")));
+    const originalTarget = window.document.getElementById("replaceable-target");
+
+    window.document.getElementById("replace-target")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+
+    await waitForCondition(() => {
+      const nextTarget = window.document.getElementById("replaceable-target");
+      return Boolean(nextTarget && nextTarget !== originalTarget && nextTarget.querySelector("#external-teleport-content"));
+    });
+    expect(window.document.getElementById("replaceable-target")?.querySelector("#external-teleport-content")).toBeTruthy();
   });
 
   it("cleans Teleports owned by removed TransitionGroup children", async () => {

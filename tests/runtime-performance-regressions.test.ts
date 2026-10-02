@@ -153,9 +153,15 @@ describe("runtime performance regressions", () => {
   it("skips page-finish enhancement scans when the DOM declares no enhancements", () => {
     const source = getClientRuntimeSource();
 
-    expect(source).toContain('document.addEventListener("resux:page:finish", () => {');
-    expect(source).toContain("if (!collectDeclaredClientEnhancementElements(document).length)");
-    expect(source).toContain("void scanClientEnhancements(document);");
+    const listenerStart = source.indexOf('document.addEventListener("resux:page:finish", () => {');
+    expect(listenerStart).toBeGreaterThanOrEqual(0);
+    const handler = source.slice(listenerStart, listenerStart + 700);
+    const guardIndex = handler.indexOf("if (!collectDeclaredClientEnhancementElements(document).length)");
+    const scanIndex = handler.indexOf("void scanClientEnhancements(document);");
+
+    expect(guardIndex).toBeGreaterThanOrEqual(0);
+    expect(scanIndex).toBeGreaterThan(guardIndex);
+    expect(handler.slice(guardIndex, scanIndex)).toContain("return;");
   });
 
   it("hydrates i18n from public route payload config without module side effects", () => {

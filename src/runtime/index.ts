@@ -656,6 +656,7 @@ export interface RenderResult {
   html: string;
   payload: ResuxPayload;
   head: HeadEntry;
+  teleports?: Record<string, string>;
 }
 
 export interface RenderDocumentOptions {
@@ -686,6 +687,8 @@ interface RenderTemplateContext {
   renderPage?: () => Promise<string>;
   renderSlot?: () => Promise<string>;
   renderLayout?: (name: string | false | undefined, slot: () => Promise<string>) => Promise<string>;
+  reserveTeleport?: (target: string) => number | undefined;
+  commitTeleport?: (reservation: number, html: string) => void;
 }
 
 type ComponentProps = Record<string, unknown>;
@@ -2327,9 +2330,12 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
   const bodyOpenTag = renderedBodyAttrs ? `<body ${renderedBodyAttrs}>` : "<body>";
   const hasDefaultTeleportTarget = collectHtmlTagsWithAttribute(result.html, "id")
     .some((tag) => readHtmlAttribute(tag, "id") === "teleports");
+  const defaultTeleportHtml = hasDefaultTeleportTarget
+    ? ""
+    : (result.teleports?.["#teleports"] ?? "");
   const defaultTeleportTarget = hasDefaultTeleportTarget
     ? '<div data-rx-teleport-fallback="true"></div>'
-    : '<div id="teleports" data-rx-teleport-fallback="true"></div>';
+    : `<div id="teleports" data-rx-teleport-fallback="true">${defaultTeleportHtml}</div>`;
   return [
     "<!doctype html>",
     `<html ${renderAttributes(htmlAttrs)}>`,
@@ -4043,12 +4049,19 @@ function encodeTeleportSourceMetadata(value: Record<string, unknown>): string {
   return encodeURIComponent(JSON.stringify(value)).replaceAll("-", "%2D");
 }
 
-function renderTeleportBoundary(
+interface TeleportBoundaryRenderState {
+  target: string;
+  disabled: boolean;
+  defer: boolean;
+  bindings: Record<string, string>;
+  toBinding: string;
+}
+
+function resolveTeleportBoundaryRenderState(
   node: ElementTemplateNode,
   context: RenderTemplateContext,
   locals: Record<string, unknown>,
-  children: string,
-): string {
+): TeleportBoundaryRenderState {
   const props = collectComponentProps(node, context.scope, locals);
   const target = normalizeTeleportTarget(props.to);
   const disabled = isTeleportBooleanEnabled(props.disabled);
@@ -4066,17 +4079,24 @@ function renderTeleportBoundary(
     }
   }
 
+  return { target, disabled, defer, bindings, toBinding };
+}
+
+function renderTeleportBoundary(
+  state: TeleportBoundaryRenderState,
+  children: string,
+): string {
   const metadata = encodeTeleportSourceMetadata({
-    to: target,
-    toBinding,
-    disabled,
-    defer,
-    bindings,
-    html: disabled ? "" : children,
+    to: state.target,
+    toBinding: state.toBinding,
+    disabled: state.disabled,
+    defer: state.defer,
+    bindings: state.bindings,
+    html: state.disabled ? "" : children,
   });
   const source = `<!--resux-teleport-source:${metadata}-->`;
   const end = "<!--resux-teleport-end-->";
-  return disabled ? `${source}${children}${end}` : `${source}${end}`;
+  return state.disabled ? `${source}${children}${end}` : `${source}${end}`;
 }
 
 function renderElement(node: ElementTemplateNode, context: RenderTemplateContext, locals: Record<string, unknown>): string {
@@ -4097,12 +4117,13 @@ function renderElement(node: ElementTemplateNode, context: RenderTemplateContext
   }
 
   if (isTeleportBoundaryTag(node.tag)) {
-    return renderTeleportBoundary(
-      node,
-      context,
-      locals,
-      renderTemplateNodes(node.children, context, locals),
-    );
+    const state = resolveTeleportBoundaryRenderState(node, context, locals);
+    const reservation = state.disabled ? undefined : context.reserveTeleport?.(state.target);
+    const children = renderTemplateNodes(node.children, context, locals);
+    if (reservation !== undefined) {
+      context.commitTeleport?.(reservation, children);
+    }
+    return renderTeleportBoundary(state, children);
   }
 
   if (isTransitionBoundaryTag(node.tag)) {
@@ -4332,12 +4353,13 @@ async function renderElementAsync(
   }
 
   if (isTeleportBoundaryTag(node.tag)) {
-    return renderTeleportBoundary(
-      node,
-      context,
-      locals,
-      await renderTemplateNodesAsync(node.children, context, renderComponent, locals),
-    );
+    const state = resolveTeleportBoundaryRenderState(node, context, locals);
+    const reservation = state.disabled ? undefined : context.reserveTeleport?.(state.target);
+    const children = await renderTemplateNodesAsync(node.children, context, renderComponent, locals);
+    if (reservation !== undefined) {
+      context.commitTeleport?.(reservation, children);
+    }
+    return renderTeleportBoundary(state, children);
   }
 
   if (isTransitionBoundaryTag(node.tag)) {
@@ -6983,6 +7005,7 @@ export class AsyncResuxRenderer {
   private readonly scopes: Record<string, ScopeRecord> = {};
   private readonly globalStateRefs: Record<string, Ref<unknown>> = Object.create(null) as Record<string, Ref<unknown>>;
   private readonly styleIds = new Set<string>();
+  private readonly teleportEntries: Array<{ target: string; html: string | null }> = [];
   readonly headEntries: HeadEntry[] = [];
   readonly resuxApp: ResuxAppLike;
 
@@ -7046,10 +7069,38 @@ export class AsyncResuxRenderer {
         addHeadEntry: (entry) => insertHeadEntryWithPriority(this.headEntries, entry),
         renderPage,
         renderSlot,
-        renderLayout: (name, slot) => this.renderLayout(name, slot)
+        renderLayout: (name, slot) => this.renderLayout(name, slot),
+        reserveTeleport: (target) => this.reserveTeleport(target),
+        commitTeleport: (reservation, html) => this.commitTeleport(reservation, html)
       },
       (component, props, slot) => this.renderComponent(component, undefined, slot, props)
     ));
+  }
+
+  private reserveTeleport(target: string): number | undefined {
+    if (target !== "#teleports") {
+      return undefined;
+    }
+    const reservation = this.teleportEntries.length;
+    this.teleportEntries.push({ target, html: null });
+    return reservation;
+  }
+
+  private commitTeleport(reservation: number, html: string): void {
+    const entry = this.teleportEntries[reservation];
+    if (entry) {
+      entry.html = html;
+    }
+  }
+
+  createTeleports(): Record<string, string> {
+    const teleports: Record<string, string> = {};
+    for (const entry of this.teleportEntries) {
+      if (entry.html === null) continue;
+      const content = `<!--resux-teleport-start-->${entry.html}<!--resux-teleport-end-->`;
+      teleports[entry.target] = (teleports[entry.target] ?? "") + content;
+    }
+    return teleports;
   }
 
   private collectComponentStyles(definition: ComponentDefinition): void {
@@ -7140,10 +7191,12 @@ export async function renderAppAsync(options: RenderAppOptions): Promise<RenderR
     ? await renderer.renderComponent(options.app, pageRenderer)
     : await pageRenderer();
 
+  const teleports = renderer.createTeleports();
   return {
     html,
     payload: renderer.createPayload(),
-    head: mergeHead(renderer.headEntries)
+    head: mergeHead(renderer.headEntries),
+    ...(Object.keys(teleports).length > 0 ? { teleports } : {})
   };
 }
 
@@ -14200,6 +14253,7 @@ const MANAGED_TELEPORT_SOURCE_PREFIX = "resux-teleport-source:";
 const MANAGED_TELEPORT_END_MARKER = "resux-teleport-end";
 const managedTeleportContent = new WeakMap();
 const managedTeleportMountedSources = new Set();
+const managedTeleportClaimedTargetStarts = new WeakSet();
 const managedTeleportSourceMetadataCache = new WeakMap();
 const managedTeleportSourceBindingKeys = new WeakMap();
 const managedTeleportBindingSources = new Map();
@@ -15006,9 +15060,27 @@ function moveManagedTeleportRange(content, target, options = {}) {
   }
 }
 
+function adoptManagedTeleportTargetRange(source, target) {
+  let start = null;
+  for (const node of Array.from(target?.childNodes ?? [])) {
+    if (node.nodeType !== 8) continue;
+    const marker = String(node.data || "");
+    if (marker === "resux-teleport-start") {
+      start = managedTeleportClaimedTargetStarts.has(node) ? null : node;
+      continue;
+    }
+    if (marker === "resux-teleport-end" && start) {
+      managedTeleportClaimedTargetStarts.add(start);
+      return { start, end: node, source, parseContext: null };
+    }
+  }
+  return null;
+}
+
 function createManagedTeleportTargetRange(source, target) {
   const start = document.createComment("resux-teleport-start");
   const end = document.createComment("resux-teleport-end");
+  managedTeleportClaimedTargetStarts.add(start);
   target.appendChild(start);
   target.appendChild(end);
   return { start, end, source, parseContext: null };
@@ -15017,7 +15089,8 @@ function createManagedTeleportTargetRange(source, target) {
 function ensureManagedTeleportTargetRange(source, target) {
   let content = managedTeleportContent.get(source);
   if (!content) {
-    content = createManagedTeleportTargetRange(source, target);
+    content = adoptManagedTeleportTargetRange(source, target)
+      || createManagedTeleportTargetRange(source, target);
     managedTeleportContent.set(source, content);
     managedTeleportMountedSources.add(source);
   }

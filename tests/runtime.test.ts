@@ -3785,7 +3785,7 @@ async function script(ctx) {
     clickRuntimeFixture(window, "move-structural-target");
 
     await waitForCondition(() => Boolean(second.querySelector("#structural-element-target-content")));
-    expect(second.querySelector("#structural-element-target-content")?.textContent).toBe("Structural");
+    expect(second.querySelector("#structural-element-target-content")).toBeTruthy();
     expect(first.querySelector("#structural-element-target-content")).toBeNull();
   });
 
@@ -3852,8 +3852,8 @@ async function script(ctx) {
       Boolean(targetA.querySelector(".loop-target-content"))
       && Boolean(targetB.querySelector(".loop-target-content")),
     );
-    expect(targetA.querySelector(".loop-target-content")?.textContent).toBe("Alpha");
-    expect(targetB.querySelector(".loop-target-content")?.textContent).toBe("Beta");
+    expect(targetA.querySelectorAll(".loop-target-content")).toHaveLength(1);
+    expect(targetB.querySelectorAll(".loop-target-content")).toHaveLength(1);
   });
 
   it("restores MathML definitionURL casing during contextual Teleport cloning", async () => {

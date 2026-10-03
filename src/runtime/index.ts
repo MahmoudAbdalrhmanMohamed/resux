@@ -14453,10 +14453,21 @@ function parseManagedTeleportMarkup(markup, target) {
   const namespace = target?.namespaceURI || XHTML_NAMESPACE;
   const localName = String(target?.localName || "").toLowerCase();
 
-  if (namespace === SVG_NAMESPACE && ["foreignobject", "desc", "title"].includes(localName)) {
-    const template = document.createElement("template");
-    template.innerHTML = markup;
-    return Array.from(template.content.childNodes);
+  if (namespace === SVG_NAMESPACE) {
+    if (["foreignobject", "desc", "title"].includes(localName)) {
+      const template = document.createElement("template");
+      template.innerHTML = markup;
+      return Array.from(template.content.childNodes);
+    }
+    const wrapper = document.createElementNS(SVG_NAMESPACE, "svg");
+    wrapper.innerHTML = markup;
+    return Array.from(wrapper.childNodes);
+  }
+
+  if (namespace === MATHML_NAMESPACE) {
+    const wrapper = document.createElementNS(MATHML_NAMESPACE, "math");
+    wrapper.innerHTML = markup;
+    return Array.from(wrapper.childNodes);
   }
 
   if (target?.cloneNode) {
@@ -14468,7 +14479,7 @@ function parseManagedTeleportMarkup(markup, target) {
         if (nodes.length || !markup) return nodes;
       }
     } catch {
-      // Fall through to the generic contextual parsers.
+      // Fall through to the generic HTML contextual parsers.
     }
   }
 
@@ -14479,24 +14490,13 @@ function parseManagedTeleportMarkup(markup, target) {
       const nodes = Array.from(range.createContextualFragment(markup).childNodes);
       if (nodes.length || !markup) return nodes;
     } catch {
-      // Fall through to namespace-aware wrappers.
+      // Fall through to a template parser.
     }
   }
 
-  if (namespace === XHTML_NAMESPACE) {
-    const template = document.createElement("template");
-    template.innerHTML = markup;
-    return Array.from(template.content.childNodes);
-  }
-
-  const wrapperName = namespace === SVG_NAMESPACE
-    ? "svg"
-    : namespace === MATHML_NAMESPACE
-      ? "math"
-      : (target?.localName || "g");
-  const wrapper = document.createElementNS(namespace, wrapperName);
-  wrapper.innerHTML = markup;
-  return Array.from(wrapper.childNodes);
+  const template = document.createElement("template");
+  template.innerHTML = markup;
+  return Array.from(template.content.childNodes);
 }
 
 function managedTeleportInitialNodes(source, target) {

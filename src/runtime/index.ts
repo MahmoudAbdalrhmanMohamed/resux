@@ -14449,25 +14449,206 @@ function managedTeleportParsingContext(target) {
   return namespace + ":" + localName;
 }
 
+const MANAGED_TELEPORT_SVG_TAG_NAMES = {
+  altglyph: "altGlyph",
+  altglyphdef: "altGlyphDef",
+  altglyphitem: "altGlyphItem",
+  animatecolor: "animateColor",
+  animatemotion: "animateMotion",
+  animatetransform: "animateTransform",
+  clippath: "clipPath",
+  feblend: "feBlend",
+  fecolormatrix: "feColorMatrix",
+  fecomponenttransfer: "feComponentTransfer",
+  fecomposite: "feComposite",
+  feconvolvematrix: "feConvolveMatrix",
+  fediffuselighting: "feDiffuseLighting",
+  fedisplacementmap: "feDisplacementMap",
+  fedistantlight: "feDistantLight",
+  fedropshadow: "feDropShadow",
+  feflood: "feFlood",
+  fefunca: "feFuncA",
+  fefuncb: "feFuncB",
+  fefuncg: "feFuncG",
+  fefuncr: "feFuncR",
+  fegaussianblur: "feGaussianBlur",
+  feimage: "feImage",
+  femerge: "feMerge",
+  femergenode: "feMergeNode",
+  femorphology: "feMorphology",
+  feoffset: "feOffset",
+  fepointlight: "fePointLight",
+  fespecularlighting: "feSpecularLighting",
+  fespotlight: "feSpotLight",
+  fetile: "feTile",
+  feturbulence: "feTurbulence",
+  foreignobject: "foreignObject",
+  glyphref: "glyphRef",
+  lineargradient: "linearGradient",
+  radialgradient: "radialGradient",
+  textpath: "textPath"
+};
+
+const MANAGED_TELEPORT_SVG_ATTRIBUTE_NAMES = {
+  attributename: "attributeName",
+  attributetype: "attributeType",
+  basefrequency: "baseFrequency",
+  baseprofile: "baseProfile",
+  calcmode: "calcMode",
+  clippathunits: "clipPathUnits",
+  diffuseconstant: "diffuseConstant",
+  edgemode: "edgeMode",
+  filterunits: "filterUnits",
+  glyphref: "glyphRef",
+  gradienttransform: "gradientTransform",
+  gradientunits: "gradientUnits",
+  kernelmatrix: "kernelMatrix",
+  kernelunitlength: "kernelUnitLength",
+  keypoints: "keyPoints",
+  keysplines: "keySplines",
+  keytimes: "keyTimes",
+  lengthadjust: "lengthAdjust",
+  limitingconeangle: "limitingConeAngle",
+  markerheight: "markerHeight",
+  markerunits: "markerUnits",
+  markerwidth: "markerWidth",
+  maskcontentunits: "maskContentUnits",
+  maskunits: "maskUnits",
+  numoctaves: "numOctaves",
+  pathlength: "pathLength",
+  patterncontentunits: "patternContentUnits",
+  patterntransform: "patternTransform",
+  patternunits: "patternUnits",
+  pointsatx: "pointsAtX",
+  pointsaty: "pointsAtY",
+  pointsatz: "pointsAtZ",
+  preservealpha: "preserveAlpha",
+  preserveaspectratio: "preserveAspectRatio",
+  primitiveunits: "primitiveUnits",
+  refx: "refX",
+  refy: "refY",
+  repeatcount: "repeatCount",
+  repeatdur: "repeatDur",
+  requiredextensions: "requiredExtensions",
+  requiredfeatures: "requiredFeatures",
+  specularconstant: "specularConstant",
+  specularexponent: "specularExponent",
+  spreadmethod: "spreadMethod",
+  startoffset: "startOffset",
+  stddeviation: "stdDeviation",
+  stitchtiles: "stitchTiles",
+  surfacescale: "surfaceScale",
+  systemlanguage: "systemLanguage",
+  tablevalues: "tableValues",
+  targetx: "targetX",
+  targety: "targetY",
+  textlength: "textLength",
+  viewbox: "viewBox",
+  viewtarget: "viewTarget",
+  xchannelselector: "xChannelSelector",
+  ychannelselector: "yChannelSelector",
+  zoomandpan: "zoomAndPan"
+};
+
+function managedTeleportElementNamespace(parent, localName) {
+  const parentNamespace = parent?.namespaceURI || XHTML_NAMESPACE;
+  const parentLocalName = String(parent?.localName || "").toLowerCase();
+  const childLocalName = String(localName || "").toLowerCase();
+
+  if (parentNamespace === SVG_NAMESPACE) {
+    if (["foreignobject", "desc", "title"].includes(parentLocalName)) {
+      if (childLocalName === "svg") return SVG_NAMESPACE;
+      if (childLocalName === "math") return MATHML_NAMESPACE;
+      return XHTML_NAMESPACE;
+    }
+    return SVG_NAMESPACE;
+  }
+
+  if (parentNamespace === MATHML_NAMESPACE) {
+    if (
+      ["mi", "mo", "mn", "ms", "mtext"].includes(parentLocalName)
+      && !["mglyph", "malignmark"].includes(childLocalName)
+    ) {
+      if (childLocalName === "svg") return SVG_NAMESPACE;
+      return XHTML_NAMESPACE;
+    }
+    if (
+      parentLocalName === "annotation-xml"
+      && ["text/html", "application/xhtml+xml"].includes(
+        String(parent?.getAttribute?.("encoding") || "").toLowerCase()
+      )
+    ) {
+      if (childLocalName === "svg") return SVG_NAMESPACE;
+      return XHTML_NAMESPACE;
+    }
+    if (childLocalName === "svg") return SVG_NAMESPACE;
+    return MATHML_NAMESPACE;
+  }
+
+  if (childLocalName === "svg") return SVG_NAMESPACE;
+  if (childLocalName === "math") return MATHML_NAMESPACE;
+  return XHTML_NAMESPACE;
+}
+
+function managedTeleportElementName(localName, namespace) {
+  const normalized = String(localName || "").toLowerCase();
+  return namespace === SVG_NAMESPACE
+    ? (MANAGED_TELEPORT_SVG_TAG_NAMES[normalized] || normalized)
+    : normalized;
+}
+
+function copyManagedTeleportElementAttributes(source, target, namespace) {
+  for (const attribute of Array.from(source.attributes ?? [])) {
+    const lowerName = String(attribute.name || "").toLowerCase();
+    const adjustedName = namespace === SVG_NAMESPACE
+      ? (MANAGED_TELEPORT_SVG_ATTRIBUTE_NAMES[lowerName] || attribute.name)
+      : attribute.name;
+    if (attribute.namespaceURI) {
+      target.setAttributeNS(attribute.namespaceURI, adjustedName, attribute.value);
+    } else if (lowerName.startsWith("xlink:")) {
+      target.setAttributeNS("http://www.w3.org/1999/xlink", adjustedName, attribute.value);
+    } else if (lowerName.startsWith("xml:")) {
+      target.setAttributeNS("http://www.w3.org/XML/1998/namespace", adjustedName, attribute.value);
+    } else {
+      target.setAttribute(adjustedName, attribute.value);
+    }
+  }
+}
+
+function cloneManagedTeleportNodeForContext(node, parent) {
+  if (node.nodeType !== 1) {
+    return node.cloneNode(true);
+  }
+
+  const namespace = managedTeleportElementNamespace(parent, node.localName);
+  const name = managedTeleportElementName(node.localName, namespace);
+  const cloned = document.createElementNS(namespace, name);
+  copyManagedTeleportElementAttributes(node, cloned, namespace);
+  for (const child of Array.from(node.childNodes ?? [])) {
+    cloned.appendChild(cloneManagedTeleportNodeForContext(child, cloned));
+  }
+  return cloned;
+}
+
+function parseManagedTeleportNamespacedMarkup(markup, target) {
+  const template = document.createElement("template");
+  template.innerHTML = markup;
+  return Array.from(template.content.childNodes).map((node) =>
+    cloneManagedTeleportNodeForContext(node, target)
+  );
+}
+
 function parseManagedTeleportMarkup(markup, target) {
   const namespace = target?.namespaceURI || XHTML_NAMESPACE;
   const localName = String(target?.localName || "").toLowerCase();
 
-  if (namespace === SVG_NAMESPACE) {
-    if (["foreignobject", "desc", "title"].includes(localName)) {
-      const template = document.createElement("template");
-      template.innerHTML = markup;
-      return Array.from(template.content.childNodes);
-    }
-    const template = document.createElement("template");
-    template.innerHTML = "<svg>" + markup + "</svg>";
-    return Array.from(template.content.firstElementChild?.childNodes ?? []);
-  }
-
-  if (namespace === MATHML_NAMESPACE) {
-    const template = document.createElement("template");
-    template.innerHTML = "<math>" + markup + "</math>";
-    return Array.from(template.content.firstElementChild?.childNodes ?? []);
+  if (
+    namespace === SVG_NAMESPACE
+    || namespace === MATHML_NAMESPACE
+    || localName === "svg"
+    || localName === "math"
+  ) {
+    return parseManagedTeleportNamespacedMarkup(markup, target);
   }
 
   if (target?.cloneNode) {

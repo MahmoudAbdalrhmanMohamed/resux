@@ -3484,6 +3484,173 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
     expect(first.querySelector("#element-target-content")).toBeNull();
   });
 
+
+  it("rejects a Teleport target inside its already-mounted content", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-mounted-self-target",
+      (runtimeUrl) =>
+        'import { createClientComponent } from ' + JSON.stringify(runtimeUrl) + ';\n'
+        + 'const template = ['
+        + '{ type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "move" }], children: [{ type: "text", value: "Move" }] },'
+        + '{ type: "element", tag: "teleport", attrs: [{ kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }], events: [], children: ['
+        + '{ type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "inside-self-target" }], events: [], children: ['
+        + '{ type: "element", tag: "span", attrs: [{ kind: "static", name: "id", value: "self-target-content" }], events: [], children: [{ type: "text", value: "Safe" }] }'
+        + '] }'
+        + '] }'
+        + '];\n'
+        + 'async function script(ctx) { const target = ctx.useState("target", () => "#outer-self-target"); function move() { target.value = "#inside-self-target"; } return { target, move }; }\n'
+        + 'export default createClientComponent({ id: "m0", name: "MountedSelfTarget", file: "MountedSelfTarget.vue", script, template, handlers: ["move"] });\n',
+    );
+
+    const source = managedTeleportSourceComment({
+      to: "#outer-self-target",
+      disabled: false,
+      defer: false,
+      bindings: { b0: "s0:b0" },
+      html: '<div id="inside-self-target"><span id="self-target-content">Safe</span></div>',
+    });
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="move-self-target" data-rx-on-click="s0:m0:move">Move</button>'
+      + source + '</div><div id="outer-self-target"></div>';
+
+    installClientRuntimeFixture(window, { target: "#outer-self-target" }, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    const root = window.document.getElementById("__resux")!;
+    const outer = window.document.getElementById("outer-self-target")!;
+    await waitForCondition(() => Boolean(outer.querySelector("#inside-self-target")));
+    expect(outer.querySelector("#inside-self-target")).toBeTruthy();
+
+    window.document.getElementById("move-self-target")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+
+    await waitForCondition(() => Boolean(root.querySelector("#inside-self-target")));
+    expect(root.querySelector("#inside-self-target")).toBeTruthy();
+    expect(root.querySelector("#self-target-content")?.textContent).toBe("Safe");
+    expect(outer.querySelector("#inside-self-target")).toBeNull();
+  });
+
+  it("reparses Teleport content when MathML annotation integration status changes", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-annotation-context",
+      (runtimeUrl) =>
+        'import { createClientComponent } from ' + JSON.stringify(runtimeUrl) + ';\n'
+        + 'const template = ['
+        + '{ type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "move" }], children: [{ type: "text", value: "Move" }] },'
+        + '{ type: "element", tag: "teleport", attrs: [{ kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }], events: [], children: ['
+        + '{ type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "annotation-child" }], events: [], children: [{ type: "text", value: "Annotation" }] }'
+        + '] }'
+        + '];\n'
+        + 'async function script(ctx) { const target = ctx.useState("target", () => "#html-annotation-target"); function move() { target.value = "#math-annotation-target"; } return { target, move }; }\n'
+        + 'export default createClientComponent({ id: "m0", name: "AnnotationContextTeleport", file: "AnnotationContextTeleport.vue", script, template, handlers: ["move"] });\n',
+    );
+
+    const source = managedTeleportSourceComment({
+      to: "#html-annotation-target",
+      disabled: false,
+      defer: false,
+      bindings: { b0: "s0:b0" },
+      html: '<div id="annotation-child">Annotation</div>',
+    });
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="move-annotation-target" data-rx-on-click="s0:m0:move">Move</button>'
+      + source + '</div>';
+
+    const mathRoot = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "math");
+    const htmlAnnotation = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "annotation-xml");
+    htmlAnnotation.setAttribute("id", "html-annotation-target");
+    htmlAnnotation.setAttribute("encoding", "text/html");
+    const mathAnnotation = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "annotation-xml");
+    mathAnnotation.setAttribute("id", "math-annotation-target");
+    mathRoot.appendChild(htmlAnnotation);
+    mathRoot.appendChild(mathAnnotation);
+    window.document.body.appendChild(mathRoot);
+
+    installClientRuntimeFixture(window, { target: "#html-annotation-target" }, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    await waitForCondition(() => Boolean(htmlAnnotation.querySelector("#annotation-child")));
+    expect(htmlAnnotation.querySelector("#annotation-child")?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
+
+    window.document.getElementById("move-annotation-target")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+
+    await waitForCondition(() => Boolean(mathAnnotation.querySelector("#annotation-child")));
+    expect(mathAnnotation.querySelector("#annotation-child")?.namespaceURI).toBe("http://www.w3.org/1998/Math/MathML");
+    expect(htmlAnnotation.querySelector("#annotation-child")).toBeNull();
+  });
+
+  it("registers Teleport bindings before a slow client plugin finishes", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-plugin-startup-binding",
+      (runtimeUrl) =>
+        'import { createClientComponent } from ' + JSON.stringify(runtimeUrl) + ';\n'
+        + 'const template = ['
+        + '{ type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "move" }], children: [{ type: "text", value: "Move" }] },'
+        + '{ type: "element", tag: "teleport", attrs: [{ kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }], events: [], children: ['
+        + '{ type: "element", tag: "p", attrs: [{ kind: "static", name: "id", value: "plugin-gated-teleport" }], events: [], children: [{ type: "text", value: "Plugin" }] }'
+        + '] }'
+        + '];\n'
+        + 'async function script(ctx) { const target = ctx.useState("target", () => "#plugin-first-target"); function move() { target.value = "#plugin-second-target"; } return { target, move }; }\n'
+        + 'export default createClientComponent({ id: "m0", name: "PluginStartupTeleport", file: "PluginStartupTeleport.vue", script, template, handlers: ["move"] });\n',
+    );
+
+    const pluginUrl = handlerUrl.replace(/handler\.mjs$/, "slow-plugin.mjs");
+    await writeFile(
+      new URL(pluginUrl),
+      'export default async () => { globalThis.__RESUX_TEST_PLUGIN_STARTED__ = true; await globalThis.__RESUX_TEST_PLUGIN_GATE__; };',
+      "utf8",
+    );
+
+    const source = managedTeleportSourceComment({
+      to: "#plugin-first-target",
+      disabled: false,
+      defer: false,
+      bindings: { b0: "s0:b0" },
+      html: '<p id="plugin-gated-teleport">Plugin</p>',
+    });
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="move-during-plugin" data-rx-on-click="s0:m0:move">Move</button>'
+      + source + '</div><div id="plugin-first-target"></div><div id="plugin-second-target"></div>';
+
+    let releasePlugin: (() => void) | undefined;
+    (globalThis as any).__RESUX_TEST_PLUGIN_STARTED__ = false;
+    (globalThis as any).__RESUX_TEST_PLUGIN_GATE__ = new Promise<void>((resolve) => {
+      releasePlugin = resolve;
+    });
+
+    try {
+      installClientRuntimeFixture(window, { target: "#plugin-first-target" }, handlerUrl);
+      (globalThis as any).__RESUX__.plugins = [{
+        id: "slow-plugin",
+        mode: "client",
+        src: pluginUrl,
+      }];
+
+      await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+      await waitForCondition(() => (globalThis as any).__RESUX_TEST_PLUGIN_STARTED__ === true);
+      expect((globalThis as any).__RESUX_TEST_PLUGIN_STARTED__).toBe(true);
+
+      window.document.getElementById("move-during-plugin")!.dispatchEvent(
+        new window.MouseEvent("click", { bubbles: true, button: 0 }),
+      );
+
+      releasePlugin?.();
+      await waitForCondition(() => Boolean(window.document.getElementById("plugin-second-target")?.querySelector("#plugin-gated-teleport")));
+      expect(window.document.getElementById("plugin-second-target")?.querySelector("#plugin-gated-teleport")).toBeTruthy();
+      expect(window.document.getElementById("plugin-first-target")?.querySelector("#plugin-gated-teleport")).toBeNull();
+    } finally {
+      releasePlugin?.();
+      delete (globalThis as any).__RESUX_TEST_PLUGIN_GATE__;
+      delete (globalThis as any).__RESUX_TEST_PLUGIN_STARTED__;
+    }
+  });
+
   it("reinitializes managed content after a Teleport changes target namespaces", async () => {
     const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
       "resux-teleport-namespace-reinit",

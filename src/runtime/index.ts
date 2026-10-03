@@ -11317,6 +11317,8 @@ async function initializeClientRuntime() {
   if (!payload) {
     return;
   }
+  reconcileDefaultTeleportTarget();
+  managedTeleportSources(document);
   await ensureClientPlugins(payload);
   reconcileDefaultTeleportTarget();
   mountManagedTeleports(document);
@@ -14518,6 +14520,13 @@ function managedTeleportParsingContext(target) {
       : "default";
     return namespace + ":" + contextualTag;
   }
+  if (namespace === MATHML_NAMESPACE && localName === "annotation-xml") {
+    const encoding = String(target?.getAttribute?.("encoding") || "").trim().toLowerCase();
+    const integration = ["text/html", "application/xhtml+xml"].includes(encoding)
+      ? "html"
+      : "mathml";
+    return namespace + ":" + localName + ":" + integration;
+  }
   return namespace + ":" + localName;
 }
 
@@ -14989,9 +14998,17 @@ function syncManagedTeleportSource(source, options = {}) {
   const metadata = decodeManagedTeleportSourceMetadata(source);
   const disabled = Boolean(metadata.disabled);
   const target = managedTeleportTarget(source);
-  const sourceContainsTarget = managedTeleportSourceContainsTarget(source, target);
-  const validTarget = Boolean(target && target !== source && !sourceContainsTarget);
   let content = managedTeleportContent.get(source);
+  const mountedContentContainsTarget = managedTeleportRangeNodes(content).some((node) =>
+    node === target || Boolean(node.nodeType === 1 && node.contains?.(target))
+  );
+  const sourceContainsTarget = managedTeleportSourceContainsTarget(source, target);
+  const validTarget = Boolean(
+    target
+    && target !== source
+    && !sourceContainsTarget
+    && !mountedContentContainsTarget
+  );
 
   if (disabled) {
     deferredManagedTeleportSources.delete(source);

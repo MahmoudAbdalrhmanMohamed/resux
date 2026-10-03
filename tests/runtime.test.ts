@@ -3389,39 +3389,55 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
     expect(Array.from(target.children).map((element) => element.id)).toEqual(["first-teleport", "second-teleport"]);
   });
 
-  it("recreates Teleport children in an SVG target namespace", async () => {
-    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
-      "resux-svg-teleport",
-      () => "export default {};",
+  it("recreates Teleport children in SVG namespaces without recreating equivalent-context nodes", async () => {
+    const { runtimeUrl, handlerUrl } = await createDynamicTeleportRuntimeFixture({
+      prefix: "resux-svg-teleport",
+      componentName: "SvgTeleport",
+      initialTarget: "#svg-target",
+      nextTarget: "#svg-defs-target",
+      children: [
+        { type: "element", tag: "svg", attrs: [{ kind: "static", name: "id", value: "teleported-svg" }], events: [], children: [] },
+        { type: "element", tag: "circle", attrs: [{ kind: "static", name: "id", value: "teleported-circle" }], events: [], children: [] },
+      ],
+    });
+
+    const source = managedTeleportBindingSourceComment(
+      "#svg-target",
+      '<svg id="teleported-svg"></svg><circle id="teleported-circle"></circle>',
     );
-
     const window = new Window({ url: "http://localhost/" });
-    window.document.body.innerHTML = `
-      <div id="__resux">
-        <span data-rx-teleport-source="true" data-rx-teleport-to="#svg-target" style="display: contents;">
-          <svg id="teleported-svg"></svg>
-          <circle id="teleported-circle" cx="12" cy="12" r="6"></circle>
-        </span>
-        <span data-rx-teleport-source="true" data-rx-teleport-to="#foreign-target" style="display: contents;">
-          <div id="foreign-html">HTML</div>
-        </span>
-      </div>
-      <svg id="svg-target" viewBox="0 0 24 24"></svg>
-      <svg><foreignObject id="foreign-target"></foreignObject></svg>
-    `;
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="move-svg-target" data-rx-on-click="s0:m0:move">Move</button>'
+      + source
+      + '<span data-rx-teleport-source="true" data-rx-teleport-to="#foreign-target" style="display: contents;">'
+      + '<div id="foreign-html">HTML</div></span></div>';
 
-    installClientRuntimeFixture(window, {}, handlerUrl);
-    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+    const svgRoot = window.document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const target = window.document.createElementNS("http://www.w3.org/2000/svg", "g");
+    const nextTarget = window.document.createElementNS("http://www.w3.org/2000/svg", "defs");
+    const foreignTarget = window.document.createElementNS("http://www.w3.org/2000/svg", "foreignObject");
+    target.setAttribute("id", "svg-target");
+    nextTarget.setAttribute("id", "svg-defs-target");
+    foreignTarget.setAttribute("id", "foreign-target");
+    svgRoot.append(target, nextTarget, foreignTarget);
+    window.document.body.appendChild(svgRoot);
 
-    const target = window.document.getElementById("svg-target")!;
+    installClientRuntimeFixture(window, { target: "#svg-target" }, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
     await waitForCondition(() => Boolean(target.querySelector("#teleported-circle")));
-    const svg = target.querySelector("#teleported-svg")!;
+    const nestedSvg = target.querySelector("#teleported-svg")!;
     const circle = target.querySelector("#teleported-circle")!;
-    expect(svg.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    expect(nestedSvg.namespaceURI).toBe("http://www.w3.org/2000/svg");
     expect(circle.namespaceURI).toBe("http://www.w3.org/2000/svg");
-    expect(target.firstElementChild).toBe(svg);
-    const foreignHtml = window.document.getElementById("foreign-target")?.querySelector("#foreign-html");
-    expect(foreignHtml?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
+    expect(target.firstElementChild).toBe(nestedSvg);
+    expect(foreignTarget.querySelector("#foreign-html")?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
+
+    circle.setAttribute("data-live-state", "preserved");
+    clickRuntimeFixture(window, "move-svg-target");
+    await waitForCondition(() => Boolean(nextTarget.querySelector("#teleported-circle")));
+    expect(nextTarget.querySelector("#teleported-circle")).toBe(circle);
+    expect(circle.getAttribute("data-live-state")).toBe("preserved");
   });
 
   it("preserves an authoritative foreign namespace when the target tag name is misleading", async () => {
@@ -3761,216 +3777,6 @@ async function script(ctx) {
     }
   });
 
-  it("queues an initially missing deferred Teleport for a later reactive target", async () => {
-    const { runtimeUrl, handlerUrl } = await createClientComponentRuntimeFixture({
-      prefix: "resux-teleport-startup-deferred-target",
-      componentName: "StartupDeferredTeleport",
-      template: [
-        {
-          type: "element",
-          tag: "button",
-          attrs: [],
-          events: [{ name: "click", handler: "reveal" }],
-          children: [{ type: "text", value: "Reveal" }],
-        },
-        {
-          type: "element",
-          tag: "teleport",
-          attrs: [
-            { kind: "static", name: "to", value: "#startup-deferred-target" },
-            { kind: "static", name: "defer", value: "" },
-          ],
-          events: [],
-          children: [{
-            type: "element",
-            tag: "p",
-            attrs: [{ kind: "static", name: "id", value: "startup-deferred-content" }],
-            events: [],
-            children: [{ type: "text", value: "Deferred" }],
-          }],
-        },
-        {
-          type: "element",
-          tag: "div",
-          attrs: [{ kind: "static", name: "id", value: "startup-deferred-target" }],
-          events: [],
-          if: { expression: "show.value", blockId: "startup-deferred-target-block" },
-          children: [],
-        },
-      ],
-      scriptSource: `
-async function script(ctx) {
-  const show = ctx.useState("show", () => false);
-  function reveal() { show.value = true; }
-  return { show, reveal };
-}`,
-      handlers: ["reveal"],
-    });
-
-    const source = managedTeleportSourceComment({
-      to: "#startup-deferred-target",
-      disabled: false,
-      defer: true,
-      html: '<p id="startup-deferred-content">Deferred</p>',
-    });
-    const window = new Window({ url: "http://localhost/" });
-    window.document.body.innerHTML =
-      '<div id="__resux"><button id="reveal-deferred-target" data-rx-on-click="s0:m0:reveal">Reveal</button>'
-      + source
-      + '<span data-rx-block="s0:startup-deferred-target-block" style="display: contents;"></span></div>';
-
-    installClientRuntimeFixture(window, { show: false }, handlerUrl);
-    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
-
-    clickRuntimeFixture(window, "reveal-deferred-target");
-
-    await waitForCondition(() =>
-      Boolean(window.document.getElementById("startup-deferred-target")?.querySelector("#startup-deferred-content")),
-    );
-    expect(window.document.getElementById("startup-deferred-target")?.querySelector("#startup-deferred-content")).toBeTruthy();
-  });
-
-  it("preserves Teleport node identity across equivalent SVG target contexts", async () => {
-    const { runtimeUrl, handlerUrl } = await createDynamicTeleportRuntimeFixture({
-      prefix: "resux-teleport-equivalent-svg-contexts",
-      componentName: "EquivalentSvgTeleport",
-      initialTarget: "#svg-container-a",
-      nextTarget: "#svg-container-b",
-      children: [{
-        type: "element",
-        tag: "circle",
-        attrs: [{ kind: "static", name: "id", value: "svg-context-circle" }],
-        events: [],
-        children: [],
-      }],
-    });
-
-    const source = managedTeleportBindingSourceComment(
-      "#svg-container-a",
-      '<circle id="svg-context-circle"></circle>',
-    );
-    const window = new Window({ url: "http://localhost/" });
-    window.document.body.innerHTML =
-      '<div id="__resux"><button id="move-svg-context" data-rx-on-click="s0:m0:move">Move</button>'
-      + source + '</div>';
-
-    const svg = window.document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    const first = window.document.createElementNS("http://www.w3.org/2000/svg", "g");
-    const second = window.document.createElementNS("http://www.w3.org/2000/svg", "defs");
-    first.setAttribute("id", "svg-container-a");
-    second.setAttribute("id", "svg-container-b");
-    svg.appendChild(first);
-    svg.appendChild(second);
-    window.document.body.appendChild(svg);
-
-    installClientRuntimeFixture(window, { target: "#svg-container-a" }, handlerUrl);
-    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
-
-    await waitForCondition(() => Boolean(first.querySelector("#svg-context-circle")));
-    const circle = first.querySelector("#svg-context-circle")!;
-    circle.setAttribute("data-live-state", "preserved");
-
-    clickRuntimeFixture(window, "move-svg-context");
-
-    await waitForCondition(() => Boolean(second.querySelector("#svg-context-circle")));
-    const moved = second.querySelector("#svg-context-circle");
-    expect(moved).toBe(circle);
-    expect(moved?.getAttribute("data-live-state")).toBe("preserved");
-  });
-
-  it("reparses a replaced Teleport target from the live range state", async () => {
-    const { runtimeUrl, handlerUrl } = await createClientComponentRuntimeFixture({
-      prefix: "resux-teleport-live-range-reparse",
-      componentName: "LiveRangeReparseTeleport",
-      template: [
-        {
-          type: "element",
-          tag: "button",
-          attrs: [],
-          events: [{ name: "click", handler: "swap" }],
-          children: [{ type: "text", value: "Swap" }],
-        },
-        {
-          type: "element",
-          tag: "teleport",
-          attrs: [
-            { kind: "static", name: "to", value: "#live-context-target" },
-            { kind: "static", name: "defer", value: "" },
-          ],
-          events: [],
-          children: [{
-            type: "element",
-            tag: "g",
-            attrs: [{ kind: "static", name: "id", value: "live-context-content" }],
-            events: [],
-            children: [{ type: "interpolation", expression: "label.value", bindingId: "b1" }],
-          }],
-        },
-        {
-          type: "element",
-          tag: "div",
-          attrs: [{ kind: "static", name: "id", value: "live-context-target" }],
-          events: [],
-          if: { expression: "!svg.value", blockId: "live-html-target-block" },
-          children: [],
-        },
-        {
-          type: "element",
-          tag: "svg",
-          attrs: [{ kind: "static", name: "id", value: "live-context-target" }],
-          events: [],
-          if: { expression: "svg.value", blockId: "live-svg-target-block" },
-          children: [],
-        },
-      ],
-      scriptSource: `
-async function script(ctx) {
-  const label = ctx.useState("label", () => "Old");
-  const svg = ctx.useState("svg", () => false);
-  function swap() {
-    label.value = "New";
-    svg.value = true;
-  }
-  return { label, svg, swap };
-}`,
-      handlers: ["swap"],
-    });
-
-    const source = managedTeleportSourceComment({
-      to: "#live-context-target",
-      disabled: false,
-      defer: true,
-      html: '<g id="live-context-content"><span data-rx-text="s0:b1">Old</span></g>',
-    });
-    const window = new Window({ url: "http://localhost/" });
-    window.document.body.innerHTML =
-      '<div id="__resux"><button id="swap-live-context" data-rx-on-click="s0:m0:swap">Swap</button>'
-      + source
-      + '<span data-rx-block="s0:live-html-target-block" style="display: contents;"><div id="live-context-target"></div></span>'
-      + '<span data-rx-block="s0:live-svg-target-block" style="display: contents;"></span></div>';
-
-    installClientRuntimeFixture(window, { label: "Old", svg: false }, handlerUrl);
-    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
-
-    await waitForCondition(() =>
-      Boolean(window.document.getElementById("live-context-target")?.querySelector("#live-context-content")),
-    );
-
-    clickRuntimeFixture(window, "swap-live-context");
-
-    await waitForCondition(() => {
-      const target = window.document.getElementById("live-context-target");
-      return target?.namespaceURI === "http://www.w3.org/2000/svg"
-        && target.querySelector('[data-rx-text="s0:b1"]')?.textContent === "New";
-    });
-
-    const svgTarget = window.document.getElementById("live-context-target")!;
-    const liveContent = svgTarget.querySelector("#live-context-content")!;
-    expect(svgTarget.namespaceURI).toBe("http://www.w3.org/2000/svg");
-    expect(liveContent.namespaceURI).toBe("http://www.w3.org/2000/svg");
-    expect(liveContent.querySelector('[data-rx-text="s0:b1"]')?.textContent).toBe("New");
-  });
-
   it("preserves an element-valued Teleport target across structural block replacement", async () => {
     const { runtimeUrl, handlerUrl } = await createClientComponentRuntimeFixture({
       prefix: "resux-teleport-structural-element-target",
@@ -4269,59 +4075,99 @@ export default createClientComponent({ id: "m0", name: "DeferredTeleport", file:
     expect(nonDeferredSource?.metadata.html).toContain('id="non-deferred-content"');
   });
 
-  it("remounts an external Teleport when a reactive block replaces its target", async () => {
-    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
-      "resux-external-teleport-target",
-      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
-const template = [
-  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "replace" }], children: [{ type: "text", value: "Replace" }] },
-  { type: "element", tag: "teleport", attrs: [{ kind: "static", name: "to", value: "#replaceable-target" }], events: [], children: [
-    { type: "element", tag: "p", attrs: [{ kind: "static", name: "id", value: "external-teleport-content" }], events: [], children: [{ type: "text", value: "External" }] }
-  ] },
-  { type: "element", tag: "section", attrs: [], events: [], if: { expression: "visible.value", blockId: "b0" }, children: [
-    { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "replaceable-target" }], events: [], children: [] }
-  ] }
-];
+  it("remounts live Teleport state when a reactive block replaces its target context", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientComponentRuntimeFixture({
+      prefix: "resux-external-teleport-target",
+      componentName: "ExternalTeleportTarget",
+      template: [
+        {
+          type: "element",
+          tag: "button",
+          attrs: [],
+          events: [{ name: "click", handler: "replace" }],
+          children: [{ type: "text", value: "Replace" }],
+        },
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [
+            { kind: "static", name: "to", value: "#replaceable-target" },
+            { kind: "static", name: "defer", value: "" },
+          ],
+          events: [],
+          children: [{
+            type: "element",
+            tag: "g",
+            attrs: [{ kind: "static", name: "id", value: "external-teleport-content" }],
+            events: [],
+            children: [{ type: "interpolation", expression: "label.value", bindingId: "b1" }],
+          }],
+        },
+        {
+          type: "element",
+          tag: "div",
+          attrs: [{ kind: "static", name: "id", value: "replaceable-target" }],
+          events: [],
+          if: { expression: "!svg.value", blockId: "b0" },
+          children: [],
+        },
+        {
+          type: "element",
+          tag: "svg",
+          attrs: [{ kind: "static", name: "id", value: "replaceable-target" }],
+          events: [],
+          if: { expression: "svg.value", blockId: "b2" },
+          children: [],
+        },
+      ],
+      scriptSource: `
 async function script(ctx) {
-  const visible = ctx.useState("visible", () => true);
+  const label = ctx.useState("label", () => "External");
+  const svg = ctx.useState("svg", () => false);
   function replace() {
-    visible.value = false;
-    queueMicrotask(() => { visible.value = true; });
+    label.value = "Updated";
+    svg.value = true;
   }
-  return { visible, replace };
-}
-export default createClientComponent({ id: "m0", name: "ExternalTeleportTarget", file: "ExternalTeleportTarget.vue", script, template, handlers: ["replace"] });
-`,
-    );
-
-    const window = new Window({ url: "http://localhost/" });
-    window.document.body.innerHTML = `
-      <div id="__resux">
-        <button id="replace-target" data-rx-on-click="s0:m0:replace">Replace</button>
-        <span data-rx-teleport-source="true" data-rx-teleport-to="#replaceable-target" style="display: contents;">
-          <p id="external-teleport-content">External</p>
-        </span>
-        <span data-rx-block="s0:b0" style="display: contents;">
-          <section><div id="replaceable-target"></div></section>
-        </span>
-      </div>
-    `;
-
-    installClientRuntimeFixture(window, { visible: true }, handlerUrl);
-    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
-
-    await waitForCondition(() => Boolean(window.document.getElementById("replaceable-target")?.querySelector("#external-teleport-content")));
-    const originalTarget = window.document.getElementById("replaceable-target");
-
-    window.document.getElementById("replace-target")!.dispatchEvent(
-      new window.MouseEvent("click", { bubbles: true, button: 0 }),
-    );
-
-    await waitForCondition(() => {
-      const nextTarget = window.document.getElementById("replaceable-target");
-      return Boolean(nextTarget && nextTarget !== originalTarget && nextTarget.querySelector("#external-teleport-content"));
+  return { label, svg, replace };
+}`,
+      handlers: ["replace"],
     });
-    expect(window.document.getElementById("replaceable-target")?.querySelector("#external-teleport-content")).toBeTruthy();
+
+    const source = managedTeleportSourceComment({
+      to: "#replaceable-target",
+      disabled: false,
+      defer: true,
+      html: '<g id="external-teleport-content"><span data-rx-text="s0:b1">External</span></g>',
+    });
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="replace-target" data-rx-on-click="s0:m0:replace">Replace</button>'
+      + source
+      + '<span data-rx-block="s0:b0" style="display: contents;"><div id="replaceable-target"></div></span>'
+      + '<span data-rx-block="s0:b2" style="display: contents;"></span></div>';
+
+    installClientRuntimeFixture(window, { label: "External", svg: false }, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    const originalTarget = window.document.getElementById("replaceable-target")!;
+    await waitForCondition(() => Boolean(originalTarget.querySelector("#external-teleport-content")));
+
+    clickRuntimeFixture(window, "replace-target");
+    await waitForCondition(() => {
+      const target = window.document.getElementById("replaceable-target");
+      return Boolean(
+        target
+        && target !== originalTarget
+        && target.namespaceURI === "http://www.w3.org/2000/svg"
+        && target.querySelector('[data-rx-text="s0:b1"]')?.textContent === "Updated"
+      );
+    });
+
+    const nextTarget = window.document.getElementById("replaceable-target")!;
+    const content = nextTarget.querySelector("#external-teleport-content")!;
+    expect(nextTarget).not.toBe(originalTarget);
+    expect(content.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    expect(content.querySelector('[data-rx-text="s0:b1"]')?.textContent).toBe("Updated");
   });
 
   it("cleans Teleports owned by removed TransitionGroup children", async () => {
@@ -4453,7 +4299,12 @@ export default createClientComponent({ id: "m0", name: "TransitionList", file: "
       `import { createClientComponent } from ${JSON.stringify(pathToFileURL(runtimeFile).href)};
 const __template = [
   { type: "element", tag: "p", attrs: [], events: [], if: { expression: "stats.pending.value", blockId: "b0" }, children: [{ type: "text", value: "Loading stats" }] },
-  { type: "element", tag: "p", attrs: [], events: [], if: { expression: "!stats.pending.value", blockId: "b1" }, children: [{ type: "interpolation", expression: "stats.value.value.label", bindingId: "b2" }] }
+  { type: "element", tag: "p", attrs: [], events: [], if: { expression: "!stats.pending.value", blockId: "b1" }, children: [{ type: "interpolation", expression: "stats.value.value.label", bindingId: "b2" }] },
+  { type: "element", tag: "teleport", attrs: [
+    { kind: "static", name: "to", value: "#pending-async-target" },
+    { kind: "static", name: "defer", value: "" }
+  ], events: [], children: [{ type: "element", tag: "p", attrs: [{ kind: "static", name: "id", value: "pending-deferred-content" }], events: [], children: [{ type: "text", value: "Deferred" }] }] },
+  { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "pending-async-target" }], events: [], if: { expression: "!stats.pending.value", blockId: "b3" }, children: [] }
 ];
 async function script(ctx) {
   const stats = ctx.useAsyncData("stats", async () => {
@@ -4467,10 +4318,18 @@ export default createClientComponent({ id: "m0", name: "Stats", file: "Stats.vue
       "utf8"
     );
 
+    const pendingTeleport = managedTeleportSourceComment({
+      to: "#pending-async-target",
+      disabled: false,
+      defer: true,
+      html: '<p id="pending-deferred-content">Deferred</p>',
+    });
     const window = new Window();
     window.document.body.innerHTML = `
+      ${pendingTeleport}
       <span data-rx-block="s0:b0"><p>Loading stats</p></span>
       <span data-rx-block="s0:b1"></span>
+      <span data-rx-block="s0:b3"></span>
     `;
     Object.assign(globalThis, {
       document: window.document,
@@ -4496,8 +4355,12 @@ export default createClientComponent({ id: "m0", name: "Stats", file: "Stats.vue
 
     await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     await waitForHtml(window, "Ready");
+    await waitForCondition(() =>
+      Boolean(window.document.getElementById("pending-async-target")?.querySelector("#pending-deferred-content")),
+    );
 
     expect(window.document.body.innerHTML).not.toContain("Loading stats");
+    expect(window.document.getElementById("pending-async-target")?.querySelector("#pending-deferred-content")).toBeTruthy();
     expect((globalThis as any).__RESUX__.scopes.s0.asyncData.stats).toEqual({
       value: { label: "Ready" },
       pending: false,

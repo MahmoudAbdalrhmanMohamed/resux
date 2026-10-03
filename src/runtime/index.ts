@@ -14484,12 +14484,16 @@ function managedTeleportRangeNodes(content) {
   return nodes;
 }
 
-function managedTeleportRangeMarkup(content) {
+function managedTeleportNodesMarkup(nodes) {
   const container = document.createElement("div");
-  for (const node of managedTeleportRangeNodes(content)) {
+  for (const node of nodes) {
     container.appendChild(node.cloneNode(true));
   }
   return container.innerHTML;
+}
+
+function managedTeleportRangeMarkup(content) {
+  return managedTeleportNodesMarkup(managedTeleportRangeNodes(content));
 }
 
 function managedTeleportEffectiveNamespace(node) {
@@ -14873,14 +14877,28 @@ function managedTeleportRangeMatchesParsedContext(actualNodes, expectedNodes) {
 }
 
 function managedTeleportSourceMarkup(content) {
-  if (managedTeleportRangeNodes(content).length > 0) {
-    return managedTeleportRangeMarkup(content);
-  }
   const source = content?.source;
-  if (isManagedTeleportCommentSource(source)) {
-    return decodeManagedTeleportSourceMetadata(source).html || "";
+  const sourceMarkup = isManagedTeleportCommentSource(source)
+    ? (decodeManagedTeleportSourceMetadata(source).html || "")
+    : "";
+  const liveNodes = managedTeleportRangeNodes(content);
+  if (liveNodes.length === 0) return sourceMarkup;
+
+  if (
+    content?.parseContext === XHTML_NAMESPACE + ":table"
+    && liveNodes.length === 1
+    && liveNodes[0]?.nodeType === 1
+  ) {
+    const wrapper = String(liveNodes[0].localName || "").toLowerCase();
+    if (
+      (wrapper === "tbody" && /^\s*<tr(?=[\s>])/i.test(sourceMarkup))
+      || (wrapper === "colgroup" && /^\s*<col(?=[\s/>])/i.test(sourceMarkup))
+    ) {
+      return managedTeleportNodesMarkup(Array.from(liveNodes[0].childNodes ?? []));
+    }
   }
-  return "";
+
+  return managedTeleportNodesMarkup(liveNodes);
 }
 
 function normalizeManagedTeleportNamespace(content, target) {

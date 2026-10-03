@@ -470,6 +470,17 @@ describe("runtime SSR", () => {
     );
     expect(documentHtml).toContain('<script type="module" src="/__resux/runtime-client.mjs"></script>');
 
+    const explicitTargetDocumentHtml = renderDocument({
+      ...result,
+      html: result.html + '<section id="teleports"><span id="explicit-target-existing">Existing</span></section>',
+    });
+    const explicitTargetWindow = new Window({ url: "http://localhost/" });
+    explicitTargetWindow.document.body.innerHTML = /<body[^>]*>([\s\S]*?)<\/body>/.exec(explicitTargetDocumentHtml)?.[1] ?? "";
+    const explicitTarget = explicitTargetWindow.document.getElementById("teleports")!;
+    expect(explicitTarget.querySelector("#explicit-target-existing")).toBeTruthy();
+    expect(explicitTarget.querySelectorAll("#overlay")).toHaveLength(1);
+    expect(explicitTargetWindow.document.querySelector("[data-rx-teleport-fallback='true']")?.hasAttribute("id")).toBe(false);
+
     const body = /<body[^>]*>([\s\S]*?)<\/body>/.exec(documentHtml)?.[1];
     expect(body).toBeTruthy();
     parsed.document.body.innerHTML = body!;
@@ -579,7 +590,7 @@ describe("runtime SSR", () => {
       .toContain('<div id="teleports" data-rx-teleport-fallback="true"></div>');
   });
 
-  it("parses Teleport rows in their tbody target context", async () => {
+  it("preserves Teleport row identity between equivalent table-section targets", async () => {
     const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
       "resux-teleport-table-context",
       (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
@@ -609,22 +620,23 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML = `
       <div id="__resux"><button id="move-table" data-rx-on-click="s0:m0:move"></button>${source}</div>
-      <table id="table-target"></table>
-      <table><tbody id="tbody-target"></tbody></table>
+      <table><thead id="table-target"></thead><tfoot id="tbody-target"></tfoot></table>
     `;
 
     installClientRuntimeFixture(window, { target: "#table-target" }, handlerUrl);
     try {
       await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
       await waitForCondition(() => Boolean(window.document.getElementById("table-target")?.querySelector("#teleported-row")));
+      const row = window.document.getElementById("table-target")!.querySelector("#teleported-row");
       window.document.getElementById("move-table")!.dispatchEvent(
         new window.MouseEvent("click", { bubbles: true, button: 0 }),
       );
       const target = window.document.getElementById("tbody-target")!;
       await waitForCondition(() => Boolean(target.querySelector("#teleported-row")));
-      const row = target.querySelector("#teleported-row");
-      expect(row?.localName).toBe("tr");
-      expect(row?.parentElement).toBe(target);
+      const movedRow = target.querySelector("#teleported-row");
+      expect(movedRow).toBe(row);
+      expect(movedRow?.localName).toBe("tr");
+      expect(movedRow?.parentElement).toBe(target);
     } finally {
       resetClientRuntimeFixture();
     }
@@ -3933,7 +3945,7 @@ async function script(ctx) {
       to: "#math-attribute-target",
       disabled: false,
       defer: false,
-      html: '<annotation-xml id="math-attribute-child" definitionurl="https://example.test/definition"></annotation-xml>',
+      html: '<annotation-xml id="math-attribute-child" xmlns="http://www.w3.org/1998/Math/MathML" xmlns:xlink="http://www.w3.org/1999/xlink" definitionurl="https://example.test/definition"></annotation-xml>',
     });
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML = '<div id="__resux">' + source + '</div>';
@@ -3951,6 +3963,8 @@ async function script(ctx) {
     expect(annotation.getAttributeNames()).toContain("definitionURL");
     expect(annotation.getAttributeNames()).not.toContain("definitionurl");
     expect(annotation.getAttribute("definitionURL")).toBe("https://example.test/definition");
+    expect(annotation.getAttributeNS("http://www.w3.org/2000/xmlns/", "xmlns")).toBe("http://www.w3.org/1998/Math/MathML");
+    expect(annotation.getAttributeNS("http://www.w3.org/2000/xmlns/", "xlink")).toBe("http://www.w3.org/1999/xlink");
   });
 
   it("reinitializes managed content after a Teleport changes target namespaces", async () => {
@@ -4039,7 +4053,8 @@ const template = [
       { type: "element", tag: "p", attrs: [{ kind: "static", name: "id", value: "non-deferred-content" }], events: [], children: [{ type: "text", value: "Immediate" }] }
     ] }
   ] },
-  { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "late-target-no-defer" }], events: [], if: { expression: "showTarget.value", blockId: "b3" }, children: [] }
+  { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "late-target-no-defer" }], events: [], if: { expression: "showTarget.value", blockId: "b3" }, children: [] },
+  { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "teleports" }], events: [], if: { expression: "showTarget.value", blockId: "b4" }, children: [] }
 ];
 async function script(ctx) {
   const showTeleport = ctx.useState("showTeleport", () => false);
@@ -4054,19 +4069,30 @@ export default createClientComponent({ id: "m0", name: "DeferredTeleport", file:
 `,
     );
 
+    const defaultSource = managedTeleportSourceComment({
+      to: "#teleports",
+      disabled: false,
+      defer: false,
+      html: '<p id="structural-default-content">Default</p>',
+    });
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML = `
       <div id="__resux">
         <button id="show-deferred" data-rx-on-click="s0:m0:show">Show</button>
+        ${defaultSource}
         <span data-rx-block="s0:b0" style="display: contents;"></span>
         <span data-rx-block="s0:b1" style="display: contents;"></span>
         <span data-rx-block="s0:b2" style="display: contents;"></span>
         <span data-rx-block="s0:b3" style="display: contents;"></span>
+        <span data-rx-block="s0:b4" style="display: contents;"></span>
       </div>
+      <div id="teleports" data-rx-teleport-fallback="true"></div>
     `;
 
     installClientRuntimeFixture(window, { showTeleport: false, showTarget: false }, handlerUrl);
     await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+    const fallback = window.document.querySelector("[data-rx-teleport-fallback='true']") as HTMLElement;
+    await waitForCondition(() => Boolean(fallback.querySelector("#structural-default-content")));
 
     window.document.getElementById("show-deferred")!.dispatchEvent(
       new window.MouseEvent("click", { bubbles: true, button: 0 }),
@@ -4086,6 +4112,12 @@ export default createClientComponent({ id: "m0", name: "DeferredTeleport", file:
     expect(nonDeferredSource?.metadata.defer).toBe(false);
     expect(nonDeferredTarget.querySelector("#non-deferred-content")).toBeNull();
     expect(nonDeferredSource?.metadata.html).toContain('id="non-deferred-content"');
+
+    const structuralDefaultTarget = window.document.querySelector('[data-rx-block="s0:b4"] #teleports') as HTMLElement;
+    await waitForCondition(() => Boolean(structuralDefaultTarget?.querySelector("#structural-default-content")));
+    expect(structuralDefaultTarget.querySelector("#structural-default-content")).toBeTruthy();
+    expect(fallback.hasAttribute("id")).toBe(false);
+    expect(fallback.querySelector("#structural-default-content")).toBeNull();
   });
 
   it("remounts live Teleport state when a reactive block replaces its target context", async () => {

@@ -14857,14 +14857,26 @@ function restoreManagedTeleportsWithinContent(content) {
 }
 
 function retokenizeNestedManagedTeleportLiveTargets(content) {
+  const records = [];
   for (const source of nestedManagedTeleportSources(content)) {
     if (!isManagedTeleportCommentSource(source)) continue;
     const target = managedTeleportLiveTargets.get(source);
     if (!isManagedTeleportElementTarget(target)) continue;
     const metadata = decodeManagedTeleportSourceMetadata(source);
+    const originalData = source.data;
+    const originalMetadata = { ...metadata };
     metadata.liveTargetToken = createManagedTeleportLiveTargetToken(target);
     source.data = MANAGED_TELEPORT_SOURCE_PREFIX + encodeClientTeleportSourceMetadata(metadata);
     managedTeleportSourceMetadataCache.set(source, metadata);
+    records.push({ source, originalData, originalMetadata });
+  }
+  return records;
+}
+
+function restoreRetokenizedNestedManagedTeleportSources(records) {
+  for (const record of records) {
+    record.source.data = record.originalData;
+    managedTeleportSourceMetadataCache.set(record.source, record.originalMetadata);
   }
 }
 
@@ -14931,10 +14943,15 @@ function normalizeManagedTeleportNamespace(content, target) {
   }
 
   restoreManagedTeleportsWithinContent(content);
-  if (content.parseContext != null) {
-    retokenizeNestedManagedTeleportLiveTargets(content);
+  const retokenizedSources = content.parseContext != null
+    ? retokenizeNestedManagedTeleportLiveTargets(content)
+    : [];
+  let markup;
+  try {
+    markup = managedTeleportSourceMarkup(content);
+  } finally {
+    restoreRetokenizedNestedManagedTeleportSources(retokenizedSources);
   }
-  const markup = managedTeleportSourceMarkup(content);
   const currentNodes = managedTeleportRangeNodes(content);
   const parsedNodes = parseManagedTeleportMarkup(markup, target);
   if (

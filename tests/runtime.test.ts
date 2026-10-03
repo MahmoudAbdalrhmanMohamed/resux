@@ -4232,8 +4232,8 @@ export default createClientComponent({ id: "m0", name: "TransitionTeleportList",
       new window.MouseEvent("click", { bubbles: true, button: 0 }),
     );
 
-    await waitForCondition(() => !portals.querySelector("#portal-1"), 500);
-    await waitForCondition(() => Boolean(portals.querySelector("#portal-2")), 500);
+    await waitForCondition(() => !portals.querySelector("#portal-1"));
+    await waitForCondition(() => Boolean(portals.querySelector("#portal-2")));
     expect(portals.querySelector("#portal-1")).toBeNull();
     expect(portals.querySelector("#portal-2")).toBeTruthy();
   });

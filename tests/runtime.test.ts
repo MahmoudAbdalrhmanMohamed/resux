@@ -82,6 +82,17 @@ type ManagedTeleportCommentRecord = {
   };
 };
 
+function managedTeleportSourceComment(metadata: ManagedTeleportCommentRecord["metadata"]): string {
+  const encoded = encodeURIComponent(JSON.stringify(metadata)).replaceAll("-", "%2D");
+  return `<!--resux-teleport-source:${encoded}--><!--resux-teleport-end-->`;
+}
+
+function resetClientRuntimeFixture(): void {
+  for (const key of ["document", "window", "location", "history", "scrollTo", "__RESUX__", "__RESUX_APP__", "__RESUX_ROUTER__", "__RESUX_INSTALLED__"]) {
+    delete (globalThis as any)[key];
+  }
+}
+
 function managedTeleportCommentRecords(root: Node): ManagedTeleportCommentRecord[] {
   const records: ManagedTeleportCommentRecord[] = [];
   const visit = (node: Node) => {
@@ -467,35 +478,60 @@ describe("runtime SSR", () => {
     expect(result.html).not.toContain("<span data-rx-teleport-source");
     expect(result.html).not.toContain("<template data-rx-teleport-source");
     expect(renderDocument(result).match(/id="teleports"/g)).toHaveLength(1);
+    expect(renderDocument({ ...result, html: result.html + '<div data-id="teleports"></div>' }))
+      .toContain('<div id="teleports" data-rx-teleport-fallback="true"></div>');
   });
 
   it("parses Teleport rows in their tbody target context", async () => {
     const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
       "resux-teleport-table-context",
-      () => "export default {};",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "move" }], children: [] },
+  { type: "element", tag: "teleport", attrs: [{ kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }], events: [], children: [
+    { type: "element", tag: "tr", attrs: [{ kind: "static", name: "id", value: "teleported-row" }], events: [], children: [
+      { type: "element", tag: "td", attrs: [], events: [], children: [{ type: "text", value: "Row" }] }
+    ] }
+  ] }
+];
+async function script(ctx) {
+  const target = ctx.useState("target", () => "#table-target");
+  function move() { target.value = "#tbody-target"; }
+  return { target, move };
+}
+export default createClientComponent({ id: "m0", name: "TableTeleport", file: "TableTeleport.vue", script, template, handlers: ["move"] });
+`,
     );
-    const metadata = encodeURIComponent(JSON.stringify({
+    const source = managedTeleportSourceComment({
       to: "#table-target",
       disabled: false,
       defer: false,
-      bindings: {},
+      bindings: { to: "s0:b0" },
       html: '<tr id="teleported-row"><td>Row</td></tr>',
-    })).replaceAll("-", "%2D");
+    });
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML = `
-      <div id="__resux"><!--resux-teleport-source:${metadata}--><!--resux-teleport-end--></div>
-      <table><tbody id="table-target"></tbody></table>
+      <div id="__resux"><button id="move-table" data-rx-on-click="s0:m0:move"></button>${source}</div>
+      <table id="table-target"></table>
+      <table><tbody id="tbody-target"></tbody></table>
     `;
 
-    installClientRuntimeFixture(window, {}, handlerUrl);
-    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
-
-    const target = window.document.getElementById("table-target")!;
-    await waitForCondition(() => Boolean(target.querySelector("#teleported-row")));
-    expect(target.firstElementChild?.localName).toBe("tr");
-    expect(target.querySelector("#teleported-row")?.parentElement).toBe(target);
+    installClientRuntimeFixture(window, { target: "#table-target" }, handlerUrl);
+    try {
+      await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+      await waitForCondition(() => Boolean(window.document.getElementById("table-target")?.querySelector("#teleported-row")));
+      window.document.getElementById("move-table")!.dispatchEvent(
+        new window.MouseEvent("click", { bubbles: true, button: 0 }),
+      );
+      const target = window.document.getElementById("tbody-target")!;
+      await waitForCondition(() => Boolean(target.querySelector("#teleported-row")));
+      const row = target.querySelector("#teleported-row");
+      expect(row?.localName).toBe("tr");
+      expect(row?.parentElement).toBe(target);
+    } finally {
+      resetClientRuntimeFixture();
+    }
   });
-
   it("applies Vue Boolean semantics to static and bound Teleport disabled props during SSR", async () => {
     const page: ComponentDefinition = defineComponent({
       id: "m-teleport-boolean-ssr",
@@ -2991,7 +3027,8 @@ export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "T
     const teleportedIcon = target.querySelector("#teleported-icon");
     expect(teleportedIcon?.namespaceURI).toBe("http://www.w3.org/2000/svg");
     expect(source.childNodes).toHaveLength(0);
-    expect(target.firstElementChild?.getAttribute("data-rx-transition")).toBe("fade");
+    expect(target.firstElementChild).toBe(teleportedIcon);
+    expect(target.querySelector("[data-rx-transition='fade']")?.getAttribute("data-rx-transition")).toBe("fade");
     expect(target.querySelector("[data-rx-teleport-content='true']")).toBeNull();
 
     window.document.getElementById("toggle")!.dispatchEvent(
@@ -3036,6 +3073,30 @@ export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "T
     expect(alternateTarget.firstElementChild?.getAttribute("data-rx-transition")).toBe("fade");
     expect(source.childNodes).toHaveLength(0);
     expect(source.hasAttribute("data-rx-teleport-disabled")).toBe(false);
+  });
+
+  it("mounts Teleports before initial client middleware aborts", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-middleware-abort",
+      () => "export default () => false;",
+    );
+    const source = managedTeleportSourceComment({
+      to: "#abort-target",
+      disabled: false,
+      defer: false,
+      bindings: {},
+      html: '<div id="abort-teleport">Visible</div>',
+    });
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `<div id="__resux">${source}</div><div id="abort-target"></div>`;
+    installClientRuntimeFixture(window, {}, handlerUrl);
+    (globalThis as any).__RESUX__.middleware = [{
+      id: "abort", name: "abort", file: "abort.ts", global: true, mode: "client", src: handlerUrl,
+    }];
+
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+    await waitForCondition(() => Boolean(window.document.getElementById("abort-target")?.querySelector("#abort-teleport")));
+    expect(window.document.getElementById("abort-target")?.querySelector("#abort-teleport")).toBeTruthy();
   });
 
   it("recursively cleans nested Teleports when their owning reactive block is removed", async () => {
@@ -3253,8 +3314,12 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
           <svg id="teleported-svg"></svg>
           <circle id="teleported-circle" cx="12" cy="12" r="6"></circle>
         </span>
+        <span data-rx-teleport-source="true" data-rx-teleport-to="#foreign-target" style="display: contents;">
+          <div id="foreign-html">HTML</div>
+        </span>
       </div>
       <svg id="svg-target" viewBox="0 0 24 24"></svg>
+      <svg><foreignObject id="foreign-target"></foreignObject></svg>
     `;
 
     installClientRuntimeFixture(window, {}, handlerUrl);
@@ -3267,6 +3332,8 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
     expect(svg.namespaceURI).toBe("http://www.w3.org/2000/svg");
     expect(circle.namespaceURI).toBe("http://www.w3.org/2000/svg");
     expect(target.firstElementChild).toBe(svg);
+    const foreignHtml = window.document.getElementById("foreign-target")?.querySelector("#foreign-html");
+    expect(foreignHtml?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
   });
 
   it("reinitializes managed content after a Teleport changes target namespaces", async () => {
@@ -5606,11 +5673,12 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
                 </span>
               </div>
             </span>
-            <span data-rx-page=""><main>Home</main><div id="outer-layout-target"></div></span>
+            <span data-rx-page=""><main>Home</main><div id="outer-layout-target"></div><div id="teleports"></div></span>
           </section>
         </span>
       </div>
       <div id="inner-layout-target"></div>
+      <div data-rx-teleport-fallback="true"></div>
     `;
     const layoutElement = window.document.getElementById("layout");
 
@@ -5677,6 +5745,7 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     expect(window.document.getElementById("__resux")?.innerHTML).toContain("<main>About</main>");
     expect((globalThis as any).__RESUX__.scopes.s0.state.menuOpen).toBe(true);
     expect((globalThis as any).__RESUX__.scopes.s1.state.loaded).toBe(true);
+    expect(window.document.querySelector("[data-rx-teleport-fallback='true']")?.id).toBe("teleports");
   });
 
   it("hot-updates active component scopes in dev without reloading the document", async () => {

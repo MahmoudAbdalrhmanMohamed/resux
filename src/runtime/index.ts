@@ -2325,9 +2325,10 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
   };
   const renderedBodyAttrs = renderAttributes(mergedHead.bodyAttrs ?? {});
   const bodyOpenTag = renderedBodyAttrs ? `<body ${renderedBodyAttrs}>` : "<body>";
-  const defaultTeleportTarget = /\bid\s*=\s*(?:"teleports"|'teleports'|teleports)(?:\s|\/?>)/i.test(result.html)
-    ? ""
-    : '<div id="teleports"></div>';
+  const hasDefaultTeleportTarget = /<[^>]*[\t\n\f\r ]id[\t\n\f\r ]*=[\t\n\f\r ]*(?:"teleports"|'teleports'|teleports)(?=[\t\n\f\r \/>])[^>]*>/i.test(result.html);
+  const defaultTeleportTarget = hasDefaultTeleportTarget
+    ? '<div data-rx-teleport-fallback="true"></div>'
+    : '<div id="teleports" data-rx-teleport-fallback="true"></div>';
   return [
     "<!doctype html>",
     `<html ${renderAttributes(htmlAttrs)}>`,
@@ -11311,6 +11312,8 @@ async function initializeClientRuntime() {
     return;
   }
   await ensureClientPlugins(payload);
+  reconcileDefaultTeleportTarget();
+  mountManagedTeleports(document);
   const middlewareResult = await runClientRouteMiddleware(payload, { path: "", params: {}, query: {} });
   if (middlewareResult?.type === "redirect") {
     await navigateTo(middlewareResult.to, { replace: true });
@@ -11320,7 +11323,6 @@ async function initializeClientRuntime() {
     return;
   }
   void resumePendingAsyncData();
-  mountManagedTeleports(document);
   initializeManagedRuntimeContent(document);
 }
 
@@ -14380,6 +14382,18 @@ function managedTeleportInlineNodes(source) {
   return nodes;
 }
 
+function reconcileDefaultTeleportTarget() {
+  const fallback = document.querySelector("[data-rx-teleport-fallback='true']");
+  if (!fallback) return;
+  const explicitTarget = [...document.querySelectorAll("[id='teleports']")]
+    .find((element) => element !== fallback);
+  if (explicitTarget) {
+    fallback.removeAttribute("id");
+  } else {
+    fallback.setAttribute("id", "teleports");
+  }
+}
+
 function managedTeleportTarget(source) {
   const selector = decodeManagedTeleportSourceMetadata(source).to || "#teleports";
   try {
@@ -14421,26 +14435,53 @@ function managedTeleportRangeMarkup(content) {
   return container.innerHTML;
 }
 
+function managedTeleportParsingContext(target) {
+  return (target?.namespaceURI || XHTML_NAMESPACE) + ":" + String(target?.localName || "").toLowerCase();
+}
+
 function parseManagedTeleportMarkup(markup, target) {
   const namespace = target?.namespaceURI || XHTML_NAMESPACE;
-  if (namespace === XHTML_NAMESPACE) {
-    if (typeof document.createRange === "function") {
-      try {
-        const range = document.createRange();
-        range.selectNodeContents(target);
-        return Array.from(range.createContextualFragment(markup).childNodes);
-      } catch {
-        // Fall through to template parsing when contextual fragments are unavailable.
-      }
-    }
+  const localName = String(target?.localName || "").toLowerCase();
+
+  if (namespace === SVG_NAMESPACE && ["foreignobject", "desc", "title"].includes(localName)) {
     const template = document.createElement("template");
     template.innerHTML = markup;
     return Array.from(template.content.childNodes);
   }
 
-  const wrapperName = namespace === "http://www.w3.org/2000/svg"
+  if (target?.cloneNode) {
+    try {
+      const context = target.cloneNode(false);
+      if ("innerHTML" in context) {
+        context.innerHTML = markup;
+        const nodes = Array.from(context.childNodes);
+        if (nodes.length || !markup) return nodes;
+      }
+    } catch {
+      // Fall through to the generic contextual parsers.
+    }
+  }
+
+  if (typeof document.createRange === "function" && target) {
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      const nodes = Array.from(range.createContextualFragment(markup).childNodes);
+      if (nodes.length || !markup) return nodes;
+    } catch {
+      // Fall through to namespace-aware wrappers.
+    }
+  }
+
+  if (namespace === XHTML_NAMESPACE) {
+    const template = document.createElement("template");
+    template.innerHTML = markup;
+    return Array.from(template.content.childNodes);
+  }
+
+  const wrapperName = namespace === SVG_NAMESPACE
     ? "svg"
-    : namespace === "http://www.w3.org/1998/Math/MathML"
+    : namespace === MATHML_NAMESPACE
       ? "math"
       : (target?.localName || "g");
   const wrapper = document.createElementNS(namespace, wrapperName);
@@ -14492,29 +14533,28 @@ function restoreManagedTeleportsWithinContent(content) {
   }
 }
 
-function managedTeleportElementMatchesNamespace(element, targetNamespace) {
-  if (targetNamespace !== XHTML_NAMESPACE) {
-    return element.namespaceURI === targetNamespace;
+function managedTeleportSourceMarkup(content) {
+  const source = content?.source;
+  if (isManagedTeleportCommentSource(source)) {
+    const markup = decodeManagedTeleportSourceMetadata(source).html || "";
+    if (markup) return markup;
   }
-  if (element.localName === "svg") {
-    return element.namespaceURI === SVG_NAMESPACE;
-  }
-  if (element.localName === "math") {
-    return element.namespaceURI === MATHML_NAMESPACE;
-  }
-  return element.namespaceURI === XHTML_NAMESPACE;
+  return managedTeleportRangeMarkup(content);
 }
 
 function normalizeManagedTeleportNamespace(content, target) {
+  const targetContext = managedTeleportParsingContext(target);
   const nodes = managedTeleportRangeNodes(content);
-  const elements = nodes.filter((node) => node.nodeType === 1);
-  const targetNamespace = target?.namespaceURI || XHTML_NAMESPACE;
-  if (elements.every((element) => managedTeleportElementMatchesNamespace(element, targetNamespace))) {
+  if (nodes.length === 0) {
+    content.parseContext = targetContext;
+    return false;
+  }
+  if (content.parseContext === targetContext) {
     return false;
   }
 
   restoreManagedTeleportsWithinContent(content);
-  const markup = managedTeleportRangeMarkup(content);
+  const markup = managedTeleportSourceMarkup(content);
   const currentNodes = managedTeleportRangeNodes(content);
   for (const node of currentNodes) {
     if (node.nodeType === 1) {
@@ -14526,6 +14566,7 @@ function normalizeManagedTeleportNamespace(content, target) {
   for (const node of parseManagedTeleportMarkup(markup, target)) {
     content.end.parentNode?.insertBefore(node, content.end);
   }
+  content.parseContext = targetContext;
   return true;
 }
 
@@ -14559,18 +14600,18 @@ function moveManagedTeleportRange(content, target, options = {}) {
   }
 }
 
-function createManagedTeleportTargetRange(target) {
+function createManagedTeleportTargetRange(source, target) {
   const start = document.createComment("resux-teleport-start");
   const end = document.createComment("resux-teleport-end");
   target.appendChild(start);
   target.appendChild(end);
-  return { start, end };
+  return { start, end, source, parseContext: null };
 }
 
 function ensureManagedTeleportTargetRange(source, target) {
   let content = managedTeleportContent.get(source);
   if (!content) {
-    content = createManagedTeleportTargetRange(target);
+    content = createManagedTeleportTargetRange(source, target);
     managedTeleportContent.set(source, content);
     managedTeleportMountedSources.add(source);
   }
@@ -14634,6 +14675,7 @@ function populateManagedTeleportRange(source, content, target, options = {}) {
     for (const node of managedTeleportInitialNodes(source, target)) {
       content.end.parentNode?.insertBefore(node, content.end);
     }
+    content.parseContext = null;
   }
   normalizeManagedTeleportNamespace(content, target);
   initializeManagedTeleportContent(content, options);
@@ -14841,6 +14883,7 @@ function replaceRouteHtml(root, html, preserveLayout = true) {
     cleanupManagedTeleports(root);
     unmountVueIslands(root);
     root.innerHTML = html;
+    reconcileDefaultTeleportTarget();
     return { root, scopeIds: new Set() };
   }
 
@@ -14850,6 +14893,7 @@ function replaceRouteHtml(root, html, preserveLayout = true) {
     cleanupManagedTeleports(root);
     unmountVueIslands(root);
     root.innerHTML = html;
+    reconcileDefaultTeleportTarget();
     return { root, scopeIds: new Set() };
   }
 
@@ -14858,6 +14902,7 @@ function replaceRouteHtml(root, html, preserveLayout = true) {
   cleanupManagedTeleports(currentPage);
   unmountVueIslands(currentPage);
   currentPage.innerHTML = nextPage.innerHTML;
+  reconcileDefaultTeleportTarget();
   remountPreparedManagedTeleports(externalTeleportSources, { deferMissingTarget: true });
   return { root: currentPage, scopeIds: preservedScopeIds };
 }
@@ -17966,6 +18011,7 @@ function replaceManagedRuntimeHtml(element, value, preparedTeleportSources = [])
   cleanupManagedTeleports(element);
   unmountVueIslands(element);
   element.innerHTML = value;
+  reconcileDefaultTeleportTarget();
   mountManagedTeleports(element, { deferMissingTarget: true });
   remountPreparedManagedTeleports(externalTeleportSources, { deferMissingTarget: true });
 }

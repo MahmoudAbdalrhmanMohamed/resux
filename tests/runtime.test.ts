@@ -414,19 +414,37 @@ describe("runtime SSR", () => {
       async script() {
         return {};
       },
-      template: [{
-        type: "element",
-        tag: "teleport",
-        attrs: [{ kind: "static", name: "to", value: "#teleports" }],
-        events: [],
-        children: [{
+      template: [
+        {
           type: "element",
-          tag: "div",
-          attrs: [{ kind: "static", name: "id", value: "overlay" }],
+          tag: "teleport",
+          attrs: [
+            { kind: "static", name: "to", value: "#teleports" },
+            { kind: "static", name: "disabled", value: "" },
+          ],
           events: [],
-          children: [{ type: "text", value: "Overlay" }],
-        }],
-      }],
+          children: [{
+            type: "element",
+            tag: "div",
+            attrs: [{ kind: "static", name: "id", value: "inline-overlay" }],
+            events: [],
+            children: [{ type: "text", value: "Inline" }],
+          }],
+        },
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [{ kind: "static", name: "to", value: "#teleports" }],
+          events: [],
+          children: [{
+            type: "element",
+            tag: "div",
+            attrs: [{ kind: "static", name: "id", value: "overlay" }],
+            events: [],
+            children: [{ type: "text", value: "Overlay" }],
+          }],
+        },
+      ],
     });
 
     const result = await renderApp({
@@ -439,7 +457,10 @@ describe("runtime SSR", () => {
     expect(result.html).not.toContain("<teleport");
     const parsed = new Window({ url: "http://localhost/" });
     parsed.document.body.innerHTML = result.html;
-    const source = managedTeleportCommentRecords(parsed.document.body)[0];
+    const sources = managedTeleportCommentRecords(parsed.document.body);
+    expect(sources[0]?.metadata.disabled).toBe(true);
+    expect(result.html).toContain('id="inline-overlay"');
+    const source = sources[1];
     expect(source?.metadata.to).toBe("#teleports");
     expect(source?.metadata.html).toContain('id="overlay"');
     expect(result.teleports?.["#teleports"]).toContain("<!--resux-teleport-start-->");
@@ -460,47 +481,11 @@ describe("runtime SSR", () => {
       await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
       await waitForCondition(() => Boolean(target.querySelector("#overlay")));
       expect(target.querySelectorAll("#overlay")).toHaveLength(1);
+      expect(target.querySelector("#inline-overlay")).toBeNull();
+      expect(Array.from(target.childNodes).indexOf(target.querySelector("#overlay")!)).toBeGreaterThan(1);
     } finally {
       resetClientRuntimeFixture();
     }
-  });
-
-  it("honors a bare Teleport disabled attribute during SSR", async () => {
-    const page: ComponentDefinition = defineComponent({
-      id: "m-teleport-disabled-ssr",
-      name: "TeleportDisabledSsrPage",
-      file: "TeleportDisabledSsrPage.vue",
-      handlers: [],
-      async script() {
-        return {};
-      },
-      template: [{
-        type: "element",
-        tag: "teleport",
-        attrs: [
-          { kind: "static", name: "to", value: "#teleports" },
-          { kind: "static", name: "disabled", value: "" },
-        ],
-        events: [],
-        children: [{
-          type: "element",
-          tag: "div",
-          attrs: [{ kind: "static", name: "id", value: "inline-overlay" }],
-          events: [],
-          children: [{ type: "text", value: "Inline" }],
-        }],
-      }],
-    });
-
-    const result = await renderApp({
-      page,
-      route: { path: "/", params: {}, query: {} },
-    });
-
-    const parsed = new Window({ url: "http://localhost/" });
-    parsed.document.body.innerHTML = result.html;
-    expect(managedTeleportCommentRecords(parsed.document.body)[0]?.metadata.disabled).toBe(true);
-    expect(result.html).toContain('id="inline-overlay"');
   });
 
   it("renders parser-safe Teleport markers inside select and table contexts", async () => {

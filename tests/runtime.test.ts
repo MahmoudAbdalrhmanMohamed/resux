@@ -3427,6 +3427,7 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
     const explicit = window.document.querySelector('[data-rx-attr-b0="s0:b0"]') as HTMLElement;
     const fallback = window.document.querySelector("[data-rx-teleport-fallback='true']") as HTMLElement;
     await waitForCondition(() => Boolean(explicit.querySelector("#fallback-teleport-content")));
+    expect(explicit.querySelector("#fallback-teleport-content")).toBeTruthy();
     expect(fallback.hasAttribute("id")).toBe(false);
 
     window.document.getElementById("move-fallback-id")!.dispatchEvent(
@@ -3435,6 +3436,9 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
 
     await waitForCondition(() => fallback.id === "teleports");
     await waitForCondition(() => Boolean(fallback.querySelector("#fallback-teleport-content")));
+    expect(fallback.id).toBe("teleports");
+    expect(fallback.querySelector("#fallback-teleport-content")).toBeTruthy();
+    expect(explicit.querySelector("#fallback-teleport-content")).toBeNull();
     expect(explicit.id).toBe("moved-target");
   });
 

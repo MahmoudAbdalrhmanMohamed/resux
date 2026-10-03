@@ -18495,10 +18495,19 @@ function applyPatches(scopeId, patches, options = {}) {
           syncManagedTeleportSource(source, { deferMissingTarget: true });
         }
       }
-      if (patch.attr === "id") {
-        needsTeleportFallbackReconciliation = true;
-      }
       document.querySelectorAll('[data-rx-attr-' + patch.id + '="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
+        if (patch.attr === "id") {
+          const previousId = element.getAttribute("id");
+          const nextId = patch.value === "" || patch.value === "false" || patch.value == null
+            ? null
+            : String(patch.value);
+          if (
+            previousId !== nextId
+            && (previousId === "teleports" || nextId === "teleports")
+          ) {
+            needsTeleportFallbackReconciliation = true;
+          }
+        }
         const teleportElementTarget = patch.attr === "data-rx-teleport-to"
           && isManagedTeleportElementTarget(patch.value);
         const removeAttribute = patch.value === "" || patch.value === "false" || patch.value == null;

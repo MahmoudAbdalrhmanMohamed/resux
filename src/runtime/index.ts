@@ -15060,37 +15060,43 @@ function moveManagedTeleportRange(content, target, options = {}) {
   }
 }
 
+function nextUnclaimedManagedTeleportTargetStart(target) {
+  return Array.from(target?.childNodes ?? []).find((node) =>
+    node.nodeType === 8
+    && String(node.data || "") === "resux-teleport-start"
+    && !managedTeleportClaimedTargetStarts.has(node)
+  ) || null;
+}
+
 function adoptManagedTeleportTargetRange(source, target) {
-  let start = null;
-  for (const node of Array.from(target?.childNodes ?? [])) {
-    if (node.nodeType !== 8) continue;
-    const marker = String(node.data || "");
-    if (marker === "resux-teleport-start") {
-      start = managedTeleportClaimedTargetStarts.has(node) ? null : node;
-      continue;
-    }
-    if (marker === "resux-teleport-end" && start) {
+  const start = nextUnclaimedManagedTeleportTargetStart(target);
+  if (!start) return null;
+  let end = start.nextSibling;
+  while (end) {
+    if (end.nodeType === 8 && String(end.data || "") === "resux-teleport-end") {
       managedTeleportClaimedTargetStarts.add(start);
-      return { start, end: node, source, parseContext: null };
+      return { start, end, source, parseContext: null };
     }
+    end = end.nextSibling;
   }
   return null;
 }
 
-function createManagedTeleportTargetRange(source, target) {
+function createManagedTeleportTargetRange(source, target, before = null) {
   const start = document.createComment("resux-teleport-start");
   const end = document.createComment("resux-teleport-end");
   managedTeleportClaimedTargetStarts.add(start);
-  target.appendChild(start);
-  target.appendChild(end);
+  target.insertBefore(start, before);
+  target.insertBefore(end, before);
   return { start, end, source, parseContext: null };
 }
 
-function ensureManagedTeleportTargetRange(source, target) {
+function ensureManagedTeleportTargetRange(source, target, allowAdoption = true) {
   let content = managedTeleportContent.get(source);
   if (!content) {
-    content = adoptManagedTeleportTargetRange(source, target)
-      || createManagedTeleportTargetRange(source, target);
+    const insertionPoint = allowAdoption ? null : nextUnclaimedManagedTeleportTargetStart(target);
+    content = (allowAdoption ? adoptManagedTeleportTargetRange(source, target) : null)
+      || createManagedTeleportTargetRange(source, target, insertionPoint);
     managedTeleportContent.set(source, content);
     managedTeleportMountedSources.add(source);
   }
@@ -15190,7 +15196,7 @@ function syncManagedTeleportSource(source, options = {}) {
     if (content) {
       restoreManagedTeleport(source, content, { ...options, preserveTargetAnchors: true });
     } else {
-      content = ensureManagedTeleportTargetRange(source, target);
+      content = ensureManagedTeleportTargetRange(source, target, false);
     }
     moveManagedTeleportRange(content, target, { ...options, initialize: false });
     return;

@@ -3631,19 +3631,45 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
     expect(outer.querySelector("#inside-self-target")).toBeNull();
   });
 
-  it("reparses Teleport content when MathML annotation integration status changes", async () => {
-    const { runtimeUrl, handlerUrl } = await createDynamicTeleportRuntimeFixture({
+  it("reparses MathML integration changes while preserving equivalent MathML target identity", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientComponentRuntimeFixture({
       prefix: "resux-teleport-annotation-context",
       componentName: "AnnotationContextTeleport",
-      initialTarget: "#html-annotation-target",
-      nextTarget: "#math-annotation-target",
-      children: [{
-        type: "element",
-        tag: "div",
-        attrs: [{ kind: "static", name: "id", value: "annotation-child" }],
-        events: [],
-        children: [{ type: "text", value: "Annotation" }],
-      }],
+      template: [
+        {
+          type: "element",
+          tag: "button",
+          attrs: [],
+          events: [{ name: "click", handler: "move" }],
+          children: [{ type: "text", value: "Move" }],
+        },
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [{ kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }],
+          events: [],
+          children: [{
+            type: "element",
+            tag: "div",
+            attrs: [{ kind: "static", name: "id", value: "annotation-child" }],
+            events: [],
+            children: [{ type: "text", value: "Annotation" }],
+          }],
+        },
+      ],
+      scriptSource: `
+async function script(ctx) {
+  const target = ctx.useState("target", () => "#html-annotation-target");
+  function move() {
+    target.value = target.value === "#html-annotation-target"
+      ? "#math-annotation-target"
+      : target.value === "#math-annotation-target"
+        ? "#math-row-target"
+        : "#math-style-target";
+  }
+  return { target, move };
+}`,
+      handlers: ["move"],
     });
 
     const source = managedTeleportBindingSourceComment(
@@ -3661,8 +3687,11 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
     htmlAnnotation.setAttribute("encoding", "text/html");
     const mathAnnotation = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "annotation-xml");
     mathAnnotation.setAttribute("id", "math-annotation-target");
-    mathRoot.appendChild(htmlAnnotation);
-    mathRoot.appendChild(mathAnnotation);
+    const mathRow = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "mrow");
+    mathRow.setAttribute("id", "math-row-target");
+    const mathStyle = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "mstyle");
+    mathStyle.setAttribute("id", "math-style-target");
+    mathRoot.append(htmlAnnotation, mathAnnotation, mathRow, mathStyle);
     window.document.body.appendChild(mathRoot);
 
     installClientRuntimeFixture(window, { target: "#html-annotation-target" }, handlerUrl);
@@ -3672,10 +3701,19 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
     expect(htmlAnnotation.querySelector("#annotation-child")?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
 
     clickRuntimeFixture(window, "move-annotation-target");
-
     await waitForCondition(() => Boolean(mathAnnotation.querySelector("#annotation-child")));
     expect(mathAnnotation.querySelector("#annotation-child")?.namespaceURI).toBe("http://www.w3.org/1998/Math/MathML");
     expect(htmlAnnotation.querySelector("#annotation-child")).toBeNull();
+
+    clickRuntimeFixture(window, "move-annotation-target");
+    await waitForCondition(() => Boolean(mathRow.querySelector("#annotation-child")));
+    const mathNode = mathRow.querySelector("#annotation-child")!;
+    mathNode.setAttribute("data-live-state", "preserved");
+
+    clickRuntimeFixture(window, "move-annotation-target");
+    await waitForCondition(() => Boolean(mathStyle.querySelector("#annotation-child")));
+    expect(mathStyle.querySelector("#annotation-child")).toBe(mathNode);
+    expect(mathNode.getAttribute("data-live-state")).toBe("preserved");
   });
 
   it("mounts and patches Teleport content before a slow client plugin finishes", async () => {
@@ -3940,50 +3978,97 @@ async function script(ctx) {
     expect(annotation.getAttribute("definitionURL")).toBe("https://example.test/definition");
   });
 
-  it("reinitializes managed content after a Teleport changes target namespaces", async () => {
-    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
-      "resux-teleport-namespace-reinit",
-      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
-const template = [
-  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "move" }], children: [{ type: "text", value: "Move" }] },
-  { type: "element", tag: "teleport", attrs: [
-    { kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }
-  ], events: [], children: [
-    { type: "element", tag: "div", attrs: [
-      { kind: "static", name: "id", value: "namespace-island" },
-      { kind: "static", name: "data-rx-vue-island", value: "MissingIsland" }
-    ], events: [], children: [] }
-  ] }
-];
+  it("reinitializes managed content and preserves nested Element targets across namespace changes", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientComponentRuntimeFixture({
+      prefix: "resux-teleport-namespace-reinit",
+      componentName: "TeleportNamespaceReinit",
+      template: [
+        {
+          type: "element",
+          tag: "button",
+          attrs: [],
+          events: [{ name: "click", handler: "bindNested" }],
+          children: [{ type: "text", value: "Bind" }],
+        },
+        {
+          type: "element",
+          tag: "button",
+          attrs: [],
+          events: [{ name: "click", handler: "move" }],
+          children: [{ type: "text", value: "Move" }],
+        },
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [{ kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }],
+          events: [],
+          children: [
+            {
+              type: "element",
+              tag: "div",
+              attrs: [
+                { kind: "static", name: "id", value: "namespace-island" },
+                { kind: "static", name: "data-rx-vue-island", value: "MissingIsland" },
+              ],
+              events: [],
+              children: [],
+            },
+            {
+              type: "element",
+              tag: "teleport",
+              attrs: [{ kind: "dynamic", name: "to", value: "nestedTarget.value", bindingId: "b1" }],
+              events: [],
+              children: [{
+                type: "element",
+                tag: "p",
+                attrs: [{ kind: "static", name: "id", value: "nested-element-content" }],
+                events: [],
+                children: [{ type: "text", value: "Nested" }],
+              }],
+            },
+          ],
+        },
+      ],
+      scriptSource: `
 async function script(ctx) {
   const target = ctx.useState("target", () => "#html-target");
+  const nestedTarget = ctx.useState("nestedTarget", () => "#teleports");
+  function bindNested() {
+    nestedTarget.value = document.getElementById("nested-element-target");
+  }
   function move() { target.value = "#svg-target"; }
-  return { target, move };
-}
-export default createClientComponent({ id: "m0", name: "TeleportNamespaceReinit", file: "TeleportNamespaceReinit.vue", script, template, handlers: ["move"] });
-`,
-    );
+  return { target, nestedTarget, bindNested, move };
+}`,
+      handlers: ["bindNested", "move"],
+    });
 
+    const nestedSource = managedTeleportSourceComment({
+      to: "#teleports",
+      toBinding: "s0:b1",
+      disabled: false,
+      defer: false,
+      bindings: { b1: "s0:b1" },
+      html: '<p id="nested-element-content">Nested</p>',
+    });
     const window = new Window({ url: "http://localhost/" });
-    window.document.body.innerHTML = `
-      <div id="__resux">
-        <button id="move-namespace" data-rx-on-click="s0:m0:move">Move</button>
-        <span
-          data-rx-teleport-source="true"
-          data-rx-teleport-to="#html-target"
-          data-rx-attr-b0="s0:b0"
-          style="display: contents;"
-        >
-          <div id="namespace-island" data-rx-vue-island="MissingIsland"></div>
-        </span>
-      </div>
-      <div id="html-target"></div>
-      <svg id="svg-target" viewBox="0 0 24 24"></svg>
-    `;
+    window.document.body.innerHTML =
+      '<div id="__resux">'
+      + '<button id="bind-nested-target" data-rx-on-click="s0:m0:bindNested">Bind</button>'
+      + '<button id="move-namespace" data-rx-on-click="s0:m0:move">Move</button>'
+      + '<span data-rx-teleport-source="true" data-rx-teleport-to="#html-target" data-rx-attr-b0="s0:b0" style="display: contents;">'
+      + '<div id="namespace-island" data-rx-vue-island="MissingIsland"></div>'
+      + nestedSource
+      + '</span></div>'
+      + '<div id="html-target"></div><svg id="svg-target" viewBox="0 0 24 24"></svg>'
+      + '<div id="teleports"></div><div id="nested-element-target"></div>';
 
-    installClientRuntimeFixture(window, { target: "#html-target" }, handlerUrl);
+    installClientRuntimeFixture(
+      window,
+      { target: "#html-target", nestedTarget: "#teleports" },
+      handlerUrl,
+    );
     (globalThis as any).__RESUX__.vueIslands = {};
-    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
 
     const htmlTarget = window.document.getElementById("html-target")!;
     await waitForCondition(() => Boolean(htmlTarget.querySelector("#namespace-island")));
@@ -3991,9 +4076,12 @@ export default createClientComponent({ id: "m0", name: "TeleportNamespaceReinit"
     await waitForCondition(() => initialIsland.getAttribute("data-rx-vue-error") === "missing");
     initialIsland.removeAttribute("data-rx-vue-error");
 
-    window.document.getElementById("move-namespace")!.dispatchEvent(
-      new window.MouseEvent("click", { bubbles: true, button: 0 }),
-    );
+    clickRuntimeFixture(window, "bind-nested-target");
+    const nestedTarget = window.document.getElementById("nested-element-target")!;
+    await waitForCondition(() => Boolean(nestedTarget.querySelector("#nested-element-content")));
+    expect(window.document.getElementById("teleports")?.querySelector("#nested-element-content")).toBeNull();
+
+    clickRuntimeFixture(window, "move-namespace");
 
     const svgTarget = window.document.getElementById("svg-target")!;
     await waitForCondition(() => Boolean(svgTarget.querySelector("#namespace-island")));
@@ -4002,6 +4090,9 @@ export default createClientComponent({ id: "m0", name: "TeleportNamespaceReinit"
     expect(recreatedIsland.namespaceURI).toBe("http://www.w3.org/2000/svg");
     await waitForCondition(() => recreatedIsland.getAttribute("data-rx-vue-error") === "missing");
     expect(recreatedIsland.getAttribute("data-rx-vue-error")).toBe("missing");
+    await waitForCondition(() => Boolean(nestedTarget.querySelector("#nested-element-content")));
+    expect(nestedTarget.querySelector("#nested-element-content")).toBeTruthy();
+    expect(window.document.getElementById("teleports")?.querySelector("#nested-element-content")).toBeNull();
   });
 
   it("resolves a deferred Teleport after a later patch creates its target in the same tick", async () => {
@@ -4750,8 +4841,32 @@ export default createClientComponent({ id: "m0", name: "Model", file: "Model.vue
     const tempDir = path.join(os.tmpdir(), `resux-nav-${Date.now()}`);
     await mkdir(tempDir, { recursive: true });
     const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    const handlerFile = path.join(tempDir, "handler.mjs");
     await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+    await writeFile(
+      handlerFile,
+      `import { createClientComponent } from ${JSON.stringify(pathToFileURL(runtimeFile).href)};
+const template = [
+  { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "nav-deferred-target" }], events: [], if: { expression: "!stats.pending.value", blockId: "b0" }, children: [] }
+];
+async function script(ctx) {
+  const stats = ctx.useAsyncData("stats", async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return { ready: true };
+  });
+  return { stats };
+}
+export default createClientComponent({ id: "m1", name: "PostRoute", file: "PostRoute.vue", script, template, handlers: [] });
+`,
+      "utf8",
+    );
 
+    const deferredSource = managedTeleportSourceComment({
+      to: "#nav-deferred-target",
+      disabled: false,
+      defer: true,
+      html: '<p id="nav-deferred-content">Deferred navigation</p>',
+    });
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML = `
       <div id="__resux">
@@ -4771,7 +4886,8 @@ export default createClientComponent({ id: "m0", name: "Model", file: "Model.vue
         requestedUrl = url;
         return new Response(
           JSON.stringify({
-            html: "<main>Post 42</main>",
+            html: '<main>Post 42</main>' + deferredSource
+              + '<span data-rx-block="s1:b0" style="display: contents;"></span>',
             head: {
               title: "Post 42",
               meta: [{ name: "route", content: "post" }],
@@ -4783,8 +4899,17 @@ export default createClientComponent({ id: "m0", name: "Model", file: "Model.vue
                 params: { id: "42" },
                 query: { tab: "info" }
               },
-              scopes: {},
-              modules: {}
+              scopes: {
+                s1: {
+                  id: "s1",
+                  moduleId: "m1",
+                  state: {},
+                  asyncData: {
+                    stats: { value: null, pending: true, error: null }
+                  }
+                }
+              },
+              modules: { m1: pathToFileURL(handlerFile).href }
             }
           }),
           {
@@ -4812,6 +4937,10 @@ export default createClientComponent({ id: "m0", name: "Model", file: "Model.vue
     expect((globalThis as any).__RESUX__.route.params.id).toBe("42");
     expect(window.document.title).toBe("Post 42");
     expect(window.document.head.innerHTML).toContain('name="route"');
+    await waitForCondition(() =>
+      Boolean(window.document.getElementById("nav-deferred-target")?.querySelector("#nav-deferred-content")),
+    );
+    expect(window.document.getElementById("nav-deferred-target")?.querySelector("#nav-deferred-content")).toBeTruthy();
   });
 
   it("normalizes preload head links on client navigation updates", async () => {

@@ -14139,7 +14139,7 @@ async function navigateTo(target, options = {}) {
     animateRouteSwap(preserved.root);
     clearScopeCacheExcept(preserved.scopeIds);
     void resumePendingAsyncData();
-    mountManagedTeleports(document);
+    mountManagedTeleports(document, { deferMissingTarget: true });
     initializeManagedRuntimeContent(document);
 
     if (!options.preserveScroll && nextUrl.hash) {
@@ -14557,12 +14557,18 @@ function managedTeleportParsingContext(target) {
       : "svg";
     return namespace + ":" + integration;
   }
-  if (namespace === MATHML_NAMESPACE && localName === "annotation-xml") {
-    const encoding = String(target?.getAttribute?.("encoding") || "").trim().toLowerCase();
-    const integration = ["text/html", "application/xhtml+xml"].includes(encoding)
-      ? "html"
+  if (namespace === MATHML_NAMESPACE) {
+    if (localName === "annotation-xml") {
+      const encoding = String(target?.getAttribute?.("encoding") || "").trim().toLowerCase();
+      const integration = ["text/html", "application/xhtml+xml"].includes(encoding)
+        ? "html"
+        : "mathml";
+      return namespace + ":" + localName + ":" + integration;
+    }
+    const integration = ["mi", "mo", "mn", "ms", "mtext"].includes(localName)
+      ? "text"
       : "mathml";
-    return namespace + ":" + localName + ":" + integration;
+    return namespace + ":" + integration;
   }
   return namespace + ":" + localName;
 }
@@ -14850,6 +14856,18 @@ function restoreManagedTeleportsWithinContent(content) {
   }
 }
 
+function retokenizeNestedManagedTeleportLiveTargets(content) {
+  for (const source of nestedManagedTeleportSources(content)) {
+    if (!isManagedTeleportCommentSource(source)) continue;
+    const target = managedTeleportLiveTargets.get(source);
+    if (!isManagedTeleportElementTarget(target)) continue;
+    const metadata = decodeManagedTeleportSourceMetadata(source);
+    metadata.liveTargetToken = createManagedTeleportLiveTargetToken(target);
+    source.data = MANAGED_TELEPORT_SOURCE_PREFIX + encodeClientTeleportSourceMetadata(metadata);
+    managedTeleportSourceMetadataCache.set(source, metadata);
+  }
+}
+
 function managedTeleportNodeContextsMatch(actual, expected) {
   if (!actual || !expected || actual.nodeType !== expected.nodeType) return false;
   if (actual.nodeType === 1) {
@@ -14913,6 +14931,9 @@ function normalizeManagedTeleportNamespace(content, target) {
   }
 
   restoreManagedTeleportsWithinContent(content);
+  if (content.parseContext != null) {
+    retokenizeNestedManagedTeleportLiveTargets(content);
+  }
   const markup = managedTeleportSourceMarkup(content);
   const currentNodes = managedTeleportRangeNodes(content);
   const parsedNodes = parseManagedTeleportMarkup(markup, target);

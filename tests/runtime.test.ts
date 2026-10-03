@@ -435,9 +435,79 @@ describe("runtime SSR", () => {
     expect(result.html).not.toContain("<teleport");
     const parsed = new Window({ url: "http://localhost/" });
     parsed.document.body.innerHTML = result.html;
-    expect(managedTeleportCommentRecords(parsed.document.body)[0]?.metadata.to).toBe("#teleports");
-    expect(documentHtml).toContain('<div id="teleports" data-rx-teleport-fallback="true"></div>');
+    const source = managedTeleportCommentRecords(parsed.document.body)[0];
+    expect(source?.metadata.to).toBe("#teleports");
+    expect(source?.metadata.html).toContain('id="overlay"');
+    expect(result.teleports?.["#teleports"]).toContain("<!--resux-teleport-start-->");
+    expect(result.teleports?.["#teleports"]).toContain('<div id="overlay">Overlay</div>');
+    expect(documentHtml).toContain(
+      '<div id="teleports" data-rx-teleport-fallback="true"><!--resux-teleport-start--><div id="overlay">Overlay</div><!--resux-teleport-end--></div>',
+    );
     expect(documentHtml).toContain('<script type="module" src="/__resux/runtime-client.mjs"></script>');
+  });
+
+  it("adopts server-rendered default Teleport content without duplicating it", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-ssr-adoption",
+      () => "export default {};",
+    );
+    const page: ComponentDefinition = defineComponent({
+      id: "m0",
+      name: "TeleportSsrAdoptionPage",
+      file: "TeleportSsrAdoptionPage.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [{
+        type: "element",
+        tag: "teleport",
+        attrs: [{ kind: "static", name: "to", value: "#teleports" }],
+        events: [],
+        children: [{
+          type: "element",
+          tag: "div",
+          attrs: [{ kind: "static", name: "id", value: "ssr-adopted-overlay" }],
+          events: [],
+          children: [{ type: "text", value: "SSR visible" }],
+        }],
+      }],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/", params: {}, query: {} },
+      modules: { m0: handlerUrl },
+    });
+    const documentHtml = renderDocument(result);
+    const body = /<body[^>]*>([\s\S]*?)<\/body>/.exec(documentHtml)?.[1];
+    expect(body).toBeTruthy();
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = body!;
+    const target = window.document.getElementById("teleports")!;
+    expect(target.querySelectorAll("#ssr-adopted-overlay")).toHaveLength(1);
+
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      scrollTo: () => undefined,
+      __RESUX__: result.payload,
+      __RESUX_APP__: undefined,
+      __RESUX_ROUTER__: undefined,
+      __RESUX_INSTALLED__: false,
+    });
+
+    try {
+      await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+      await waitForCondition(() => Boolean(target.querySelector("#ssr-adopted-overlay")));
+      expect(target.querySelectorAll("#ssr-adopted-overlay")).toHaveLength(1);
+      expect(target.querySelector("#ssr-adopted-overlay")?.textContent).toBe("SSR visible");
+    } finally {
+      resetClientRuntimeFixture();
+    }
   });
 
   it("honors a bare Teleport disabled attribute during SSR", async () => {
@@ -3756,15 +3826,18 @@ async function script(ctx) {
 
       await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
       await waitForCondition(() => (globalThis as any).__RESUX_TEST_PLUGIN_STARTED__ === true);
+      expect((globalThis as any).__RESUX_TEST_PLUGIN_STARTED__).toBe(true);
 
       const first = window.document.getElementById("plugin-first-target")!;
       const second = window.document.getElementById("plugin-second-target")!;
       await waitForCondition(() => Boolean(first.querySelector("#plugin-gated-teleport")));
+      expect(first.querySelector("#plugin-gated-teleport")).toBeTruthy();
 
       clickRuntimeFixture(window, "move-during-plugin");
       await waitForCondition(() =>
         second.querySelector('[data-rx-text="s0:b1"]')?.textContent === "Updated",
       );
+      expect(second.querySelector('[data-rx-text="s0:b1"]')?.textContent).toBe("Updated");
 
       releasePlugin?.();
       await waitForCondition(() => Boolean(second.querySelector("#plugin-gated-teleport")));

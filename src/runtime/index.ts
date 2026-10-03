@@ -14685,7 +14685,9 @@ function populateManagedTeleportRange(source, content, target, options = {}) {
     for (const node of managedTeleportInitialNodes(source, target)) {
       content.end.parentNode?.insertBefore(node, content.end);
     }
-    content.parseContext = null;
+    if (isManagedTeleportCommentSource(source)) {
+      content.parseContext = managedTeleportParsingContext(target);
+    }
   }
   normalizeManagedTeleportNamespace(content, target);
   initializeManagedTeleportContent(content, options);

@@ -3662,19 +3662,43 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
     expect(htmlAnnotation.querySelector("#annotation-child")).toBeNull();
   });
 
-  it("registers Teleport bindings before a slow client plugin finishes", async () => {
-    const { runtimeUrl, handlerUrl } = await createDynamicTeleportRuntimeFixture({
-      prefix: "resux-teleport-plugin-startup-binding",
+  it("mounts and patches Teleport content before a slow client plugin finishes", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientComponentRuntimeFixture({
+      prefix: "resux-teleport-plugin-startup-mount",
       componentName: "PluginStartupTeleport",
-      initialTarget: "#plugin-first-target",
-      nextTarget: "#plugin-second-target",
-      children: [{
-        type: "element",
-        tag: "p",
-        attrs: [{ kind: "static", name: "id", value: "plugin-gated-teleport" }],
-        events: [],
-        children: [{ type: "text", value: "Plugin" }],
-      }],
+      template: [
+        {
+          type: "element",
+          tag: "button",
+          attrs: [],
+          events: [{ name: "click", handler: "move" }],
+          children: [{ type: "text", value: "Move" }],
+        },
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [{ kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }],
+          events: [],
+          children: [{
+            type: "element",
+            tag: "p",
+            attrs: [{ kind: "static", name: "id", value: "plugin-gated-teleport" }],
+            events: [],
+            children: [{ type: "interpolation", expression: "label.value", bindingId: "b1" }],
+          }],
+        },
+      ],
+      scriptSource: `
+async function script(ctx) {
+  const target = ctx.useState("target", () => "#plugin-first-target");
+  const label = ctx.useState("label", () => "Plugin");
+  function move() {
+    target.value = "#plugin-second-target";
+    label.value = "Updated";
+  }
+  return { target, label, move };
+}`,
+      handlers: ["move"],
     });
 
     const pluginUrl = handlerUrl.replace(/handler\.mjs$/, "slow-plugin.mjs");
@@ -3684,10 +3708,13 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
       "utf8",
     );
 
-    const source = managedTeleportBindingSourceComment(
-      "#plugin-first-target",
-      '<p id="plugin-gated-teleport">Plugin</p>',
-    );
+    const source = managedTeleportSourceComment({
+      to: "#plugin-first-target",
+      disabled: false,
+      defer: false,
+      bindings: { b0: "s0:b0" },
+      html: '<p id="plugin-gated-teleport"><span data-rx-text="s0:b1">Plugin</span></p>',
+    });
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML =
       '<div id="__resux"><button id="move-during-plugin" data-rx-on-click="s0:m0:move">Move</button>'
@@ -3700,7 +3727,11 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
     });
 
     try {
-      installClientRuntimeFixture(window, { target: "#plugin-first-target" }, handlerUrl);
+      installClientRuntimeFixture(
+        window,
+        { target: "#plugin-first-target", label: "Plugin" },
+        handlerUrl,
+      );
       (globalThis as any).__RESUX__.plugins = [{
         id: "slow-plugin",
         mode: "client",
@@ -3709,21 +3740,235 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
 
       await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
       await waitForCondition(() => (globalThis as any).__RESUX_TEST_PLUGIN_STARTED__ === true);
-      expect((globalThis as any).__RESUX_TEST_PLUGIN_STARTED__).toBe(true);
+
+      const first = window.document.getElementById("plugin-first-target")!;
+      const second = window.document.getElementById("plugin-second-target")!;
+      await waitForCondition(() => Boolean(first.querySelector("#plugin-gated-teleport")));
 
       clickRuntimeFixture(window, "move-during-plugin");
+      await waitForCondition(() =>
+        second.querySelector('[data-rx-text="s0:b1"]')?.textContent === "Updated",
+      );
 
       releasePlugin?.();
-      await waitForCondition(() =>
-        Boolean(window.document.getElementById("plugin-second-target")?.querySelector("#plugin-gated-teleport")),
-      );
-      expect(window.document.getElementById("plugin-second-target")?.querySelector("#plugin-gated-teleport")).toBeTruthy();
-      expect(window.document.getElementById("plugin-first-target")?.querySelector("#plugin-gated-teleport")).toBeNull();
+      await waitForCondition(() => Boolean(second.querySelector("#plugin-gated-teleport")));
+      expect(second.querySelector('[data-rx-text="s0:b1"]')?.textContent).toBe("Updated");
+      expect(first.querySelector("#plugin-gated-teleport")).toBeNull();
     } finally {
       releasePlugin?.();
       delete (globalThis as any).__RESUX_TEST_PLUGIN_GATE__;
       delete (globalThis as any).__RESUX_TEST_PLUGIN_STARTED__;
     }
+  });
+
+  it("queues an initially missing deferred Teleport for a later reactive target", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientComponentRuntimeFixture({
+      prefix: "resux-teleport-startup-deferred-target",
+      componentName: "StartupDeferredTeleport",
+      template: [
+        {
+          type: "element",
+          tag: "button",
+          attrs: [],
+          events: [{ name: "click", handler: "reveal" }],
+          children: [{ type: "text", value: "Reveal" }],
+        },
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [
+            { kind: "static", name: "to", value: "#startup-deferred-target" },
+            { kind: "static", name: "defer", value: "" },
+          ],
+          events: [],
+          children: [{
+            type: "element",
+            tag: "p",
+            attrs: [{ kind: "static", name: "id", value: "startup-deferred-content" }],
+            events: [],
+            children: [{ type: "text", value: "Deferred" }],
+          }],
+        },
+        {
+          type: "element",
+          tag: "div",
+          attrs: [{ kind: "static", name: "id", value: "startup-deferred-target" }],
+          events: [],
+          if: { expression: "show.value", blockId: "startup-deferred-target-block" },
+          children: [],
+        },
+      ],
+      scriptSource: `
+async function script(ctx) {
+  const show = ctx.useState("show", () => false);
+  function reveal() { show.value = true; }
+  return { show, reveal };
+}`,
+      handlers: ["reveal"],
+    });
+
+    const source = managedTeleportSourceComment({
+      to: "#startup-deferred-target",
+      disabled: false,
+      defer: true,
+      html: '<p id="startup-deferred-content">Deferred</p>',
+    });
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="reveal-deferred-target" data-rx-on-click="s0:m0:reveal">Reveal</button>'
+      + source
+      + '<span data-rx-block="s0:startup-deferred-target-block" style="display: contents;"></span></div>';
+
+    installClientRuntimeFixture(window, { show: false }, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    clickRuntimeFixture(window, "reveal-deferred-target");
+
+    await waitForCondition(() =>
+      Boolean(window.document.getElementById("startup-deferred-target")?.querySelector("#startup-deferred-content")),
+    );
+    expect(window.document.getElementById("startup-deferred-target")?.querySelector("#startup-deferred-content")).toBeTruthy();
+  });
+
+  it("preserves Teleport node identity across equivalent SVG target contexts", async () => {
+    const { runtimeUrl, handlerUrl } = await createDynamicTeleportRuntimeFixture({
+      prefix: "resux-teleport-equivalent-svg-contexts",
+      componentName: "EquivalentSvgTeleport",
+      initialTarget: "#svg-container-a",
+      nextTarget: "#svg-container-b",
+      children: [{
+        type: "element",
+        tag: "circle",
+        attrs: [{ kind: "static", name: "id", value: "svg-context-circle" }],
+        events: [],
+        children: [],
+      }],
+    });
+
+    const source = managedTeleportBindingSourceComment(
+      "#svg-container-a",
+      '<circle id="svg-context-circle"></circle>',
+    );
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="move-svg-context" data-rx-on-click="s0:m0:move">Move</button>'
+      + source + '</div>';
+
+    const svg = window.document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const first = window.document.createElementNS("http://www.w3.org/2000/svg", "g");
+    const second = window.document.createElementNS("http://www.w3.org/2000/svg", "defs");
+    first.setAttribute("id", "svg-container-a");
+    second.setAttribute("id", "svg-container-b");
+    svg.appendChild(first);
+    svg.appendChild(second);
+    window.document.body.appendChild(svg);
+
+    installClientRuntimeFixture(window, { target: "#svg-container-a" }, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    await waitForCondition(() => Boolean(first.querySelector("#svg-context-circle")));
+    const circle = first.querySelector("#svg-context-circle")!;
+    circle.setAttribute("data-live-state", "preserved");
+
+    clickRuntimeFixture(window, "move-svg-context");
+
+    await waitForCondition(() => Boolean(second.querySelector("#svg-context-circle")));
+    const moved = second.querySelector("#svg-context-circle");
+    expect(moved).toBe(circle);
+    expect(moved?.getAttribute("data-live-state")).toBe("preserved");
+  });
+
+  it("reparses a replaced Teleport target from the live range state", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientComponentRuntimeFixture({
+      prefix: "resux-teleport-live-range-reparse",
+      componentName: "LiveRangeReparseTeleport",
+      template: [
+        {
+          type: "element",
+          tag: "button",
+          attrs: [],
+          events: [{ name: "click", handler: "swap" }],
+          children: [{ type: "text", value: "Swap" }],
+        },
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [
+            { kind: "static", name: "to", value: "#live-context-target" },
+            { kind: "static", name: "defer", value: "" },
+          ],
+          events: [],
+          children: [{
+            type: "element",
+            tag: "g",
+            attrs: [{ kind: "static", name: "id", value: "live-context-content" }],
+            events: [],
+            children: [{ type: "interpolation", expression: "label.value", bindingId: "b1" }],
+          }],
+        },
+        {
+          type: "element",
+          tag: "div",
+          attrs: [{ kind: "static", name: "id", value: "live-context-target" }],
+          events: [],
+          if: { expression: "!svg.value", blockId: "live-html-target-block" },
+          children: [],
+        },
+        {
+          type: "element",
+          tag: "svg",
+          attrs: [{ kind: "static", name: "id", value: "live-context-target" }],
+          events: [],
+          if: { expression: "svg.value", blockId: "live-svg-target-block" },
+          children: [],
+        },
+      ],
+      scriptSource: `
+async function script(ctx) {
+  const label = ctx.useState("label", () => "Old");
+  const svg = ctx.useState("svg", () => false);
+  function swap() {
+    label.value = "New";
+    svg.value = true;
+  }
+  return { label, svg, swap };
+}`,
+      handlers: ["swap"],
+    });
+
+    const source = managedTeleportSourceComment({
+      to: "#live-context-target",
+      disabled: false,
+      defer: true,
+      html: '<g id="live-context-content"><span data-rx-text="s0:b1">Old</span></g>',
+    });
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="swap-live-context" data-rx-on-click="s0:m0:swap">Swap</button>'
+      + source
+      + '<span data-rx-block="s0:live-html-target-block" style="display: contents;"><div id="live-context-target"></div></span>'
+      + '<span data-rx-block="s0:live-svg-target-block" style="display: contents;"></span></div>';
+
+    installClientRuntimeFixture(window, { label: "Old", svg: false }, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    await waitForCondition(() =>
+      Boolean(window.document.getElementById("live-context-target")?.querySelector("#live-context-content")),
+    );
+
+    clickRuntimeFixture(window, "swap-live-context");
+
+    await waitForCondition(() => {
+      const target = window.document.getElementById("live-context-target");
+      return target?.namespaceURI === "http://www.w3.org/2000/svg"
+        && target.querySelector('[data-rx-text="s0:b1"]')?.textContent === "New";
+    });
+
+    const svgTarget = window.document.getElementById("live-context-target")!;
+    const liveContent = svgTarget.querySelector("#live-context-content")!;
+    expect(svgTarget.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    expect(liveContent.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    expect(liveContent.querySelector('[data-rx-text="s0:b1"]')?.textContent).toBe("New");
   });
 
   it("preserves an element-valued Teleport target across structural block replacement", async () => {

@@ -11318,10 +11318,10 @@ async function initializeClientRuntime() {
     return;
   }
   reconcileDefaultTeleportTarget();
-  managedTeleportSources(document);
+  mountManagedTeleports(document, { deferMissingTarget: true });
   await ensureClientPlugins(payload);
   reconcileDefaultTeleportTarget();
-  mountManagedTeleports(document);
+  mountManagedTeleports(document, { deferMissingTarget: true });
   const middlewareResult = await runClientRouteMiddleware(payload, { path: "", params: {}, query: {} });
   if (middlewareResult?.type === "redirect") {
     await navigateTo(middlewareResult.to, { replace: true });
@@ -14547,6 +14547,12 @@ function managedTeleportParsingContext(target) {
       : "default";
     return namespace + ":" + contextualTag;
   }
+  if (namespace === SVG_NAMESPACE) {
+    const integration = ["foreignobject", "desc", "title"].includes(localName)
+      ? "html"
+      : "svg";
+    return namespace + ":" + integration;
+  }
   if (namespace === MATHML_NAMESPACE && localName === "annotation-xml") {
     const encoding = String(target?.getAttribute?.("encoding") || "").trim().toLowerCase();
     const integration = ["text/html", "application/xhtml+xml"].includes(encoding)
@@ -14867,12 +14873,14 @@ function managedTeleportRangeMatchesParsedContext(actualNodes, expectedNodes) {
 }
 
 function managedTeleportSourceMarkup(content) {
+  if (managedTeleportRangeNodes(content).length > 0) {
+    return managedTeleportRangeMarkup(content);
+  }
   const source = content?.source;
   if (isManagedTeleportCommentSource(source)) {
-    const markup = decodeManagedTeleportSourceMetadata(source).html || "";
-    if (markup) return markup;
+    return decodeManagedTeleportSourceMetadata(source).html || "";
   }
-  return managedTeleportRangeMarkup(content);
+  return "";
 }
 
 function normalizeManagedTeleportNamespace(content, target) {

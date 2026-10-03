@@ -14436,8 +14436,52 @@ function managedTeleportRangeMarkup(content) {
   return container.innerHTML;
 }
 
+function managedTeleportEffectiveNamespace(node) {
+  if (!node) return XHTML_NAMESPACE;
+  const localName = String(node.localName || "").toLowerCase();
+  if (localName === "svg") return SVG_NAMESPACE;
+  if (localName === "math") return MATHML_NAMESPACE;
+
+  const reportedNamespace = node.namespaceURI || XHTML_NAMESPACE;
+  if (reportedNamespace === SVG_NAMESPACE || reportedNamespace === MATHML_NAMESPACE) {
+    return reportedNamespace;
+  }
+
+  const parent = node.parentElement;
+  if (!parent) return reportedNamespace;
+  const parentNamespace = managedTeleportEffectiveNamespace(parent);
+  const parentLocalName = String(parent.localName || "").toLowerCase();
+
+  if (parentNamespace === SVG_NAMESPACE) {
+    if (["foreignobject", "desc", "title"].includes(parentLocalName)) {
+      return XHTML_NAMESPACE;
+    }
+    return SVG_NAMESPACE;
+  }
+
+  if (parentNamespace === MATHML_NAMESPACE) {
+    if (
+      ["mi", "mo", "mn", "ms", "mtext"].includes(parentLocalName)
+      && !["mglyph", "malignmark"].includes(localName)
+    ) {
+      return XHTML_NAMESPACE;
+    }
+    if (
+      parentLocalName === "annotation-xml"
+      && ["text/html", "application/xhtml+xml"].includes(
+        String(parent.getAttribute?.("encoding") || "").toLowerCase()
+      )
+    ) {
+      return XHTML_NAMESPACE;
+    }
+    return MATHML_NAMESPACE;
+  }
+
+  return reportedNamespace;
+}
+
 function managedTeleportParsingContext(target) {
-  const namespace = target?.namespaceURI || XHTML_NAMESPACE;
+  const namespace = managedTeleportEffectiveNamespace(target);
   const localName = String(target?.localName || "").toLowerCase();
   if (namespace === XHTML_NAMESPACE) {
     const contextualTag = ["table", "thead", "tbody", "tfoot", "tr", "colgroup", "select", "optgroup"]
@@ -14551,7 +14595,7 @@ const MANAGED_TELEPORT_SVG_ATTRIBUTE_NAMES = {
 };
 
 function managedTeleportElementNamespace(parent, localName) {
-  const parentNamespace = parent?.namespaceURI || XHTML_NAMESPACE;
+  const parentNamespace = managedTeleportEffectiveNamespace(parent);
   const parentLocalName = String(parent?.localName || "").toLowerCase();
   const childLocalName = String(localName || "").toLowerCase();
 
@@ -14639,7 +14683,7 @@ function parseManagedTeleportNamespacedMarkup(markup, target) {
 }
 
 function parseManagedTeleportMarkup(markup, target) {
-  const namespace = target?.namespaceURI || XHTML_NAMESPACE;
+  const namespace = managedTeleportEffectiveNamespace(target);
   const localName = String(target?.localName || "").toLowerCase();
 
   if (

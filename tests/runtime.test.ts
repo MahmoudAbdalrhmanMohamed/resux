@@ -61,6 +61,144 @@ function installClientRuntimeFixture(
   });
 }
 
+async function renderRuntimePage(page: ComponentDefinition) {
+  const result = await renderApp({
+    page,
+    route: { path: "/", params: {}, query: {} },
+  });
+  const parsed = new Window({ url: "http://localhost/" });
+  parsed.document.body.innerHTML = result.html;
+  return { result, parsed };
+}
+
+type ManagedTeleportCommentRecord = {
+  node: Comment;
+  metadata: {
+    to?: string;
+    toBinding?: string;
+    liveTargetToken?: string;
+    disabled?: boolean;
+    defer?: boolean;
+    bindings?: Record<string, string>;
+    html?: string;
+  };
+};
+
+function managedTeleportSourceComment(metadata: ManagedTeleportCommentRecord["metadata"]): string {
+  const encoded = encodeURIComponent(JSON.stringify(metadata)).replaceAll("-", "%2D");
+  return `<!--resux-teleport-source:${encoded}--><!--resux-teleport-end-->`;
+}
+
+type ClientComponentRuntimeFixtureOptions = {
+  prefix: string;
+  componentName: string;
+  template: unknown[];
+  scriptSource: string;
+  handlers: string[];
+};
+
+async function createClientComponentRuntimeFixture(
+  options: ClientComponentRuntimeFixtureOptions,
+): Promise<{ runtimeUrl: string; handlerUrl: string }> {
+  return createClientRuntimeFixture(options.prefix, (runtimeUrl) => `
+import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = ${JSON.stringify(options.template)};
+${options.scriptSource}
+export default createClientComponent({
+  id: "m0",
+  name: ${JSON.stringify(options.componentName)},
+  file: ${JSON.stringify(options.componentName + ".vue")},
+  script,
+  template,
+  handlers: ${JSON.stringify(options.handlers)},
+});
+`);
+}
+
+type DynamicTeleportRuntimeFixtureOptions = {
+  prefix: string;
+  componentName: string;
+  initialTarget: string;
+  nextTarget: string;
+  children: unknown[];
+};
+
+async function createDynamicTeleportRuntimeFixture(
+  options: DynamicTeleportRuntimeFixtureOptions,
+): Promise<{ runtimeUrl: string; handlerUrl: string }> {
+  return createClientComponentRuntimeFixture({
+    prefix: options.prefix,
+    componentName: options.componentName,
+    template: [
+      {
+        type: "element",
+        tag: "button",
+        attrs: [],
+        events: [{ name: "click", handler: "move" }],
+        children: [{ type: "text", value: "Move" }],
+      },
+      {
+        type: "element",
+        tag: "teleport",
+        attrs: [{ kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }],
+        events: [],
+        children: options.children,
+      },
+    ],
+    scriptSource: `
+async function script(ctx) {
+  const target = ctx.useState("target", () => ${JSON.stringify(options.initialTarget)});
+  function move() { target.value = ${JSON.stringify(options.nextTarget)}; }
+  return { target, move };
+}`,
+    handlers: ["move"],
+  });
+}
+
+function managedTeleportBindingSourceComment(to: string, html: string): string {
+  return managedTeleportSourceComment({
+    to,
+    disabled: false,
+    defer: false,
+    bindings: { b0: "s0:b0" },
+    html,
+  });
+}
+
+function clickRuntimeFixture(window: Window, id: string): void {
+  window.document.getElementById(id)!.dispatchEvent(
+    new window.MouseEvent("click", { bubbles: true, button: 0 }),
+  );
+}
+
+function resetClientRuntimeFixture(): void {
+  for (const key of ["document", "window", "location", "history", "scrollTo", "__RESUX__", "__RESUX_APP__", "__RESUX_ROUTER__", "__RESUX_INSTALLED__"]) {
+    delete (globalThis as any)[key];
+  }
+}
+
+function managedTeleportCommentRecords(root: Node): ManagedTeleportCommentRecord[] {
+  const records: ManagedTeleportCommentRecord[] = [];
+  const visit = (node: Node) => {
+    if (node.nodeType === 8) {
+      const comment = node as Comment;
+      const prefix = "resux-teleport-source:";
+      if (comment.data.startsWith(prefix)) {
+        records.push({
+          node: comment,
+          metadata: JSON.parse(decodeURIComponent(comment.data.slice(prefix.length))),
+        });
+      }
+    }
+    for (const child of Array.from(node.childNodes)) {
+      visit(child);
+    }
+  };
+  visit(root);
+  return records;
+}
+
+
 describe("runtime SSR", () => {
   it("renders icon root presentation attributes consistently during SSR", async () => {
     const name = "audit-suite:ssr-outline";
@@ -261,6 +399,303 @@ describe("runtime SSR", () => {
     expect(result.html).toContain('<li key="2">');
     expect(result.html).not.toContain('<span data-rx-block="s0:b-list"');
     expect(getClientRuntimeSource()).toContain("style.animationIterationCount");
+  });
+
+  it("renders Teleport as a managed boundary and provides the Nuxt-compatible target", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-ssr-adoption",
+      () => "export default {};",
+    );
+    const page: ComponentDefinition = defineComponent({
+      id: "m-teleport-ssr",
+      name: "TeleportSsrPage",
+      file: "TeleportSsrPage.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [
+            { kind: "static", name: "to", value: "#teleports" },
+            { kind: "static", name: "disabled", value: "" },
+          ],
+          events: [],
+          children: [{
+            type: "element",
+            tag: "div",
+            attrs: [{ kind: "static", name: "id", value: "inline-overlay" }],
+            events: [],
+            children: [{ type: "text", value: "Inline" }],
+          }],
+        },
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [{ kind: "static", name: "to", value: "#teleports" }],
+          events: [],
+          children: [{
+            type: "element",
+            tag: "div",
+            attrs: [{ kind: "static", name: "id", value: "overlay" }],
+            events: [],
+            children: [{ type: "text", value: "Overlay" }],
+          }],
+        },
+      ],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/", params: {}, query: {} },
+    });
+    const documentHtml = renderDocument(result);
+
+    expect(result.html).toContain("<!--resux-teleport-source:");
+    expect(result.html).not.toContain("<teleport");
+    const parsed = new Window({ url: "http://localhost/" });
+    parsed.document.body.innerHTML = result.html;
+    const sources = managedTeleportCommentRecords(parsed.document.body);
+    expect(sources[0]?.metadata.disabled).toBe(true);
+    expect(result.html).toContain('id="inline-overlay"');
+    const source = sources[1];
+    expect(source?.metadata.to).toBe("#teleports");
+    expect(source?.metadata.html).toContain('id="overlay"');
+    expect(result.teleports?.["#teleports"]).toContain("<!--resux-teleport-start-->");
+    expect(result.teleports?.["#teleports"]).toContain('<div id="overlay">Overlay</div>');
+    expect(documentHtml).toContain(
+      '<div id="teleports" data-rx-teleport-fallback="true"><!--resux-teleport-start--><div id="overlay">Overlay</div><!--resux-teleport-end--></div>',
+    );
+    expect(documentHtml).toContain('<script type="module" src="/__resux/runtime-client.mjs"></script>');
+
+    const explicitTargetDocumentHtml = renderDocument({
+      ...result,
+      html: result.html + '<section id="teleports"><span id="explicit-target-existing">Existing</span></section>',
+    });
+    const explicitTargetWindow = new Window({ url: "http://localhost/" });
+    explicitTargetWindow.document.body.innerHTML = /<body[^>]*>([\s\S]*?)<\/body>/.exec(explicitTargetDocumentHtml)?.[1] ?? "";
+    const explicitTarget = explicitTargetWindow.document.getElementById("teleports")!;
+    expect(explicitTarget.querySelector("#explicit-target-existing")).toBeTruthy();
+    expect(explicitTarget.querySelectorAll("#overlay")).toHaveLength(1);
+    expect(explicitTargetWindow.document.querySelector("[data-rx-teleport-fallback='true']")?.hasAttribute("id")).toBe(false);
+
+    const body = /<body[^>]*>([\s\S]*?)<\/body>/.exec(documentHtml)?.[1];
+    expect(body).toBeTruthy();
+    parsed.document.body.innerHTML = body!;
+    const target = parsed.document.getElementById("teleports")!;
+    expect(target.querySelectorAll("#overlay")).toHaveLength(1);
+
+    installClientRuntimeFixture(parsed, {}, handlerUrl);
+    try {
+      await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+      await waitForCondition(() => Boolean(target.querySelector("#overlay")));
+      expect(target.querySelectorAll("#overlay")).toHaveLength(1);
+      expect(target.querySelector("#inline-overlay")).toBeNull();
+      expect(Array.from(target.childNodes).indexOf(target.querySelector("#overlay")!)).toBeGreaterThan(1);
+    } finally {
+      resetClientRuntimeFixture();
+    }
+  });
+
+  it("renders parser-safe Teleport markers inside select and table contexts", async () => {
+    const page: ComponentDefinition = defineComponent({
+      id: "m-teleport-parser-safe",
+      name: "TeleportParserSafePage",
+      file: "TeleportParserSafePage.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [
+        {
+          type: "element",
+          tag: "select",
+          attrs: [{ kind: "static", name: "id", value: "teleport-select" }],
+          events: [],
+          children: [{
+            type: "element",
+            tag: "teleport",
+            attrs: [{ kind: "static", name: "to", value: "#select-target" }],
+            events: [],
+            children: [{
+              type: "element",
+              tag: "option",
+              attrs: [{ kind: "static", name: "id", value: "teleported-option" }],
+              events: [],
+              children: [{ type: "text", value: "Option" }],
+            }],
+          }],
+        },
+        {
+          type: "element",
+          tag: "div",
+          attrs: [{ kind: "static", name: "id", value: "teleports" }],
+          events: [],
+          children: [],
+        },
+        {
+          type: "element",
+          tag: "table",
+          attrs: [],
+          events: [],
+          children: [{
+            type: "element",
+            tag: "tbody",
+            attrs: [{ kind: "static", name: "id", value: "teleport-body" }],
+            events: [],
+            children: [{
+              type: "element",
+              tag: "teleport",
+              attrs: [{ kind: "static", name: "to", value: "#table-target" }],
+              events: [],
+              children: [{
+                type: "element",
+                tag: "tr",
+                attrs: [{ kind: "static", name: "id", value: "teleported-row" }],
+                events: [],
+                children: [{
+                  type: "element",
+                  tag: "td",
+                  attrs: [],
+                  events: [],
+                  children: [{ type: "text", value: "Row" }],
+                }],
+              }],
+            }],
+          }],
+        },
+      ],
+    });
+
+    const { result, parsed } = await renderRuntimePage(page);
+
+    const select = parsed.document.getElementById("teleport-select")!;
+    const tableBody = parsed.document.getElementById("teleport-body")!;
+    const selectSource = managedTeleportCommentRecords(select)[0];
+    const tableSource = managedTeleportCommentRecords(tableBody)[0];
+
+    expect(selectSource?.metadata.to).toBe("#select-target");
+    expect(selectSource?.metadata.html).toContain('id="teleported-option"');
+    expect(tableSource?.metadata.to).toBe("#table-target");
+    expect(tableSource?.metadata.html).toContain('id="teleported-row"');
+    expect(result.html).not.toContain("<span data-rx-teleport-source");
+    expect(result.html).not.toContain("<template data-rx-teleport-source");
+    expect(renderDocument(result).match(/id="teleports"/g)).toHaveLength(1);
+    const dataIdOnlyHtml = result.html
+      .replace('id="teleports"', 'id="not-teleports"')
+      + '<div data-id="teleports"></div>';
+    expect(renderDocument({ ...result, html: dataIdOnlyHtml }))
+      .toContain('<div id="teleports" data-rx-teleport-fallback="true"></div>');
+  });
+
+  it("preserves Teleport row identity between equivalent table-section targets", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-table-context",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "move" }], children: [] },
+  { type: "element", tag: "teleport", attrs: [{ kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }], events: [], children: [
+    { type: "element", tag: "tr", attrs: [{ kind: "static", name: "id", value: "teleported-row" }], events: [], children: [
+      { type: "element", tag: "td", attrs: [], events: [], children: [{ type: "text", value: "Row" }] }
+    ] }
+  ] }
+];
+async function script(ctx) {
+  const target = ctx.useState("target", () => "#table-target");
+  function move() { target.value = "#tbody-target"; }
+  return { target, move };
+}
+export default createClientComponent({ id: "m0", name: "TableTeleport", file: "TableTeleport.vue", script, template, handlers: ["move"] });
+`,
+    );
+    const source = managedTeleportSourceComment({
+      to: "#table-target",
+      disabled: false,
+      defer: false,
+      bindings: { to: "s0:b0" },
+      html: '<tr id="teleported-row"><td>Row</td></tr>',
+    });
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux"><button id="move-table" data-rx-on-click="s0:m0:move"></button>${source}</div>
+      <table><thead id="table-target"></thead><tfoot id="tbody-target"></tfoot></table>
+    `;
+
+    installClientRuntimeFixture(window, { target: "#table-target" }, handlerUrl);
+    try {
+      await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+      await waitForCondition(() => Boolean(window.document.getElementById("table-target")?.querySelector("#teleported-row")));
+      const row = window.document.getElementById("table-target")!.querySelector("#teleported-row");
+      window.document.getElementById("move-table")!.dispatchEvent(
+        new window.MouseEvent("click", { bubbles: true, button: 0 }),
+      );
+      const target = window.document.getElementById("tbody-target")!;
+      await waitForCondition(() => Boolean(target.querySelector("#teleported-row")));
+      const movedRow = target.querySelector("#teleported-row");
+      expect(movedRow).toBe(row);
+      expect(movedRow?.localName).toBe("tr");
+      expect(movedRow?.parentElement).toBe(target);
+    } finally {
+      resetClientRuntimeFixture();
+    }
+  });
+  it("applies Vue Boolean semantics to static and bound Teleport disabled props during SSR", async () => {
+    const page: ComponentDefinition = defineComponent({
+      id: "m-teleport-boolean-ssr",
+      name: "TeleportBooleanSsrPage",
+      file: "TeleportBooleanSsrPage.vue",
+      handlers: [],
+      async script(ctx) {
+        const truthy = ctx.useState("truthy", () => 1);
+        const falsy = ctx.useState("falsy", () => 0);
+        return { truthy, falsy };
+      },
+      template: [
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [
+            { kind: "static", name: "to", value: "#static-disabled" },
+            { kind: "static", name: "disabled", value: "disabled" },
+          ],
+          events: [],
+          children: [{ type: "element", tag: "div", attrs: [], events: [], children: [{ type: "text", value: "Static" }] }],
+        },
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [
+            { kind: "static", name: "to", value: "#truthy-disabled" },
+            { kind: "dynamic", name: "disabled", value: "truthy.value", bindingId: "b-truthy-disabled" },
+          ],
+          events: [],
+          children: [{ type: "element", tag: "div", attrs: [], events: [], children: [{ type: "text", value: "Truthy" }] }],
+        },
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [
+            { kind: "static", name: "to", value: "#falsy-disabled" },
+            { kind: "dynamic", name: "disabled", value: "falsy.value", bindingId: "b-falsy-disabled" },
+          ],
+          events: [],
+          children: [{ type: "element", tag: "div", attrs: [], events: [], children: [{ type: "text", value: "Falsy" }] }],
+        },
+      ],
+    });
+
+    const { result, parsed } = await renderRuntimePage(page);
+
+    const records = managedTeleportCommentRecords(parsed.document.body);
+    const staticSource = records.find((record) => record.metadata.to === "#static-disabled");
+    const truthySource = records.find((record) => record.metadata.to === "#truthy-disabled");
+    const falsySource = records.find((record) => record.metadata.to === "#falsy-disabled");
+
+    expect(staticSource?.metadata.disabled).toBe(true);
+    expect(truthySource?.metadata.disabled).toBe(true);
+    expect(falsySource?.metadata.disabled).toBe(false);
   });
 
   it("renders HTML and serialized state without eagerly loading handler chunks", async () => {
@@ -2623,6 +3058,1231 @@ export default createClientComponent({ id: "m0", name: "TransitionPanel", file: 
     expect(window.document.querySelector('[data-rx-block="s0:b0"]')?.getAttribute("data-rx-transition")).toBe("slide");
   });
 
+  it("moves teleported transition content to #teleports and keeps resumed handlers reactive", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "toggle" }], children: [{ type: "text", value: "Toggle" }] },
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "move" }], children: [{ type: "text", value: "Move" }] },
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "toggleDisabled" }], children: [{ type: "text", value: "Placement" }] },
+  { type: "element", tag: "teleport", attrs: [
+    { kind: "dynamic", name: "to", value: "target.value", bindingId: "b2" },
+    { kind: "dynamic", name: "disabled", value: "disabled.value", bindingId: "b3" }
+  ], events: [], children: [
+    { type: "element", tag: "svg", attrs: [{ kind: "static", name: "id", value: "teleported-icon" }], events: [], children: [] },
+    { type: "element", tag: "transition", attrs: [{ kind: "static", name: "name", value: "fade" }], events: [], children: [
+      { type: "element", tag: "div", attrs: [], events: [], if: { expression: "visible.value", blockId: "b0" }, children: [
+        { type: "element", tag: "button", attrs: [{ kind: "static", name: "id", value: "teleported-action" }], events: [{ name: "click", handler: "ping" }], children: [
+          { type: "interpolation", expression: "hits.value", bindingId: "b1" }
+        ] }
+      ] }
+    ] }
+  ] }
+];
+async function script(ctx) {
+  const visible = ctx.useState("visible", () => false);
+  const hits = ctx.useState("hits", () => 0);
+  const target = ctx.useState("target", () => "#teleports");
+  const disabled = ctx.useState("disabled", () => false);
+  function toggle() { visible.value = !visible.value; }
+  function ping() { hits.value += 1; }
+  function move() { target.value = target.value === "#teleports" ? "#alternate-teleports" : "#teleports"; }
+  function toggleDisabled() { disabled.value = disabled.value === false ? 1 : false; }
+  return { visible, hits, target, disabled, toggle, ping, move, toggleDisabled };
+}
+export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "TeleportPanel.vue", script, template, handlers: ["toggle", "ping", "move", "toggleDisabled"] });
+`,
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.head.innerHTML = `<style>
+      .fade-enter-active,.fade-leave-active{transition:opacity .04s linear}
+      .fade-enter-from,.fade-leave-to{opacity:0}
+    </style>`;
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <button id="toggle" data-rx-on-click="s0:m0:toggle">Toggle</button>
+        <button id="move" data-rx-on-click="s0:m0:move">Move</button>
+        <button id="placement" data-rx-on-click="s0:m0:toggleDisabled">Placement</button>
+        <span
+          data-rx-teleport-source="true"
+          data-rx-teleport-to="#teleports"
+          data-rx-attr-b2="s0:b2"
+          data-rx-attr-b3="s0:b3"
+          style="display: contents;"
+        >
+          <svg id="teleported-icon"></svg>
+          <span data-rx-transition="fade" data-rx-block="s0:b0" style="display: contents;"></span>
+        </span>
+      </div>
+      <div id="teleports"></div>
+      <div id="alternate-teleports"></div>
+    `;
+
+    installClientRuntimeFixture(
+      window,
+      { visible: false, hits: 0, target: "#teleports", disabled: false },
+      handlerUrl,
+    );
+    let pageFinishCount = 0;
+    window.document.addEventListener("resux:page:finish", () => { pageFinishCount += 1; });
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+    expect(pageFinishCount).toBe(1);
+
+    const source = window.document.querySelector("[data-rx-teleport-source='true']") as HTMLElement;
+    const target = window.document.getElementById("teleports")!;
+    await waitForCondition(() => Boolean(target.querySelector("[data-rx-transition='fade']")));
+    const teleportedIcon = target.querySelector("#teleported-icon");
+    expect(teleportedIcon?.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    expect(source.childNodes).toHaveLength(0);
+    expect(target.firstElementChild).toBe(teleportedIcon);
+    expect(target.querySelector("[data-rx-transition='fade']")?.getAttribute("data-rx-transition")).toBe("fade");
+    expect(target.querySelector("[data-rx-teleport-content='true']")).toBeNull();
+
+    window.document.getElementById("toggle")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+    await waitForCondition(() => Boolean(window.document.getElementById("teleported-action")));
+    expect(target.querySelector("#teleported-icon")).toBe(teleportedIcon);
+
+    const action = window.document.getElementById("teleported-action")!;
+    expect(target.contains(action)).toBe(true);
+    expect(action.getAttribute("data-rx-on-click")).toBe("s0:m0:ping");
+    action.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+    await waitForCondition(() => window.document.querySelector('[data-rx-text="s0:b1"]')?.textContent === "1");
+    expect((globalThis as any).__RESUX__.scopes.s0.state.hits).toBe(1);
+
+    window.document.getElementById("toggle")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+    await waitForCondition(() => !window.document.getElementById("teleported-action"), 500);
+    expect(window.document.getElementById("teleported-action")).toBeNull();
+
+    window.document.getElementById("move")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+    const alternateTarget = window.document.getElementById("alternate-teleports")!;
+    await waitForCondition(() => Boolean(alternateTarget.querySelector("[data-rx-transition='fade']")));
+    expect(alternateTarget.querySelector("#teleported-icon")).toBe(teleportedIcon);
+    expect(alternateTarget.querySelector("[data-rx-transition='fade']")?.getAttribute("data-rx-transition")).toBe("fade");
+    expect(target.querySelector("[data-rx-transition='fade']")).toBeNull();
+
+    window.document.getElementById("placement")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+    await waitForCondition(() => Boolean(source.querySelector("[data-rx-transition='fade']")));
+    expect(alternateTarget.querySelector("[data-rx-transition='fade']")).toBeNull();
+    expect(source.getAttribute("data-rx-teleport-disabled")).toBe("true");
+
+    window.document.getElementById("placement")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+    await waitForCondition(() => Boolean(alternateTarget.querySelector("[data-rx-transition='fade']")));
+    expect(alternateTarget.firstElementChild).toBe(teleportedIcon);
+    expect(alternateTarget.querySelector("[data-rx-transition='fade']")?.getAttribute("data-rx-transition")).toBe("fade");
+    expect(source.childNodes).toHaveLength(0);
+    expect(source.hasAttribute("data-rx-teleport-disabled")).toBe(false);
+  });
+
+  it("mounts Teleports before initial client middleware aborts", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-middleware-abort",
+      () => "export default () => false;",
+    );
+    const source = managedTeleportSourceComment({
+      to: "#abort-target",
+      disabled: false,
+      defer: false,
+      bindings: {},
+      html: '<div id="abort-teleport">Visible</div>',
+    });
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `<div id="__resux">${source}</div><div id="abort-target"></div>`;
+    installClientRuntimeFixture(window, {}, handlerUrl);
+    (globalThis as any).__RESUX__.middleware = [{
+      id: "abort", name: "abort", file: "abort.ts", global: true, mode: "client", src: handlerUrl,
+    }];
+
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+    await waitForCondition(() => Boolean(window.document.getElementById("abort-target")?.querySelector("#abort-teleport")));
+    expect(window.document.getElementById("abort-target")?.querySelector("#abort-teleport")).toBeTruthy();
+  });
+
+  it("recursively cleans nested Teleports when their owning reactive block is removed", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-nested-teleport",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "toggle" }], children: [{ type: "text", value: "Toggle" }] },
+  { type: "element", tag: "div", attrs: [], events: [], if: { expression: "show.value", blockId: "b0" }, children: [
+    { type: "element", tag: "teleport", attrs: [{ kind: "static", name: "to", value: "#outer-target" }], events: [], children: [
+      { type: "element", tag: "teleport", attrs: [{ kind: "static", name: "to", value: "#inner-target" }], events: [], children: [
+        { type: "element", tag: "button", attrs: [{ kind: "static", name: "id", value: "nested-action" }], events: [{ name: "click", handler: "ping" }], children: [
+          { type: "interpolation", expression: "hits.value", bindingId: "b1" }
+        ] }
+      ] }
+    ] }
+  ] }
+];
+async function script(ctx) {
+  const show = ctx.useState("show", () => false);
+  const hits = ctx.useState("hits", () => 0);
+  function toggle() { show.value = !show.value; }
+  function ping() { hits.value += 1; }
+  return { show, hits, toggle, ping };
+}
+export default createClientComponent({ id: "m0", name: "NestedTeleport", file: "NestedTeleport.vue", script, template, handlers: ["toggle", "ping"] });
+`,
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <button id="toggle-nested" data-rx-on-click="s0:m0:toggle">Toggle</button>
+        <span data-rx-block="s0:b0" style="display: contents;"></span>
+      </div>
+      <div id="outer-target"></div>
+      <div id="inner-target"></div>
+    `;
+
+    installClientRuntimeFixture(window, { show: false, hits: 0 }, handlerUrl);
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+
+    const outerTarget = window.document.getElementById("outer-target")!;
+    const innerTarget = window.document.getElementById("inner-target")!;
+    const toggle = window.document.getElementById("toggle-nested")!;
+    toggle.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+    await waitForCondition(() => Boolean(innerTarget.querySelector("#nested-action")));
+    expect(managedTeleportCommentRecords(window.document.body).length).toBeGreaterThanOrEqual(2);
+    expect(innerTarget.firstElementChild?.id).toBe("nested-action");
+
+    toggle.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+    await waitForCondition(() => !window.document.getElementById("nested-action"));
+    expect(outerTarget.firstElementChild).toBeNull();
+    expect(innerTarget.firstElementChild).toBeNull();
+  });
+
+  it("initializes a Vue island marker after a reactive patch moves it through Teleport", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-patched-teleport-island",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "reveal" }], children: [{ type: "text", value: "Reveal" }] },
+  { type: "element", tag: "div", attrs: [], events: [], if: { expression: "visible.value", blockId: "b0" }, children: [
+    { type: "element", tag: "teleport", attrs: [{ kind: "static", name: "to", value: "#teleports" }], events: [], children: [
+      { type: "element", tag: "div", attrs: [
+        { kind: "static", name: "id", value: "teleported-island" },
+        { kind: "static", name: "data-rx-vue-island", value: "MissingIsland" }
+      ], events: [], children: [] }
+    ] }
+  ] }
+];
+async function script(ctx) {
+  const visible = ctx.useState("visible", () => false);
+  function reveal() { visible.value = true; }
+  return { visible, reveal };
+}
+export default createClientComponent({ id: "m0", name: "PatchedTeleportIsland", file: "PatchedTeleportIsland.vue", script, template, handlers: ["reveal"] });
+`,
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <button id="reveal" data-rx-on-click="s0:m0:reveal">Reveal</button>
+        <span data-rx-block="s0:b0" style="display: contents;"></span>
+      </div>
+      <div id="teleports"></div>
+    `;
+
+    installClientRuntimeFixture(window, { visible: false }, handlerUrl);
+    (globalThis as any).__RESUX__.vueIslands = {};
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+
+    window.document.getElementById("reveal")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+    await waitForCondition(() => Boolean(window.document.getElementById("teleported-island")));
+    const island = window.document.getElementById("teleported-island")!;
+    expect(window.document.getElementById("teleports")!.firstElementChild).toBe(island);
+    await waitForCondition(() => island.getAttribute("data-rx-vue-error") === "missing");
+    expect(island.getAttribute("data-rx-vue-error")).toBe("missing");
+  });
+
+  it("restores disabled Teleport content to the source namespace", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-restore-namespace",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "disable" }], children: [{ type: "text", value: "Disable" }] },
+  { type: "element", tag: "teleport", attrs: [
+    { kind: "static", name: "to", value: "#svg-target" },
+    { kind: "dynamic", name: "disabled", value: "disabled.value", bindingId: "b0" }
+  ], events: [], children: [
+    { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "restore-namespace-node" }], events: [], children: [{ type: "text", value: "Restored" }] }
+  ] }
+];
+async function script(ctx) {
+  const disabled = ctx.useState("disabled", () => false);
+  function disable() { disabled.value = true; }
+  return { disabled, disable };
+}
+export default createClientComponent({ id: "m0", name: "RestoreNamespace", file: "RestoreNamespace.vue", script, template, handlers: ["disable"] });
+`,
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <button id="disable-namespace" data-rx-on-click="s0:m0:disable">Disable</button>
+        <span data-rx-teleport-source="true" data-rx-teleport-to="#svg-target" data-rx-attr-b0="s0:b0" style="display: contents;">
+          <div id="restore-namespace-node">Restored</div>
+        </span>
+      </div>
+      <svg id="svg-target"></svg>
+    `;
+
+    installClientRuntimeFixture(window, { disabled: false }, handlerUrl);
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+
+    const source = window.document.querySelector("[data-rx-teleport-source='true']") as HTMLElement;
+    const svgTarget = window.document.getElementById("svg-target")!;
+    await waitForCondition(() => Boolean(svgTarget.querySelector("#restore-namespace-node")));
+    expect(svgTarget.querySelector("#restore-namespace-node")?.namespaceURI).toBe("http://www.w3.org/2000/svg");
+
+    window.document.getElementById("disable-namespace")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+    await waitForCondition(() => Boolean(source.querySelector("#restore-namespace-node")));
+    expect(source.querySelector("#restore-namespace-node")?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
+  });
+
+  it("preserves target order when an earlier Teleport starts disabled", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-disabled-order",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "enableFirst" }], children: [{ type: "text", value: "Enable" }] },
+  { type: "element", tag: "teleport", attrs: [
+    { kind: "static", name: "to", value: "#ordered-target" },
+    { kind: "dynamic", name: "disabled", value: "firstDisabled.value", bindingId: "b0" }
+  ], events: [], children: [
+    { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "first-teleport" }], events: [], children: [{ type: "text", value: "First" }] }
+  ] },
+  { type: "element", tag: "teleport", attrs: [{ kind: "static", name: "to", value: "#ordered-target" }], events: [], children: [
+    { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "second-teleport" }], events: [], children: [{ type: "text", value: "Second" }] }
+  ] }
+];
+async function script(ctx) {
+  const firstDisabled = ctx.useState("firstDisabled", () => true);
+  function enableFirst() { firstDisabled.value = false; }
+  return { firstDisabled, enableFirst };
+}
+export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "TeleportOrder.vue", script, template, handlers: ["enableFirst"] });
+`,
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <button id="enable-first" data-rx-on-click="s0:m0:enableFirst">Enable</button>
+        <span data-rx-teleport-source="true" data-rx-teleport-to="#ordered-target" data-rx-teleport-disabled="true" data-rx-attr-b0="s0:b0" style="display: contents;">
+          <div id="first-teleport">First</div>
+        </span>
+        <span data-rx-teleport-source="true" data-rx-teleport-to="#ordered-target" style="display: contents;">
+          <div id="second-teleport">Second</div>
+        </span>
+      </div>
+      <div id="ordered-target"></div>
+    `;
+
+    installClientRuntimeFixture(window, { firstDisabled: true }, handlerUrl);
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+
+    const target = window.document.getElementById("ordered-target")!;
+    await waitForCondition(() => Boolean(target.querySelector("#second-teleport")));
+    window.document.getElementById("enable-first")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+    await waitForCondition(() => Boolean(target.querySelector("#first-teleport")));
+    expect(Array.from(target.children).map((element) => element.id)).toEqual(["first-teleport", "second-teleport"]);
+  });
+
+  it("recreates Teleport children in SVG namespaces without recreating equivalent-context nodes", async () => {
+    const { runtimeUrl, handlerUrl } = await createDynamicTeleportRuntimeFixture({
+      prefix: "resux-svg-teleport",
+      componentName: "SvgTeleport",
+      initialTarget: "#svg-target",
+      nextTarget: "#svg-defs-target",
+      children: [
+        { type: "element", tag: "svg", attrs: [{ kind: "static", name: "id", value: "teleported-svg" }], events: [], children: [] },
+        { type: "element", tag: "circle", attrs: [{ kind: "static", name: "id", value: "teleported-circle" }], events: [], children: [] },
+      ],
+    });
+
+    const source = managedTeleportBindingSourceComment(
+      "#svg-target",
+      '<svg id="teleported-svg"></svg><circle id="teleported-circle"></circle>',
+    );
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="move-svg-target" data-rx-on-click="s0:m0:move">Move</button>'
+      + source
+      + '<span data-rx-teleport-source="true" data-rx-teleport-to="#foreign-target" style="display: contents;">'
+      + '<div id="foreign-html">HTML</div></span></div>';
+
+    const svgRoot = window.document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const target = window.document.createElementNS("http://www.w3.org/2000/svg", "g");
+    const nextTarget = window.document.createElementNS("http://www.w3.org/2000/svg", "defs");
+    const foreignTarget = window.document.createElementNS("http://www.w3.org/2000/svg", "foreignObject");
+    target.setAttribute("id", "svg-target");
+    nextTarget.setAttribute("id", "svg-defs-target");
+    foreignTarget.setAttribute("id", "foreign-target");
+    svgRoot.append(target, nextTarget, foreignTarget);
+    window.document.body.appendChild(svgRoot);
+
+    installClientRuntimeFixture(window, { target: "#svg-target" }, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    await waitForCondition(() => Boolean(target.querySelector("#teleported-circle")));
+    const nestedSvg = target.querySelector("#teleported-svg")!;
+    const circle = target.querySelector("#teleported-circle")!;
+    expect(nestedSvg.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    expect(circle.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    expect(target.firstElementChild).toBe(nestedSvg);
+    expect(foreignTarget.querySelector("#foreign-html")?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
+
+    circle.setAttribute("data-live-state", "preserved");
+    clickRuntimeFixture(window, "move-svg-target");
+    await waitForCondition(() => Boolean(nextTarget.querySelector("#teleported-circle")));
+    expect(nextTarget.querySelector("#teleported-circle")).toBe(circle);
+    expect(circle.getAttribute("data-live-state")).toBe("preserved");
+  });
+
+  it("preserves an authoritative foreign namespace when the target tag name is misleading", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-authoritative-namespace",
+      () => "export default {};",
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><span data-rx-teleport-source="true" data-rx-teleport-to="#foreign-named-target" style="display: contents;"><circle id="foreign-named-circle"></circle></span></div>';
+    const svg = window.document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const target = window.document.createElementNS("http://www.w3.org/2000/svg", "math");
+    target.setAttribute("id", "foreign-named-target");
+    svg.appendChild(target);
+    window.document.body.appendChild(svg);
+
+    installClientRuntimeFixture(window, {}, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    await waitForCondition(() => Boolean(target.querySelector("#foreign-named-circle")));
+    expect(target.querySelector("#foreign-named-circle")?.namespaceURI).toBe("http://www.w3.org/2000/svg");
+  });
+
+  it("creates MathML roots when targeting a MathML text integration point", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-mathml-integration",
+      () => "export default {};",
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><span id="math-source" data-rx-teleport-source="true" data-rx-teleport-to="#math-text-target" style="display: contents;"></span></div>';
+    const source = window.document.getElementById("math-source")!;
+    const mathChild = window.document.createElement("math");
+    mathChild.setAttribute("id", "teleported-math-root");
+    const miChild = window.document.createElement("mi");
+    miChild.textContent = "x";
+    mathChild.appendChild(miChild);
+    source.appendChild(mathChild);
+
+    const math = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "math");
+    const target = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "mi");
+    target.setAttribute("id", "math-text-target");
+    math.appendChild(target);
+    window.document.body.appendChild(math);
+
+    installClientRuntimeFixture(window, {}, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    await waitForCondition(() => Boolean(target.querySelector("#teleported-math-root")));
+    const teleportedMath = target.querySelector("#teleported-math-root")!;
+    expect(teleportedMath.namespaceURI).toBe("http://www.w3.org/1998/Math/MathML");
+    expect(teleportedMath.firstElementChild?.namespaceURI).toBe("http://www.w3.org/1998/Math/MathML");
+  });
+
+  it("reconciles the default Teleport fallback after a reactive id changes", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-reactive-fallback-id",
+      (runtimeUrl) =>
+        'import { createClientComponent } from ' + JSON.stringify(runtimeUrl) + ';\n'
+        + 'const template = ['
+        + '{ type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "moveId" }], children: [{ type: "text", value: "Move" }] },'
+        + '{ type: "element", tag: "div", attrs: [{ kind: "dynamic", name: "id", value: "targetId.value", bindingId: "b0" }], events: [], children: [] }'
+        + '];\n'
+        + 'async function script(ctx) { const targetId = ctx.useState("targetId", () => "teleports"); function moveId() { targetId.value = "moved-target"; } return { targetId, moveId }; }\n'
+        + 'export default createClientComponent({ id: "m0", name: "ReactiveTeleportFallback", file: "ReactiveTeleportFallback.vue", script, template, handlers: ["moveId"] });\n',
+    );
+
+    const metadata = encodeURIComponent(JSON.stringify({
+      to: "#teleports",
+      disabled: false,
+      defer: false,
+      bindings: {},
+      html: '<p id="fallback-teleport-content">Fallback</p>',
+    })).replaceAll("-", "%2D");
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="move-fallback-id" data-rx-on-click="s0:m0:moveId">Move</button>'
+      + '<div id="teleports" data-rx-attr-b0="s0:b0"></div>'
+      + '<!--resux-teleport-source:' + metadata + '--><!--resux-teleport-end--></div>'
+      + '<div data-rx-teleport-fallback="true"></div>';
+
+    installClientRuntimeFixture(window, { targetId: "teleports" }, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    const explicit = window.document.querySelector('[data-rx-attr-b0="s0:b0"]') as HTMLElement;
+    const fallback = window.document.querySelector("[data-rx-teleport-fallback='true']") as HTMLElement;
+    await waitForCondition(() => Boolean(explicit.querySelector("#fallback-teleport-content")));
+    expect(explicit.querySelector("#fallback-teleport-content")).toBeTruthy();
+    expect(fallback.hasAttribute("id")).toBe(false);
+
+    window.document.getElementById("move-fallback-id")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+
+    await waitForCondition(() => fallback.id === "teleports");
+    await waitForCondition(() => Boolean(fallback.querySelector("#fallback-teleport-content")));
+    expect(fallback.id).toBe("teleports");
+    expect(fallback.querySelector("#fallback-teleport-content")).toBeTruthy();
+    expect(explicit.querySelector("#fallback-teleport-content")).toBeNull();
+    expect(explicit.id).toBe("moved-target");
+  });
+
+  it("preserves an element-valued reactive Teleport target", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-element-target",
+      (runtimeUrl) =>
+        'import { createClientComponent } from ' + JSON.stringify(runtimeUrl) + ';\n'
+        + 'const template = ['
+        + '{ type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "move" }], children: [{ type: "text", value: "Move" }] },'
+        + '{ type: "element", tag: "teleport", attrs: [{ kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }], events: [], children: [{ type: "element", tag: "p", attrs: [{ kind: "static", name: "id", value: "element-target-content" }], events: [], children: [{ type: "text", value: "Element target" }] }] }'
+        + '];\n'
+        + 'async function script(ctx) { const target = ctx.useState("target", () => "#first-element-target"); function move() { target.value = document.getElementById("second-element-target"); } return { target, move }; }\n'
+        + 'export default createClientComponent({ id: "m0", name: "ElementTeleportTarget", file: "ElementTeleportTarget.vue", script, template, handlers: ["move"] });\n',
+    );
+
+    const metadata = encodeURIComponent(JSON.stringify({
+      to: "#first-element-target",
+      toBinding: "s0:b0",
+      disabled: false,
+      defer: false,
+      bindings: { b0: "s0:b0" },
+      html: '<p id="element-target-content">Element target</p>',
+    })).replaceAll("-", "%2D");
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="move-element-target" data-rx-on-click="s0:m0:move">Move</button>'
+      + '<!--resux-teleport-source:' + metadata + '--><!--resux-teleport-end--></div>'
+      + '<div id="first-element-target"></div><div id="second-element-target"></div>';
+
+    installClientRuntimeFixture(window, { target: "#first-element-target" }, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    const first = window.document.getElementById("first-element-target")!;
+    const second = window.document.getElementById("second-element-target")!;
+    await waitForCondition(() => Boolean(first.querySelector("#element-target-content")));
+
+    window.document.getElementById("move-element-target")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+
+    await waitForCondition(() => Boolean(second.querySelector("#element-target-content")));
+    expect(first.querySelector("#element-target-content")).toBeNull();
+  });
+
+
+  it("rejects a Teleport target inside its already-mounted content", async () => {
+    const { runtimeUrl, handlerUrl } = await createDynamicTeleportRuntimeFixture({
+      prefix: "resux-teleport-mounted-self-target",
+      componentName: "MountedSelfTarget",
+      initialTarget: "#outer-self-target",
+      nextTarget: "#inside-self-target",
+      children: [{
+        type: "element",
+        tag: "div",
+        attrs: [{ kind: "static", name: "id", value: "inside-self-target" }],
+        events: [],
+        children: [{
+          type: "element",
+          tag: "span",
+          attrs: [{ kind: "static", name: "id", value: "self-target-content" }],
+          events: [],
+          children: [{ type: "text", value: "Safe" }],
+        }],
+      }],
+    });
+
+    const source = managedTeleportBindingSourceComment(
+      "#outer-self-target",
+      '<div id="inside-self-target"><span id="self-target-content">Safe</span></div>',
+    );
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="move-self-target" data-rx-on-click="s0:m0:move">Move</button>'
+      + source + '</div><div id="outer-self-target"></div>';
+
+    installClientRuntimeFixture(window, { target: "#outer-self-target" }, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    const root = window.document.getElementById("__resux")!;
+    const outer = window.document.getElementById("outer-self-target")!;
+    await waitForCondition(() => Boolean(outer.querySelector("#inside-self-target")));
+    expect(outer.querySelector("#inside-self-target")).toBeTruthy();
+
+    clickRuntimeFixture(window, "move-self-target");
+
+    await waitForCondition(() => Boolean(root.querySelector("#inside-self-target")));
+    expect(root.querySelector("#inside-self-target")).toBeTruthy();
+    expect(root.querySelector("#self-target-content")?.textContent).toBe("Safe");
+    expect(outer.querySelector("#inside-self-target")).toBeNull();
+  });
+
+  it("reparses Teleport content when MathML annotation integration status changes", async () => {
+    const { runtimeUrl, handlerUrl } = await createDynamicTeleportRuntimeFixture({
+      prefix: "resux-teleport-annotation-context",
+      componentName: "AnnotationContextTeleport",
+      initialTarget: "#html-annotation-target",
+      nextTarget: "#math-annotation-target",
+      children: [{
+        type: "element",
+        tag: "div",
+        attrs: [{ kind: "static", name: "id", value: "annotation-child" }],
+        events: [],
+        children: [{ type: "text", value: "Annotation" }],
+      }],
+    });
+
+    const source = managedTeleportBindingSourceComment(
+      "#html-annotation-target",
+      '<div id="annotation-child">Annotation</div>',
+    );
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="move-annotation-target" data-rx-on-click="s0:m0:move">Move</button>'
+      + source + '</div>';
+
+    const mathRoot = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "math");
+    const htmlAnnotation = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "annotation-xml");
+    htmlAnnotation.setAttribute("id", "html-annotation-target");
+    htmlAnnotation.setAttribute("encoding", "text/html");
+    const mathAnnotation = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "annotation-xml");
+    mathAnnotation.setAttribute("id", "math-annotation-target");
+    mathRoot.appendChild(htmlAnnotation);
+    mathRoot.appendChild(mathAnnotation);
+    window.document.body.appendChild(mathRoot);
+
+    installClientRuntimeFixture(window, { target: "#html-annotation-target" }, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    await waitForCondition(() => Boolean(htmlAnnotation.querySelector("#annotation-child")));
+    expect(htmlAnnotation.querySelector("#annotation-child")?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
+
+    clickRuntimeFixture(window, "move-annotation-target");
+
+    await waitForCondition(() => Boolean(mathAnnotation.querySelector("#annotation-child")));
+    expect(mathAnnotation.querySelector("#annotation-child")?.namespaceURI).toBe("http://www.w3.org/1998/Math/MathML");
+    expect(htmlAnnotation.querySelector("#annotation-child")).toBeNull();
+  });
+
+  it("mounts and patches Teleport content before a slow client plugin finishes", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientComponentRuntimeFixture({
+      prefix: "resux-teleport-plugin-startup-mount",
+      componentName: "PluginStartupTeleport",
+      template: [
+        {
+          type: "element",
+          tag: "button",
+          attrs: [],
+          events: [{ name: "click", handler: "move" }],
+          children: [{ type: "text", value: "Move" }],
+        },
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [{ kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }],
+          events: [],
+          children: [{
+            type: "element",
+            tag: "p",
+            attrs: [{ kind: "static", name: "id", value: "plugin-gated-teleport" }],
+            events: [],
+            children: [{ type: "interpolation", expression: "label.value", bindingId: "b1" }],
+          }],
+        },
+      ],
+      scriptSource: `
+async function script(ctx) {
+  const target = ctx.useState("target", () => "#plugin-first-target");
+  const label = ctx.useState("label", () => "Plugin");
+  function move() {
+    target.value = "#plugin-second-target";
+    label.value = "Updated";
+  }
+  return { target, label, move };
+}`,
+      handlers: ["move"],
+    });
+
+    const pluginUrl = handlerUrl.replace(/handler\.mjs$/, "slow-plugin.mjs");
+    await writeFile(
+      new URL(pluginUrl),
+      'export default async () => { globalThis.__RESUX_TEST_PLUGIN_STARTED__ = true; await globalThis.__RESUX_TEST_PLUGIN_GATE__; };',
+      "utf8",
+    );
+
+    const source = managedTeleportSourceComment({
+      to: "#plugin-first-target",
+      disabled: false,
+      defer: false,
+      bindings: { b0: "s0:b0" },
+      html: '<p id="plugin-gated-teleport"><span data-rx-text="s0:b1">Plugin</span></p>',
+    });
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="move-during-plugin" data-rx-on-click="s0:m0:move">Move</button>'
+      + source + '</div><div id="plugin-first-target"></div><div id="plugin-second-target"></div>';
+
+    let releasePlugin: (() => void) | undefined;
+    (globalThis as any).__RESUX_TEST_PLUGIN_STARTED__ = false;
+    (globalThis as any).__RESUX_TEST_PLUGIN_GATE__ = new Promise<void>((resolve) => {
+      releasePlugin = resolve;
+    });
+
+    try {
+      installClientRuntimeFixture(
+        window,
+        { target: "#plugin-first-target", label: "Plugin" },
+        handlerUrl,
+      );
+      (globalThis as any).__RESUX__.plugins = [{
+        id: "slow-plugin",
+        mode: "client",
+        src: pluginUrl,
+      }];
+
+      await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+      await waitForCondition(() => (globalThis as any).__RESUX_TEST_PLUGIN_STARTED__ === true);
+      expect((globalThis as any).__RESUX_TEST_PLUGIN_STARTED__).toBe(true);
+
+      const first = window.document.getElementById("plugin-first-target")!;
+      const second = window.document.getElementById("plugin-second-target")!;
+      await waitForCondition(() => Boolean(first.querySelector("#plugin-gated-teleport")));
+      expect(first.querySelector("#plugin-gated-teleport")).toBeTruthy();
+
+      clickRuntimeFixture(window, "move-during-plugin");
+      await waitForCondition(() =>
+        second.querySelector('[data-rx-text="s0:b1"]')?.textContent === "Updated",
+      );
+      expect(second.querySelector('[data-rx-text="s0:b1"]')?.textContent).toBe("Updated");
+
+      releasePlugin?.();
+      await waitForCondition(() => Boolean(second.querySelector("#plugin-gated-teleport")));
+      expect(second.querySelector('[data-rx-text="s0:b1"]')?.textContent).toBe("Updated");
+      expect(first.querySelector("#plugin-gated-teleport")).toBeNull();
+    } finally {
+      releasePlugin?.();
+      delete (globalThis as any).__RESUX_TEST_PLUGIN_GATE__;
+      delete (globalThis as any).__RESUX_TEST_PLUGIN_STARTED__;
+    }
+  });
+
+  it("preserves an element-valued Teleport target across structural block replacement", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientComponentRuntimeFixture({
+      prefix: "resux-teleport-structural-element-target",
+      componentName: "StructuralElementTargetTeleport",
+      template: [
+        {
+          type: "element",
+          tag: "button",
+          attrs: [],
+          events: [{ name: "click", handler: "move" }],
+          children: [{ type: "text", value: "Move" }],
+        },
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [{ kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }],
+          events: [],
+          if: { expression: "show.value", blockId: "structural-target-block" },
+          children: [{
+            type: "element",
+            tag: "p",
+            attrs: [{ kind: "static", name: "id", value: "structural-element-target-content" }],
+            events: [],
+            children: [{ type: "text", value: "Structural" }],
+          }],
+        },
+      ],
+      scriptSource: `
+async function script(ctx) {
+  const target = ctx.useState("target", () => "#structural-first-target");
+  const show = ctx.useState("show", () => true);
+  function move() { target.value = document.getElementById("structural-second-target"); }
+  return { target, show, move };
+}`,
+      handlers: ["move"],
+    });
+
+    const source = managedTeleportBindingSourceComment(
+      "#structural-first-target",
+      '<p id="structural-element-target-content">Structural</p>',
+    );
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="move-structural-target" data-rx-on-click="s0:m0:move">Move</button>'
+      + '<span data-rx-block="s0:structural-target-block" style="display: contents;">'
+      + source + '</span></div>'
+      + '<div id="structural-first-target"></div><div id="structural-second-target"></div>';
+
+    installClientRuntimeFixture(window, { target: "#structural-first-target", show: true }, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    const first = window.document.getElementById("structural-first-target")!;
+    const second = window.document.getElementById("structural-second-target")!;
+    await waitForCondition(() => Boolean(first.querySelector("#structural-element-target-content")));
+    expect(first.querySelector("#structural-element-target-content")).toBeTruthy();
+
+    clickRuntimeFixture(window, "move-structural-target");
+
+    await waitForCondition(() => Boolean(second.querySelector("#structural-element-target-content")));
+    expect(second.querySelector("#structural-element-target-content")).toBeTruthy();
+    expect(first.querySelector("#structural-element-target-content")).toBeNull();
+  });
+
+  it("keeps element-valued Teleport targets distinct for each v-for instance", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientComponentRuntimeFixture({
+      prefix: "resux-teleport-loop-element-targets",
+      componentName: "LoopElementTargetsTeleport",
+      template: [
+        {
+          type: "element",
+          tag: "button",
+          attrs: [],
+          events: [{ name: "click", handler: "populate" }],
+          children: [{ type: "text", value: "Populate" }],
+        },
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [{
+            kind: "dynamic",
+            name: "to",
+            value: "document.getElementById(item.targetId)",
+            bindingId: "b0",
+          }],
+          events: [],
+          for: { source: "items.value", value: "item", blockId: "loop-target-block" },
+          children: [{
+            type: "element",
+            tag: "p",
+            attrs: [{ kind: "static", name: "class", value: "loop-target-content" }],
+            events: [],
+            children: [{ type: "interpolation", expression: "item.label", bindingId: "b1" }],
+          }],
+        },
+      ],
+      scriptSource: `
+async function script(ctx) {
+  const items = ctx.useState("items", () => []);
+  function populate() {
+    items.value = [
+      { label: "Alpha", targetId: "loop-target-a" },
+      { label: "Beta", targetId: "loop-target-b" },
+    ];
+  }
+  return { items, populate };
+}`,
+      handlers: ["populate"],
+    });
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="populate-loop-targets" data-rx-on-click="s0:m0:populate">Populate</button>'
+      + '<span data-rx-block="s0:loop-target-block" style="display: contents;"></span></div>'
+      + '<div id="loop-target-a"></div><div id="loop-target-b"></div>';
+
+    installClientRuntimeFixture(window, { items: [] }, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    clickRuntimeFixture(window, "populate-loop-targets");
+
+    const targetA = window.document.getElementById("loop-target-a")!;
+    const targetB = window.document.getElementById("loop-target-b")!;
+    await waitForCondition(() =>
+      Boolean(targetA.querySelector(".loop-target-content"))
+      && Boolean(targetB.querySelector(".loop-target-content")),
+    );
+    expect(targetA.querySelectorAll(".loop-target-content")).toHaveLength(1);
+    expect(targetB.querySelectorAll(".loop-target-content")).toHaveLength(1);
+  });
+
+  it("restores MathML definitionURL casing during contextual Teleport cloning", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientComponentRuntimeFixture({
+      prefix: "resux-teleport-mathml-attribute-case",
+      componentName: "MathMlAttributeTeleport",
+      template: [],
+      scriptSource: "async function script() { return {}; }",
+      handlers: [],
+    });
+
+    const source = managedTeleportSourceComment({
+      to: "#math-attribute-target",
+      disabled: false,
+      defer: false,
+      html: '<annotation-xml id="math-attribute-child" xmlns="http://www.w3.org/1998/Math/MathML" xmlns:xlink="http://www.w3.org/1999/xlink" definitionurl="https://example.test/definition"></annotation-xml>',
+    });
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = '<div id="__resux">' + source + '</div>';
+
+    const mathTarget = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "math");
+    mathTarget.setAttribute("id", "math-attribute-target");
+    window.document.body.appendChild(mathTarget);
+
+    installClientRuntimeFixture(window, {}, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    await waitForCondition(() => Boolean(mathTarget.querySelector("#math-attribute-child")));
+    const annotation = mathTarget.querySelector("#math-attribute-child")!;
+    expect(annotation.namespaceURI).toBe("http://www.w3.org/1998/Math/MathML");
+    expect(annotation.getAttributeNames()).toContain("definitionURL");
+    expect(annotation.getAttributeNames()).not.toContain("definitionurl");
+    expect(annotation.getAttribute("definitionURL")).toBe("https://example.test/definition");
+    expect(annotation.getAttributeNS("http://www.w3.org/2000/xmlns/", "xmlns")).toBe("http://www.w3.org/1998/Math/MathML");
+    expect(annotation.getAttributeNS("http://www.w3.org/2000/xmlns/", "xlink")).toBe("http://www.w3.org/1999/xlink");
+  });
+
+  it("reinitializes managed content after a Teleport changes target namespaces", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-namespace-reinit",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "move" }], children: [{ type: "text", value: "Move" }] },
+  { type: "element", tag: "teleport", attrs: [
+    { kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }
+  ], events: [], children: [
+    { type: "element", tag: "div", attrs: [
+      { kind: "static", name: "id", value: "namespace-island" },
+      { kind: "static", name: "data-rx-vue-island", value: "MissingIsland" }
+    ], events: [], children: [] }
+  ] }
+];
+async function script(ctx) {
+  const target = ctx.useState("target", () => "#html-target");
+  function move() { target.value = "#svg-target"; }
+  return { target, move };
+}
+export default createClientComponent({ id: "m0", name: "TeleportNamespaceReinit", file: "TeleportNamespaceReinit.vue", script, template, handlers: ["move"] });
+`,
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <button id="move-namespace" data-rx-on-click="s0:m0:move">Move</button>
+        <span
+          data-rx-teleport-source="true"
+          data-rx-teleport-to="#html-target"
+          data-rx-attr-b0="s0:b0"
+          style="display: contents;"
+        >
+          <div id="namespace-island" data-rx-vue-island="MissingIsland"></div>
+        </span>
+      </div>
+      <div id="html-target"></div>
+      <svg id="svg-target" viewBox="0 0 24 24"></svg>
+    `;
+
+    installClientRuntimeFixture(window, { target: "#html-target" }, handlerUrl);
+    (globalThis as any).__RESUX__.vueIslands = {};
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+
+    const htmlTarget = window.document.getElementById("html-target")!;
+    await waitForCondition(() => Boolean(htmlTarget.querySelector("#namespace-island")));
+    const initialIsland = htmlTarget.querySelector("#namespace-island") as Element;
+    await waitForCondition(() => initialIsland.getAttribute("data-rx-vue-error") === "missing");
+    initialIsland.removeAttribute("data-rx-vue-error");
+
+    window.document.getElementById("move-namespace")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+
+    const svgTarget = window.document.getElementById("svg-target")!;
+    await waitForCondition(() => Boolean(svgTarget.querySelector("#namespace-island")));
+    const recreatedIsland = svgTarget.querySelector("#namespace-island") as Element;
+    expect(recreatedIsland).not.toBe(initialIsland);
+    expect(recreatedIsland.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    await waitForCondition(() => recreatedIsland.getAttribute("data-rx-vue-error") === "missing");
+    expect(recreatedIsland.getAttribute("data-rx-vue-error")).toBe("missing");
+  });
+
+  it("resolves a deferred Teleport after a later patch creates its target in the same tick", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-deferred-teleport",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "show" }], children: [{ type: "text", value: "Show" }] },
+  { type: "element", tag: "div", attrs: [], events: [], if: { expression: "showTeleport.value", blockId: "b0" }, children: [
+    { type: "element", tag: "teleport", attrs: [
+      { kind: "static", name: "to", value: "#late-target" },
+      { kind: "static", name: "defer", value: "" }
+    ], events: [], children: [
+      { type: "element", tag: "p", attrs: [{ kind: "static", name: "id", value: "deferred-content" }], events: [], children: [{ type: "text", value: "Deferred" }] }
+    ] }
+  ] },
+  { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "late-target" }], events: [], if: { expression: "showTarget.value", blockId: "b1" }, children: [] },
+  { type: "element", tag: "div", attrs: [], events: [], if: { expression: "showTeleport.value", blockId: "b2" }, children: [
+    { type: "element", tag: "teleport", attrs: [
+      { kind: "static", name: "to", value: "#late-target-no-defer" }
+    ], events: [], children: [
+      { type: "element", tag: "p", attrs: [{ kind: "static", name: "id", value: "non-deferred-content" }], events: [], children: [{ type: "text", value: "Immediate" }] }
+    ] }
+  ] },
+  { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "late-target-no-defer" }], events: [], if: { expression: "showTarget.value", blockId: "b3" }, children: [] },
+  { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "teleports" }], events: [], if: { expression: "showTarget.value", blockId: "b4" }, children: [] }
+];
+async function script(ctx) {
+  const showTeleport = ctx.useState("showTeleport", () => false);
+  const showTarget = ctx.useState("showTarget", () => false);
+  function show() {
+    showTeleport.value = true;
+    showTarget.value = true;
+  }
+  return { showTeleport, showTarget, show };
+}
+export default createClientComponent({ id: "m0", name: "DeferredTeleport", file: "DeferredTeleport.vue", script, template, handlers: ["show"] });
+`,
+    );
+
+    const defaultSource = managedTeleportSourceComment({
+      to: "#teleports",
+      disabled: false,
+      defer: false,
+      html: '<p id="structural-default-content">Default</p>',
+    });
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <button id="show-deferred" data-rx-on-click="s0:m0:show">Show</button>
+        ${defaultSource}
+        <span data-rx-block="s0:b0" style="display: contents;"></span>
+        <span data-rx-block="s0:b1" style="display: contents;"></span>
+        <span data-rx-block="s0:b2" style="display: contents;"></span>
+        <span data-rx-block="s0:b3" style="display: contents;"></span>
+        <span data-rx-block="s0:b4" style="display: contents;"></span>
+      </div>
+      <div id="teleports" data-rx-teleport-fallback="true"></div>
+    `;
+
+    installClientRuntimeFixture(window, { showTeleport: false, showTarget: false }, handlerUrl);
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+    const fallback = window.document.querySelector("[data-rx-teleport-fallback='true']") as HTMLElement;
+    await waitForCondition(() => Boolean(fallback.querySelector("#structural-default-content")));
+
+    window.document.getElementById("show-deferred")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+
+    await waitForCondition(() => Boolean(window.document.getElementById("late-target")));
+    await waitForCondition(() => Boolean(window.document.getElementById("late-target")?.querySelector("#deferred-content")));
+    const source = managedTeleportCommentRecords(window.document.body)
+      .find((record) => record.metadata.to === "#late-target");
+    expect(source?.metadata.defer).toBe(true);
+    expect(source?.node.nextSibling?.nodeType).toBe(8);
+    expect(window.document.getElementById("late-target")?.firstElementChild?.id).toBe("deferred-content");
+
+    const nonDeferredTarget = window.document.getElementById("late-target-no-defer")!;
+    const nonDeferredSource = managedTeleportCommentRecords(window.document.body)
+      .find((record) => record.metadata.to === "#late-target-no-defer");
+    expect(nonDeferredSource?.metadata.defer).toBe(false);
+    expect(nonDeferredTarget.querySelector("#non-deferred-content")).toBeNull();
+    expect(nonDeferredSource?.metadata.html).toContain('id="non-deferred-content"');
+
+    const structuralDefaultTarget = window.document.querySelector('[data-rx-block="s0:b4"] #teleports') as HTMLElement;
+    await waitForCondition(() => Boolean(structuralDefaultTarget?.querySelector("#structural-default-content")));
+    expect(structuralDefaultTarget.querySelector("#structural-default-content")).toBeTruthy();
+    expect(fallback.hasAttribute("id")).toBe(false);
+    expect(fallback.querySelector("#structural-default-content")).toBeNull();
+  });
+
+  it("remounts live Teleport state when a reactive block replaces its target context", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientComponentRuntimeFixture({
+      prefix: "resux-external-teleport-target",
+      componentName: "ExternalTeleportTarget",
+      template: [
+        {
+          type: "element",
+          tag: "button",
+          attrs: [],
+          events: [{ name: "click", handler: "replace" }],
+          children: [{ type: "text", value: "Replace" }],
+        },
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [
+            { kind: "static", name: "to", value: "#replaceable-target" },
+            { kind: "static", name: "defer", value: "" },
+          ],
+          events: [],
+          children: [{
+            type: "element",
+            tag: "g",
+            attrs: [{ kind: "static", name: "id", value: "external-teleport-content" }],
+            events: [],
+            children: [{ type: "interpolation", expression: "label.value", bindingId: "b1" }],
+          }],
+        },
+        {
+          type: "element",
+          tag: "div",
+          attrs: [{ kind: "static", name: "id", value: "replaceable-target" }],
+          events: [],
+          if: { expression: "!svg.value", blockId: "b0" },
+          children: [],
+        },
+        {
+          type: "element",
+          tag: "svg",
+          attrs: [{ kind: "static", name: "id", value: "replaceable-target" }],
+          events: [],
+          if: { expression: "svg.value", blockId: "b2" },
+          children: [],
+        },
+      ],
+      scriptSource: `
+async function script(ctx) {
+  const label = ctx.useState("label", () => "External");
+  const svg = ctx.useState("svg", () => false);
+  function replace() {
+    label.value = "Updated";
+    svg.value = true;
+  }
+  return { label, svg, replace };
+}`,
+      handlers: ["replace"],
+    });
+
+    const source = managedTeleportSourceComment({
+      to: "#replaceable-target",
+      disabled: false,
+      defer: true,
+      html: '<g id="external-teleport-content"><span data-rx-text="s0:b1">External</span></g>',
+    });
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="replace-target" data-rx-on-click="s0:m0:replace">Replace</button>'
+      + source
+      + '<span data-rx-block="s0:b0" style="display: contents;"><div id="replaceable-target"></div></span>'
+      + '<span data-rx-block="s0:b2" style="display: contents;"></span></div>';
+
+    installClientRuntimeFixture(window, { label: "External", svg: false }, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    const originalTarget = window.document.getElementById("replaceable-target")!;
+    await waitForCondition(() => Boolean(originalTarget.querySelector("#external-teleport-content")));
+
+    clickRuntimeFixture(window, "replace-target");
+    await waitForCondition(() => {
+      const target = window.document.getElementById("replaceable-target");
+      return Boolean(
+        target
+        && target !== originalTarget
+        && target.namespaceURI === "http://www.w3.org/2000/svg"
+        && target.querySelector('[data-rx-text="s0:b1"]')?.textContent === "Updated"
+      );
+    });
+
+    const nextTarget = window.document.getElementById("replaceable-target")!;
+    const content = nextTarget.querySelector("#external-teleport-content")!;
+    expect(nextTarget).not.toBe(originalTarget);
+    expect(content.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    expect(content.querySelector('[data-rx-text="s0:b1"]')?.textContent).toBe("Updated");
+  });
+
+  it("cleans Teleports owned by removed TransitionGroup children", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-transition-group-teleport",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [
+  { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "removeFirst" }], children: [{ type: "text", value: "Remove" }] },
+  { type: "element", tag: "transition-group", attrs: [
+    { kind: "static", name: "name", value: "list" },
+    { kind: "static", name: "tag", value: "div" }
+  ], events: [], children: [
+    { type: "element", tag: "article", attrs: [{ kind: "dynamic", name: "key", value: "item" }], events: [], for: { source: "items.value", value: "item", blockId: "b0" }, children: [
+      { type: "element", tag: "teleport", attrs: [{ kind: "static", name: "to", value: "#portals" }], events: [], children: [
+        { type: "element", tag: "div", attrs: [{ kind: "dynamic", name: "id", value: '"portal-" + item', bindingId: "b2" }], events: [], children: [
+          { type: "interpolation", expression: "item", bindingId: "b1" }
+        ] }
+      ] }
+    ] }
+  ] }
+];
+async function script(ctx) {
+  const items = ctx.useState("items", () => [1, 2]);
+  function removeFirst() { items.value = [2]; }
+  return { items, removeFirst };
+}
+export default createClientComponent({ id: "m0", name: "TransitionTeleportList", file: "TransitionTeleportList.vue", script, template, handlers: ["removeFirst"] });
+`,
+    );
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.head.innerHTML = `<style>
+      .list-enter-active,.list-leave-active{transition:opacity .04s linear}
+      .list-enter-from,.list-leave-to{opacity:0}
+    </style>`;
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <button id="remove-first" data-rx-on-click="s0:m0:removeFirst">Remove</button>
+        <div data-rx-transition="list" data-rx-transition-group="true" data-rx-block="s0:b0">
+          <article key="1">
+            <span data-rx-teleport-source="true" data-rx-teleport-to="#portals" style="display: contents;">
+              <div id="portal-1"><span data-rx-text="s0:b1">1</span></div>
+            </span>
+          </article>
+          <article key="2">
+            <span data-rx-teleport-source="true" data-rx-teleport-to="#portals" style="display: contents;">
+              <div id="portal-2"><span data-rx-text="s0:b1">2</span></div>
+            </span>
+          </article>
+        </div>
+      </div>
+      <div id="portals"></div>
+    `;
+
+    installClientRuntimeFixture(window, { items: [1, 2] }, handlerUrl);
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+
+    const portals = window.document.getElementById("portals")!;
+    await waitForCondition(() => Boolean(portals.querySelector("#portal-1") && portals.querySelector("#portal-2")));
+
+    window.document.getElementById("remove-first")!.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, button: 0 }),
+    );
+
+    await waitForCondition(() => !portals.querySelector("#portal-1"));
+    await waitForCondition(() => Boolean(portals.querySelector("#portal-2")));
+    expect(portals.querySelector("#portal-1")).toBeNull();
+    expect(portals.querySelector("#portal-2")).toBeTruthy();
+  });
+
   it("commits keyed TransitionGroup additions immediately while removed items leave", async () => {
     const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
       "resux-transition-group",
@@ -2684,7 +4344,12 @@ export default createClientComponent({ id: "m0", name: "TransitionList", file: "
       `import { createClientComponent } from ${JSON.stringify(pathToFileURL(runtimeFile).href)};
 const __template = [
   { type: "element", tag: "p", attrs: [], events: [], if: { expression: "stats.pending.value", blockId: "b0" }, children: [{ type: "text", value: "Loading stats" }] },
-  { type: "element", tag: "p", attrs: [], events: [], if: { expression: "!stats.pending.value", blockId: "b1" }, children: [{ type: "interpolation", expression: "stats.value.value.label", bindingId: "b2" }] }
+  { type: "element", tag: "p", attrs: [], events: [], if: { expression: "!stats.pending.value", blockId: "b1" }, children: [{ type: "interpolation", expression: "stats.value.value.label", bindingId: "b2" }] },
+  { type: "element", tag: "teleport", attrs: [
+    { kind: "static", name: "to", value: "#pending-async-target" },
+    { kind: "static", name: "defer", value: "" }
+  ], events: [], children: [{ type: "element", tag: "p", attrs: [{ kind: "static", name: "id", value: "pending-deferred-content" }], events: [], children: [{ type: "text", value: "Deferred" }] }] },
+  { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "pending-async-target" }], events: [], if: { expression: "!stats.pending.value", blockId: "b3" }, children: [] }
 ];
 async function script(ctx) {
   const stats = ctx.useAsyncData("stats", async () => {
@@ -2698,10 +4363,18 @@ export default createClientComponent({ id: "m0", name: "Stats", file: "Stats.vue
       "utf8"
     );
 
+    const pendingTeleport = managedTeleportSourceComment({
+      to: "#pending-async-target",
+      disabled: false,
+      defer: true,
+      html: '<p id="pending-deferred-content">Deferred</p>',
+    });
     const window = new Window();
     window.document.body.innerHTML = `
+      ${pendingTeleport}
       <span data-rx-block="s0:b0"><p>Loading stats</p></span>
       <span data-rx-block="s0:b1"></span>
+      <span data-rx-block="s0:b3"></span>
     `;
     Object.assign(globalThis, {
       document: window.document,
@@ -2727,8 +4400,12 @@ export default createClientComponent({ id: "m0", name: "Stats", file: "Stats.vue
 
     await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     await waitForHtml(window, "Ready");
+    await waitForCondition(() =>
+      Boolean(window.document.getElementById("pending-async-target")?.querySelector("#pending-deferred-content")),
+    );
 
     expect(window.document.body.innerHTML).not.toContain("Loading stats");
+    expect(window.document.getElementById("pending-async-target")?.querySelector("#pending-deferred-content")).toBeTruthy();
     expect((globalThis as any).__RESUX__.scopes.s0.asyncData.stats).toEqual({
       value: { label: "Ready" },
       pending: false,
@@ -4688,17 +6365,28 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     await mkdir(tempDir, { recursive: true });
     const runtimeFile = path.join(tempDir, "runtime-client.mjs");
     await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+    const layoutTeleportMarkup = `
+      <span data-rx-teleport-source="true" data-rx-teleport-to="#outer-layout-target" style="display: contents;">
+        <div id="outer-layout-shell">
+          <span data-rx-teleport-source="true" data-rx-teleport-to="#inner-layout-target" style="display: contents;">
+            <button id="layout-menu-action" data-rx-on-click="s0:layout:toggle">Menu</button>
+          </span>
+        </div>
+      </span>`;
 
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML = `
       <div id="__resux">
         <span data-rx-layout="default">
-          <section id="layout" data-rx-text="s0:b0">
+          <section id="layout">
             <nav><a href="/about">About</a></nav>
-            <span data-rx-page=""><main>Home</main></span>
+            ${layoutTeleportMarkup}
+            <span data-rx-page=""><main>Home</main><div id="outer-layout-target"></div><div id="teleports"></div></span>
           </section>
         </span>
       </div>
+      <div id="inner-layout-target"></div>
+      <div data-rx-teleport-fallback="true"></div>
     `;
     const layoutElement = window.document.getElementById("layout");
 
@@ -4712,9 +6400,10 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
         JSON.stringify({
           html: `
             <span data-rx-layout="default">
-              <section id="layout" data-rx-text="s0:b0">
+              <section id="layout">
                 <nav><a href="/">Home</a></nav>
-                <span data-rx-page=""><main>About</main></span>
+                ${layoutTeleportMarkup}
+                <span data-rx-page=""><main>About</main><div id="outer-layout-target"></div></span>
               </section>
             </span>
           `,
@@ -4745,13 +6434,20 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     });
 
     await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+    await waitForCondition(() => Boolean(window.document.getElementById("inner-layout-target")?.querySelector("#layout-menu-action")));
+    expect(window.document.getElementById("layout")?.querySelector("[data-rx-on-click^='s0:']")).toBeNull();
     window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await waitForHtml(window, "<main>About</main>");
+    await waitForCondition(() => Boolean(
+      window.document.getElementById("outer-layout-target")?.querySelector("#outer-layout-shell"),
+    ));
+    expect(window.document.getElementById("inner-layout-target")?.querySelector("#layout-menu-action")).toBeTruthy();
 
     expect(window.document.getElementById("layout")).toBe(layoutElement);
     expect(window.document.getElementById("__resux")?.innerHTML).toContain("<main>About</main>");
     expect((globalThis as any).__RESUX__.scopes.s0.state.menuOpen).toBe(true);
     expect((globalThis as any).__RESUX__.scopes.s1.state.loaded).toBe(true);
+    expect(window.document.querySelector("[data-rx-teleport-fallback='true']")?.id).toBe("teleports");
   });
 
   it("hot-updates active component scopes in dev without reloading the document", async () => {

@@ -14459,15 +14459,15 @@ function parseManagedTeleportMarkup(markup, target) {
       template.innerHTML = markup;
       return Array.from(template.content.childNodes);
     }
-    const wrapper = document.createElementNS(SVG_NAMESPACE, "svg");
-    wrapper.innerHTML = markup;
-    return Array.from(wrapper.childNodes);
+    const template = document.createElement("template");
+    template.innerHTML = "<svg>" + markup + "</svg>";
+    return Array.from(template.content.firstElementChild?.childNodes ?? []);
   }
 
   if (namespace === MATHML_NAMESPACE) {
-    const wrapper = document.createElementNS(MATHML_NAMESPACE, "math");
-    wrapper.innerHTML = markup;
-    return Array.from(wrapper.childNodes);
+    const template = document.createElement("template");
+    template.innerHTML = "<math>" + markup + "</math>";
+    return Array.from(template.content.firstElementChild?.childNodes ?? []);
   }
 
   if (target?.cloneNode) {
@@ -14543,6 +14543,32 @@ function restoreManagedTeleportsWithinContent(content) {
   }
 }
 
+function managedTeleportNodeContextsMatch(actual, expected) {
+  if (!actual || !expected || actual.nodeType !== expected.nodeType) return false;
+  if (actual.nodeType === 1) {
+    if (
+      actual.namespaceURI !== expected.namespaceURI
+      || String(actual.localName || "").toLowerCase() !== String(expected.localName || "").toLowerCase()
+    ) {
+      return false;
+    }
+    const actualChildren = Array.from(actual.childNodes ?? []);
+    const expectedChildren = Array.from(expected.childNodes ?? []);
+    if (actualChildren.length !== expectedChildren.length) return false;
+    return actualChildren.every((child, index) =>
+      managedTeleportNodeContextsMatch(child, expectedChildren[index])
+    );
+  }
+  return true;
+}
+
+function managedTeleportRangeMatchesParsedContext(actualNodes, expectedNodes) {
+  if (actualNodes.length !== expectedNodes.length) return false;
+  return actualNodes.every((node, index) =>
+    managedTeleportNodeContextsMatch(node, expectedNodes[index])
+  );
+}
+
 function managedTeleportSourceMarkup(content) {
   const source = content?.source;
   if (isManagedTeleportCommentSource(source)) {
@@ -14566,6 +14592,15 @@ function normalizeManagedTeleportNamespace(content, target) {
   restoreManagedTeleportsWithinContent(content);
   const markup = managedTeleportSourceMarkup(content);
   const currentNodes = managedTeleportRangeNodes(content);
+  const parsedNodes = parseManagedTeleportMarkup(markup, target);
+  if (
+    content.parseContext == null
+    && managedTeleportRangeMatchesParsedContext(currentNodes, parsedNodes)
+  ) {
+    content.parseContext = targetContext;
+    return false;
+  }
+
   for (const node of currentNodes) {
     if (node.nodeType === 1) {
       cleanupManagedTeleports(node);
@@ -14573,7 +14608,7 @@ function normalizeManagedTeleportNamespace(content, target) {
     }
     node.remove();
   }
-  for (const node of parseManagedTeleportMarkup(markup, target)) {
+  for (const node of parsedNodes) {
     content.end.parentNode?.insertBefore(node, content.end);
   }
   content.parseContext = targetContext;

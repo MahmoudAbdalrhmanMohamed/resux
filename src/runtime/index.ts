@@ -14204,8 +14204,7 @@ const managedTeleportSourceMetadataCache = new WeakMap();
 const managedTeleportSourceBindingKeys = new WeakMap();
 const managedTeleportBindingSources = new Map();
 const managedTeleportLiveTargets = new WeakMap();
-const managedTeleportPendingLiveTargets = new Map();
-let managedTeleportPendingTargetToken = 0;
+const MANAGED_TELEPORT_TARGET_BRIDGE_KEY = "__RESUX_TELEPORT_TARGET_BRIDGE__";
 const deferredManagedTeleportSources = new Set();
 let managedTeleportPatchBatchDepth = 0;
 let managedTeleportFlushRequested = false;
@@ -14416,19 +14415,31 @@ function isManagedTeleportElementTarget(value) {
   return Boolean(value && typeof value === "object" && value.nodeType === 1);
 }
 
+function managedTeleportTargetBridge() {
+  const current = globalThis[MANAGED_TELEPORT_TARGET_BRIDGE_KEY];
+  if (current && current.targets instanceof Map && Number.isFinite(current.next)) {
+    return current;
+  }
+  const bridge = { next: 0, targets: new Map() };
+  globalThis[MANAGED_TELEPORT_TARGET_BRIDGE_KEY] = bridge;
+  return bridge;
+}
+
 function createManagedTeleportLiveTargetToken(target) {
   if (!isManagedTeleportElementTarget(target)) return "";
-  managedTeleportPendingTargetToken += 1;
-  const token = "rx-tp-" + managedTeleportPendingTargetToken.toString(36);
-  managedTeleportPendingLiveTargets.set(token, target);
+  const bridge = managedTeleportTargetBridge();
+  bridge.next += 1;
+  const token = "rx-tp-" + bridge.next.toString(36);
+  bridge.targets.set(token, target);
   return token;
 }
 
 function claimManagedTeleportPendingLiveTarget(source, metadata) {
   const token = String(metadata?.liveTargetToken || "");
   if (!token) return;
-  const target = managedTeleportPendingLiveTargets.get(token);
-  managedTeleportPendingLiveTargets.delete(token);
+  const bridge = managedTeleportTargetBridge();
+  const target = bridge.targets.get(token);
+  bridge.targets.delete(token);
   metadata.liveTargetToken = "";
   if (isManagedTeleportElementTarget(target)) {
     managedTeleportLiveTargets.set(source, target);

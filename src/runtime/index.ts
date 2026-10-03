@@ -14437,7 +14437,16 @@ function managedTeleportRangeMarkup(content) {
 }
 
 function managedTeleportParsingContext(target) {
-  return (target?.namespaceURI || XHTML_NAMESPACE) + ":" + String(target?.localName || "").toLowerCase();
+  const namespace = target?.namespaceURI || XHTML_NAMESPACE;
+  const localName = String(target?.localName || "").toLowerCase();
+  if (namespace === XHTML_NAMESPACE) {
+    const contextualTag = ["table", "thead", "tbody", "tfoot", "tr", "colgroup", "select", "optgroup"]
+      .includes(localName)
+      ? localName
+      : "default";
+    return namespace + ":" + contextualTag;
+  }
+  return namespace + ":" + localName;
 }
 
 function parseManagedTeleportMarkup(markup, target) {

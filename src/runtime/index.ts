@@ -15093,6 +15093,7 @@ function syncManagedTeleportSource(source, options = {}) {
     return;
   }
   const metadata = decodeManagedTeleportSourceMetadata(source);
+  claimManagedTeleportPendingLiveTarget(source, metadata);
   const disabled = Boolean(metadata.disabled);
   const target = managedTeleportTarget(source);
   let content = managedTeleportContent.get(source);

@@ -2175,6 +2175,42 @@ function readHtmlAttribute(tag: string, attribute: string): string | undefined {
   return match?.[1] ?? match?.[2] ?? match?.[3];
 }
 
+function injectHtmlIntoElementById(html: string, id: string, content: string): string {
+  if (!content) return html;
+  const tagPattern = /<\/?([A-Za-z][\w:-]*)\b[^>]*>/g;
+  let opening: RegExpExecArray | null;
+
+  while ((opening = tagPattern.exec(html))) {
+    const token = opening[0];
+    if (token.startsWith("</") || token.endsWith("/>") || readHtmlAttribute(token, "id") !== id) {
+      continue;
+    }
+
+    const tagName = opening[1]?.toLowerCase();
+    if (!tagName || ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"].includes(tagName)) {
+      return html;
+    }
+
+    let depth = 1;
+    let candidate: RegExpExecArray | null;
+    while ((candidate = tagPattern.exec(html))) {
+      if (candidate[1]?.toLowerCase() !== tagName) continue;
+      const candidateToken = candidate[0];
+      if (candidateToken.startsWith("</")) {
+        depth -= 1;
+        if (depth === 0) {
+          return html.slice(0, candidate.index) + content + html.slice(candidate.index);
+        }
+      } else if (!candidateToken.endsWith("/>")) {
+        depth += 1;
+      }
+    }
+    return html;
+  }
+
+  return html;
+}
+
 function collectEnhancementTriggers(html: string): ClientEnhancementTrigger[] {
   const tags = new Set([
     ...collectHtmlTagsWithAttribute(html, "data-resux-enhancement"),
@@ -2330,9 +2366,10 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
   const bodyOpenTag = renderedBodyAttrs ? `<body ${renderedBodyAttrs}>` : "<body>";
   const hasDefaultTeleportTarget = collectHtmlTagsWithAttribute(result.html, "id")
     .some((tag) => readHtmlAttribute(tag, "id") === "teleports");
-  const defaultTeleportHtml = hasDefaultTeleportTarget
-    ? ""
-    : (result.teleports?.["#teleports"] ?? "");
+  const defaultTeleportHtml = result.teleports?.["#teleports"] ?? "";
+  const renderedAppHtml = hasDefaultTeleportTarget
+    ? injectHtmlIntoElementById(result.html, "teleports", defaultTeleportHtml)
+    : result.html;
   const defaultTeleportTarget = hasDefaultTeleportTarget
     ? '<div data-rx-teleport-fallback="true"></div>'
     : `<div id="teleports" data-rx-teleport-fallback="true">${defaultTeleportHtml}</div>`;
@@ -2646,7 +2683,7 @@ html[dir="rtl"] [data-rx-loading-indicator] .rx-loading-progress {
     "</head>",
     bodyOpenTag,
     '<div id="__resux">',
-    result.html,
+    renderedAppHtml,
     "</div>",
     defaultTeleportTarget,
     needsClientRuntime
@@ -14465,6 +14502,16 @@ function reconcileDefaultTeleportTarget() {
   }
 }
 
+function resyncDefaultManagedTeleports() {
+  for (const source of managedTeleportSources(document)) {
+    if (managedTeleportLiveTargets.has(source)) continue;
+    const metadata = decodeManagedTeleportSourceMetadata(source);
+    if ((metadata.to || "#teleports") === "#teleports") {
+      syncManagedTeleportSource(source, { deferMissingTarget: true });
+    }
+  }
+}
+
 function isManagedTeleportElementTarget(value) {
   return Boolean(value && typeof value === "object" && value.nodeType === 1);
 }
@@ -14599,10 +14646,11 @@ function managedTeleportParsingContext(target) {
   const namespace = managedTeleportEffectiveNamespace(target);
   const localName = String(target?.localName || "").toLowerCase();
   if (namespace === XHTML_NAMESPACE) {
-    const contextualTag = ["table", "thead", "tbody", "tfoot", "tr", "colgroup", "select", "optgroup"]
-      .includes(localName)
-      ? localName
-      : "default";
+    const contextualTag = ["thead", "tbody", "tfoot"].includes(localName)
+      ? "table-section"
+      : ["table", "tr", "colgroup", "select", "optgroup"].includes(localName)
+        ? localName
+        : "default";
     return namespace + ":" + contextualTag;
   }
   if (namespace === SVG_NAMESPACE) {
@@ -14791,6 +14839,8 @@ function copyManagedTeleportElementAttributes(source, target, namespace) {
         : attribute.name;
     if (attribute.namespaceURI) {
       target.setAttributeNS(attribute.namespaceURI, adjustedName, attribute.value);
+    } else if (lowerName === "xmlns" || lowerName.startsWith("xmlns:")) {
+      target.setAttributeNS("http://www.w3.org/2000/xmlns/", lowerName, attribute.value);
     } else if (lowerName.startsWith("xlink:")) {
       target.setAttributeNS("http://www.w3.org/1999/xlink", adjustedName, attribute.value);
     } else if (lowerName.startsWith("xml:")) {
@@ -18527,6 +18577,7 @@ function replaceManagedRuntimeHtml(element, value, preparedTeleportSources = [])
   reconcileDefaultTeleportTarget();
   mountManagedTeleports(element, { deferMissingTarget: true });
   remountPreparedManagedTeleports(externalTeleportSources, { deferMissingTarget: true });
+  resyncDefaultManagedTeleports();
 }
 
 function refreshPatchedBlock(element, value) {
@@ -18750,13 +18801,7 @@ function applyPatches(scopeId, patches, options = {}) {
   }
   if (needsTeleportFallbackReconciliation) {
     reconcileDefaultTeleportTarget();
-    for (const source of managedTeleportSources(document)) {
-      if (managedTeleportLiveTargets.has(source)) continue;
-      const metadata = decodeManagedTeleportSourceMetadata(source);
-      if ((metadata.to || "#teleports") === "#teleports") {
-        syncManagedTeleportSource(source, { deferMissingTarget: true });
-      }
-    }
+    resyncDefaultManagedTeleports();
   }
 
   // Retry only explicitly deferred Teleports, and allow multi-scope refreshes

@@ -4054,6 +4054,10 @@ function renderTeleportBoundary(
   const disabled = isTeleportBooleanEnabled(props.disabled);
   const defer = isTeleportBooleanEnabled(props.defer);
   const bindings: Record<string, string> = {};
+  const toAttr = node.attrs.find((attr) => attr.name === "to");
+  const toBinding = toAttr?.kind === "dynamic" && toAttr.bindingId
+    ? `${context.scopeId}:${toAttr.bindingId}`
+    : "";
 
   for (const attr of node.attrs) {
     if (attr.kind !== "dynamic" || !attr.bindingId) continue;
@@ -4064,6 +4068,7 @@ function renderTeleportBoundary(
 
   const metadata = encodeTeleportSourceMetadata({
     to: target,
+    toBinding,
     disabled,
     defer,
     bindings,
@@ -14196,6 +14201,8 @@ const managedTeleportMountedSources = new Set();
 const managedTeleportSourceMetadataCache = new WeakMap();
 const managedTeleportSourceBindingKeys = new WeakMap();
 const managedTeleportBindingSources = new Map();
+const managedTeleportLiveTargets = new WeakMap();
+const managedTeleportBindingLiveTargets = new Map();
 const deferredManagedTeleportSources = new Set();
 let managedTeleportPatchBatchDepth = 0;
 let managedTeleportFlushRequested = false;
@@ -14218,6 +14225,7 @@ function decodeManagedTeleportSourceMetadata(source) {
   if (isManagedTeleportElementSource(source)) {
     return {
       to: source.getAttribute("data-rx-teleport-to") || "#teleports",
+      toBinding: "",
       disabled: source.getAttribute("data-rx-teleport-disabled") === "true",
       defer: source.hasAttribute("data-rx-teleport-defer"),
       bindings: {},
@@ -14229,6 +14237,7 @@ function decodeManagedTeleportSourceMetadata(source) {
   if (cached) return cached;
   let metadata = {
     to: "#teleports",
+    toBinding: "",
     disabled: false,
     defer: false,
     bindings: {},
@@ -14240,6 +14249,7 @@ function decodeManagedTeleportSourceMetadata(source) {
       const parsed = JSON.parse(decodeURIComponent(encoded));
       metadata = {
         to: normalizeClientTeleportTarget(parsed?.to),
+        toBinding: typeof parsed?.toBinding === "string" ? parsed.toBinding : "",
         disabled: Boolean(parsed?.disabled),
         defer: Boolean(parsed?.defer),
         bindings: parsed?.bindings && typeof parsed.bindings === "object" ? parsed.bindings : {},
@@ -14262,6 +14272,7 @@ function unregisterManagedTeleportSourceBindings(source) {
     sources.delete(source);
     if (sources.size === 0) {
       managedTeleportBindingSources.delete(key);
+      managedTeleportBindingLiveTargets.delete(key);
     }
   }
   managedTeleportSourceBindingKeys.delete(source);
@@ -14395,8 +14406,24 @@ function reconcileDefaultTeleportTarget() {
   }
 }
 
+function isManagedTeleportElementTarget(value) {
+  return Boolean(value && typeof value === "object" && value.nodeType === 1);
+}
+
 function managedTeleportTarget(source) {
-  const selector = decodeManagedTeleportSourceMetadata(source).to || "#teleports";
+  const liveTarget = managedTeleportLiveTargets.get(source);
+  if (isManagedTeleportElementTarget(liveTarget)) {
+    return liveTarget;
+  }
+  const metadata = decodeManagedTeleportSourceMetadata(source);
+  const bindingTarget = metadata.toBinding
+    ? managedTeleportBindingLiveTargets.get(metadata.toBinding)
+    : null;
+  if (isManagedTeleportElementTarget(bindingTarget)) {
+    managedTeleportLiveTargets.set(source, bindingTarget);
+    return bindingTarget;
+  }
+  const selector = metadata.to || "#teleports";
   try {
     return document.querySelector(selector);
   } catch {
@@ -14439,12 +14466,13 @@ function managedTeleportRangeMarkup(content) {
 function managedTeleportEffectiveNamespace(node) {
   if (!node) return XHTML_NAMESPACE;
   const localName = String(node.localName || "").toLowerCase();
-  if (localName === "svg") return SVG_NAMESPACE;
-  if (localName === "math") return MATHML_NAMESPACE;
-
   const reportedNamespace = node.namespaceURI || XHTML_NAMESPACE;
   if (reportedNamespace === SVG_NAMESPACE || reportedNamespace === MATHML_NAMESPACE) {
     return reportedNamespace;
+  }
+  if (reportedNamespace === XHTML_NAMESPACE) {
+    if (localName === "svg") return SVG_NAMESPACE;
+    if (localName === "math") return MATHML_NAMESPACE;
   }
 
   const parent = node.parentElement;
@@ -14614,6 +14642,7 @@ function managedTeleportElementNamespace(parent, localName) {
       && !["mglyph", "malignmark"].includes(childLocalName)
     ) {
       if (childLocalName === "svg") return SVG_NAMESPACE;
+      if (childLocalName === "math") return MATHML_NAMESPACE;
       return XHTML_NAMESPACE;
     }
     if (
@@ -14623,6 +14652,7 @@ function managedTeleportElementNamespace(parent, localName) {
       )
     ) {
       if (childLocalName === "svg") return SVG_NAMESPACE;
+      if (childLocalName === "math") return MATHML_NAMESPACE;
       return XHTML_NAMESPACE;
     }
     if (childLocalName === "svg") return SVG_NAMESPACE;
@@ -14945,9 +14975,7 @@ function populateManagedTeleportRange(source, content, target, options = {}) {
     for (const node of managedTeleportInitialNodes(source, target)) {
       content.end.parentNode?.insertBefore(node, content.end);
     }
-    if (isManagedTeleportCommentSource(source)) {
-      content.parseContext = managedTeleportParsingContext(target);
-    }
+    content.parseContext = null;
   }
   normalizeManagedTeleportNamespace(content, target);
   initializeManagedTeleportContent(content, options);
@@ -15038,11 +15066,19 @@ function endManagedTeleportPatchBatch() {
   }
 }
 
-function updateManagedTeleportCommentSource(source, attr, value) {
+function updateManagedTeleportCommentSource(source, attr, value, bindingKey = "") {
   if (!isManagedTeleportCommentSource(source)) return;
   const metadata = decodeManagedTeleportSourceMetadata(source);
   if (attr === "data-rx-teleport-to") {
-    metadata.to = normalizeClientTeleportTarget(value);
+    if (bindingKey) metadata.toBinding = bindingKey;
+    if (isManagedTeleportElementTarget(value)) {
+      managedTeleportLiveTargets.set(source, value);
+      if (metadata.toBinding) managedTeleportBindingLiveTargets.set(metadata.toBinding, value);
+    } else {
+      managedTeleportLiveTargets.delete(source);
+      if (metadata.toBinding) managedTeleportBindingLiveTargets.delete(metadata.toBinding);
+      metadata.to = normalizeClientTeleportTarget(value);
+    }
   } else if (attr === "data-rx-teleport-disabled") {
     metadata.disabled = value === "true";
   } else if (attr === "data-rx-teleport-defer") {
@@ -15100,6 +15136,7 @@ function remountPreparedManagedTeleports(sources, options = {}) {
 
 function cleanupManagedTeleportSource(source) {
   deferredManagedTeleportSources.delete(source);
+  managedTeleportLiveTargets.delete(source);
   unregisterManagedTeleportSourceBindings(source);
   const content = managedTeleportContent.get(source);
   if (!content) return;
@@ -16217,7 +16254,7 @@ function collectPatches(nodes, scope, locals, patches, styleScopeId, scopeId, mo
           id: attr.bindingId,
           attr: patchAttr,
           value: attr.name === "to"
-            ? normalizeClientTeleportTarget(rawValue)
+            ? normalizeClientTeleportPatchTarget(rawValue, scopeId + ":" + attr.bindingId)
             : (isClientTeleportBooleanEnabled(rawValue) ? "true" : "")
         });
       }
@@ -16278,6 +16315,15 @@ function normalizeClientTeleportTarget(value) {
   return candidate && candidate.length <= 512 ? candidate : "#teleports";
 }
 
+function normalizeClientTeleportPatchTarget(value, bindingKey = "") {
+  if (isManagedTeleportElementTarget(value)) {
+    if (bindingKey) managedTeleportBindingLiveTargets.set(bindingKey, value);
+    return value;
+  }
+  if (bindingKey) managedTeleportBindingLiveTargets.delete(bindingKey);
+  return normalizeClientTeleportTarget(value);
+}
+
 function isClientTeleportBooleanEnabled(value) {
   return value === "" || Boolean(value);
 }
@@ -16308,6 +16354,16 @@ function renderElement(node, scope, locals, styleScopeId, scopeId, moduleId) {
     const rawTarget = toAttr
       ? (toAttr.kind === "static" ? toAttr.value : evaluateExpression(toAttr.value, scope, locals))
       : "#teleports";
+    const toBinding = toAttr && toAttr.kind === "dynamic" && toAttr.bindingId
+      ? scopeId + ":" + toAttr.bindingId
+      : "";
+    if (toBinding) {
+      if (isManagedTeleportElementTarget(rawTarget)) {
+        managedTeleportBindingLiveTargets.set(toBinding, rawTarget);
+      } else {
+        managedTeleportBindingLiveTargets.delete(toBinding);
+      }
+    }
     const rawDisabled = disabledAttr
       ? (disabledAttr.kind === "static" ? disabledAttr.value : evaluateExpression(disabledAttr.value, scope, locals))
       : false;
@@ -16325,7 +16381,8 @@ function renderElement(node, scope, locals, styleScopeId, scopeId, moduleId) {
       .map((child) => renderNode(child, scope, locals, styleScopeId, scopeId, moduleId))
       .join("");
     const metadata = encodeClientTeleportSourceMetadata({
-      to: normalizeClientTeleportTarget(rawTarget),
+      to: isManagedTeleportElementTarget(rawTarget) ? "#teleports" : normalizeClientTeleportTarget(rawTarget),
+      toBinding,
       disabled,
       defer: isClientTeleportBooleanEnabled(rawDefer),
       bindings,
@@ -18418,6 +18475,7 @@ function patchTransitionVisibility(element, shouldHide) {
 function applyPatches(scopeId, patches, options = {}) {
   let needsLazyImageActivation = false;
   let needsDelegatedEventRegistration = false;
+  let needsTeleportFallbackReconciliation = false;
   for (const patch of patches) {
     if (patch.type === "text") {
       document.querySelectorAll('[data-rx-text="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
@@ -18433,27 +18491,39 @@ function applyPatches(scopeId, patches, options = {}) {
       ) {
         const bindingKey = scopeId + ":" + patch.id;
         for (const source of managedTeleportSourcesForBinding(bindingKey)) {
-          updateManagedTeleportCommentSource(source, patch.attr, patch.value);
+          updateManagedTeleportCommentSource(source, patch.attr, patch.value, bindingKey);
           syncManagedTeleportSource(source, { deferMissingTarget: true });
         }
       }
+      if (patch.attr === "id") {
+        needsTeleportFallbackReconciliation = true;
+      }
       document.querySelectorAll('[data-rx-attr-' + patch.id + '="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
+        const teleportElementTarget = patch.attr === "data-rx-teleport-to"
+          && isManagedTeleportElementTarget(patch.value);
         const removeAttribute = patch.value === "" || patch.value === "false" || patch.value == null;
         if (patch.attr === "hidden" && patchTransitionVisibility(element, !removeAttribute)) {
           return;
         }
-        if (removeAttribute) {
-          element.removeAttribute(patch.attr);
-          if (patch.attr === "checked" && "checked" in element) {
-            element.checked = false;
-          }
+        if (teleportElementTarget) {
+          managedTeleportLiveTargets.set(element, patch.value);
         } else {
-          element.setAttribute(patch.attr, patch.value);
-          if (patch.attr === "value" && "value" in element) {
-            element.value = patch.value;
+          if (patch.attr === "data-rx-teleport-to") {
+            managedTeleportLiveTargets.delete(element);
           }
-          if (patch.attr === "checked" && "checked" in element) {
-            element.checked = true;
+          if (removeAttribute) {
+            element.removeAttribute(patch.attr);
+            if (patch.attr === "checked" && "checked" in element) {
+              element.checked = false;
+            }
+          } else {
+            element.setAttribute(patch.attr, patch.value);
+            if (patch.attr === "value" && "value" in element) {
+              element.value = patch.value;
+            }
+            if (patch.attr === "checked" && "checked" in element) {
+              element.checked = true;
+            }
           }
         }
         if (
@@ -18485,6 +18555,17 @@ function applyPatches(scopeId, patches, options = {}) {
       needsDelegatedEventRegistration = true;
     });
   }
+  if (needsTeleportFallbackReconciliation) {
+    reconcileDefaultTeleportTarget();
+    for (const source of managedTeleportSources(document)) {
+      if (managedTeleportLiveTargets.has(source)) continue;
+      const metadata = decodeManagedTeleportSourceMetadata(source);
+      if ((metadata.to || "#teleports") === "#teleports") {
+        syncManagedTeleportSource(source, { deferMissingTarget: true });
+      }
+    }
+  }
+
   // Retry only explicitly deferred Teleports, and allow multi-scope refreshes
   // to flush once after every affected scope has patched.
   if (options.flushDeferredTeleports !== false) {

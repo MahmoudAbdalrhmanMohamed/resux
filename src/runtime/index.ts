@@ -2325,7 +2325,8 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
   };
   const renderedBodyAttrs = renderAttributes(mergedHead.bodyAttrs ?? {});
   const bodyOpenTag = renderedBodyAttrs ? `<body ${renderedBodyAttrs}>` : "<body>";
-  const hasDefaultTeleportTarget = /<[^>]*[\t\n\f\r ]id[\t\n\f\r ]*=[\t\n\f\r ]*(?:"teleports"|'teleports'|teleports)(?=[\t\n\f\r \/>])[^>]*>/i.test(result.html);
+  const hasDefaultTeleportTarget = collectHtmlTagsWithAttribute(result.html, "id")
+    .some((tag) => readHtmlAttribute(tag, "id") === "teleports");
   const defaultTeleportTarget = hasDefaultTeleportTarget
     ? '<div data-rx-teleport-fallback="true"></div>'
     : '<div id="teleports" data-rx-teleport-fallback="true"></div>';

@@ -352,7 +352,7 @@ describe("runtime SSR", () => {
     const parsed = new Window({ url: "http://localhost/" });
     parsed.document.body.innerHTML = result.html;
     expect(managedTeleportCommentRecords(parsed.document.body)[0]?.metadata.to).toBe("#teleports");
-    expect(documentHtml).toContain('<div id="teleports"></div>');
+    expect(documentHtml).toContain('<div id="teleports" data-rx-teleport-fallback="true"></div>');
     expect(documentHtml).toContain('<script type="module" src="/__resux/runtime-client.mjs"></script>');
   });
 
@@ -478,7 +478,10 @@ describe("runtime SSR", () => {
     expect(result.html).not.toContain("<span data-rx-teleport-source");
     expect(result.html).not.toContain("<template data-rx-teleport-source");
     expect(renderDocument(result).match(/id="teleports"/g)).toHaveLength(1);
-    expect(renderDocument({ ...result, html: result.html + '<div data-id="teleports"></div>' }))
+    const dataIdOnlyHtml = result.html
+      .replace('id="teleports"', 'id="not-teleports"')
+      + '<div data-id="teleports"></div>';
+    expect(renderDocument({ ...result, html: dataIdOnlyHtml }))
       .toContain('<div id="teleports" data-rx-teleport-fallback="true"></div>');
   });
 
@@ -3070,7 +3073,8 @@ export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "T
       new window.MouseEvent("click", { bubbles: true, button: 0 }),
     );
     await waitForCondition(() => Boolean(alternateTarget.querySelector("[data-rx-transition='fade']")));
-    expect(alternateTarget.firstElementChild?.getAttribute("data-rx-transition")).toBe("fade");
+    expect(alternateTarget.firstElementChild).toBe(teleportedIcon);
+    expect(alternateTarget.querySelector("[data-rx-transition='fade']")?.getAttribute("data-rx-transition")).toBe("fade");
     expect(source.childNodes).toHaveLength(0);
     expect(source.hasAttribute("data-rx-teleport-disabled")).toBe(false);
   });
@@ -5659,6 +5663,14 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     await mkdir(tempDir, { recursive: true });
     const runtimeFile = path.join(tempDir, "runtime-client.mjs");
     await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+    const layoutTeleportMarkup = `
+      <span data-rx-teleport-source="true" data-rx-teleport-to="#outer-layout-target" style="display: contents;">
+        <div id="outer-layout-shell">
+          <span data-rx-teleport-source="true" data-rx-teleport-to="#inner-layout-target" style="display: contents;">
+            <button id="layout-menu-action" data-rx-on-click="s0:layout:toggle">Menu</button>
+          </span>
+        </div>
+      </span>`;
 
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML = `
@@ -5666,13 +5678,7 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
         <span data-rx-layout="default">
           <section id="layout">
             <nav><a href="/about">About</a></nav>
-            <span data-rx-teleport-source="true" data-rx-teleport-to="#outer-layout-target" style="display: contents;">
-              <div id="outer-layout-shell">
-                <span data-rx-teleport-source="true" data-rx-teleport-to="#inner-layout-target" style="display: contents;">
-                  <button id="layout-menu-action" data-rx-on-click="s0:layout:toggle">Menu</button>
-                </span>
-              </div>
-            </span>
+            ${layoutTeleportMarkup}
             <span data-rx-page=""><main>Home</main><div id="outer-layout-target"></div><div id="teleports"></div></span>
           </section>
         </span>
@@ -5694,13 +5700,7 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
             <span data-rx-layout="default">
               <section id="layout">
                 <nav><a href="/">Home</a></nav>
-                <span data-rx-teleport-source="true" data-rx-teleport-to="#outer-layout-target" style="display: contents;">
-                  <div id="outer-layout-shell">
-                    <span data-rx-teleport-source="true" data-rx-teleport-to="#inner-layout-target" style="display: contents;">
-                      <button id="layout-menu-action" data-rx-on-click="s0:layout:toggle">Menu</button>
-                    </span>
-                  </div>
-                </span>
+                ${layoutTeleportMarkup}
                 <span data-rx-page=""><main>About</main><div id="outer-layout-target"></div></span>
               </section>
             </span>

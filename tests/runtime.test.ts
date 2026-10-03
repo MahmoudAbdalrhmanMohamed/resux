@@ -75,6 +75,8 @@ type ManagedTeleportCommentRecord = {
   node: Comment;
   metadata: {
     to?: string;
+    toBinding?: string;
+    liveTargetToken?: string;
     disabled?: boolean;
     defer?: boolean;
     bindings?: Record<string, string>;
@@ -85,6 +87,32 @@ type ManagedTeleportCommentRecord = {
 function managedTeleportSourceComment(metadata: ManagedTeleportCommentRecord["metadata"]): string {
   const encoded = encodeURIComponent(JSON.stringify(metadata)).replaceAll("-", "%2D");
   return `<!--resux-teleport-source:${encoded}--><!--resux-teleport-end-->`;
+}
+
+type ClientComponentRuntimeFixtureOptions = {
+  prefix: string;
+  componentName: string;
+  template: unknown[];
+  scriptSource: string;
+  handlers: string[];
+};
+
+async function createClientComponentRuntimeFixture(
+  options: ClientComponentRuntimeFixtureOptions,
+): Promise<{ runtimeUrl: string; handlerUrl: string }> {
+  return createClientRuntimeFixture(options.prefix, (runtimeUrl) => `
+import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = ${JSON.stringify(options.template)};
+${options.scriptSource}
+export default createClientComponent({
+  id: "m0",
+  name: ${JSON.stringify(options.componentName)},
+  file: ${JSON.stringify(options.componentName + ".vue")},
+  script,
+  template,
+  handlers: ${JSON.stringify(options.handlers)},
+});
+`);
 }
 
 type DynamicTeleportRuntimeFixtureOptions = {
@@ -98,40 +126,33 @@ type DynamicTeleportRuntimeFixtureOptions = {
 async function createDynamicTeleportRuntimeFixture(
   options: DynamicTeleportRuntimeFixtureOptions,
 ): Promise<{ runtimeUrl: string; handlerUrl: string }> {
-  const template = [
-    {
-      type: "element",
-      tag: "button",
-      attrs: [],
-      events: [{ name: "click", handler: "move" }],
-      children: [{ type: "text", value: "Move" }],
-    },
-    {
-      type: "element",
-      tag: "teleport",
-      attrs: [{ kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }],
-      events: [],
-      children: options.children,
-    },
-  ];
-
-  return createClientRuntimeFixture(options.prefix, (runtimeUrl) => `
-import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
-const template = ${JSON.stringify(template)};
+  return createClientComponentRuntimeFixture({
+    prefix: options.prefix,
+    componentName: options.componentName,
+    template: [
+      {
+        type: "element",
+        tag: "button",
+        attrs: [],
+        events: [{ name: "click", handler: "move" }],
+        children: [{ type: "text", value: "Move" }],
+      },
+      {
+        type: "element",
+        tag: "teleport",
+        attrs: [{ kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }],
+        events: [],
+        children: options.children,
+      },
+    ],
+    scriptSource: `
 async function script(ctx) {
   const target = ctx.useState("target", () => ${JSON.stringify(options.initialTarget)});
   function move() { target.value = ${JSON.stringify(options.nextTarget)}; }
   return { target, move };
-}
-export default createClientComponent({
-  id: "m0",
-  name: ${JSON.stringify(options.componentName)},
-  file: ${JSON.stringify(options.componentName + ".vue")},
-  script,
-  template,
-  handlers: ["move"],
-});
-`);
+}`,
+    handlers: ["move"],
+  });
 }
 
 function managedTeleportBindingSourceComment(to: string, html: string): string {
@@ -3703,6 +3724,169 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
       delete (globalThis as any).__RESUX_TEST_PLUGIN_GATE__;
       delete (globalThis as any).__RESUX_TEST_PLUGIN_STARTED__;
     }
+  });
+
+  it("preserves an element-valued Teleport target across structural block replacement", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientComponentRuntimeFixture({
+      prefix: "resux-teleport-structural-element-target",
+      componentName: "StructuralElementTargetTeleport",
+      template: [
+        {
+          type: "element",
+          tag: "button",
+          attrs: [],
+          events: [{ name: "click", handler: "move" }],
+          children: [{ type: "text", value: "Move" }],
+        },
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [{ kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }],
+          events: [],
+          if: { expression: "show.value", blockId: "structural-target-block" },
+          children: [{
+            type: "element",
+            tag: "p",
+            attrs: [{ kind: "static", name: "id", value: "structural-element-target-content" }],
+            events: [],
+            children: [{ type: "text", value: "Structural" }],
+          }],
+        },
+      ],
+      scriptSource: `
+async function script(ctx) {
+  const target = ctx.useState("target", () => "#structural-first-target");
+  const show = ctx.useState("show", () => true);
+  function move() { target.value = document.getElementById("structural-second-target"); }
+  return { target, show, move };
+}`,
+      handlers: ["move"],
+    });
+
+    const source = managedTeleportBindingSourceComment(
+      "#structural-first-target",
+      '<p id="structural-element-target-content">Structural</p>',
+    );
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="move-structural-target" data-rx-on-click="s0:m0:move">Move</button>'
+      + '<span data-rx-block="s0:structural-target-block" style="display: contents;">'
+      + source + '</span></div>'
+      + '<div id="structural-first-target"></div><div id="structural-second-target"></div>';
+
+    installClientRuntimeFixture(window, { target: "#structural-first-target", show: true }, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    const first = window.document.getElementById("structural-first-target")!;
+    const second = window.document.getElementById("structural-second-target")!;
+    await waitForCondition(() => Boolean(first.querySelector("#structural-element-target-content")));
+    expect(first.querySelector("#structural-element-target-content")).toBeTruthy();
+
+    clickRuntimeFixture(window, "move-structural-target");
+
+    await waitForCondition(() => Boolean(second.querySelector("#structural-element-target-content")));
+    expect(second.querySelector("#structural-element-target-content")?.textContent).toBe("Structural");
+    expect(first.querySelector("#structural-element-target-content")).toBeNull();
+  });
+
+  it("keeps element-valued Teleport targets distinct for each v-for instance", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientComponentRuntimeFixture({
+      prefix: "resux-teleport-loop-element-targets",
+      componentName: "LoopElementTargetsTeleport",
+      template: [
+        {
+          type: "element",
+          tag: "button",
+          attrs: [],
+          events: [{ name: "click", handler: "populate" }],
+          children: [{ type: "text", value: "Populate" }],
+        },
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [{
+            kind: "dynamic",
+            name: "to",
+            value: "document.getElementById(item.targetId)",
+            bindingId: "b0",
+          }],
+          events: [],
+          for: { source: "items.value", value: "item", blockId: "loop-target-block" },
+          children: [{
+            type: "element",
+            tag: "p",
+            attrs: [{ kind: "static", name: "class", value: "loop-target-content" }],
+            events: [],
+            children: [{ type: "interpolation", expression: "item.label", bindingId: "b1" }],
+          }],
+        },
+      ],
+      scriptSource: `
+async function script(ctx) {
+  const items = ctx.useState("items", () => []);
+  function populate() {
+    items.value = [
+      { label: "Alpha", targetId: "loop-target-a" },
+      { label: "Beta", targetId: "loop-target-b" },
+    ];
+  }
+  return { items, populate };
+}`,
+      handlers: ["populate"],
+    });
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="populate-loop-targets" data-rx-on-click="s0:m0:populate">Populate</button>'
+      + '<span data-rx-block="s0:loop-target-block" style="display: contents;"></span></div>'
+      + '<div id="loop-target-a"></div><div id="loop-target-b"></div>';
+
+    installClientRuntimeFixture(window, { items: [] }, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    clickRuntimeFixture(window, "populate-loop-targets");
+
+    const targetA = window.document.getElementById("loop-target-a")!;
+    const targetB = window.document.getElementById("loop-target-b")!;
+    await waitForCondition(() =>
+      Boolean(targetA.querySelector(".loop-target-content"))
+      && Boolean(targetB.querySelector(".loop-target-content")),
+    );
+    expect(targetA.querySelector(".loop-target-content")?.textContent).toBe("Alpha");
+    expect(targetB.querySelector(".loop-target-content")?.textContent).toBe("Beta");
+  });
+
+  it("restores MathML definitionURL casing during contextual Teleport cloning", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientComponentRuntimeFixture({
+      prefix: "resux-teleport-mathml-attribute-case",
+      componentName: "MathMlAttributeTeleport",
+      template: [],
+      scriptSource: "async function script() { return {}; }",
+      handlers: [],
+    });
+
+    const source = managedTeleportSourceComment({
+      to: "#math-attribute-target",
+      disabled: false,
+      defer: false,
+      html: '<annotation-xml id="math-attribute-child" definitionurl="https://example.test/definition"></annotation-xml>',
+    });
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = '<div id="__resux">' + source + '</div>';
+
+    const mathTarget = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "math");
+    mathTarget.setAttribute("id", "math-attribute-target");
+    window.document.body.appendChild(mathTarget);
+
+    installClientRuntimeFixture(window, {}, handlerUrl);
+    await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+
+    await waitForCondition(() => Boolean(mathTarget.querySelector("#math-attribute-child")));
+    const annotation = mathTarget.querySelector("#math-attribute-child")!;
+    expect(annotation.namespaceURI).toBe("http://www.w3.org/1998/Math/MathML");
+    expect(annotation.getAttributeNames()).toContain("definitionURL");
+    expect(annotation.getAttributeNames()).not.toContain("definitionurl");
+    expect(annotation.getAttribute("definitionURL")).toBe("https://example.test/definition");
   });
 
   it("reinitializes managed content after a Teleport changes target namespaces", async () => {

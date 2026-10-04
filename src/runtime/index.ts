@@ -18911,31 +18911,39 @@ function patchTransitionVisibility(element, shouldHide) {
   return true;
 }
 
-function queryManagedTeleportPatchElements(sources, selector) {
-  if (!sources) return document.querySelectorAll(selector);
-  const elements = new Set();
-  const visit = (source) => {
+function managedTeleportPatchExists(sources, selector) {
+  return sources.some((source) => {
     const content = managedTeleportContent.get(source);
-    if (!content) return;
-    for (const node of managedTeleportRangeNodes(content)) {
-      if (node.nodeType !== 1) continue;
-      if (node.matches?.(selector)) elements.add(node);
-      node.querySelectorAll?.(selector).forEach((element) => elements.add(element));
-    }
-    nestedManagedTeleportSources(content).forEach(visit);
-  };
-  sources.forEach(visit);
-  return elements;
+    return Boolean(content && managedTeleportRangeNodes(content).some((node) =>
+      node.nodeType === 1 && (node.matches?.(selector) || node.querySelector?.(selector))
+    ));
+  });
 }
 
 function replayDeferredManagedTeleportPatches(sources) {
   if (sources?.length) {
     for (const [scopeId, patches] of managedTeleportDeferredPatchReplays) {
-      applyPatches(scopeId, patches, {
-        flushDeferredTeleports: false,
-        teleportSources: sources,
-        trackDeferredReplay: false
+      const relevant = patches.filter((patch) => {
+        if (
+          patch.type === "attr"
+          && ["data-rx-teleport-to", "data-rx-teleport-disabled", "data-rx-teleport-defer"].includes(patch.attr)
+        ) return true;
+        const key = scopeId + ":" + patch.id;
+        const selector = patch.type === "text"
+          ? '[data-rx-text="' + key + '"]'
+          : patch.type === "attr"
+            ? '[data-rx-attr-' + patch.id + '="' + key + '"]'
+            : patch.type === "html"
+              ? '[data-rx-html-' + patch.id + '="' + key + '"]'
+              : '[data-rx-block="' + key + '"]';
+        return managedTeleportPatchExists(sources, selector);
       });
+      if (relevant.length) {
+        applyPatches(scopeId, relevant, {
+          flushDeferredTeleports: false,
+          trackDeferredReplay: false
+        });
+      }
     }
   }
   if (!deferredManagedTeleportSources.size) managedTeleportDeferredPatchReplays.clear();
@@ -18945,12 +18953,9 @@ function applyPatches(scopeId, patches, options = {}) {
   let needsLazyImageActivation = false;
   let needsDelegatedEventRegistration = false;
   let needsTeleportFallbackReconciliation = false;
-  const queryPatchElements = (selector) =>
-    queryManagedTeleportPatchElements(options.teleportSources, selector);
-
   for (const patch of patches) {
     if (patch.type === "text") {
-      queryPatchElements('[data-rx-text="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
+      document.querySelectorAll('[data-rx-text="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
         element.textContent = patch.value;
       });
       continue;
@@ -18967,7 +18972,7 @@ function applyPatches(scopeId, patches, options = {}) {
           syncManagedTeleportSource(source, { deferMissingTarget: true });
         }
       }
-      queryPatchElements('[data-rx-attr-' + patch.id + '="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
+      document.querySelectorAll('[data-rx-attr-' + patch.id + '="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
         if (patch.attr === "id") {
           const previousId = element.getAttribute("id");
           const nextId = patch.value === "" || patch.value === "false" || patch.value == null
@@ -19018,7 +19023,7 @@ function applyPatches(scopeId, patches, options = {}) {
       continue;
     }
     if (patch.type === "html") {
-      queryPatchElements('[data-rx-html-' + patch.id + '="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
+      document.querySelectorAll('[data-rx-html-' + patch.id + '="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
         replaceManagedRuntimeHtml(element, patch.value);
         void mountVueIslands(document);
         needsLazyImageActivation = true;
@@ -19026,7 +19031,7 @@ function applyPatches(scopeId, patches, options = {}) {
       });
       continue;
     }
-    queryPatchElements('[data-rx-block="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
+    document.querySelectorAll('[data-rx-block="' + scopeId + ':' + patch.id + '"]').forEach((element) => {
       if (patchTransitionBlock(element, patch.value)) {
         return;
       }

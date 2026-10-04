@@ -673,6 +673,15 @@ interface ScopeRecord {
   asyncDataRefs: Record<string, AsyncDataResource<unknown>>;
 }
 
+type ComponentProps = Record<string, unknown>;
+type AsyncRenderSlot = (suppressTeleportReservations?: boolean) => Promise<string>;
+type AsyncRenderComponent = (
+  component: ComponentDefinition,
+  props?: ComponentProps,
+  renderSlot?: AsyncRenderSlot,
+  suppressTeleportReservations?: boolean,
+) => Promise<string>;
+
 interface RenderTemplateContext {
   scope: Record<string, unknown>;
   scopeId: string;
@@ -684,14 +693,17 @@ interface RenderTemplateContext {
   layouts: Record<string, ComponentDefinition>;
   pageMeta: PageMeta;
   addHeadEntry?: (entry: HeadEntry) => void;
-  renderPage?: () => Promise<string>;
-  renderSlot?: () => Promise<string>;
-  renderLayout?: (name: string | false | undefined, slot: () => Promise<string>) => Promise<string>;
+  suppressTeleportReservations?: boolean;
+  renderPage?: AsyncRenderSlot;
+  renderSlot?: AsyncRenderSlot;
+  renderLayout?: (
+    name: string | false | undefined,
+    slot: AsyncRenderSlot,
+    suppressTeleportReservations?: boolean,
+  ) => Promise<string>;
   reserveTeleport?: (target: string) => number | undefined;
   commitTeleport?: (reservation: number, html: string) => void;
 }
-
-type ComponentProps = Record<string, unknown>;
 type ResuxAsyncContextStorage = {
   getStore(): ResuxAppLike | undefined;
   run<T>(store: ResuxAppLike, callback: () => T): T;
@@ -4082,6 +4094,22 @@ function resolveTeleportBoundaryRenderState(
   return { target, disabled, defer, bindings, toBinding };
 }
 
+function inheritTeleportReservationSuppression(
+  context: RenderTemplateContext,
+  suppressTeleportReservations: boolean | undefined,
+): RenderTemplateContext {
+  if (!suppressTeleportReservations || context.suppressTeleportReservations) {
+    return context;
+  }
+
+  return {
+    ...context,
+    suppressTeleportReservations: true,
+    reserveTeleport: undefined,
+    commitTeleport: undefined,
+  };
+}
+
 function teleportChildRenderContext(
   state: TeleportBoundaryRenderState,
   context: RenderTemplateContext,
@@ -4089,11 +4117,7 @@ function teleportChildRenderContext(
   if (state.disabled || state.target === "#teleports") {
     return context;
   }
-  return {
-    ...context,
-    reserveTeleport: undefined,
-    commitTeleport: undefined,
-  };
+  return inheritTeleportReservationSuppression(context, true);
 }
 
 function renderTeleportBoundary(
@@ -4290,7 +4314,7 @@ function renderNativeElement(node: ElementTemplateNode, context: RenderTemplateC
 export async function renderTemplateNodesAsync(
   nodes: TemplateNode[],
   context: RenderTemplateContext,
-  renderComponent: (component: ComponentDefinition, props?: ComponentProps, renderSlot?: () => Promise<string>) => Promise<string>,
+  renderComponent: AsyncRenderComponent,
   locals: Record<string, unknown> = {}
 ): Promise<string> {
   let html = "";
@@ -4305,7 +4329,7 @@ export async function renderTemplateNodesAsync(
 async function renderTemplateNodeAsync(
   node: TemplateNode,
   context: RenderTemplateContext,
-  renderComponent: (component: ComponentDefinition, props?: ComponentProps, renderSlot?: () => Promise<string>) => Promise<string>,
+  renderComponent: AsyncRenderComponent,
   locals: Record<string, unknown>
 ): Promise<string> {
   if (node.type !== "element") {
@@ -4343,30 +4367,46 @@ async function renderTemplateNodeAsync(
 async function renderElementAsync(
   node: ElementTemplateNode,
   context: RenderTemplateContext,
-  renderComponent: (component: ComponentDefinition, props?: ComponentProps, renderSlot?: () => Promise<string>) => Promise<string>,
+  renderComponent: AsyncRenderComponent,
   locals: Record<string, unknown>
 ): Promise<string> {
+  const renderChildren: AsyncRenderSlot = (
+    suppressTeleportReservations = context.suppressTeleportReservations,
+  ) => renderTemplateNodesAsync(
+    node.children,
+    inheritTeleportReservationSuppression(context, suppressTeleportReservations),
+    renderComponent,
+    locals,
+  );
+
   if (node.tag === "ResuxPage") {
-    return context.renderPage ? `<span data-rx-page="">${await context.renderPage()}</span>` : "";
+    return context.renderPage
+      ? `<span data-rx-page="">${await context.renderPage(context.suppressTeleportReservations)}</span>`
+      : "";
   }
 
   if (node.tag === "ResuxLayout") {
     const layoutName = resolveLayoutName(node, context, locals);
-    const renderChildren = () => renderTemplateNodesAsync(node.children, context, renderComponent, locals);
     if (layoutName === false) {
       return renderChildren();
     }
     if (!context.renderLayout) {
       return renderChildren();
     }
-    const rendered = await context.renderLayout(layoutName, renderChildren);
+    const rendered = await context.renderLayout(
+      layoutName,
+      renderChildren,
+      context.suppressTeleportReservations,
+    );
     const selectedLayoutSource = layoutName ?? (context.pageMeta.layout === false ? "default" : context.pageMeta.layout) ?? "default";
     const selectedLayout = normalizeLayoutName(selectedLayoutSource);
     return `<span data-rx-layout="${escapeAttribute(selectedLayout)}">${rendered}</span>`;
   }
 
   if (node.tag === "slot") {
-    return context.renderSlot ? context.renderSlot() : "";
+    return context.renderSlot
+      ? context.renderSlot(context.suppressTeleportReservations)
+      : "";
   }
 
   if (isTeleportBoundaryTag(node.tag)) {
@@ -4393,8 +4433,12 @@ async function renderElementAsync(
     const component = resolveComponentDefinition(node.tag, context.components);
     if (component) {
       const props = collectComponentProps(node, context.scope, locals);
-      const renderChildren = () => renderTemplateNodesAsync(node.children, context, renderComponent, locals);
-      return renderComponent(component, props, renderChildren);
+      return renderComponent(
+        component,
+        props,
+        renderChildren,
+        context.suppressTeleportReservations,
+      );
     }
     return renderNativeElementAsync(node, context, renderComponent, locals);
   }
@@ -4403,8 +4447,12 @@ async function renderElementAsync(
     const component = resolveComponentDefinition(node.tag, context.components);
     if (component) {
       const props = collectComponentProps(node, context.scope, locals);
-      const renderChildren = () => renderTemplateNodesAsync(node.children, context, renderComponent, locals);
-      return renderComponent(component, props, renderChildren);
+      return renderComponent(
+        component,
+        props,
+        renderChildren,
+        context.suppressTeleportReservations,
+      );
     }
     return renderResuxImg(node, context, locals);
   }
@@ -4413,8 +4461,12 @@ async function renderElementAsync(
     const component = resolveComponentDefinition(node.tag, context.components);
     if (component) {
       const props = collectComponentProps(node, context.scope, locals);
-      const renderChildren = () => renderTemplateNodesAsync(node.children, context, renderComponent, locals);
-      return renderComponent(component, props, renderChildren);
+      return renderComponent(
+        component,
+        props,
+        renderChildren,
+        context.suppressTeleportReservations,
+      );
     }
     return renderResuxPicture(node, context, locals);
   }
@@ -4422,8 +4474,12 @@ async function renderElementAsync(
     const component = resolveComponentDefinition(node.tag, context.components);
     if (component) {
       const props = collectComponentProps(node, context.scope, locals);
-      const renderChildren = () => renderTemplateNodesAsync(node.children, context, renderComponent, locals);
-      return renderComponent(component, props, renderChildren);
+      return renderComponent(
+        component,
+        props,
+        renderChildren,
+        context.suppressTeleportReservations,
+      );
     }
     return renderResuxVideo(node, context, locals);
   }
@@ -4431,8 +4487,12 @@ async function renderElementAsync(
     const component = resolveComponentDefinition(node.tag, context.components);
     if (component) {
       const props = collectComponentProps(node, context.scope, locals);
-      const renderChildren = () => renderTemplateNodesAsync(node.children, context, renderComponent, locals);
-      return renderComponent(component, props, renderChildren);
+      return renderComponent(
+        component,
+        props,
+        renderChildren,
+        context.suppressTeleportReservations,
+      );
     }
     return renderResuxIcon(node, context, locals);
   }
@@ -4460,8 +4520,12 @@ async function renderElementAsync(
       throw new Error(`Unknown component <${node.tag}>.`);
     }
     const props = collectComponentProps(node, context.scope, locals);
-    const renderChildren = () => renderTemplateNodesAsync(node.children, context, renderComponent, locals);
-    return renderComponent(component, props, renderChildren);
+    return renderComponent(
+      component,
+      props,
+      renderChildren,
+      context.suppressTeleportReservations,
+    );
   }
 
   return renderNativeElementAsync(node, context, renderComponent, locals);
@@ -4470,7 +4534,7 @@ async function renderElementAsync(
 async function renderNativeElementAsync(
   node: ElementTemplateNode,
   context: RenderTemplateContext,
-  renderComponent: (component: ComponentDefinition, props?: ComponentProps, renderSlot?: () => Promise<string>) => Promise<string>,
+  renderComponent: AsyncRenderComponent,
   locals: Record<string, unknown>
 ): Promise<string> {
   const attrs = collectNativeElementAttributes(node, context, locals);
@@ -4687,7 +4751,7 @@ function renderResuxClientEnhance(
 async function renderResuxClientEnhanceAsync(
   node: ElementTemplateNode,
   context: RenderTemplateContext,
-  renderComponent: (component: ComponentDefinition, props?: ComponentProps, renderSlot?: () => Promise<string>) => Promise<string>,
+  renderComponent: AsyncRenderComponent,
   locals: Record<string, unknown>,
 ): Promise<string> {
   const props = collectComponentProps(node, context.scope, locals);
@@ -6812,11 +6876,7 @@ function renderVueIsland(
 async function renderVueIslandAsync(
   node: ElementTemplateNode,
   context: RenderTemplateContext,
-  renderComponent: (
-    component: ComponentDefinition,
-    props?: ComponentProps,
-    renderSlot?: () => Promise<string>,
-  ) => Promise<string>,
+  renderComponent: AsyncRenderComponent,
   locals: Record<string, unknown>,
 ): Promise<string> {
   const fallbackHtml = await renderTemplateNodesAsync(
@@ -7041,9 +7101,10 @@ export class AsyncResuxRenderer {
 
   async renderComponent(
     definition: ComponentDefinition,
-    renderPage?: () => Promise<string>,
-    renderSlot?: () => Promise<string>,
-    props: ComponentProps = {}
+    renderPage?: AsyncRenderSlot,
+    renderSlot?: AsyncRenderSlot,
+    props: ComponentProps = {},
+    suppressTeleportReservations = false,
   ): Promise<string> {
     this.collectComponentStyles(definition);
     const scopeId = `s${this.nextScopeId++}`;
@@ -7085,13 +7146,19 @@ export class AsyncResuxRenderer {
         layouts: this.layouts,
         pageMeta: this.pageMeta,
         addHeadEntry: (entry) => insertHeadEntryWithPriority(this.headEntries, entry),
+        suppressTeleportReservations,
         renderPage,
         renderSlot,
-        renderLayout: (name, slot) => this.renderLayout(name, slot),
-        reserveTeleport: (target) => this.reserveTeleport(target),
-        commitTeleport: (reservation, html) => this.commitTeleport(reservation, html)
+        renderLayout: (name, slot, suppress) => this.renderLayout(name, slot, suppress),
+        reserveTeleport: suppressTeleportReservations
+          ? undefined
+          : (target) => this.reserveTeleport(target),
+        commitTeleport: suppressTeleportReservations
+          ? undefined
+          : (reservation, html) => this.commitTeleport(reservation, html)
       },
-      (component, props, slot) => this.renderComponent(component, undefined, slot, props)
+      (component, props, slot, suppress) =>
+        this.renderComponent(component, undefined, slot, props, suppress)
     ));
   }
 
@@ -7133,22 +7200,32 @@ export class AsyncResuxRenderer {
     }
   }
 
-  async renderLayout(name: string | false | undefined, renderSlot: () => Promise<string>): Promise<string> {
+  async renderLayout(
+    name: string | false | undefined,
+    renderSlot: AsyncRenderSlot,
+    suppressTeleportReservations = false,
+  ): Promise<string> {
     if (name === false) {
-      return renderSlot();
+      return renderSlot(suppressTeleportReservations);
     }
 
     const selectedLayout = name ?? this.pageMeta.layout ?? "default";
     if (selectedLayout === false) {
-      return renderSlot();
+      return renderSlot(suppressTeleportReservations);
     }
     const layoutName = normalizeLayoutName(selectedLayout);
     const layout = this.layouts[layoutName];
     if (!layout) {
-      return renderSlot();
+      return renderSlot(suppressTeleportReservations);
     }
 
-    return this.renderComponent(layout, undefined, renderSlot);
+    return this.renderComponent(
+      layout,
+      undefined,
+      renderSlot,
+      {},
+      suppressTeleportReservations,
+    );
   }
 
   createPayload(): ResuxPayload {
@@ -7206,7 +7283,14 @@ export async function renderAppAsync(options: RenderAppOptions): Promise<RenderR
   }
 
   renderer.headEntries.push(appHead);
-  const pageRenderer = () => renderer.renderComponent(options.page, undefined, undefined, options.pageProps ?? {});
+  const pageRenderer: AsyncRenderSlot = (suppressTeleportReservations = false) =>
+    renderer.renderComponent(
+      options.page,
+      undefined,
+      undefined,
+      options.pageProps ?? {},
+      suppressTeleportReservations,
+    );
   const html = options.app
     ? await renderer.renderComponent(options.app, pageRenderer)
     : await pageRenderer();

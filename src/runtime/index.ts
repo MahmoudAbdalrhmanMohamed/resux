@@ -15106,6 +15106,20 @@ function managedTeleportSourceMarkup(content) {
   return managedTeleportNodesMarkup(liveNodes);
 }
 
+function managedTeleportNodeNamespaceMatchesTarget(node, parent) {
+  if (node?.nodeType !== 1) return true;
+  const expectedNamespace = managedTeleportElementNamespace(parent, node.localName);
+  const actualNamespace = node.namespaceURI || XHTML_NAMESPACE;
+  if (actualNamespace !== expectedNamespace) return false;
+  return Array.from(node.childNodes ?? []).every((child) =>
+    managedTeleportNodeNamespaceMatchesTarget(child, node)
+  );
+}
+
+function managedTeleportRangeNamespacesMatchTarget(nodes, target) {
+  return nodes.every((node) => managedTeleportNodeNamespaceMatchesTarget(node, target));
+}
+
 function normalizeManagedTeleportNamespace(content, target) {
   const targetContext = managedTeleportParsingContext(target);
   const nodes = managedTeleportRangeNodes(content);
@@ -15114,6 +15128,10 @@ function normalizeManagedTeleportNamespace(content, target) {
     return false;
   }
   if (content.parseContext === targetContext) {
+    return false;
+  }
+  if (managedTeleportRangeNamespacesMatchTarget(nodes, target)) {
+    content.parseContext = targetContext;
     return false;
   }
 

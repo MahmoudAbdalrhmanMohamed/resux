@@ -620,7 +620,10 @@ async function script(ctx) {
     const outerSource = managedTeleportCommentRecords(parsed.document.body)[0];
     expect(outerSource?.metadata.to).toBe("#missing-custom-target");
     expect(outerSource?.metadata.html).toContain("resux-teleport-source");
-    expect(outerSource?.metadata.html).toContain("nested-client-only-ssr-content");
+    const nestedParsed = new Window({ url: "http://localhost/" });
+    nestedParsed.document.body.innerHTML = outerSource?.metadata.html ?? "";
+    const nestedSource = managedTeleportCommentRecords(nestedParsed.document.body)[0];
+    expect(nestedSource?.metadata.html).toContain('id="nested-client-only-ssr-content"');
     expect(result.teleports?.["#teleports"] ?? "").not.toContain("nested-client-only-ssr-content");
     expect(renderDocument(result)).not.toMatch(
       /data-rx-teleport-fallback="true"[\s\S]*nested-client-only-ssr-content/,
@@ -4021,12 +4024,14 @@ async function script(ctx) {
       await import(fixture.runtimeUrl + "?test=" + nextRuntimeImportQuery());
       const table = window.document.getElementById("disabled-teleport-table")!;
       const target = window.document.querySelector("[data-rx-teleport-fallback='true']") as HTMLElement;
-      expect(table.querySelector("#disabled-table-row")).toBeTruthy();
+      const row = table.querySelector("#disabled-table-row");
+      expect(row).toBeTruthy();
 
       clickRuntimeFixture(window, "enable-disabled-table");
 
       await waitForCondition(() => Boolean(target.querySelector("#disabled-table-row")));
       expect(target.querySelectorAll("#disabled-table-row")).toHaveLength(1);
+      expect(target.querySelector("#disabled-table-row")).toBe(row);
       expect(table.querySelector("#disabled-table-row")).toBeNull();
     } finally {
       resetClientRuntimeFixture();

@@ -4834,60 +4834,77 @@ export default createClientComponent({ id: "m0", name: "DeferredTeleport", file:
     expect(fallback.querySelector("#structural-default-content")).toBeTruthy();
   });
 
-  it("keeps deferred Teleports queued and replays current patches when the target arrives", async () => {
+  it("keeps full deferred patches until another scope creates the target", async () => {
     const fixture = await createClientComponentRuntimeFixture({
       prefix: "resux-deferred-teleport-replay",
       componentName: "DeferredTeleportReplay",
       template: [
-        { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "bump" }], children: [] },
-        { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "show" }], children: [] },
         { type: "element", tag: "teleport", attrs: [
           { kind: "static", name: "to", value: "#late-replay-target" },
-          { kind: "static", name: "defer", value: "" },
+          { kind: "dynamic", name: "defer", value: "defer.value", bindingId: "b1" },
         ], events: [], children: [
           { type: "element", tag: "p", attrs: [{ kind: "static", name: "id", value: "deferred-replay-content" }], events: [], children: [
             { type: "interpolation", expression: "count.value", bindingId: "b0" },
           ] },
         ] },
-        { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "late-replay-target" }], events: [], if: { expression: "showTarget.value", blockId: "b1" }, children: [] },
       ],
       scriptSource: `
 async function script(ctx) {
   const count = ctx.useState("count", () => 0);
-  const showTarget = ctx.useState("showTarget", () => false);
+  const defer = ctx.useState("defer", () => true);
   function bump() { count.value += 1; }
-  function show() { count.value += 1; showTarget.value = true; }
-  return { count, showTarget, bump, show };
+  return { count, defer, bump };
 }`,
-      handlers: ["bump", "show"],
+      handlers: ["bump"],
     });
+
+    const targetHandlerUrl = fixture.handlerUrl.replace(/handler\.mjs$/, "target-handler.mjs");
+    await writeFile(
+      new URL(targetHandlerUrl),
+      `import { createClientComponent } from ${JSON.stringify(fixture.runtimeUrl)};
+const template = [
+  { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "late-replay-target" }], events: [], if: { expression: "visible.value", blockId: "b0" }, children: [] }
+];
+async function script(ctx) {
+  const visible = ctx.useState("visible", () => false);
+  function show() { visible.value = true; }
+  return { visible, show };
+}
+export default createClientComponent({ id: "m1", name: "DeferredTarget", file: "DeferredTarget.vue", script, template, handlers: ["show"] });
+`,
+      "utf8",
+    );
 
     const source = managedTeleportSourceComment({
       to: "#late-replay-target",
       disabled: false,
       defer: true,
+      bindings: { b1: "s0:b1" },
       html: '<p id="deferred-replay-content"><span data-rx-text="s0:b0">0</span></p>',
     });
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML =
       '<div id="__resux"><button id="bump-deferred" data-rx-on-click="s0:m0:bump"></button>'
-      + '<button id="show-deferred-replay" data-rx-on-click="s0:m0:show"></button>'
-      + source + '<span data-rx-block="s0:b1" style="display: contents;"></span></div>';
+      + '<button id="show-deferred-target" data-rx-on-click="s1:m1:show"></button>'
+      + source + '<span data-rx-block="s1:b0" style="display: contents;"></span></div>';
 
-    installClientRuntimeFixture(window, { count: 0, showTarget: false }, fixture.handlerUrl);
+    installClientRuntimeFixture(window, { count: 0, defer: true }, fixture.handlerUrl);
+    const payload = (globalThis as any).__RESUX__;
+    payload.scopes.s1 = { id: "s1", moduleId: "m1", state: { visible: false }, asyncData: {} };
+    payload.modules.m1 = targetHandlerUrl;
+
     try {
       await import(fixture.runtimeUrl + "?test=" + nextRuntimeImportQuery());
       clickRuntimeFixture(window, "bump-deferred");
-      await waitForCondition(() => (globalThis as any).__RESUX__.scopes.s0.state.count === 1);
+      await waitForCondition(() => payload.scopes.s0.state.count === 1);
       expect(window.document.getElementById("late-replay-target")).toBeNull();
 
-      clickRuntimeFixture(window, "show-deferred-replay");
+      clickRuntimeFixture(window, "show-deferred-target");
       await waitForCondition(() =>
-        window.document.querySelector("#late-replay-target [data-rx-text='s0:b0']")?.textContent === "2",
+        window.document.querySelector("#late-replay-target [data-rx-text='s0:b0']")?.textContent === "1",
       );
-      const target = window.document.getElementById("late-replay-target")!;
-      expect(target.querySelector("#deferred-replay-content")).toBeTruthy();
-      expect(target.querySelector("[data-rx-text='s0:b0']")?.textContent).toBe("2");
+      expect(window.document.getElementById("late-replay-target")
+        ?.querySelector("#deferred-replay-content")).toBeTruthy();
     } finally {
       resetClientRuntimeFixture();
     }

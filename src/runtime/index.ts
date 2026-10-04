@@ -18911,80 +18911,40 @@ function patchTransitionVisibility(element, shouldHide) {
   return true;
 }
 
-function collectManagedTeleportPatchSources(sources) {
-  const collected = new Set();
-  const visit = (source) => {
-    if (!source || collected.has(source)) return;
-    collected.add(source);
-    const content = managedTeleportContent.get(source);
-    if (!content) return;
-    for (const nestedSource of nestedManagedTeleportSources(content)) {
-      visit(nestedSource);
-    }
-  };
-  for (const source of sources ?? []) visit(source);
-  return collected;
-}
-
 function queryManagedTeleportPatchElements(sources, selector) {
-  if (!sources) return Array.from(document.querySelectorAll(selector));
-
-  const elements = [];
-  const seenElements = new Set();
-  const visitedSources = new Set();
-  const addElement = (element) => {
-    if (!element || seenElements.has(element)) return;
-    seenElements.add(element);
-    elements.push(element);
-  };
+  if (!sources) return document.querySelectorAll(selector);
+  const elements = new Set();
   const visit = (source) => {
-    if (!source || visitedSources.has(source)) return;
-    visitedSources.add(source);
     const content = managedTeleportContent.get(source);
     if (!content) return;
-
     for (const node of managedTeleportRangeNodes(content)) {
       if (node.nodeType !== 1) continue;
-      if (node.matches?.(selector)) addElement(node);
-      for (const element of Array.from(node.querySelectorAll?.(selector) ?? [])) {
-        addElement(element);
-      }
+      if (node.matches?.(selector)) elements.add(node);
+      node.querySelectorAll?.(selector).forEach((element) => elements.add(element));
     }
-    for (const nestedSource of nestedManagedTeleportSources(content)) {
-      visit(nestedSource);
-    }
+    nestedManagedTeleportSources(content).forEach(visit);
   };
-  for (const source of sources) visit(source);
+  sources.forEach(visit);
   return elements;
 }
 
-function replayDeferredManagedTeleportPatches(mountedSources) {
-  if (!mountedSources?.length || managedTeleportDeferredPatchReplays.size === 0) {
-    if (deferredManagedTeleportSources.size === 0) {
-      managedTeleportDeferredPatchReplays.clear();
+function replayDeferredManagedTeleportPatches(sources) {
+  if (sources?.length) {
+    for (const [scopeId, patches] of managedTeleportDeferredPatchReplays) {
+      applyPatches(scopeId, patches, {
+        flushDeferredTeleports: false,
+        teleportSources: sources,
+        trackDeferredReplay: false
+      });
     }
-    return;
   }
-
-  for (const [scopeId, patches] of managedTeleportDeferredPatchReplays) {
-    applyPatches(scopeId, patches, {
-      flushDeferredTeleports: false,
-      teleportSources: mountedSources,
-      trackDeferredReplay: false
-    });
-  }
-  if (deferredManagedTeleportSources.size === 0) {
-    managedTeleportDeferredPatchReplays.clear();
-  }
+  if (!deferredManagedTeleportSources.size) managedTeleportDeferredPatchReplays.clear();
 }
 
 function applyPatches(scopeId, patches, options = {}) {
   let needsLazyImageActivation = false;
   let needsDelegatedEventRegistration = false;
   let needsTeleportFallbackReconciliation = false;
-  const patchSources = options.teleportSources
-    ? collectManagedTeleportPatchSources(options.teleportSources)
-    : null;
   const queryPatchElements = (selector) =>
     queryManagedTeleportPatchElements(options.teleportSources, selector);
 
@@ -19003,7 +18963,6 @@ function applyPatches(scopeId, patches, options = {}) {
       ) {
         const bindingKey = scopeId + ":" + patch.id;
         for (const source of managedTeleportSourcesForBinding(bindingKey)) {
-          if (patchSources && !patchSources.has(source)) continue;
           updateManagedTeleportCommentSource(source, patch.attr, patch.value, bindingKey);
           syncManagedTeleportSource(source, { deferMissingTarget: true });
         }

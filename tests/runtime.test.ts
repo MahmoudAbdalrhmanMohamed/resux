@@ -4910,6 +4910,109 @@ export default createClientComponent({ id: "m1", name: "DeferredTarget", file: "
     }
   });
 
+  it("clears stale deferred patches when route cleanup removes the last waiter", async () => {
+    const fixture = await createClientComponentRuntimeFixture({
+      prefix: "resux-deferred-teleport-route-cleanup",
+      componentName: "DeferredRouteCleanup",
+      template: [
+        { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "bump" }], children: [{ type: "text", value: "Bump" }] },
+        { type: "interpolation", expression: "count.value", bindingId: "b0" },
+      ],
+      scriptSource: `
+async function script(ctx) {
+  const count = ctx.useState("count", () => 0);
+  function bump() { count.value += 1; }
+  return { count, bump };
+}`,
+      handlers: ["bump"],
+    });
+
+    const targetHandlerUrl = fixture.handlerUrl.replace(/handler\.mjs$/, "route-target-handler.mjs");
+    await writeFile(
+      new URL(targetHandlerUrl),
+      `import { createClientComponent } from ${JSON.stringify(fixture.runtimeUrl)};
+const template = [
+  { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "route-b-late-target" }], events: [], if: { expression: "visible.value", blockId: "b0" }, children: [] }
+];
+async function script(ctx) {
+  const visible = ctx.useState("visible", () => false);
+  function show() { visible.value = true; }
+  return { visible, show };
+}
+export default createClientComponent({ id: "m1", name: "RouteBTarget", file: "RouteBTarget.vue", script, template, handlers: ["show"] });
+`,
+      "utf8",
+    );
+
+    const routeASource = managedTeleportSourceComment({
+      to: "#route-a-missing-target",
+      disabled: false,
+      defer: true,
+      bindings: {},
+      html: '<p><span data-rx-text="s0:b0">0</span></p>',
+    });
+    const routeBSource = managedTeleportSourceComment({
+      to: "#route-b-late-target",
+      disabled: false,
+      defer: true,
+      bindings: {},
+      html: '<p id="route-b-deferred"><span data-rx-text="s0:b0">Route B</span></p>',
+    });
+    const routeBHtml =
+      '<main>Route B</main><button id="show-route-b-target" data-rx-on-click="s1:m1:show">Show</button>'
+      + routeBSource
+      + '<span data-rx-block="s1:b0" style="display: contents;"></span>';
+
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><a id="go-route-b" href="/route-b">Route B</a>'
+      + '<button id="bump-route-a" data-rx-on-click="s0:m0:bump">Bump</button>'
+      + routeASource
+      + '</div>';
+
+    const originalFetch = globalThis.fetch;
+    installClientRuntimeFixture(window, { count: 0 }, fixture.handlerUrl);
+    Object.assign(globalThis, {
+      fetch: async () => new Response(
+        JSON.stringify({
+          html: routeBHtml,
+          head: { title: "Route B" },
+          payload: {
+            route: { path: "/route-b", params: {}, query: {} },
+            scopes: {
+              s0: { id: "s0", moduleId: "m0", state: { count: 7 }, asyncData: {} },
+              s1: { id: "s1", moduleId: "m1", state: { visible: false }, asyncData: {} },
+            },
+            modules: { m0: fixture.handlerUrl, m1: targetHandlerUrl },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    });
+
+    try {
+      await import(fixture.runtimeUrl + "?test=" + nextRuntimeImportQuery());
+      clickRuntimeFixture(window, "bump-route-a");
+      await waitForCondition(() => (globalThis as any).__RESUX__.scopes.s0.state.count === 1);
+      expect(window.document.getElementById("route-a-missing-target")).toBeNull();
+
+      clickRuntimeFixture(window, "go-route-b");
+      await waitForCondition(() => window.location.pathname === "/route-b");
+      await waitForHtml(window, "<main>Route B</main>");
+      expect(window.document.getElementById("route-b-late-target")).toBeNull();
+
+      clickRuntimeFixture(window, "show-route-b-target");
+      await waitForCondition(() =>
+        window.document.querySelector("#route-b-late-target [data-rx-text='s0:b0']")?.textContent === "Route B",
+      );
+      expect(window.document.getElementById("route-b-late-target")
+        ?.querySelector("#route-b-deferred")).toBeTruthy();
+    } finally {
+      Object.assign(globalThis, { fetch: originalFetch });
+      resetClientRuntimeFixture();
+    }
+  });
+
   it("remounts live Teleport state when a reactive block replaces its target context", async () => {
     const { runtimeUrl, handlerUrl } = await createClientComponentRuntimeFixture({
       prefix: "resux-external-teleport-target",
@@ -7155,6 +7258,23 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     await mkdir(tempDir, { recursive: true });
     const runtimeFile = path.join(tempDir, "runtime-client.mjs");
     await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+    const deferredHandlerFile = path.join(tempDir, "layout-deferred.mjs");
+    const deferredHandlerUrl = pathToFileURL(deferredHandlerFile).href;
+    await writeFile(
+      deferredHandlerFile,
+      `import { createClientComponent } from ${JSON.stringify(pathToFileURL(runtimeFile).href)};
+const template = [{ type: "interpolation", expression: "String(menuOpen.value)", bindingId: "b0" }];
+async function script(ctx) {
+  globalThis.__RESUX_LAYOUT_DEFERRED_SCOPE_CREATIONS__ = (globalThis.__RESUX_LAYOUT_DEFERRED_SCOPE_CREATIONS__ || 0) + 1;
+  const menuOpen = ctx.useState("menuOpen", () => false);
+  function prime() {}
+  function toggle() { menuOpen.value = !menuOpen.value; }
+  return { menuOpen, prime, toggle };
+}
+export default createClientComponent({ id: "layoutDeferred", name: "LayoutDeferred", file: "LayoutDeferred.vue", script, template, handlers: ["prime", "toggle"] });
+`,
+      "utf8",
+    );
     const layoutTeleportMarkup = `
       <span data-rx-teleport-source="true" data-rx-teleport-to="#outer-layout-target" style="display: contents;">
         <div id="outer-layout-shell">
@@ -7163,6 +7283,13 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
           </span>
         </div>
       </span>`;
+    const layoutDeferredTeleportMarkup = managedTeleportSourceComment({
+      to: "#deferred-layout-target",
+      disabled: false,
+      defer: true,
+      bindings: {},
+      html: '<button id="deferred-layout-action" data-rx-on-click="s2:layoutDeferred:toggle" data-rx-text="s2:b0">true</button>',
+    });
 
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML = `
@@ -7171,7 +7298,8 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
           <section id="layout">
             <nav><a href="/about">About</a></nav>
             ${layoutTeleportMarkup}
-            <span data-rx-page=""><main>Home</main><div id="outer-layout-target"></div><div id="teleports"></div></span>
+            ${layoutDeferredTeleportMarkup}
+            <span data-rx-page=""><main>Home</main><button id="prime-deferred-layout" data-rx-on-click="s2:layoutDeferred:prime">Prime</button><div id="outer-layout-target"></div><div id="teleports"></div></span>
           </section>
         </span>
       </div>
@@ -7193,7 +7321,8 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
               <section id="layout">
                 <nav><a href="/">Home</a></nav>
                 ${layoutTeleportMarkup}
-                <span data-rx-page=""><main>About</main><div id="outer-layout-target"></div></span>
+                ${layoutDeferredTeleportMarkup}
+                <span data-rx-page=""><main>About</main><div id="outer-layout-target"></div><div id="deferred-layout-target"></div></span>
               </section>
             </span>
           `,
@@ -7202,9 +7331,10 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
             route: { path: "/about", params: {}, query: {} },
             scopes: {
               s0: { id: "s0", moduleId: "layout", state: { menuOpen: false }, asyncData: {} },
-              s1: { id: "s1", moduleId: "page", state: { loaded: true }, asyncData: {} }
+              s1: { id: "s1", moduleId: "page", state: { loaded: true }, asyncData: {} },
+              s2: { id: "s2", moduleId: "layoutDeferred", state: { menuOpen: false }, asyncData: {} }
             },
-            modules: {}
+            modules: { layoutDeferred: deferredHandlerUrl }
           }
         }),
         {
@@ -7216,9 +7346,10 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
         route: { path: "/", params: {}, query: {} },
         scopes: {
           s0: { id: "s0", moduleId: "layout", state: { menuOpen: true }, asyncData: {} },
+          s2: { id: "s2", moduleId: "layoutDeferred", state: { menuOpen: true }, asyncData: {} },
           s9: { id: "s9", moduleId: "home", state: {}, asyncData: {} }
         },
-        modules: {}
+        modules: { layoutDeferred: deferredHandlerUrl }
       },
       __RESUX_INSTALLED__: false
     });
@@ -7226,6 +7357,8 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     await waitForCondition(() => Boolean(window.document.getElementById("inner-layout-target")?.querySelector("#layout-menu-action")));
     expect(window.document.getElementById("layout")?.querySelector("[data-rx-on-click^='s0:']")).toBeNull();
+    clickRuntimeFixture(window, "prime-deferred-layout");
+    await waitForCondition(() => (globalThis as any).__RESUX_LAYOUT_DEFERRED_SCOPE_CREATIONS__ === 1);
     window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await waitForHtml(window, "<main>About</main>");
     await waitForCondition(() => Boolean(
@@ -7237,7 +7370,18 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     expect(window.document.getElementById("__resux")?.innerHTML).toContain("<main>About</main>");
     expect((globalThis as any).__RESUX__.scopes.s0.state.menuOpen).toBe(true);
     expect((globalThis as any).__RESUX__.scopes.s1.state.loaded).toBe(true);
+    expect((globalThis as any).__RESUX__.scopes.s2.state.menuOpen).toBe(true);
+    expect((globalThis as any).__RESUX_LAYOUT_DEFERRED_SCOPE_CREATIONS__).toBe(1);
+    await waitForCondition(() => Boolean(
+      window.document.getElementById("deferred-layout-target")?.querySelector("#deferred-layout-action"),
+    ));
+    expect(window.document.getElementById("deferred-layout-action")?.textContent).toBe("true");
+    clickRuntimeFixture(window, "deferred-layout-action");
+    await waitForCondition(() => (globalThis as any).__RESUX__.scopes.s2.state.menuOpen === false);
+    expect((globalThis as any).__RESUX_LAYOUT_DEFERRED_SCOPE_CREATIONS__).toBe(1);
+    expect(window.document.getElementById("deferred-layout-action")?.textContent).toBe("false");
     expect(window.document.querySelector("[data-rx-teleport-fallback='true']")?.id).toBe("teleports");
+    delete (globalThis as any).__RESUX_LAYOUT_DEFERRED_SCOPE_CREATIONS__;
   });
 
   it("hot-updates active component scopes in dev without reloading the document", async () => {

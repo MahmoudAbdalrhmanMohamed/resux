@@ -4239,17 +4239,29 @@ async function script(ctx) {
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML =
       '<div id="__resux"><button id="enable-disabled-table" data-rx-on-click="s0:m0:enable">Enable</button>'
-      + '<table id="disabled-teleport-table"><!--resux-teleport-source:' + metadata + '-->'
-      + '<col id="disabled-table-col"><tr id="disabled-table-row"><td>Row</td></tr><!--resux-teleport-end--></table></div>'
+      + '<table id="disabled-teleport-table"></table></div>'
       + '<div id="teleports" data-rx-teleport-fallback="true"></div>';
+    const table = window.document.getElementById("disabled-teleport-table")!;
+    table.appendChild(window.document.createComment("resux-teleport-source:" + metadata));
+    const colgroup = window.document.createElement("colgroup");
+    const col = window.document.createElement("col");
+    col.id = "disabled-table-col";
+    colgroup.appendChild(col);
+    table.appendChild(colgroup);
+    const tbody = window.document.createElement("tbody");
+    const row = window.document.createElement("tr");
+    row.id = "disabled-table-row";
+    const cell = window.document.createElement("td");
+    cell.textContent = "Row";
+    row.appendChild(cell);
+    tbody.appendChild(row);
+    tbody.appendChild(window.document.createComment("resux-teleport-end"));
+    table.appendChild(tbody);
 
     installClientRuntimeFixture(window, { disabled: true }, fixture.handlerUrl);
     try {
       await import(fixture.runtimeUrl + "?test=" + nextRuntimeImportQuery());
-      const table = window.document.getElementById("disabled-teleport-table")!;
       const target = window.document.querySelector("[data-rx-teleport-fallback='true']") as HTMLElement;
-      const col = table.querySelector("#disabled-table-col");
-      const row = table.querySelector("#disabled-table-row");
       expect(col).toBeTruthy();
       expect(row).toBeTruthy();
 
@@ -4734,7 +4746,7 @@ const template = [
   { type: "element", tag: "teleport", attrs: [
     { kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }
   ], events: [], children: [
-    { type: "element", tag: "div", attrs: [
+    { type: "element", tag: "g", attrs: [
       { kind: "static", name: "id", value: "namespace-island" },
       { kind: "static", name: "data-rx-vue-island", value: "MissingIsland" }
     ], events: [], children: [] }
@@ -4759,7 +4771,7 @@ export default createClientComponent({ id: "m0", name: "TeleportNamespaceReinit"
           data-rx-attr-b0="s0:b0"
           style="display: contents;"
         >
-          <div id="namespace-island" data-rx-vue-island="MissingIsland"></div>
+          <g id="namespace-island" data-rx-vue-island="MissingIsland"></g>
         </span>
       </div>
       <div id="html-target"></div>

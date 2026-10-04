@@ -630,6 +630,178 @@ async function script(ctx) {
     );
   });
 
+  it("propagates client-only Teleport reservation suppression across render boundaries", async () => {
+    const nestedTeleportTemplate = (contentId: string): ComponentDefinition["template"] => [{
+      type: "element",
+      tag: "teleport",
+      attrs: [{ kind: "static", name: "to", value: "#teleports" }],
+      events: [],
+      children: [{
+        type: "element",
+        tag: "div",
+        attrs: [{ kind: "static", name: "id", value: contentId }],
+        events: [],
+        children: [{ type: "text", value: "Nested" }],
+      }],
+    }];
+    const expectSuppressed = (
+      result: Awaited<ReturnType<typeof renderApp>>,
+      outerTarget: string,
+      contentId: string,
+    ) => {
+      const parsed = new Window({ url: "http://localhost/" });
+      parsed.document.body.innerHTML = result.html;
+      const outerSource = managedTeleportCommentRecords(parsed.document.body)[0];
+      expect(outerSource?.metadata.to).toBe(outerTarget);
+      expect(outerSource?.metadata.html).toContain("resux-teleport-source");
+      expect(outerSource?.metadata.html).toContain(`id="${contentId}"`);
+      expect(result.teleports?.["#teleports"] ?? "").not.toContain(contentId);
+      expect(renderDocument(result)).not.toMatch(
+        new RegExp(`data-rx-teleport-fallback="true"[\\s\\S]*${contentId}`),
+      );
+    };
+
+    const nestedChild = defineComponent({
+      id: "m-teleport-component-child",
+      name: "NestedTeleportChild",
+      file: "NestedTeleportChild.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: nestedTeleportTemplate("nested-component-client-only-ssr"),
+    });
+    const componentPage = defineComponent({
+      id: "m-teleport-component-parent",
+      name: "TeleportComponentParentPage",
+      file: "TeleportComponentParentPage.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [{
+        type: "element",
+        tag: "teleport",
+        attrs: [{ kind: "static", name: "to", value: "#missing-component-target" }],
+        events: [],
+        children: [{
+          type: "element",
+          tag: "NestedTeleportChild",
+          attrs: [],
+          events: [],
+          children: [],
+        }],
+      }],
+    });
+    const componentResult = await renderApp({
+      page: componentPage,
+      route: { path: "/", params: {}, query: {} },
+      components: { NestedTeleportChild: nestedChild },
+    });
+    expectSuppressed(
+      componentResult,
+      "#missing-component-target",
+      "nested-component-client-only-ssr",
+    );
+
+    const slotShell = defineComponent({
+      id: "m-teleport-slot-shell",
+      name: "TeleportSlotShell",
+      file: "TeleportSlotShell.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [{
+        type: "element",
+        tag: "teleport",
+        attrs: [{ kind: "static", name: "to", value: "#missing-slot-target" }],
+        events: [],
+        children: [{ type: "element", tag: "slot", attrs: [], events: [], children: [] }],
+      }],
+    });
+    const slotPage = defineComponent({
+      id: "m-teleport-slot-parent",
+      name: "TeleportSlotParentPage",
+      file: "TeleportSlotParentPage.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [{
+        type: "element",
+        tag: "TeleportSlotShell",
+        attrs: [],
+        events: [],
+        children: nestedTeleportTemplate("nested-slot-client-only-ssr"),
+      }],
+    });
+    const slotResult = await renderApp({
+      page: slotPage,
+      route: { path: "/", params: {}, query: {} },
+      components: { TeleportSlotShell: slotShell },
+    });
+    expectSuppressed(
+      slotResult,
+      "#missing-slot-target",
+      "nested-slot-client-only-ssr",
+    );
+
+    const app = defineComponent({
+      id: "m-teleport-app-boundary",
+      name: "TeleportBoundaryApp",
+      file: "app.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [{
+        type: "element",
+        tag: "teleport",
+        attrs: [{ kind: "static", name: "to", value: "#missing-app-target" }],
+        events: [],
+        children: [{
+          type: "element",
+          tag: "ResuxLayout",
+          attrs: [],
+          events: [],
+          children: [{ type: "element", tag: "ResuxPage", attrs: [], events: [], children: [] }],
+        }],
+      }],
+    });
+    const layout = defineComponent({
+      id: "m-teleport-layout-boundary",
+      name: "DefaultLayout",
+      file: "layouts/default.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [{ type: "element", tag: "slot", attrs: [], events: [], children: [] }],
+    });
+    const boundaryPage = defineComponent({
+      id: "m-teleport-page-boundary",
+      name: "TeleportBoundaryPage",
+      file: "pages/index.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: nestedTeleportTemplate("nested-page-layout-client-only-ssr"),
+    });
+    const boundaryResult = await renderApp({
+      app,
+      page: boundaryPage,
+      route: { path: "/", params: {}, query: {} },
+      layouts: { default: layout },
+    });
+    expectSuppressed(
+      boundaryResult,
+      "#missing-app-target",
+      "nested-page-layout-client-only-ssr",
+    );
+  });
+
   it("renders parser-safe Teleport markers inside select and table contexts", async () => {
     const page: ComponentDefinition = defineComponent({
       id: "m-teleport-parser-safe",

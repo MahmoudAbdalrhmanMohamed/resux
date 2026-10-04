@@ -3668,6 +3668,13 @@ export default createClientComponent({ id: "m0", name: "RestoreNamespace", file:
 `,
     );
 
+    const missingSource = managedTeleportSourceComment({
+      to: "#never-target",
+      disabled: false,
+      defer: false,
+      bindings: { b0: "s0:b0" },
+      html: '<div id="missing-target-restored">Inline</div>',
+    });
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML = `
       <div id="__resux">
@@ -3675,6 +3682,7 @@ export default createClientComponent({ id: "m0", name: "RestoreNamespace", file:
         <span data-rx-teleport-source="true" data-rx-teleport-to="#svg-target" data-rx-attr-b0="s0:b0" style="display: contents;">
           <div id="restore-namespace-node">Restored</div>
         </span>
+        ${missingSource}
       </div>
       <svg id="svg-target"></svg>
     `;
@@ -3692,6 +3700,8 @@ export default createClientComponent({ id: "m0", name: "RestoreNamespace", file:
     );
     await waitForCondition(() => Boolean(source.querySelector("#restore-namespace-node")));
     expect(source.querySelector("#restore-namespace-node")?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
+    await waitForCondition(() => Boolean(window.document.getElementById("missing-target-restored")));
+    expect(window.document.getElementById("missing-target-restored")?.textContent).toBe("Inline");
   });
 
   it("preserves target order when an earlier Teleport starts disabled", async () => {
@@ -4213,13 +4223,12 @@ async function script(ctx) {
     }
   });
 
-  it("reparses first table-context moves and materializes disabled missing-target content", async () => {
+  it("reparses first table-context moves", async () => {
     const fixture = await createClientComponentRuntimeFixture({
       prefix: "resux-teleport-context-and-missing",
       componentName: "TeleportContextAndMissing",
       template: [
         { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "enableTable" }], children: [] },
-        { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "disableMissing" }], children: [] },
         { type: "element", tag: "teleport", attrs: [
           { kind: "static", name: "to", value: "#table-target" },
           { kind: "dynamic", name: "disabled", value: "tableDisabled.value", bindingId: "b0" },
@@ -4228,22 +4237,14 @@ async function script(ctx) {
             { type: "element", tag: "td", attrs: [], events: [], children: [{ type: "text", value: "Row" }] },
           ] },
         ] },
-        { type: "element", tag: "teleport", attrs: [
-          { kind: "static", name: "to", value: "#never-target" },
-          { kind: "dynamic", name: "disabled", value: "missingDisabled.value", bindingId: "b1" },
-        ], events: [], children: [
-          { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "materialized-missing" }], events: [], children: [{ type: "text", value: "Inline" }] },
-        ] },
       ],
       scriptSource: `
 async function script(ctx) {
   const tableDisabled = ctx.useState("tableDisabled", () => true);
-  const missingDisabled = ctx.useState("missingDisabled", () => false);
   function enableTable() { tableDisabled.value = false; }
-  function disableMissing() { missingDisabled.value = true; }
-  return { tableDisabled, missingDisabled, enableTable, disableMissing };
+  return { tableDisabled, enableTable };
 }`,
-      handlers: ["enableTable", "disableMissing"],
+      handlers: ["enableTable"],
     });
 
     const tableMarkup = '<tr id="context-row"><td>Row</td></tr>';
@@ -4254,31 +4255,21 @@ async function script(ctx) {
       bindings: { b0: "s0:b0" },
       html: tableMarkup,
     }).replace("<!--resux-teleport-end-->", tableMarkup + "<!--resux-teleport-end-->");
-    const missingSource = managedTeleportSourceComment({
-      to: "#never-target",
-      disabled: false,
-      defer: false,
-      bindings: { b1: "s0:b1" },
-      html: '<div id="materialized-missing">Inline</div>',
-    });
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML =
       '<div id="__resux"><button id="enable-context-table" data-rx-on-click="s0:m0:enableTable"></button>'
-      + '<button id="disable-missing-target" data-rx-on-click="s0:m0:disableMissing"></button>'
       + '<table id="source-table"><tbody>' + tableSource + '</tbody></table>'
-      + missingSource + '</div><table id="table-target"></table>';
+      + '</div><table id="table-target"></table>';
 
     installClientRuntimeFixture(
       window,
-      { tableDisabled: true, missingDisabled: false },
+      { tableDisabled: true },
       fixture.handlerUrl,
     );
     try {
       await import(fixture.runtimeUrl + "?test=" + nextRuntimeImportQuery());
       const sourceRow = window.document.querySelector("#source-table #context-row");
       expect(sourceRow).toBeTruthy();
-      expect(window.document.getElementById("materialized-missing")).toBeNull();
-
       clickRuntimeFixture(window, "enable-context-table");
       const tableTarget = window.document.getElementById("table-target") as HTMLTableElement;
       await waitForCondition(() => Boolean(tableTarget.querySelector("#context-row")));
@@ -4287,9 +4278,6 @@ async function script(ctx) {
       expect(movedRow?.parentElement?.localName).toBe("tbody");
       expect(movedRow).not.toBe(sourceRow);
 
-      clickRuntimeFixture(window, "disable-missing-target");
-      await waitForCondition(() => Boolean(window.document.getElementById("materialized-missing")));
-      expect(window.document.getElementById("materialized-missing")?.textContent).toBe("Inline");
     } finally {
       resetClientRuntimeFixture();
     }

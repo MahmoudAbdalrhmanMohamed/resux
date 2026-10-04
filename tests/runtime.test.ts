@@ -5013,7 +5013,7 @@ export default createClientComponent({ id: "m1", name: "RouteBTarget", file: "Ro
         '<main>Route B</main><button id="show-route-b-target" data-rx-on-click="s1:m1:show">Show</button>'
         + routeBSource
         + '<span data-rx-block="s1:b0" style="display: contents;"></span>';
-      const wrapPage = (page) => layoutSource
+      const wrapPage = (page: string) => layoutSource
         ? '<section data-rx-layout="default">' + layoutSource + '<span data-rx-page="">' + page + '</span></section>'
         : page;
       const window = new Window({ url: "http://localhost/" });

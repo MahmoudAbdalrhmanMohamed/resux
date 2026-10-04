@@ -654,7 +654,10 @@ async function script(ctx) {
       const outerSource = managedTeleportCommentRecords(parsed.document.body)[0];
       expect(outerSource?.metadata.to).toBe(outerTarget);
       expect(outerSource?.metadata.html).toContain("resux-teleport-source");
-      expect(outerSource?.metadata.html).toContain(`id="${contentId}"`);
+      const nestedParsed = new Window({ url: "http://localhost/" });
+      nestedParsed.document.body.innerHTML = outerSource?.metadata.html ?? "";
+      const nestedSource = managedTeleportCommentRecords(nestedParsed.document.body)[0];
+      expect(nestedSource?.metadata.html).toContain(`id="${contentId}"`);
       expect(result.teleports?.["#teleports"] ?? "").not.toContain(contentId);
       expect(renderDocument(result)).not.toMatch(
         new RegExp(`data-rx-teleport-fallback="true"[\\s\\S]*${contentId}`),

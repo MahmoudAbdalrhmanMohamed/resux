@@ -481,6 +481,16 @@ describe("runtime SSR", () => {
     expect(explicitTarget.querySelectorAll("#overlay")).toHaveLength(1);
     expect(explicitTargetWindow.document.querySelector("[data-rx-teleport-fallback='true']")?.hasAttribute("id")).toBe(false);
 
+    const voidTargetDocumentHtml = renderDocument({
+      ...result,
+      html: result.html + '<input id="teleports">',
+    });
+    const voidTargetWindow = new Window({ url: "http://localhost/" });
+    voidTargetWindow.document.body.innerHTML = /<body[^>]*>([\s\S]*?)<\/body>/.exec(voidTargetDocumentHtml)?.[1] ?? "";
+    const voidFallback = voidTargetWindow.document.querySelector("[data-rx-teleport-fallback='true'][id='teleports']")!;
+    expect(voidFallback.querySelectorAll("#overlay")).toHaveLength(1);
+    expect(voidTargetWindow.document.querySelector("input[id='teleports']")?.querySelector("#overlay")).toBeNull();
+
     const body = /<body[^>]*>([\s\S]*?)<\/body>/.exec(documentHtml)?.[1];
     expect(body).toBeTruthy();
     parsed.document.body.innerHTML = body!;
@@ -637,6 +647,41 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
       expect(movedRow).toBe(row);
       expect(movedRow?.localName).toBe("tr");
       expect(movedRow?.parentElement).toBe(target);
+    } finally {
+      resetClientRuntimeFixture();
+    }
+
+    const nestedSource = managedTeleportSourceComment({
+      to: "#inner-table-target",
+      disabled: false,
+      defer: false,
+      html: '<span id="inner-table-content">Inner</span>',
+    });
+    const tableSource = managedTeleportSourceComment({
+      to: "#table-target",
+      disabled: false,
+      defer: false,
+      bindings: { to: "s0:b0" },
+      html: nestedSource + '<tr id="wrapped-row"><td>Wrapped</td></tr>',
+    });
+    const markerWindow = new Window({ url: "http://localhost/" });
+    markerWindow.document.body.innerHTML =
+      '<div id="__resux"><button id="move-table" data-rx-on-click="s0:m0:move"></button>'
+      + tableSource + '</div><table id="table-target"></table>'
+      + '<table><tbody id="tbody-target"></tbody></table><div id="inner-table-target"></div>';
+
+    installClientRuntimeFixture(markerWindow, { target: "#table-target" }, handlerUrl);
+    try {
+      await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+      await waitForCondition(() => Boolean(markerWindow.document.getElementById("table-target")?.querySelector("#wrapped-row")));
+      markerWindow.document.getElementById("move-table")!.dispatchEvent(
+        new markerWindow.MouseEvent("click", { bubbles: true, button: 0 }),
+      );
+      const tbodyTarget = markerWindow.document.getElementById("tbody-target")!;
+      await waitForCondition(() => Boolean(tbodyTarget.querySelector("#wrapped-row")));
+      expect(tbodyTarget.querySelector("#wrapped-row")?.parentElement).toBe(tbodyTarget);
+      expect(tbodyTarget.querySelector("tbody")).toBeNull();
+      expect(markerWindow.document.getElementById("inner-table-target")?.querySelector("#inner-table-content")).toBeTruthy();
     } finally {
       resetClientRuntimeFixture();
     }
@@ -3683,6 +3728,7 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
     htmlAnnotation.setAttribute("encoding", "text/html");
     const mathAnnotation = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "annotation-xml");
     mathAnnotation.setAttribute("id", "math-annotation-target");
+    mathAnnotation.setAttribute("encoding", " text/html ");
     mathRoot.appendChild(htmlAnnotation);
     mathRoot.appendChild(mathAnnotation);
     window.document.body.appendChild(mathRoot);

@@ -4903,6 +4903,7 @@ export default createClientComponent({ id: "m1", name: "DeferredTarget", file: "
       await waitForCondition(() =>
         window.document.querySelector("#late-replay-target [data-rx-text='s0:b0']")?.textContent === "1",
       );
+      expect(window.document.querySelector("#late-replay-target [data-rx-text='s0:b0']")?.textContent).toBe("1");
       expect(window.document.getElementById("late-replay-target")
         ?.querySelector("#deferred-replay-content")).toBeTruthy();
     } finally {
@@ -5005,6 +5006,7 @@ export default createClientComponent({ id: "m1", name: "RouteBTarget", file: "Ro
       await waitForCondition(() =>
         window.document.querySelector("#route-b-late-target [data-rx-text='s0:b0']")?.textContent === "Route B",
       );
+      expect(window.document.querySelector("#route-b-late-target [data-rx-text='s0:b0']")?.textContent).toBe("Route B");
       expect(window.document.getElementById("route-b-late-target")
         ?.querySelector("#route-b-deferred")).toBeTruthy();
     } finally {

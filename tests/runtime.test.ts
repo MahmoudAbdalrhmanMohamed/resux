@@ -3619,6 +3619,7 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
       const input = integrationTarget.querySelector("#html-context-input") as HTMLInputElement;
       input.value = "Edited";
       input.focus();
+      expect(htmlContextWindow.document.activeElement).toBe(input);
       htmlContextWindow.document.getElementById("move-html-context")!.dispatchEvent(
         new htmlContextWindow.MouseEvent("click", { bubbles: true, button: 0 }),
       );
@@ -3627,7 +3628,6 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
       const movedInput = htmlTarget.querySelector("#html-context-input") as HTMLInputElement;
       expect(movedInput).toBe(input);
       expect(movedInput.value).toBe("Edited");
-      expect(htmlContextWindow.document.activeElement).toBe(input);
     } finally {
       resetClientRuntimeFixture();
     }

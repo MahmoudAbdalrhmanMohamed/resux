@@ -3656,7 +3656,7 @@ const template = [
     { kind: "static", name: "to", value: "#svg-target" },
     { kind: "dynamic", name: "disabled", value: "disabled.value", bindingId: "b0" }
   ], events: [], children: [
-    { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "restore-namespace-node" }], events: [], children: [{ type: "text", value: "Restored" }] }
+    { type: "element", tag: "circle", attrs: [{ kind: "static", name: "id", value: "restore-namespace-node" }], events: [], children: [] }
   ] }
 ];
 async function script(ctx) {
@@ -3680,7 +3680,7 @@ export default createClientComponent({ id: "m0", name: "RestoreNamespace", file:
       <div id="__resux">
         <button id="disable-namespace" data-rx-on-click="s0:m0:disable">Disable</button>
         <span data-rx-teleport-source="true" data-rx-teleport-to="#svg-target" data-rx-attr-b0="s0:b0" style="display: contents;">
-          <div id="restore-namespace-node">Restored</div>
+          <circle id="restore-namespace-node"></circle>
         </span>
         ${missingSource}
       </div>
@@ -3702,6 +3702,36 @@ export default createClientComponent({ id: "m0", name: "RestoreNamespace", file:
     expect(source.querySelector("#restore-namespace-node")?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
     await waitForCondition(() => Boolean(window.document.getElementById("missing-target-restored")));
     expect(window.document.getElementById("missing-target-restored")?.textContent).toBe("Inline");
+  });
+
+  it("uses HTML namespaces for SVG foreign-content breakout tags", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-svg-teleport-html-breakout",
+      () => "export default {};",
+    );
+    const source = managedTeleportSourceComment({
+      to: "#svg-breakout-target",
+      disabled: false,
+      defer: false,
+      bindings: {},
+      html: '<div id="svg-breakout-div">HTML</div><font id="svg-breakout-font" color="red">Font</font><font id="svg-plain-font">Plain</font>',
+    });
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = '<div id="__resux">' + source + '</div>';
+    const svg = window.document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("id", "svg-breakout-target");
+    window.document.body.appendChild(svg);
+
+    installClientRuntimeFixture(window, {}, handlerUrl);
+    try {
+      await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+      await waitForCondition(() => Boolean(svg.querySelector("#svg-breakout-div")));
+      expect(svg.querySelector("#svg-breakout-div")?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
+      expect(svg.querySelector("#svg-breakout-font")?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
+      expect(svg.querySelector("#svg-plain-font")?.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    } finally {
+      resetClientRuntimeFixture();
+    }
   });
 
   it("preserves target order when an earlier Teleport starts disabled", async () => {
@@ -4140,7 +4170,7 @@ async function script(ctx) {
     }
   });
 
-  it("moves a disabled table Teleport after the parser inserts an implicit tbody", async () => {
+  it("moves a disabled table Teleport across multiple implicit table wrappers", async () => {
     const fixture = await createClientComponentRuntimeFixture({
       prefix: "resux-disabled-table-teleport",
       componentName: "DisabledTableTeleport",
@@ -4165,19 +4195,28 @@ async function script(ctx) {
               { kind: "dynamic", name: "disabled", value: "disabled.value", bindingId: "b0" },
             ],
             events: [],
-            children: [{
-              type: "element",
-              tag: "tr",
-              attrs: [{ kind: "static", name: "id", value: "disabled-table-row" }],
-              events: [],
-              children: [{
+            children: [
+              {
                 type: "element",
-                tag: "td",
-                attrs: [],
+                tag: "col",
+                attrs: [{ kind: "static", name: "id", value: "disabled-table-col" }],
                 events: [],
-                children: [{ type: "text", value: "Row" }],
-              }],
-            }],
+                children: [],
+              },
+              {
+                type: "element",
+                tag: "tr",
+                attrs: [{ kind: "static", name: "id", value: "disabled-table-row" }],
+                events: [],
+                children: [{
+                  type: "element",
+                  tag: "td",
+                  attrs: [],
+                  events: [],
+                  children: [{ type: "text", value: "Row" }],
+                }],
+              },
+            ],
           }],
         },
       ],
@@ -4195,13 +4234,13 @@ async function script(ctx) {
       disabled: true,
       defer: false,
       bindings: { b0: "s0:b0" },
-      html: '<tr id="disabled-table-row"><td>Row</td></tr>',
+      html: '<col id="disabled-table-col"><tr id="disabled-table-row"><td>Row</td></tr>',
     })).replaceAll("-", "%2D");
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML =
       '<div id="__resux"><button id="enable-disabled-table" data-rx-on-click="s0:m0:enable">Enable</button>'
       + '<table id="disabled-teleport-table"><!--resux-teleport-source:' + metadata + '-->'
-      + '<tr id="disabled-table-row"><td>Row</td></tr><!--resux-teleport-end--></table></div>'
+      + '<col id="disabled-table-col"><tr id="disabled-table-row"><td>Row</td></tr><!--resux-teleport-end--></table></div>'
       + '<div id="teleports" data-rx-teleport-fallback="true"></div>';
 
     installClientRuntimeFixture(window, { disabled: true }, fixture.handlerUrl);
@@ -4209,14 +4248,19 @@ async function script(ctx) {
       await import(fixture.runtimeUrl + "?test=" + nextRuntimeImportQuery());
       const table = window.document.getElementById("disabled-teleport-table")!;
       const target = window.document.querySelector("[data-rx-teleport-fallback='true']") as HTMLElement;
+      const col = table.querySelector("#disabled-table-col");
       const row = table.querySelector("#disabled-table-row");
+      expect(col).toBeTruthy();
       expect(row).toBeTruthy();
 
       clickRuntimeFixture(window, "enable-disabled-table");
 
       await waitForCondition(() => Boolean(target.querySelector("#disabled-table-row")), 5000);
+      expect(target.querySelectorAll("#disabled-table-col")).toHaveLength(1);
       expect(target.querySelectorAll("#disabled-table-row")).toHaveLength(1);
+      expect(target.querySelector("#disabled-table-col")).toBe(col);
       expect(target.querySelector("#disabled-table-row")).toBe(row);
+      expect(table.querySelector("#disabled-table-col")).toBeNull();
       expect(table.querySelector("#disabled-table-row")).toBeNull();
     } finally {
       resetClientRuntimeFixture();
@@ -4911,7 +4955,7 @@ export default createClientComponent({ id: "m1", name: "DeferredTarget", file: "
     }
   });
 
-  it("clears stale deferred patches when route cleanup removes the last waiter", async () => {
+  it("clears stale deferred patches across route cleanup with or without surviving waiters", async () => {
     const fixture = await createClientComponentRuntimeFixture({
       prefix: "resux-deferred-teleport-route-cleanup",
       componentName: "DeferredRouteCleanup",
@@ -4959,60 +5003,74 @@ export default createClientComponent({ id: "m1", name: "RouteBTarget", file: "Ro
       bindings: {},
       html: '<p id="route-b-deferred"><span data-rx-text="s0:b0">Route B</span></p>',
     });
-    const routeBHtml =
-      '<main>Route B</main><button id="show-route-b-target" data-rx-on-click="s1:m1:show">Show</button>'
-      + routeBSource
-      + '<span data-rx-block="s1:b0" style="display: contents;"></span>';
 
-    const window = new Window({ url: "http://localhost/" });
-    window.document.body.innerHTML =
-      '<div id="__resux"><a id="go-route-b" href="/route-b">Route B</a>'
-      + '<button id="bump-route-a" data-rx-on-click="s0:m0:bump">Bump</button>'
-      + routeASource
-      + '</div>';
+    const runCase = async (layoutSource = "") => {
+      const routeAPage =
+        '<a id="go-route-b" href="/route-b">Route B</a>'
+        + '<button id="bump-route-a" data-rx-on-click="s0:m0:bump">Bump</button>'
+        + routeASource;
+      const routeBPage =
+        '<main>Route B</main><button id="show-route-b-target" data-rx-on-click="s1:m1:show">Show</button>'
+        + routeBSource
+        + '<span data-rx-block="s1:b0" style="display: contents;"></span>';
+      const wrapPage = (page) => layoutSource
+        ? '<section data-rx-layout="default">' + layoutSource + '<span data-rx-page="">' + page + '</span></section>'
+        : page;
+      const window = new Window({ url: "http://localhost/" });
+      window.document.body.innerHTML = '<div id="__resux">' + wrapPage(routeAPage) + '</div>';
 
-    const originalFetch = globalThis.fetch;
-    installClientRuntimeFixture(window, { count: 0 }, fixture.handlerUrl);
-    Object.assign(globalThis, {
-      fetch: async () => new Response(
-        JSON.stringify({
-          html: routeBHtml,
-          head: { title: "Route B" },
-          payload: {
-            route: { path: "/route-b", params: {}, query: {} },
-            scopes: {
-              s0: { id: "s0", moduleId: "m0", state: { count: 7 }, asyncData: {} },
-              s1: { id: "s1", moduleId: "m1", state: { visible: false }, asyncData: {} },
+      const originalFetch = globalThis.fetch;
+      installClientRuntimeFixture(window, { count: 0 }, fixture.handlerUrl);
+      Object.assign(globalThis, {
+        fetch: async () => new Response(
+          JSON.stringify({
+            html: wrapPage(routeBPage),
+            head: { title: "Route B" },
+            payload: {
+              route: { path: "/route-b", params: {}, query: {} },
+              scopes: {
+                s0: { id: "s0", moduleId: "m0", state: { count: 7 }, asyncData: {} },
+                s1: { id: "s1", moduleId: "m1", state: { visible: false }, asyncData: {} },
+              },
+              modules: { m0: fixture.handlerUrl, m1: targetHandlerUrl },
             },
-            modules: { m0: fixture.handlerUrl, m1: targetHandlerUrl },
-          },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      ),
-    });
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      });
 
-    try {
-      await import(fixture.runtimeUrl + "?test=" + nextRuntimeImportQuery());
-      clickRuntimeFixture(window, "bump-route-a");
-      await waitForCondition(() => (globalThis as any).__RESUX__.scopes.s0.state.count === 1);
-      expect(window.document.getElementById("route-a-missing-target")).toBeNull();
+      try {
+        await import(fixture.runtimeUrl + "?test=" + nextRuntimeImportQuery());
+        clickRuntimeFixture(window, "bump-route-a");
+        await waitForCondition(() => (globalThis as any).__RESUX__.scopes.s0.state.count === 1);
+        expect(window.document.getElementById("route-a-missing-target")).toBeNull();
 
-      clickRuntimeFixture(window, "go-route-b");
-      await waitForCondition(() => window.location.pathname === "/route-b");
-      await waitForHtml(window, "<main>Route B</main>");
-      expect(window.document.getElementById("route-b-late-target")).toBeNull();
+        clickRuntimeFixture(window, "go-route-b");
+        await waitForCondition(() => window.location.pathname === "/route-b");
+        await waitForHtml(window, "<main>Route B</main>");
+        expect(window.document.getElementById("route-b-late-target")).toBeNull();
 
-      clickRuntimeFixture(window, "show-route-b-target");
-      await waitForCondition(() =>
-        window.document.querySelector("#route-b-late-target [data-rx-text='s0:b0']")?.textContent === "Route B",
-      );
-      expect(window.document.querySelector("#route-b-late-target [data-rx-text='s0:b0']")?.textContent).toBe("Route B");
-      expect(window.document.getElementById("route-b-late-target")
-        ?.querySelector("#route-b-deferred")).toBeTruthy();
-    } finally {
-      Object.assign(globalThis, { fetch: originalFetch });
-      resetClientRuntimeFixture();
-    }
+        clickRuntimeFixture(window, "show-route-b-target");
+        await waitForCondition(() =>
+          window.document.querySelector("#route-b-late-target [data-rx-text='s0:b0']")?.textContent === "Route B",
+        );
+        expect(window.document.querySelector("#route-b-late-target [data-rx-text='s0:b0']")?.textContent).toBe("Route B");
+        expect(window.document.getElementById("route-b-late-target")
+          ?.querySelector("#route-b-deferred")).toBeTruthy();
+      } finally {
+        Object.assign(globalThis, { fetch: originalFetch });
+        resetClientRuntimeFixture();
+      }
+    };
+
+    await runCase();
+    await runCase(managedTeleportSourceComment({
+      to: "#layout-never-target",
+      disabled: false,
+      defer: true,
+      bindings: {},
+      html: '<span id="layout-deferred-content">Layout</span>',
+    }));
   });
 
   it("remounts live Teleport state when a reactive block replaces its target context", async () => {

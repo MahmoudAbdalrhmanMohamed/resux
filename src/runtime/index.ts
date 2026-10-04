@@ -2175,49 +2175,80 @@ function readHtmlAttribute(tag: string, attribute: string): string | undefined {
   return match?.[1] ?? match?.[2] ?? match?.[3];
 }
 
-const HTML_VOID_TAG_NAMES = new Set([
-  "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr",
+const HTML_TELEPORT_UNSAFE_TARGET_TAG_NAMES = new Set([
+  "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "script", "source",
+  "style", "template", "textarea", "title", "track", "wbr",
 ]);
+const HTML_RAW_TEXT_TAG_NAMES = new Set(["script", "style", "textarea", "title"]);
 
 function htmlTagCanContainChildren(tag: string): boolean {
   const match = /^<([A-Za-z][\w:-]*)\b[^>]*>$/.exec(tag);
   if (!match || tag.endsWith("/>")) return false;
-  return !HTML_VOID_TAG_NAMES.has(match[1].toLowerCase());
+  return !HTML_TELEPORT_UNSAFE_TARGET_TAG_NAMES.has(match[1].toLowerCase());
+}
+
+function findLiveHtmlElementTagById(html: string, id: string): RegExpExecArray | null {
+  const tagPattern = /<\/?([A-Za-z][\w:-]*)\b[^>]*>/g;
+  let templateDepth = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = tagPattern.exec(html))) {
+    const token = match[0];
+    const tagName = match[1]?.toLowerCase();
+    if (!tagName) continue;
+
+    if (token.startsWith("</")) {
+      if (tagName === "template" && templateDepth > 0) templateDepth -= 1;
+      continue;
+    }
+
+    if (
+      templateDepth === 0
+      && readHtmlAttribute(token, "id") === id
+      && htmlTagCanContainChildren(token)
+    ) {
+      return match;
+    }
+
+    if (tagName === "template" && !token.endsWith("/>")) {
+      templateDepth += 1;
+      continue;
+    }
+
+    if (HTML_RAW_TEXT_TAG_NAMES.has(tagName) && !token.endsWith("/>")) {
+      const closingPattern = new RegExp("</" + escapeRegExp(tagName) + "\\s*>", "ig");
+      closingPattern.lastIndex = tagPattern.lastIndex;
+      const closing = closingPattern.exec(html);
+      if (closing) tagPattern.lastIndex = closing.index + closing[0].length;
+    }
+  }
+
+  return null;
 }
 
 function injectHtmlIntoElementById(html: string, id: string, content: string): string {
   if (!content) return html;
+  const opening = findLiveHtmlElementTagById(html, id);
+  if (!opening) return html;
+
+  const tagName = opening[1]?.toLowerCase();
+  if (!tagName) return html;
+
   const tagPattern = /<\/?([A-Za-z][\w:-]*)\b[^>]*>/g;
-  let opening: RegExpExecArray | null;
-
-  while ((opening = tagPattern.exec(html))) {
-    const token = opening[0];
-    if (token.startsWith("</") || readHtmlAttribute(token, "id") !== id) {
-      continue;
-    }
-
-    if (!htmlTagCanContainChildren(token)) {
-      return html;
-    }
-
-    const tagName = opening[1]?.toLowerCase();
-    if (!tagName) return html;
-
-    let depth = 1;
-    let candidate: RegExpExecArray | null;
-    while ((candidate = tagPattern.exec(html))) {
-      if (candidate[1]?.toLowerCase() !== tagName) continue;
-      const candidateToken = candidate[0];
-      if (candidateToken.startsWith("</")) {
-        depth -= 1;
-        if (depth === 0) {
-          return html.slice(0, candidate.index) + content + html.slice(candidate.index);
-        }
-      } else if (!candidateToken.endsWith("/>")) {
-        depth += 1;
+  tagPattern.lastIndex = opening.index + opening[0].length;
+  let depth = 1;
+  let candidate: RegExpExecArray | null;
+  while ((candidate = tagPattern.exec(html))) {
+    if (candidate[1]?.toLowerCase() !== tagName) continue;
+    const candidateToken = candidate[0];
+    if (candidateToken.startsWith("</")) {
+      depth -= 1;
+      if (depth === 0) {
+        return html.slice(0, candidate.index) + content + html.slice(candidate.index);
       }
+    } else if (!candidateToken.endsWith("/>")) {
+      depth += 1;
     }
-    return html;
   }
 
   return html;
@@ -2376,8 +2407,7 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
   };
   const renderedBodyAttrs = renderAttributes(mergedHead.bodyAttrs ?? {});
   const bodyOpenTag = renderedBodyAttrs ? `<body ${renderedBodyAttrs}>` : "<body>";
-  const hasDefaultTeleportTarget = collectHtmlTagsWithAttribute(result.html, "id")
-    .some((tag) => readHtmlAttribute(tag, "id") === "teleports" && htmlTagCanContainChildren(tag));
+  const hasDefaultTeleportTarget = Boolean(findLiveHtmlElementTagById(result.html, "teleports"));
   const defaultTeleportHtml = result.teleports?.["#teleports"] ?? "";
   const renderedAppHtml = hasDefaultTeleportTarget
     ? injectHtmlIntoElementById(result.html, "teleports", defaultTeleportHtml)
@@ -4098,6 +4128,10 @@ function encodeTeleportSourceMetadata(value: Record<string, unknown>): string {
   return encodeURIComponent(JSON.stringify(value)).replaceAll("-", "%2D");
 }
 
+function teleportReservationKey(reservation: number): string {
+  return "t" + reservation.toString(36);
+}
+
 interface TeleportBoundaryRenderState {
   target: string;
   disabled: boolean;
@@ -4134,6 +4168,7 @@ function resolveTeleportBoundaryRenderState(
 function renderTeleportBoundary(
   state: TeleportBoundaryRenderState,
   children: string,
+  reservation?: number,
 ): string {
   const metadata = encodeTeleportSourceMetadata({
     to: state.target,
@@ -4142,6 +4177,7 @@ function renderTeleportBoundary(
     defer: state.defer,
     bindings: state.bindings,
     html: state.disabled ? "" : children,
+    ssrKey: reservation === undefined ? undefined : teleportReservationKey(reservation),
   });
   const source = `<!--resux-teleport-source:${metadata}-->`;
   const end = "<!--resux-teleport-end-->";
@@ -4172,7 +4208,7 @@ function renderElement(node: ElementTemplateNode, context: RenderTemplateContext
     if (reservation !== undefined) {
       context.commitTeleport?.(reservation, children);
     }
-    return renderTeleportBoundary(state, children);
+    return renderTeleportBoundary(state, children, reservation);
   }
 
   if (isTransitionBoundaryTag(node.tag)) {
@@ -4408,7 +4444,7 @@ async function renderElementAsync(
     if (reservation !== undefined) {
       context.commitTeleport?.(reservation, children);
     }
-    return renderTeleportBoundary(state, children);
+    return renderTeleportBoundary(state, children, reservation);
   }
 
   if (isTransitionBoundaryTag(node.tag)) {
@@ -7144,9 +7180,11 @@ export class AsyncResuxRenderer {
 
   createTeleports(): Record<string, string> {
     const teleports: Record<string, string> = {};
-    for (const entry of this.teleportEntries) {
-      if (entry.html === null) continue;
-      const content = `<!--resux-teleport-start-->${entry.html}<!--resux-teleport-end-->`;
+    for (let reservation = 0; reservation < this.teleportEntries.length; reservation += 1) {
+      const entry = this.teleportEntries[reservation];
+      if (!entry || entry.html === null) continue;
+      const key = teleportReservationKey(reservation);
+      const content = `<!--resux-teleport-start:${key}-->${entry.html}<!--resux-teleport-end:${key}-->`;
       teleports[entry.target] = (teleports[entry.target] ?? "") + content;
     }
     return teleports;
@@ -8308,8 +8346,9 @@ export function getClientRuntimeSource(options: ClientRuntimeSourceOptions = {})
   const packageRegistrySource = createClientRuntimePackageRegistrySource(options);
   return String.raw`
 const scopeCache = new Map();
-const HTML_VOID_TAG_NAMES = new Set([
-  "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"
+const HTML_TELEPORT_UNSAFE_TARGET_TAG_NAMES = new Set([
+  "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "script", "source",
+  "style", "template", "textarea", "title", "track", "wbr"
 ]);
 
 function parseUserAgent(ua) {
@@ -14510,7 +14549,7 @@ function isManagedTeleportContainerElement(value) {
     value
     && typeof value === "object"
     && value.nodeType === 1
-    && !HTML_VOID_TAG_NAMES.has(String(value.localName || "").toLowerCase())
+    && !HTML_TELEPORT_UNSAFE_TARGET_TAG_NAMES.has(String(value.localName || "").toLowerCase())
   );
 }
 
@@ -14682,10 +14721,10 @@ function managedTeleportParsingContext(target) {
     return namespace + ":" + contextualTag;
   }
   if (namespace === SVG_NAMESPACE) {
-    const integration = ["foreignobject", "desc", "title"].includes(localName)
-      ? "html"
-      : "svg";
-    return namespace + ":" + integration;
+    if (["foreignobject", "desc", "title"].includes(localName)) {
+      return XHTML_NAMESPACE + ":default";
+    }
+    return namespace + ":svg";
   }
   if (namespace === MATHML_NAMESPACE) {
     if (localName === "annotation-xml") {
@@ -15144,20 +15183,41 @@ function moveManagedTeleportRange(content, target, options = {}) {
   }
 }
 
+function isManagedTeleportTargetStart(node) {
+  const data = node?.nodeType === 8 ? String(node.data || "") : "";
+  return data === "resux-teleport-start" || data.startsWith("resux-teleport-start:");
+}
+
 function nextUnclaimedManagedTeleportTargetStart(target) {
   return Array.from(target?.childNodes ?? []).find((node) =>
+    isManagedTeleportTargetStart(node)
+    && !managedTeleportClaimedTargetStarts.has(node)
+  ) || null;
+}
+
+function reservedManagedTeleportTargetStart(source, target) {
+  const ssrKey = String(decodeManagedTeleportSourceMetadata(source).ssrKey || "");
+  const expected = ssrKey ? "resux-teleport-start:" + ssrKey : "resux-teleport-start";
+  return Array.from(target?.childNodes ?? []).find((node) =>
     node.nodeType === 8
-    && String(node.data || "") === "resux-teleport-start"
+    && String(node.data || "") === expected
     && !managedTeleportClaimedTargetStarts.has(node)
   ) || null;
 }
 
 function adoptManagedTeleportTargetRange(source, target) {
-  const start = nextUnclaimedManagedTeleportTargetStart(target);
+  const start = reservedManagedTeleportTargetStart(source, target);
   if (!start) return null;
+  const ssrKey = String(decodeManagedTeleportSourceMetadata(source).ssrKey || "");
+  const expectedEnd = ssrKey ? "resux-teleport-end:" + ssrKey : "resux-teleport-end";
+  let nestedSourceDepth = 0;
   let end = start.nextSibling;
   while (end) {
-    if (end.nodeType === 8 && String(end.data || "") === "resux-teleport-end") {
+    if (!ssrKey && isManagedTeleportCommentSource(end)) {
+      nestedSourceDepth += 1;
+    } else if (!ssrKey && isManagedTeleportCommentEnd(end) && nestedSourceDepth > 0) {
+      nestedSourceDepth -= 1;
+    } else if (end.nodeType === 8 && String(end.data || "") === expectedEnd) {
       managedTeleportClaimedTargetStarts.add(start);
       return { start, end, source, parseContext: null };
     }

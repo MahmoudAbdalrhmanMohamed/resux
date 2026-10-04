@@ -15130,7 +15130,10 @@ function normalizeManagedTeleportNamespace(content, target) {
   if (content.parseContext === targetContext) {
     return false;
   }
-  if (managedTeleportRangeNamespacesMatchTarget(nodes, target)) {
+  if (
+    content.parseContext == null
+    && managedTeleportRangeNamespacesMatchTarget(nodes, target)
+  ) {
     content.parseContext = targetContext;
     return false;
   }

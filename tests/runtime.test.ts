@@ -581,6 +581,52 @@ async function script(ctx) {
     }
   });
 
+  it("does not commit nested #teleports SSR content while an enabled outer Teleport is client-only", async () => {
+    const page: ComponentDefinition = defineComponent({
+      id: "m-teleport-nested-client-only-ssr",
+      name: "NestedClientOnlyTeleportSsrPage",
+      file: "NestedClientOnlyTeleportSsrPage.vue",
+      handlers: [],
+      async script() {
+        return {};
+      },
+      template: [{
+        type: "element",
+        tag: "teleport",
+        attrs: [{ kind: "static", name: "to", value: "#missing-custom-target" }],
+        events: [],
+        children: [{
+          type: "element",
+          tag: "teleport",
+          attrs: [{ kind: "static", name: "to", value: "#teleports" }],
+          events: [],
+          children: [{
+            type: "element",
+            tag: "div",
+            attrs: [{ kind: "static", name: "id", value: "nested-client-only-ssr-content" }],
+            events: [],
+            children: [{ type: "text", value: "Nested" }],
+          }],
+        }],
+      }],
+    });
+
+    const result = await renderApp({
+      page,
+      route: { path: "/", params: {}, query: {} },
+    });
+    const parsed = new Window({ url: "http://localhost/" });
+    parsed.document.body.innerHTML = result.html;
+    const outerSource = managedTeleportCommentRecords(parsed.document.body)[0];
+    expect(outerSource?.metadata.to).toBe("#missing-custom-target");
+    expect(outerSource?.metadata.html).toContain("resux-teleport-source");
+    expect(outerSource?.metadata.html).toContain("nested-client-only-ssr-content");
+    expect(result.teleports?.["#teleports"] ?? "").not.toContain("nested-client-only-ssr-content");
+    expect(renderDocument(result)).not.toMatch(
+      /data-rx-teleport-fallback="true"[\s\S]*nested-client-only-ssr-content/,
+    );
+  });
+
   it("renders parser-safe Teleport markers inside select and table contexts", async () => {
     const page: ComponentDefinition = defineComponent({
       id: "m-teleport-parser-safe",
@@ -3901,6 +3947,170 @@ async function script(ctx) {
       expect(root.querySelector("#nested-self-target")).toBeNull();
       expect(outerTarget.querySelector("#outer-nested-tail")).toBeNull();
       expect(innerTarget.querySelector("#nested-self-target")?.textContent).toBe("Nested target");
+    } finally {
+      resetClientRuntimeFixture();
+    }
+  });
+
+  it("moves a disabled table Teleport after the parser inserts an implicit tbody", async () => {
+    const fixture = await createClientComponentRuntimeFixture({
+      prefix: "resux-disabled-table-teleport",
+      componentName: "DisabledTableTeleport",
+      template: [
+        {
+          type: "element",
+          tag: "button",
+          attrs: [],
+          events: [{ name: "click", handler: "enable" }],
+          children: [{ type: "text", value: "Enable" }],
+        },
+        {
+          type: "element",
+          tag: "table",
+          attrs: [{ kind: "static", name: "id", value: "disabled-teleport-table" }],
+          events: [],
+          children: [{
+            type: "element",
+            tag: "teleport",
+            attrs: [
+              { kind: "static", name: "to", value: "#teleports" },
+              { kind: "dynamic", name: "disabled", value: "disabled.value", bindingId: "b0" },
+            ],
+            events: [],
+            children: [{
+              type: "element",
+              tag: "tr",
+              attrs: [{ kind: "static", name: "id", value: "disabled-table-row" }],
+              events: [],
+              children: [{
+                type: "element",
+                tag: "td",
+                attrs: [],
+                events: [],
+                children: [{ type: "text", value: "Row" }],
+              }],
+            }],
+          }],
+        },
+      ],
+      scriptSource: `
+async function script(ctx) {
+  const disabled = ctx.useState("disabled", () => true);
+  function enable() { disabled.value = false; }
+  return { disabled, enable };
+}`,
+      handlers: ["enable"],
+    });
+
+    const metadata = encodeURIComponent(JSON.stringify({
+      to: "#teleports",
+      disabled: true,
+      defer: false,
+      bindings: { b0: "s0:b0" },
+      html: '<tr id="disabled-table-row"><td>Row</td></tr>',
+    })).replaceAll("-", "%2D");
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="enable-disabled-table" data-rx-on-click="s0:m0:enable">Enable</button>'
+      + '<table id="disabled-teleport-table"><!--resux-teleport-source:' + metadata + '-->'
+      + '<tr id="disabled-table-row"><td>Row</td></tr><!--resux-teleport-end--></table></div>'
+      + '<div id="teleports" data-rx-teleport-fallback="true"></div>';
+
+    installClientRuntimeFixture(window, { disabled: true }, fixture.handlerUrl);
+    try {
+      await import(fixture.runtimeUrl + "?test=" + nextRuntimeImportQuery());
+      const table = window.document.getElementById("disabled-teleport-table")!;
+      const target = window.document.querySelector("[data-rx-teleport-fallback='true']") as HTMLElement;
+      expect(table.querySelector("#disabled-table-row")).toBeTruthy();
+
+      clickRuntimeFixture(window, "enable-disabled-table");
+
+      await waitForCondition(() => Boolean(target.querySelector("#disabled-table-row")));
+      expect(target.querySelectorAll("#disabled-table-row")).toHaveLength(1);
+      expect(table.querySelector("#disabled-table-row")).toBeNull();
+    } finally {
+      resetClientRuntimeFixture();
+    }
+  });
+
+  it("preserves Teleport node identity between HTML annotation-xml and ordinary HTML", async () => {
+    const { runtimeUrl, handlerUrl } = await createDynamicTeleportRuntimeFixture({
+      prefix: "resux-teleport-annotation-html-identity",
+      componentName: "AnnotationHtmlIdentityTeleport",
+      initialTarget: "#annotation-html-target",
+      nextTarget: "#ordinary-html-target",
+      children: [{
+        type: "element",
+        tag: "input",
+        attrs: [
+          { kind: "static", name: "id", value: "annotation-html-input" },
+          { kind: "static", name: "value", value: "Server" },
+        ],
+        events: [],
+        children: [],
+      }],
+    });
+    const source = managedTeleportBindingSourceComment(
+      "#annotation-html-target",
+      '<input id="annotation-html-input" value="Server">',
+    );
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="move-annotation-html" data-rx-on-click="s0:m0:move">Move</button>'
+      + source + '</div><div id="ordinary-html-target"></div>';
+
+    const math = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "math");
+    const annotation = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "annotation-xml");
+    annotation.setAttribute("id", "annotation-html-target");
+    annotation.setAttribute("encoding", "text/html");
+    math.appendChild(annotation);
+    window.document.body.appendChild(math);
+
+    installClientRuntimeFixture(window, { target: "#annotation-html-target" }, handlerUrl);
+    try {
+      await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+      await waitForCondition(() => Boolean(annotation.querySelector("#annotation-html-input")));
+      const input = annotation.querySelector("#annotation-html-input") as HTMLInputElement;
+      input.value = "Edited";
+
+      clickRuntimeFixture(window, "move-annotation-html");
+
+      const htmlTarget = window.document.getElementById("ordinary-html-target")!;
+      await waitForCondition(() => Boolean(htmlTarget.querySelector("#annotation-html-input")));
+      const movedInput = htmlTarget.querySelector("#annotation-html-input") as HTMLInputElement;
+      expect(movedInput).toBe(input);
+      expect(movedInput.value).toBe("Edited");
+    } finally {
+      resetClientRuntimeFixture();
+    }
+  });
+
+  it("keeps svg-named Teleport children in an ordinary MathML namespace", async () => {
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-teleport-ordinary-mathml-svg-name",
+      () => "export default {};",
+    );
+    const source = managedTeleportSourceComment({
+      to: "#ordinary-math-target",
+      disabled: false,
+      defer: false,
+      html: '<svg id="math-svg-name"><circle id="math-circle-name"></circle></svg>',
+    });
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = '<div id="__resux">' + source + '</div>';
+
+    const math = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "math");
+    const mrow = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "mrow");
+    mrow.setAttribute("id", "ordinary-math-target");
+    math.appendChild(mrow);
+    window.document.body.appendChild(math);
+
+    installClientRuntimeFixture(window, {}, handlerUrl);
+    try {
+      await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
+      await waitForCondition(() => Boolean(mrow.querySelector("#math-svg-name")));
+      expect(mrow.querySelector("#math-svg-name")?.namespaceURI).toBe("http://www.w3.org/1998/Math/MathML");
+      expect(mrow.querySelector("#math-circle-name")?.namespaceURI).toBe("http://www.w3.org/1998/Math/MathML");
     } finally {
       resetClientRuntimeFixture();
     }

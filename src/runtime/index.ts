@@ -4082,6 +4082,20 @@ function resolveTeleportBoundaryRenderState(
   return { target, disabled, defer, bindings, toBinding };
 }
 
+function teleportChildRenderContext(
+  state: TeleportBoundaryRenderState,
+  context: RenderTemplateContext,
+): RenderTemplateContext {
+  if (state.disabled || state.target === "#teleports") {
+    return context;
+  }
+  return {
+    ...context,
+    reserveTeleport: undefined,
+    commitTeleport: undefined,
+  };
+}
+
 function renderTeleportBoundary(
   state: TeleportBoundaryRenderState,
   children: string,
@@ -4093,7 +4107,7 @@ function renderTeleportBoundary(
     disabled: state.disabled,
     defer: state.defer,
     bindings: state.bindings,
-    html: state.disabled ? "" : children,
+    html: children,
     ssrKey: reservation === undefined ? undefined : teleportReservationKey(reservation),
   });
   const source = `<!--resux-teleport-source:${metadata}-->`;
@@ -4121,7 +4135,8 @@ function renderElement(node: ElementTemplateNode, context: RenderTemplateContext
   if (isTeleportBoundaryTag(node.tag)) {
     const state = resolveTeleportBoundaryRenderState(node, context, locals);
     const reservation = state.disabled ? undefined : context.reserveTeleport?.(state.target);
-    const children = renderTemplateNodes(node.children, context, locals);
+    const childContext = teleportChildRenderContext(state, context);
+    const children = renderTemplateNodes(node.children, childContext, locals);
     if (reservation !== undefined) {
       context.commitTeleport?.(reservation, children);
     }
@@ -4357,7 +4372,8 @@ async function renderElementAsync(
   if (isTeleportBoundaryTag(node.tag)) {
     const state = resolveTeleportBoundaryRenderState(node, context, locals);
     const reservation = state.disabled ? undefined : context.reserveTeleport?.(state.target);
-    const children = await renderTemplateNodesAsync(node.children, context, renderComponent, locals);
+    const childContext = teleportChildRenderContext(state, context);
+    const children = await renderTemplateNodesAsync(node.children, childContext, renderComponent, locals);
     if (reservation !== undefined) {
       context.commitTeleport?.(reservation, children);
     }
@@ -14417,6 +14433,34 @@ function isManagedTeleportTemplateSource(source) {
   return String(source?.localName || "").toLowerCase() === "template";
 }
 
+function managedTeleportImplicitTableSourceEnd(source) {
+  const table = source?.parentNode;
+  if (String(table?.localName || "").toLowerCase() !== "table") return null;
+
+  let wrapper = source.nextSibling;
+  while (wrapper?.nodeType === 3 && !String(wrapper.data || "").trim()) {
+    wrapper = wrapper.nextSibling;
+  }
+  const wrapperName = String(wrapper?.localName || "").toLowerCase();
+  if (!["tbody", "colgroup"].includes(wrapperName)) return null;
+
+  let depth = 0;
+  const visit = (root) => {
+    for (const node of Array.from(root?.childNodes ?? [])) {
+      if (isManagedTeleportCommentSource(node)) {
+        depth += 1;
+      } else if (isManagedTeleportCommentEnd(node)) {
+        if (depth === 0) return node;
+        depth -= 1;
+      }
+      const nested = visit(node);
+      if (nested) return nested;
+    }
+    return null;
+  };
+  return visit(wrapper);
+}
+
 function managedTeleportSourceEnd(source) {
   if (isManagedTeleportCommentSource(source)) {
     let depth = 0;
@@ -14430,7 +14474,7 @@ function managedTeleportSourceEnd(source) {
       }
       node = node.nextSibling;
     }
-    return null;
+    return managedTeleportImplicitTableSourceEnd(source);
   }
 
   if (!isManagedTeleportTemplateSource(source)) return null;
@@ -14451,6 +14495,28 @@ function managedTeleportSourceEnd(source) {
 function managedTeleportInlineNodes(source) {
   const end = managedTeleportSourceEnd(source);
   if (!end) return [];
+
+  if (source.parentNode !== end.parentNode) {
+    let wrapper = source.nextSibling;
+    while (wrapper?.nodeType === 3 && !String(wrapper.data || "").trim()) {
+      wrapper = wrapper.nextSibling;
+    }
+    const wrapperName = String(wrapper?.localName || "").toLowerCase();
+    if (
+      ["tbody", "colgroup"].includes(wrapperName)
+      && wrapper === end.parentNode
+    ) {
+      const nodes = [];
+      let node = wrapper.firstChild;
+      while (node && node !== end) {
+        nodes.push(node);
+        node = node.nextSibling;
+      }
+      return node === end ? nodes : [];
+    }
+    return [];
+  }
+
   const nodes = [];
   let node = source.nextSibling;
   while (node && node !== end) {
@@ -14643,10 +14709,10 @@ function managedTeleportParsingContext(target) {
   if (namespace === MATHML_NAMESPACE) {
     if (localName === "annotation-xml") {
       const encoding = String(target?.getAttribute?.("encoding") || "").toLowerCase();
-      const integration = ["text/html", "application/xhtml+xml"].includes(encoding)
-        ? "html"
-        : "mathml";
-      return namespace + ":" + localName + ":" + integration;
+      if (["text/html", "application/xhtml+xml"].includes(encoding)) {
+        return XHTML_NAMESPACE + ":default";
+      }
+      return namespace + ":" + localName + ":mathml";
     }
     const integration = ["mi", "mo", "mn", "ms", "mtext"].includes(localName)
       ? "text"
@@ -14780,17 +14846,18 @@ function managedTeleportElementNamespace(parent, localName) {
       if (childLocalName === "math") return MATHML_NAMESPACE;
       return XHTML_NAMESPACE;
     }
-    if (
-      parentLocalName === "annotation-xml"
-      && ["text/html", "application/xhtml+xml"].includes(
-        String(parent?.getAttribute?.("encoding") || "").toLowerCase()
-      )
-    ) {
+    if (parentLocalName === "annotation-xml") {
       if (childLocalName === "svg") return SVG_NAMESPACE;
-      if (childLocalName === "math") return MATHML_NAMESPACE;
-      return XHTML_NAMESPACE;
+      if (
+        ["text/html", "application/xhtml+xml"].includes(
+          String(parent?.getAttribute?.("encoding") || "").toLowerCase()
+        )
+      ) {
+        if (childLocalName === "math") return MATHML_NAMESPACE;
+        return XHTML_NAMESPACE;
+      }
+      return MATHML_NAMESPACE;
     }
-    if (childLocalName === "svg") return SVG_NAMESPACE;
     return MATHML_NAMESPACE;
   }
 

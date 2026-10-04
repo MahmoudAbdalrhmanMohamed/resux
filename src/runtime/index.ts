@@ -2175,6 +2175,16 @@ function readHtmlAttribute(tag: string, attribute: string): string | undefined {
   return match?.[1] ?? match?.[2] ?? match?.[3];
 }
 
+const HTML_VOID_TAG_NAMES = new Set([
+  "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr",
+]);
+
+function htmlTagCanContainChildren(tag: string): boolean {
+  const match = /^<([A-Za-z][\w:-]*)\b[^>]*>$/.exec(tag);
+  if (!match || tag.endsWith("/>")) return false;
+  return !HTML_VOID_TAG_NAMES.has(match[1].toLowerCase());
+}
+
 function injectHtmlIntoElementById(html: string, id: string, content: string): string {
   if (!content) return html;
   const tagPattern = /<\/?([A-Za-z][\w:-]*)\b[^>]*>/g;
@@ -2182,14 +2192,16 @@ function injectHtmlIntoElementById(html: string, id: string, content: string): s
 
   while ((opening = tagPattern.exec(html))) {
     const token = opening[0];
-    if (token.startsWith("</") || token.endsWith("/>") || readHtmlAttribute(token, "id") !== id) {
+    if (token.startsWith("</") || readHtmlAttribute(token, "id") !== id) {
       continue;
     }
 
-    const tagName = opening[1]?.toLowerCase();
-    if (!tagName || ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"].includes(tagName)) {
+    if (!htmlTagCanContainChildren(token)) {
       return html;
     }
+
+    const tagName = opening[1]?.toLowerCase();
+    if (!tagName) return html;
 
     let depth = 1;
     let candidate: RegExpExecArray | null;
@@ -2365,7 +2377,7 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
   const renderedBodyAttrs = renderAttributes(mergedHead.bodyAttrs ?? {});
   const bodyOpenTag = renderedBodyAttrs ? `<body ${renderedBodyAttrs}>` : "<body>";
   const hasDefaultTeleportTarget = collectHtmlTagsWithAttribute(result.html, "id")
-    .some((tag) => readHtmlAttribute(tag, "id") === "teleports");
+    .some((tag) => readHtmlAttribute(tag, "id") === "teleports" && htmlTagCanContainChildren(tag));
   const defaultTeleportHtml = result.teleports?.["#teleports"] ?? "";
   const renderedAppHtml = hasDefaultTeleportTarget
     ? injectHtmlIntoElementById(result.html, "teleports", defaultTeleportHtml)
@@ -14490,11 +14502,20 @@ function managedTeleportInlineNodes(source) {
   return nodes;
 }
 
+function isManagedTeleportContainerElement(value) {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && value.nodeType === 1
+    && !HTML_VOID_TAG_NAMES.has(String(value.localName || "").toLowerCase())
+  );
+}
+
 function reconcileDefaultTeleportTarget() {
   const fallback = document.querySelector("[data-rx-teleport-fallback='true']");
   if (!fallback) return;
   const explicitTarget = [...document.querySelectorAll("[id='teleports']")]
-    .find((element) => element !== fallback);
+    .find((element) => element !== fallback && isManagedTeleportContainerElement(element));
   if (explicitTarget) {
     fallback.removeAttribute("id");
   } else {
@@ -14555,6 +14576,10 @@ function managedTeleportTarget(source) {
   const metadata = decodeManagedTeleportSourceMetadata(source);
   const selector = metadata.to || "#teleports";
   try {
+    if (selector === "#teleports") {
+      return [...document.querySelectorAll("[id='teleports']")]
+        .find((element) => isManagedTeleportContainerElement(element)) || null;
+    }
     return document.querySelector(selector);
   } catch {
     return null;
@@ -14661,7 +14686,7 @@ function managedTeleportParsingContext(target) {
   }
   if (namespace === MATHML_NAMESPACE) {
     if (localName === "annotation-xml") {
-      const encoding = String(target?.getAttribute?.("encoding") || "").trim().toLowerCase();
+      const encoding = String(target?.getAttribute?.("encoding") || "").toLowerCase();
       const integration = ["text/html", "application/xhtml+xml"].includes(encoding)
         ? "html"
         : "mathml";
@@ -15018,17 +15043,23 @@ function managedTeleportSourceMarkup(content) {
   const liveNodes = managedTeleportRangeNodes(content);
   if (liveNodes.length === 0) return sourceMarkup;
 
-  if (
-    content?.parseContext === XHTML_NAMESPACE + ":table"
-    && liveNodes.length === 1
-    && liveNodes[0]?.nodeType === 1
-  ) {
-    const wrapper = String(liveNodes[0].localName || "").toLowerCase();
-    if (
-      (wrapper === "tbody" && /^\s*<tr(?=[\s>])/i.test(sourceMarkup))
-      || (wrapper === "colgroup" && /^\s*<col(?=[\s/>])/i.test(sourceMarkup))
-    ) {
-      return managedTeleportNodesMarkup(Array.from(liveNodes[0].childNodes ?? []));
+  if (content?.parseContext === XHTML_NAMESPACE + ":table") {
+    const leadingMarkers = "(?:\\s*<!--[\\s\\S]*?-->\\s*)*";
+    const expectedWrapper = new RegExp("^" + leadingMarkers + "<tr(?=[\\s>])", "i").test(sourceMarkup)
+      ? "tbody"
+      : new RegExp("^" + leadingMarkers + "<col(?=[\\s/>])", "i").test(sourceMarkup)
+        ? "colgroup"
+        : "";
+    const wrapperNode = expectedWrapper
+      ? liveNodes.find((node) =>
+        node.nodeType === 1 && String(node.localName || "").toLowerCase() === expectedWrapper
+      )
+      : null;
+    if (wrapperNode) {
+      const flattenedNodes = liveNodes.flatMap((node) =>
+        node === wrapperNode ? Array.from(wrapperNode.childNodes ?? []) : [node]
+      );
+      return managedTeleportNodesMarkup(flattenedNodes);
     }
   }
 

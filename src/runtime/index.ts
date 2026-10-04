@@ -8308,6 +8308,9 @@ export function getClientRuntimeSource(options: ClientRuntimeSourceOptions = {})
   const packageRegistrySource = createClientRuntimePackageRegistrySource(options);
   return String.raw`
 const scopeCache = new Map();
+const HTML_VOID_TAG_NAMES = new Set([
+  "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"
+]);
 
 function parseUserAgent(ua) {
   const userAgent = ua || "";

@@ -4378,7 +4378,7 @@ async function renderElementAsync(
 
   if (node.tag === "ResuxLayout") {
     const layoutName = resolveLayoutName(node, context, locals);
-    const renderChildren: AsyncRenderSlot = (
+    const renderChildren = (
       suppressTeleportReservations = context.suppressTeleportReservations,
     ) => renderTemplateNodesAsync(
       node.children,
@@ -4428,9 +4428,9 @@ async function renderElementAsync(
     );
   }
 
-  const renderResolvedComponent = (component: ComponentDefinition): Promise<string> => {
+  const renderResolvedComponent = (component: ComponentDefinition) => {
     const props = collectComponentProps(node, context.scope, locals);
-    const renderSlot: AsyncRenderSlot = (
+    const renderSlot = (
       suppressTeleportReservations = context.suppressTeleportReservations,
     ) => renderTemplateNodesAsync(
       node.children,

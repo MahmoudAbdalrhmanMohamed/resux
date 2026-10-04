@@ -2175,54 +2175,35 @@ function readHtmlAttribute(tag: string, attribute: string): string | undefined {
   return match?.[1] ?? match?.[2] ?? match?.[3];
 }
 
-const HTML_TELEPORT_UNSAFE_TARGET_TAG_NAMES = new Set([
-  "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "script", "source",
-  "style", "template", "textarea", "title", "track", "wbr",
-]);
-const HTML_RAW_TEXT_TAG_NAMES = new Set(["script", "style", "textarea", "title"]);
-
-function htmlTagCanContainChildren(tag: string): boolean {
-  const match = /^<([A-Za-z][\w:-]*)\b[^>]*>$/.exec(tag);
-  if (!match || tag.endsWith("/>")) return false;
-  return !HTML_TELEPORT_UNSAFE_TARGET_TAG_NAMES.has(match[1].toLowerCase());
-}
-
 function findLiveHtmlElementTagById(html: string, id: string): RegExpExecArray | null {
-  const tagPattern = /<\/?([A-Za-z][\w:-]*)\b[^>]*>/g;
+  const tags = /<\/?([A-Za-z][\w:-]*)\b[^>]*>/g;
   let templateDepth = 0;
   let match: RegExpExecArray | null;
-
-  while ((match = tagPattern.exec(html))) {
+  while ((match = tags.exec(html))) {
     const token = match[0];
-    const tagName = match[1]?.toLowerCase();
-    if (!tagName) continue;
-
+    const tagName = String(match[1] || "").toLowerCase();
     if (token.startsWith("</")) {
-      if (tagName === "template" && templateDepth > 0) templateDepth -= 1;
+      if (tagName === "template" && templateDepth) templateDepth -= 1;
       continue;
     }
-
     if (
-      templateDepth === 0
+      !templateDepth
       && readHtmlAttribute(token, "id") === id
-      && htmlTagCanContainChildren(token)
-    ) {
-      return match;
-    }
-
+      && !token.endsWith("/>")
+      && !unsafeTransitionContainerTags.has(tagName)
+    ) return match;
     if (tagName === "template" && !token.endsWith("/>")) {
       templateDepth += 1;
       continue;
     }
-
-    if (HTML_RAW_TEXT_TAG_NAMES.has(tagName) && !token.endsWith("/>")) {
-      const closingPattern = new RegExp("</" + escapeRegExp(tagName) + "\\s*>", "ig");
-      closingPattern.lastIndex = tagPattern.lastIndex;
-      const closing = closingPattern.exec(html);
-      if (closing) tagPattern.lastIndex = closing.index + closing[0].length;
+    if (["script", "style", "textarea", "title"].includes(tagName) && !token.endsWith("/>")) {
+      const closing = new RegExp("</" + tagName + "\\s*>", "ig");
+      closing.lastIndex = tags.lastIndex;
+      const end = closing.exec(html);
+      if (!end) return null;
+      tags.lastIndex = end.index + end[0].length;
     }
   }
-
   return null;
 }
 
@@ -4046,7 +4027,7 @@ function isTransitionBoundaryTag(tag: string): boolean {
 const unsafeTransitionContainerTags = new Set([
   "area", "base", "body", "br", "col", "embed", "head", "hr", "html", "iframe",
   "img", "input", "link", "meta", "object", "param", "script", "source", "style",
-  "template", "title", "track", "wbr",
+  "template", "textarea", "title", "track", "wbr",
 ]);
 
 function normalizeTransitionName(value: unknown): string {
@@ -8346,10 +8327,6 @@ export function getClientRuntimeSource(options: ClientRuntimeSourceOptions = {})
   const packageRegistrySource = createClientRuntimePackageRegistrySource(options);
   return String.raw`
 const scopeCache = new Map();
-const HTML_TELEPORT_UNSAFE_TARGET_TAG_NAMES = new Set([
-  "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "script", "source",
-  "style", "template", "textarea", "title", "track", "wbr"
-]);
 
 function parseUserAgent(ua) {
   const userAgent = ua || "";
@@ -14552,7 +14529,7 @@ function isManagedTeleportContainerElement(value) {
     value
     && typeof value === "object"
     && value.nodeType === 1
-    && !HTML_TELEPORT_UNSAFE_TARGET_TAG_NAMES.has(String(value.localName || "").toLowerCase())
+    && !unsafeClientTransitionContainerTags.has(String(value.localName || "").toLowerCase())
   );
 }
 
@@ -15186,41 +15163,31 @@ function moveManagedTeleportRange(content, target, options = {}) {
   }
 }
 
-function isManagedTeleportTargetStart(node) {
-  const data = node?.nodeType === 8 ? String(node.data || "") : "";
-  return data === "resux-teleport-start" || data.startsWith("resux-teleport-start:");
-}
-
 function nextUnclaimedManagedTeleportTargetStart(target) {
-  return Array.from(target?.childNodes ?? []).find((node) =>
-    isManagedTeleportTargetStart(node)
-    && !managedTeleportClaimedTargetStarts.has(node)
-  ) || null;
-}
-
-function reservedManagedTeleportTargetStart(source, target) {
-  const ssrKey = String(decodeManagedTeleportSourceMetadata(source).ssrKey || "");
-  const expected = ssrKey ? "resux-teleport-start:" + ssrKey : "resux-teleport-start";
-  return Array.from(target?.childNodes ?? []).find((node) =>
-    node.nodeType === 8
-    && String(node.data || "") === expected
-    && !managedTeleportClaimedTargetStarts.has(node)
-  ) || null;
+  return Array.from(target?.childNodes ?? []).find((node) => {
+    const data = node?.nodeType === 8 ? String(node.data || "") : "";
+    return (
+      (data === "resux-teleport-start" || data.startsWith("resux-teleport-start:"))
+      && !managedTeleportClaimedTargetStarts.has(node)
+    );
+  }) || null;
 }
 
 function adoptManagedTeleportTargetRange(source, target) {
-  const start = reservedManagedTeleportTargetStart(source, target);
-  if (!start) return null;
   const ssrKey = String(decodeManagedTeleportSourceMetadata(source).ssrKey || "");
-  const expectedEnd = ssrKey ? "resux-teleport-end:" + ssrKey : "resux-teleport-end";
+  const suffix = ssrKey ? ":" + ssrKey : "";
+  const start = Array.from(target?.childNodes ?? []).find((node) =>
+    node.nodeType === 8
+    && String(node.data || "") === "resux-teleport-start" + suffix
+    && !managedTeleportClaimedTargetStarts.has(node)
+  );
+  if (!start) return null;
   let nestedSourceDepth = 0;
   let end = start.nextSibling;
   while (end) {
-    if (!ssrKey && isManagedTeleportCommentSource(end)) {
-      nestedSourceDepth += 1;
-    } else if (!ssrKey && isManagedTeleportCommentEnd(end) && nestedSourceDepth > 0) {
-      nestedSourceDepth -= 1;
-    } else if (end.nodeType === 8 && String(end.data || "") === expectedEnd) {
+    if (!ssrKey && isManagedTeleportCommentSource(end)) nestedSourceDepth += 1;
+    else if (!ssrKey && isManagedTeleportCommentEnd(end) && nestedSourceDepth) nestedSourceDepth -= 1;
+    else if (end.nodeType === 8 && String(end.data || "") === "resux-teleport-end" + suffix) {
       managedTeleportClaimedTargetStarts.add(start);
       return { start, end, source, parseContext: null };
     }

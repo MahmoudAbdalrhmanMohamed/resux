@@ -81,6 +81,7 @@ type ManagedTeleportCommentRecord = {
     defer?: boolean;
     bindings?: Record<string, string>;
     html?: string;
+    ssrKey?: string;
   };
 };
 
@@ -463,10 +464,12 @@ describe("runtime SSR", () => {
     const source = sources[1];
     expect(source?.metadata.to).toBe("#teleports");
     expect(source?.metadata.html).toContain('id="overlay"');
-    expect(result.teleports?.["#teleports"]).toContain("<!--resux-teleport-start-->");
+    expect(source?.metadata.ssrKey).toBe("t0");
+    expect(result.teleports?.["#teleports"]).toContain("<!--resux-teleport-start:t0-->");
     expect(result.teleports?.["#teleports"]).toContain('<div id="overlay">Overlay</div>');
+    expect(result.teleports?.["#teleports"]).toContain("<!--resux-teleport-end:t0-->");
     expect(documentHtml).toContain(
-      '<div id="teleports" data-rx-teleport-fallback="true"><!--resux-teleport-start--><div id="overlay">Overlay</div><!--resux-teleport-end--></div>',
+      '<div id="teleports" data-rx-teleport-fallback="true"><!--resux-teleport-start:t0--><div id="overlay">Overlay</div><!--resux-teleport-end:t0--></div>',
     );
     expect(documentHtml).toContain('<script type="module" src="/__resux/runtime-client.mjs"></script>');
 
@@ -481,15 +484,22 @@ describe("runtime SSR", () => {
     expect(explicitTarget.querySelectorAll("#overlay")).toHaveLength(1);
     expect(explicitTargetWindow.document.querySelector("[data-rx-teleport-fallback='true']")?.hasAttribute("id")).toBe(false);
 
-    const voidTargetDocumentHtml = renderDocument({
-      ...result,
-      html: result.html + '<input id="teleports">',
-    });
-    const voidTargetWindow = new Window({ url: "http://localhost/" });
-    voidTargetWindow.document.body.innerHTML = /<body[^>]*>([\s\S]*?)<\/body>/.exec(voidTargetDocumentHtml)?.[1] ?? "";
-    const voidFallback = voidTargetWindow.document.querySelector("[data-rx-teleport-fallback='true'][id='teleports']")!;
-    expect(voidFallback.querySelectorAll("#overlay")).toHaveLength(1);
-    expect(voidTargetWindow.document.querySelector("input[id='teleports']")?.querySelector("#overlay")).toBeNull();
+    for (const unsafeTargetHtml of [
+      '<input id="teleports">',
+      '<textarea id="teleports"></textarea>',
+      '<template><section id="teleports"></section></template>',
+    ]) {
+      const unsafeTargetDocumentHtml = renderDocument({
+        ...result,
+        html: result.html + unsafeTargetHtml,
+      });
+      const unsafeTargetWindow = new Window({ url: "http://localhost/" });
+      unsafeTargetWindow.document.body.innerHTML =
+        /<body[^>]*>([\s\S]*?)<\/body>/.exec(unsafeTargetDocumentHtml)?.[1] ?? "";
+      const unsafeFallback =
+        unsafeTargetWindow.document.querySelector("[data-rx-teleport-fallback='true'][id='teleports']")!;
+      expect(unsafeFallback.querySelectorAll("#overlay")).toHaveLength(1);
+    }
 
     const body = /<body[^>]*>([\s\S]*?)<\/body>/.exec(documentHtml)?.[1];
     expect(body).toBeTruthy();
@@ -504,6 +514,66 @@ describe("runtime SSR", () => {
       expect(target.querySelectorAll("#overlay")).toHaveLength(1);
       expect(target.querySelector("#inline-overlay")).toBeNull();
       expect(Array.from(target.childNodes).indexOf(target.querySelector("#overlay")!)).toBeGreaterThan(1);
+    } finally {
+      resetClientRuntimeFixture();
+    }
+
+    const keyedFixture = await createClientComponentRuntimeFixture({
+      prefix: "resux-keyed-ssr-teleport",
+      componentName: "KeyedSsrTeleport",
+      template: [
+        { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "move" }], children: [] },
+        { type: "element", tag: "teleport", attrs: [{ kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }], events: [], children: [
+          { type: "element", tag: "teleport", attrs: [{ kind: "static", name: "to", value: "#teleports" }], events: [], children: [
+            { type: "element", tag: "span", attrs: [{ kind: "static", name: "id", value: "nested-keyed-content" }], events: [], children: [{ type: "text", value: "Nested" }] }
+          ] },
+          { type: "element", tag: "span", attrs: [{ kind: "static", name: "id", value: "outer-keyed-tail" }], events: [], children: [{ type: "text", value: "Tail" }] }
+        ] },
+      ],
+      scriptSource: `
+async function script(ctx) {
+  const target = ctx.useState("target", () => "#teleports");
+  function move() { target.value = "#keyed-other-target"; }
+  return { target, move };
+}`,
+      handlers: ["move"],
+    });
+    const nestedKeyedSource = managedTeleportSourceComment({
+      to: "#teleports",
+      disabled: false,
+      defer: false,
+      html: '<span id="nested-keyed-content">Nested</span>',
+      ssrKey: "t1",
+    });
+    const outerKeyedSource = managedTeleportSourceComment({
+      to: "#teleports",
+      disabled: false,
+      defer: false,
+      bindings: { b0: "s0:b0" },
+      html: nestedKeyedSource + '<span id="outer-keyed-tail">Tail</span>',
+      ssrKey: "t0",
+    });
+    const keyedWindow = new Window({ url: "http://localhost/" });
+    keyedWindow.document.body.innerHTML =
+      '<div id="teleports"><!--resux-teleport-start:t0-->' + nestedKeyedSource
+      + '<span id="outer-keyed-tail">Tail</span><!--resux-teleport-end:t0-->'
+      + '<!--resux-teleport-start:t1--><span id="nested-keyed-content">Nested</span><!--resux-teleport-end:t1--></div>'
+      + '<div id="__resux"><button id="move-keyed-outer" data-rx-on-click="s0:m0:move"></button>'
+      + outerKeyedSource + '</div><div id="keyed-other-target"></div>';
+
+    installClientRuntimeFixture(keyedWindow, { target: "#teleports" }, keyedFixture.handlerUrl);
+    try {
+      await import(keyedFixture.runtimeUrl + "?test=" + nextRuntimeImportQuery());
+      const keyedTarget = keyedWindow.document.getElementById("teleports")!;
+      await waitForCondition(() => Boolean(keyedTarget.querySelector("#nested-keyed-content")));
+      keyedWindow.document.getElementById("move-keyed-outer")!.dispatchEvent(
+        new keyedWindow.MouseEvent("click", { bubbles: true, button: 0 }),
+      );
+      const otherTarget = keyedWindow.document.getElementById("keyed-other-target")!;
+      await waitForCondition(() => Boolean(otherTarget.querySelector("#outer-keyed-tail")));
+      expect(otherTarget.querySelector("#outer-keyed-tail")?.textContent).toBe("Tail");
+      expect(keyedTarget.querySelector("#outer-keyed-tail")).toBeNull();
+      expect(keyedTarget.querySelector("#nested-keyed-content")?.textContent).toBe("Nested");
     } finally {
       resetClientRuntimeFixture();
     }
@@ -3505,6 +3575,62 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
     await waitForCondition(() => Boolean(nextTarget.querySelector("#teleported-circle")));
     expect(nextTarget.querySelector("#teleported-circle")).toBe(circle);
     expect(circle.getAttribute("data-live-state")).toBe("preserved");
+    resetClientRuntimeFixture();
+
+    const htmlContextFixture = await createDynamicTeleportRuntimeFixture({
+      prefix: "resux-svg-html-context-teleport",
+      componentName: "SvgHtmlContextTeleport",
+      initialTarget: "#foreign-html-target",
+      nextTarget: "#plain-html-target",
+      children: [{
+        type: "element",
+        tag: "input",
+        attrs: [
+          { kind: "static", name: "id", value: "html-context-input" },
+          { kind: "static", name: "value", value: "Server" },
+        ],
+        events: [],
+        children: [],
+      }],
+    });
+    const htmlContextSource = managedTeleportBindingSourceComment(
+      "#foreign-html-target",
+      '<input id="html-context-input" value="Server">',
+    );
+    const htmlContextWindow = new Window({ url: "http://localhost/" });
+    htmlContextWindow.document.body.innerHTML =
+      '<div id="__resux"><button id="move-html-context" data-rx-on-click="s0:m0:move">Move</button>'
+      + htmlContextSource + '</div><div id="plain-html-target"></div>';
+    const integrationSvg = htmlContextWindow.document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const integrationTarget =
+      htmlContextWindow.document.createElementNS("http://www.w3.org/2000/svg", "foreignObject");
+    integrationTarget.setAttribute("id", "foreign-html-target");
+    integrationSvg.appendChild(integrationTarget);
+    htmlContextWindow.document.body.appendChild(integrationSvg);
+
+    installClientRuntimeFixture(
+      htmlContextWindow,
+      { target: "#foreign-html-target" },
+      htmlContextFixture.handlerUrl,
+    );
+    try {
+      await import(htmlContextFixture.runtimeUrl + "?test=" + nextRuntimeImportQuery());
+      await waitForCondition(() => Boolean(integrationTarget.querySelector("#html-context-input")));
+      const input = integrationTarget.querySelector("#html-context-input") as HTMLInputElement;
+      input.value = "Edited";
+      input.focus();
+      htmlContextWindow.document.getElementById("move-html-context")!.dispatchEvent(
+        new htmlContextWindow.MouseEvent("click", { bubbles: true, button: 0 }),
+      );
+      const htmlTarget = htmlContextWindow.document.getElementById("plain-html-target")!;
+      await waitForCondition(() => Boolean(htmlTarget.querySelector("#html-context-input")));
+      const movedInput = htmlTarget.querySelector("#html-context-input") as HTMLInputElement;
+      expect(movedInput).toBe(input);
+      expect(movedInput.value).toBe("Edited");
+      expect(htmlContextWindow.document.activeElement).toBe(input);
+    } finally {
+      resetClientRuntimeFixture();
+    }
   });
 
   it("preserves an authoritative foreign namespace when the target tag name is misleading", async () => {

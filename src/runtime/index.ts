@@ -495,7 +495,7 @@ export interface TemplateEvent {
   name: string;
   handler: string;
   modifiers?: string[];
-    locals?: string[];
+  locals?: string[];
 }
 
 export interface IfDirective {

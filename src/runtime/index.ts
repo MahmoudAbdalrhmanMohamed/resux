@@ -980,7 +980,6 @@ function readRuntimePackagesConfig(): ResuxPackagesConfig {
       return direct as ResuxPackagesConfig;
     }
   } catch {
-    // useRuntimeConfig is not always available in pure client helpers.
   }
   return {};
 }
@@ -1579,7 +1578,6 @@ function scheduleEnhancementTrigger(
 ): () => void {
   const fire = () => {
     void activate().catch(() => {
-      // useClientEnhancement already reports error status/events.
     });
   };
   if (trigger === "manual") {
@@ -1861,7 +1859,6 @@ export async function disposeClientEnhancements(): Promise<void> {
     try {
       await dispose();
     } catch {
-      // Suppress cleanup errors during navigation.
     }
   }
 
@@ -1871,7 +1868,6 @@ export async function disposeClientEnhancements(): Promise<void> {
     try {
       await dispose();
     } catch {
-      // Suppress cleanup errors during navigation.
     }
   }
 
@@ -2826,7 +2822,6 @@ function serializeFetchRequestIdentity(url: string, init?: RequestInit): string 
       new Headers(init?.headers).forEach((value, key) => headers.push([key, value]));
       headers.sort(([left], [right]) => left.localeCompare(right));
     } catch {
-      // Invalid headers will be reported by fetch itself; keep the cache key deterministic.
     }
   }
   const extended = (init ?? {}) as RequestInit & { duplex?: string; priority?: string };
@@ -3185,7 +3180,6 @@ export function createServerSetupContext(
     },
 
     definePageMeta(): void {
-      // Page meta is compiled statically in Resux.
     },
     useI18n(): any {
       return createServerI18nContext(route, runtimeConfig);
@@ -8907,7 +8901,6 @@ function readRuntimePackagesConfig() {
       return direct;
     }
   } catch {
-    // useRuntimeConfig is not always available in pure client helpers.
   }
   return {};
 }
@@ -9216,7 +9209,6 @@ function definePackageAdapter(definition) {
 function scheduleEnhancementTrigger(name, trigger, target, activate) {
   const fire = () => {
     void activate().catch(() => {
-      // useClientEnhancement already reports error status/events.
     });
   };
   if (trigger === "manual") {
@@ -9508,7 +9500,6 @@ async function disposeClientEnhancements() {
     try {
       await dispose();
     } catch {
-      // Suppress cleanup errors during navigation.
     }
   }
 
@@ -9518,7 +9509,6 @@ async function disposeClientEnhancements() {
     try {
       await dispose();
     } catch {
-      // Suppress cleanup errors during navigation.
     }
   }
 
@@ -11023,7 +11013,6 @@ function serializeFetchRequestIdentity(url, init) {
       new Headers(init?.headers).forEach((value, key) => headers.push([key, value]));
       headers.sort(([left], [right]) => left.localeCompare(right));
     } catch {
-      // Invalid headers will be reported by fetch itself; keep the cache key deterministic.
     }
   }
   return JSON.stringify({
@@ -11179,10 +11168,8 @@ export function createClientComponent(definition) {
           return createClientRouter();
         },
         useHead() {
-          // Head updates are server-rendered by Resux.
         },
         useSeoMeta() {
-          // SEO meta updates are server-rendered by Resux.
         },
         useRuntimeConfig() {
           return getClientResuxApp(route).$config;
@@ -11249,7 +11236,6 @@ export function createClientComponent(definition) {
           }
         },
         definePageMeta() {
-          // Page meta is compiled statically in Resux.
         },
         useI18n() {
           return useClientI18n(route);
@@ -11811,7 +11797,6 @@ function revealDeferredLazyVideo(video) {
       logManagedMediaDebug("video-load", { src: assignedPrimarySrc || revealTarget || "" });
       video.load();
     } catch {
-      // Ignore load() runtime failures from older browsers.
     }
   } else {
     logManagedMediaDebug("video-load-skip", { reason: "already-called" });
@@ -13087,7 +13072,6 @@ function applyManagedVideoQuality(video, shell, qualityId, options = {}) {
     try {
       video.load();
     } catch {
-      // Keep runtime resilient on older browsers.
     }
   }
   return true;
@@ -13275,7 +13259,6 @@ function handleManagedMediaError(event) {
       handleManagedVideoError(target);
     }
   } catch {
-    // Never allow media load failures to cascade into app-level runtime failures.
   }
 }
 
@@ -14404,7 +14387,6 @@ function decodeManagedTeleportSourceMetadata(source) {
         html: typeof parsed?.html === "string" ? parsed.html : ""
       };
     } catch {
-      // Leave malformed source comments inert and pointed at the standard target.
     }
   }
   managedTeleportSourceMetadataCache.set(source, metadata);
@@ -15010,7 +14992,6 @@ function parseManagedTeleportMarkup(markup, target) {
         if (nodes.length || !markup) return nodes;
       }
     } catch {
-      // Fall through to the generic HTML contextual parsers.
     }
   }
 
@@ -15021,7 +15002,6 @@ function parseManagedTeleportMarkup(markup, target) {
       const nodes = Array.from(range.createContextualFragment(markup).childNodes);
       if (nodes.length || !markup) return nodes;
     } catch {
-      // Fall through to a template parser.
     }
   }
 

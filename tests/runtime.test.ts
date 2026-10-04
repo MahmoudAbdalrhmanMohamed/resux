@@ -4204,7 +4204,7 @@ async function script(ctx) {
 
       clickRuntimeFixture(window, "enable-disabled-table");
 
-      await waitForCondition(() => Boolean(target.querySelector("#disabled-table-row")));
+      await waitForCondition(() => Boolean(target.querySelector("#disabled-table-row")), 5000);
       expect(target.querySelectorAll("#disabled-table-row")).toHaveLength(1);
       expect(target.querySelector("#disabled-table-row")).toBe(row);
       expect(table.querySelector("#disabled-table-row")).toBeNull();

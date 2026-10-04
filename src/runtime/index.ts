@@ -15582,6 +15582,7 @@ function remountPreparedManagedTeleports(sources, options = {}) {
 
 function cleanupManagedTeleportSource(source) {
   deferredManagedTeleportSources.delete(source);
+  if (!deferredManagedTeleportSources.size) deferredManagedTeleportPatches.clear();
   managedTeleportLiveTargets.delete(source);
   unregisterManagedTeleportSourceBindings(source);
   const content = managedTeleportContent.get(source);
@@ -15768,7 +15769,19 @@ function collectScopeIdsFromTeleportRange(source, ids, visitedTeleports) {
     if (scopeId) ids.add(scopeId);
   }
   const content = managedTeleportContent.get(source);
-  if (!content) return;
+  if (!content) {
+    if (metadata.html) {
+      const template = document.createElement("template");
+      template.innerHTML = metadata.html;
+      for (const element of Array.from(template.content.querySelectorAll("*"))) {
+        collectScopeIdFromElement(element, ids);
+      }
+      for (const nestedSource of managedTeleportSources(template.content)) {
+        collectScopeIdsFromTeleportRange(nestedSource, ids, visitedTeleports);
+      }
+    }
+    return;
+  }
 
   for (const node of managedTeleportRangeNodes(content)) {
     if (isManagedTeleportCommentSource(node) || isManagedTeleportElementSource(node)) {

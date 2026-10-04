@@ -4370,15 +4370,6 @@ async function renderElementAsync(
   renderComponent: AsyncRenderComponent,
   locals: Record<string, unknown>
 ): Promise<string> {
-  const renderChildren: AsyncRenderSlot = (
-    suppressTeleportReservations = context.suppressTeleportReservations,
-  ) => renderTemplateNodesAsync(
-    node.children,
-    inheritTeleportReservationSuppression(context, suppressTeleportReservations),
-    renderComponent,
-    locals,
-  );
-
   if (node.tag === "ResuxPage") {
     return context.renderPage
       ? `<span data-rx-page="">${await context.renderPage(context.suppressTeleportReservations)}</span>`
@@ -4387,6 +4378,14 @@ async function renderElementAsync(
 
   if (node.tag === "ResuxLayout") {
     const layoutName = resolveLayoutName(node, context, locals);
+    const renderChildren: AsyncRenderSlot = (
+      suppressTeleportReservations = context.suppressTeleportReservations,
+    ) => renderTemplateNodesAsync(
+      node.children,
+      inheritTeleportReservationSuppression(context, suppressTeleportReservations),
+      renderComponent,
+      locals,
+    );
     if (layoutName === false) {
       return renderChildren();
     }
@@ -4429,16 +4428,28 @@ async function renderElementAsync(
     );
   }
 
+  const renderResolvedComponent = (component: ComponentDefinition): Promise<string> => {
+    const props = collectComponentProps(node, context.scope, locals);
+    const renderSlot: AsyncRenderSlot = (
+      suppressTeleportReservations = context.suppressTeleportReservations,
+    ) => renderTemplateNodesAsync(
+      node.children,
+      inheritTeleportReservationSuppression(context, suppressTeleportReservations),
+      renderComponent,
+      locals,
+    );
+    return renderComponent(
+      component,
+      props,
+      renderSlot,
+      context.suppressTeleportReservations,
+    );
+  };
+
   if (node.tag === "ResuxLink" || node.tag === "NuxtLink" || node.tag === "RouterLink") {
     const component = resolveComponentDefinition(node.tag, context.components);
     if (component) {
-      const props = collectComponentProps(node, context.scope, locals);
-      return renderComponent(
-        component,
-        props,
-        renderChildren,
-        context.suppressTeleportReservations,
-      );
+      return renderResolvedComponent(component);
     }
     return renderNativeElementAsync(node, context, renderComponent, locals);
   }
@@ -4446,13 +4457,7 @@ async function renderElementAsync(
   if (node.tag === "ResuxImg" || node.tag === "NuxtImg" || node.tag === "NuxtImage") {
     const component = resolveComponentDefinition(node.tag, context.components);
     if (component) {
-      const props = collectComponentProps(node, context.scope, locals);
-      return renderComponent(
-        component,
-        props,
-        renderChildren,
-        context.suppressTeleportReservations,
-      );
+      return renderResolvedComponent(component);
     }
     return renderResuxImg(node, context, locals);
   }
@@ -4460,39 +4465,21 @@ async function renderElementAsync(
   if (node.tag === "ResuxPicture" || node.tag === "NuxtPicture") {
     const component = resolveComponentDefinition(node.tag, context.components);
     if (component) {
-      const props = collectComponentProps(node, context.scope, locals);
-      return renderComponent(
-        component,
-        props,
-        renderChildren,
-        context.suppressTeleportReservations,
-      );
+      return renderResolvedComponent(component);
     }
     return renderResuxPicture(node, context, locals);
   }
   if (node.tag === "ResuxVideo") {
     const component = resolveComponentDefinition(node.tag, context.components);
     if (component) {
-      const props = collectComponentProps(node, context.scope, locals);
-      return renderComponent(
-        component,
-        props,
-        renderChildren,
-        context.suppressTeleportReservations,
-      );
+      return renderResolvedComponent(component);
     }
     return renderResuxVideo(node, context, locals);
   }
   if (node.tag === "ResuxIcon" || node.tag === "Icon" || node.tag === "NuxtIcon") {
     const component = resolveComponentDefinition(node.tag, context.components);
     if (component) {
-      const props = collectComponentProps(node, context.scope, locals);
-      return renderComponent(
-        component,
-        props,
-        renderChildren,
-        context.suppressTeleportReservations,
-      );
+      return renderResolvedComponent(component);
     }
     return renderResuxIcon(node, context, locals);
   }
@@ -4519,13 +4506,7 @@ async function renderElementAsync(
     if (!component) {
       throw new Error(`Unknown component <${node.tag}>.`);
     }
-    const props = collectComponentProps(node, context.scope, locals);
-    return renderComponent(
-      component,
-      props,
-      renderChildren,
-      context.suppressTeleportReservations,
-    );
+    return renderResolvedComponent(component);
   }
 
   return renderNativeElementAsync(node, context, renderComponent, locals);

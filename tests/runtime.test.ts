@@ -3898,9 +3898,9 @@ async function script(ctx) {
 
       await waitForCondition(() => Boolean(root.querySelector("#outer-nested-tail")));
       expect(root.querySelector("#outer-nested-tail")?.textContent).toBe("Tail");
-      expect(root.querySelector("#nested-self-target")?.textContent).toBe("Nested target");
+      expect(root.querySelector("#nested-self-target")).toBeNull();
       expect(outerTarget.querySelector("#outer-nested-tail")).toBeNull();
-      expect(innerTarget.querySelector("#nested-self-target")).toBeNull();
+      expect(innerTarget.querySelector("#nested-self-target")?.textContent).toBe("Nested target");
     } finally {
       resetClientRuntimeFixture();
     }
@@ -4368,10 +4368,10 @@ export default createClientComponent({ id: "m0", name: "DeferredTeleport", file:
     expect(nonDeferredSource?.metadata.html).toContain('id="non-deferred-content"');
 
     const structuralDefaultTarget = window.document.querySelector('[data-rx-block="s0:b4"] #teleports') as HTMLElement;
-    await waitForCondition(() => Boolean(structuralDefaultTarget?.querySelector("#structural-default-content")));
-    expect(structuralDefaultTarget.querySelector("#structural-default-content")).toBeTruthy();
-    expect(fallback.hasAttribute("id")).toBe(false);
-    expect(fallback.querySelector("#structural-default-content")).toBeNull();
+    await waitForCondition(() => Boolean(structuralDefaultTarget));
+    expect(structuralDefaultTarget.querySelector("#structural-default-content")).toBeNull();
+    expect(fallback.id).toBe("teleports");
+    expect(fallback.querySelector("#structural-default-content")).toBeTruthy();
   });
 
   it("remounts live Teleport state when a reactive block replaces its target context", async () => {

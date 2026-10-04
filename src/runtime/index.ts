@@ -495,8 +495,7 @@ export interface TemplateEvent {
   name: string;
   handler: string;
   modifiers?: string[];
-  /** Template-local bindings captured by an inline resumable handler. */
-  locals?: string[];
+    locals?: string[];
 }
 
 export interface IfDirective {
@@ -2093,7 +2092,6 @@ export async function readBody<T = unknown>(event: EventHandlerEvent): Promise<T
     try {
       return await h3ReadBody(event as unknown as Parameters<typeof h3ReadBody>[0]) as T;
     } catch {
-      // Fall through to the minimal reader for tests and custom Node-like events.
     }
   }
 
@@ -2299,17 +2297,6 @@ function hasEagerClientRuntimeWork(
   return false;
 }
 
-/**
- * Plans the smallest browser boot path needed by a server-rendered document.
- *
- * - `none`: HTML is already complete; ship no Resux client payload or runtime.
- * - `interaction`: ship only the tiny resume bootstrap. It waits for a
- *   resumable event or a declared enhancement/island trigger before importing
- *   the full browser runtime.
- * - `eager`: preserve startup semantics for work that must begin immediately
- *   (pending data, plugins/middleware, immediate islands/enhancements, and
- *   managed media).
- */
 export function getClientRuntimeBootPlan(result: RenderResult): ResuxClientBootPlan {
   const eventNames = collectResumableEventNames(result.html);
   const enhancementTriggers = collectEnhancementTriggers(result.html);
@@ -2329,7 +2316,6 @@ export function getClientRuntimeBootPlan(result: RenderResult): ResuxClientBootP
   return { mode: "none", eventNames: [], deferEnhancements: false, deferVueIslands: false };
 }
 
-/** Returns whether a document needs any Resux browser execution. */
 export function shouldLoadClientRuntime(result: RenderResult): boolean {
   return getClientRuntimeBootPlan(result).mode !== "none";
 }
@@ -3194,7 +3180,6 @@ export function createServerSetupContext(
     },
 
     onMounted(): void {
-      // Client lifecycle hooks run when a resumable scope is first resumed.
     },
 
     definePageMeta(): void {
@@ -3320,7 +3305,6 @@ async function settleAsyncDataResource<T>(
 
 function createServerRouter(): ResuxRouter {
   const navigate = (): void => {
-    // Client navigation is only available after hydration.
   };
   return {
     push: navigate,

@@ -2244,6 +2244,24 @@ function selectedClientMiddlewareNeedsRuntime(payload: ResuxPayload): boolean {
   ));
 }
 
+function htmlHasEagerManagedTeleport(html: string): boolean {
+  const pattern = /<!--resux-teleport-source:([^>]*)-->/g;
+  for (const match of html.matchAll(pattern)) {
+    try {
+      const metadata = JSON.parse(decodeURIComponent(match[1] ?? "")) as {
+        disabled?: boolean;
+        bindings?: Record<string, unknown>;
+      };
+      if (!metadata.disabled || Object.keys(metadata.bindings ?? {}).length > 0) {
+        return true;
+      }
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}
+
 function hasEagerClientRuntimeWork(
   result: RenderResult,
   enhancementTriggers: ClientEnhancementTrigger[],
@@ -2251,7 +2269,7 @@ function hasEagerClientRuntimeWork(
 ): boolean {
   if (
     EAGER_CLIENT_RUNTIME_HTML_ATTRIBUTES.some((attribute) => htmlHasAttribute(result.html, attribute))
-    || result.html.includes("<!--resux-teleport-source:")
+    || htmlHasEagerManagedTeleport(result.html)
   ) {
     return true;
   }
@@ -14481,17 +14499,23 @@ function isManagedTeleportTemplateSource(source) {
   return String(source?.localName || "").toLowerCase() === "template";
 }
 
-function managedTeleportImplicitTableSourceEnd(source) {
-  const table = source?.parentNode;
-  if (String(table?.localName || "").toLowerCase() !== "table") return null;
-
+function managedTeleportImplicitTableWrappers(source) {
+  if (String(source?.parentNode?.localName || "").toLowerCase() !== "table") return [];
+  const wrappers = [];
   let wrapper = source.nextSibling;
-  while (wrapper?.nodeType === 3 && !String(wrapper.data || "").trim()) {
+  while (wrapper) {
+    if (wrapper.nodeType === 3 && !String(wrapper.data || "").trim()) {
+      wrapper = wrapper.nextSibling;
+      continue;
+    }
+    if (!["tbody", "colgroup"].includes(String(wrapper?.localName || "").toLowerCase())) break;
+    wrappers.push(wrapper);
     wrapper = wrapper.nextSibling;
   }
-  const wrapperName = String(wrapper?.localName || "").toLowerCase();
-  if (!["tbody", "colgroup"].includes(wrapperName)) return null;
+  return wrappers;
+}
 
+function managedTeleportImplicitTableSourceEnd(source) {
   let depth = 0;
   const visit = (root) => {
     for (const node of Array.from(root?.childNodes ?? [])) {
@@ -14506,7 +14530,11 @@ function managedTeleportImplicitTableSourceEnd(source) {
     }
     return null;
   };
-  return visit(wrapper);
+  for (const wrapper of managedTeleportImplicitTableWrappers(source)) {
+    const end = visit(wrapper);
+    if (end) return end;
+  }
+  return null;
 }
 
 function managedTeleportSourceEnd(source) {
@@ -14545,22 +14573,17 @@ function managedTeleportInlineNodes(source) {
   if (!end) return [];
 
   if (source.parentNode !== end.parentNode) {
-    let wrapper = source.nextSibling;
-    while (wrapper?.nodeType === 3 && !String(wrapper.data || "").trim()) {
-      wrapper = wrapper.nextSibling;
-    }
-    const wrapperName = String(wrapper?.localName || "").toLowerCase();
-    if (
-      ["tbody", "colgroup"].includes(wrapperName)
-      && wrapper === end.parentNode
-    ) {
-      const nodes = [];
+    const wrappers = managedTeleportImplicitTableWrappers(source);
+    if (!wrappers.includes(end.parentNode)) return [];
+    const nodes = [];
+    for (const wrapper of wrappers) {
       let node = wrapper.firstChild;
-      while (node && node !== end) {
+      while (node) {
+        if (node === end) return nodes;
         nodes.push(node);
         node = node.nextSibling;
       }
-      return node === end ? nodes : [];
+      if (wrapper === end.parentNode) return [];
     }
     return [];
   }
@@ -14871,15 +14894,26 @@ const MANAGED_TELEPORT_SVG_ATTRIBUTE_NAMES = {
   zoomandpan: "zoomAndPan"
 };
 
-function managedTeleportElementNamespace(parent, localName) {
+const MANAGED_TELEPORT_SVG_HTML_BREAKOUT_TAGS = "|b|big|blockquote|body|br|center|code|dd|div|dl|dt|em|embed|h1|h2|h3|h4|h5|h6|head|hr|i|img|li|listing|menu|meta|nobr|ol|p|pre|ruby|s|small|span|strong|strike|sub|sup|table|tt|u|ul|var|";
+
+function managedTeleportElementNamespace(parent, child) {
   const parentNamespace = managedTeleportEffectiveNamespace(parent);
   const parentLocalName = String(parent?.localName || "").toLowerCase();
-  const childLocalName = String(localName || "").toLowerCase();
+  const childLocalName = String(child?.localName || child || "").toLowerCase();
 
   if (parentNamespace === SVG_NAMESPACE) {
     if (["foreignobject", "desc", "title"].includes(parentLocalName)) {
       if (childLocalName === "svg") return SVG_NAMESPACE;
       if (childLocalName === "math") return MATHML_NAMESPACE;
+      return XHTML_NAMESPACE;
+    }
+    if (
+      MANAGED_TELEPORT_SVG_HTML_BREAKOUT_TAGS.includes("|" + childLocalName + "|")
+      || (
+        childLocalName === "font"
+        && ["color", "face", "size"].some((name) => child?.hasAttribute?.(name))
+      )
+    ) {
       return XHTML_NAMESPACE;
     }
     return SVG_NAMESPACE;
@@ -14952,7 +14986,7 @@ function cloneManagedTeleportNodeForContext(node, parent) {
     return node.cloneNode(true);
   }
 
-  const namespace = managedTeleportElementNamespace(parent, node.localName);
+  const namespace = managedTeleportElementNamespace(parent, node);
   const name = managedTeleportElementName(node.localName, namespace);
   const cloned = document.createElementNS(namespace, name);
   copyManagedTeleportElementAttributes(node, cloned, namespace);
@@ -15154,7 +15188,7 @@ function managedTeleportSourceMarkup(content) {
 
 function managedTeleportNodeNamespaceMatchesTarget(node, parent) {
   if (node?.nodeType !== 1) return true;
-  const expectedNamespace = managedTeleportElementNamespace(parent, node.localName);
+  const expectedNamespace = managedTeleportElementNamespace(parent, node);
   const actualNamespace = node.namespaceURI || XHTML_NAMESPACE;
   if (actualNamespace !== expectedNamespace) return false;
   return Array.from(node.childNodes ?? []).every((child) =>
@@ -15655,6 +15689,9 @@ function replaceRouteHtml(root, html, preserveLayout = true) {
 
   const externalTeleportSources = preparePreservedManagedTeleports(currentLayout, currentPage);
   const preservedScopeIds = collectScopeIds(currentLayout, currentPage);
+  for (const scopeId of collectScopeIds(currentPage)) {
+    if (!preservedScopeIds.has(scopeId)) deferredManagedTeleportPatches.delete(scopeId);
+  }
   cleanupManagedTeleports(currentPage);
   unmountVueIslands(currentPage);
   currentPage.innerHTML = nextPage.innerHTML;

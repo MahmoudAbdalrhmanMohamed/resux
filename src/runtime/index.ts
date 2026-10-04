@@ -2175,66 +2175,6 @@ function readHtmlAttribute(tag: string, attribute: string): string | undefined {
   return match?.[1] ?? match?.[2] ?? match?.[3];
 }
 
-function findLiveHtmlElementTagById(html: string, id: string): RegExpExecArray | null {
-  const tags = /<\/?([A-Za-z][\w:-]*)\b[^>]*>/g;
-  let templateDepth = 0;
-  let match: RegExpExecArray | null;
-  while ((match = tags.exec(html))) {
-    const token = match[0];
-    const tagName = String(match[1] || "").toLowerCase();
-    if (token.startsWith("</")) {
-      if (tagName === "template" && templateDepth) templateDepth -= 1;
-      continue;
-    }
-    if (
-      !templateDepth
-      && readHtmlAttribute(token, "id") === id
-      && !token.endsWith("/>")
-      && !unsafeTransitionContainerTags.has(tagName)
-    ) return match;
-    if (tagName === "template" && !token.endsWith("/>")) {
-      templateDepth += 1;
-      continue;
-    }
-    if (["script", "style", "textarea", "title"].includes(tagName) && !token.endsWith("/>")) {
-      const closing = new RegExp("</" + tagName + "\\s*>", "ig");
-      closing.lastIndex = tags.lastIndex;
-      const end = closing.exec(html);
-      if (!end) return null;
-      tags.lastIndex = end.index + end[0].length;
-    }
-  }
-  return null;
-}
-
-function injectHtmlIntoElementById(html: string, id: string, content: string): string {
-  if (!content) return html;
-  const opening = findLiveHtmlElementTagById(html, id);
-  if (!opening) return html;
-
-  const tagName = opening[1]?.toLowerCase();
-  if (!tagName) return html;
-
-  const tagPattern = /<\/?([A-Za-z][\w:-]*)\b[^>]*>/g;
-  tagPattern.lastIndex = opening.index + opening[0].length;
-  let depth = 1;
-  let candidate: RegExpExecArray | null;
-  while ((candidate = tagPattern.exec(html))) {
-    if (candidate[1]?.toLowerCase() !== tagName) continue;
-    const candidateToken = candidate[0];
-    if (candidateToken.startsWith("</")) {
-      depth -= 1;
-      if (depth === 0) {
-        return html.slice(0, candidate.index) + content + html.slice(candidate.index);
-      }
-    } else if (!candidateToken.endsWith("/>")) {
-      depth += 1;
-    }
-  }
-
-  return html;
-}
-
 function collectEnhancementTriggers(html: string): ClientEnhancementTrigger[] {
   const tags = new Set([
     ...collectHtmlTagsWithAttribute(html, "data-resux-enhancement"),
@@ -2388,14 +2328,10 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
   };
   const renderedBodyAttrs = renderAttributes(mergedHead.bodyAttrs ?? {});
   const bodyOpenTag = renderedBodyAttrs ? `<body ${renderedBodyAttrs}>` : "<body>";
-  const hasDefaultTeleportTarget = Boolean(findLiveHtmlElementTagById(result.html, "teleports"));
   const defaultTeleportHtml = result.teleports?.["#teleports"] ?? "";
-  const renderedAppHtml = hasDefaultTeleportTarget
-    ? injectHtmlIntoElementById(result.html, "teleports", defaultTeleportHtml)
-    : result.html;
-  const defaultTeleportTarget = hasDefaultTeleportTarget
-    ? '<div data-rx-teleport-fallback="true"></div>'
-    : `<div id="teleports" data-rx-teleport-fallback="true">${defaultTeleportHtml}</div>`;
+  const renderedAppHtml = result.html;
+  const defaultTeleportTarget =
+    `<div id="teleports" data-rx-teleport-fallback="true">${defaultTeleportHtml}</div>`;
   return [
     "<!doctype html>",
     `<html ${renderAttributes(htmlAttrs)}>`,
@@ -14534,15 +14470,9 @@ function isManagedTeleportContainerElement(value) {
 }
 
 function reconcileDefaultTeleportTarget() {
-  const fallback = document.querySelector("[data-rx-teleport-fallback='true']");
-  if (!fallback) return;
-  const explicitTarget = [...document.querySelectorAll("[id='teleports']")]
-    .find((element) => element !== fallback && isManagedTeleportContainerElement(element));
-  if (explicitTarget) {
-    fallback.removeAttribute("id");
-  } else {
-    fallback.setAttribute("id", "teleports");
-  }
+  const frameworkTarget = document.querySelector("[data-rx-teleport-fallback='true']");
+  if (!frameworkTarget) return;
+  frameworkTarget.setAttribute("id", "teleports");
 }
 
 function resyncDefaultManagedTeleports() {
@@ -14599,6 +14529,10 @@ function managedTeleportTarget(source) {
   const selector = metadata.to || "#teleports";
   try {
     if (selector === "#teleports") {
+      const frameworkTarget = document.querySelector("[data-rx-teleport-fallback='true']");
+      if (isManagedTeleportContainerElement(frameworkTarget)) {
+        return frameworkTarget;
+      }
       return [...document.querySelectorAll("[id='teleports']")]
         .find((element) => isManagedTeleportContainerElement(element)) || null;
     }
@@ -14998,6 +14932,23 @@ function nestedManagedTeleportSources(content) {
   return sources;
 }
 
+function managedTeleportContentContainsTarget(content, target, seen = new Set()) {
+  if (!content || !target || seen.has(content)) return false;
+  seen.add(content);
+  if (managedTeleportRangeNodes(content).some((node) =>
+    node === target || Boolean(node.nodeType === 1 && node.contains?.(target))
+  )) {
+    return true;
+  }
+  for (const nestedSource of nestedManagedTeleportSources(content)) {
+    const nestedContent = managedTeleportContent.get(nestedSource);
+    if (managedTeleportContentContainsTarget(nestedContent, target, seen)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function restoreManagedTeleportsWithinContent(content) {
   for (const source of nestedManagedTeleportSources(content).reverse()) {
     const nestedContent = managedTeleportContent.get(source);
@@ -15290,9 +15241,7 @@ function syncManagedTeleportSource(source, options = {}) {
   const disabled = Boolean(metadata.disabled);
   const target = managedTeleportTarget(source);
   let content = managedTeleportContent.get(source);
-  const mountedContentContainsTarget = managedTeleportRangeNodes(content).some((node) =>
-    node === target || Boolean(node.nodeType === 1 && node.contains?.(target))
-  );
+  const mountedContentContainsTarget = managedTeleportContentContainsTarget(content, target);
   const sourceContainsTarget = managedTeleportSourceContainsTarget(source, target);
   const validTarget = Boolean(
     target

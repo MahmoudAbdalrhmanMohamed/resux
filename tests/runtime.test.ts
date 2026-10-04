@@ -473,32 +473,31 @@ describe("runtime SSR", () => {
     );
     expect(documentHtml).toContain('<script type="module" src="/__resux/runtime-client.mjs"></script>');
 
-    const explicitTargetDocumentHtml = renderDocument({
-      ...result,
-      html: result.html + '<section id="teleports"><span id="explicit-target-existing">Existing</span></section>',
-    });
-    const explicitTargetWindow = new Window({ url: "http://localhost/" });
-    explicitTargetWindow.document.body.innerHTML = /<body[^>]*>([\s\S]*?)<\/body>/.exec(explicitTargetDocumentHtml)?.[1] ?? "";
-    const explicitTarget = explicitTargetWindow.document.getElementById("teleports")!;
-    expect(explicitTarget.querySelector("#explicit-target-existing")).toBeTruthy();
-    expect(explicitTarget.querySelectorAll("#overlay")).toHaveLength(1);
-    expect(explicitTargetWindow.document.querySelector("[data-rx-teleport-fallback='true']")?.hasAttribute("id")).toBe(false);
-
-    for (const unsafeTargetHtml of [
-      '<input id="teleports">',
+    for (const appOwnedTargetHtml of [
+      '<section id="teleports"><span id="explicit-target-existing">Existing</span></section>',
       '<textarea id="teleports"></textarea>',
       '<template><section id="teleports"></section></template>',
+      '<iframe><div id="teleports"></div></iframe>',
+      '<table id="teleports"><tr><td>App table</td></tr></table>',
     ]) {
-      const unsafeTargetDocumentHtml = renderDocument({
+      const dedicatedTargetDocumentHtml = renderDocument({
         ...result,
-        html: result.html + unsafeTargetHtml,
+        html: result.html + appOwnedTargetHtml,
       });
-      const unsafeTargetWindow = new Window({ url: "http://localhost/" });
-      unsafeTargetWindow.document.body.innerHTML =
-        /<body[^>]*>([\s\S]*?)<\/body>/.exec(unsafeTargetDocumentHtml)?.[1] ?? "";
-      const unsafeFallback =
-        unsafeTargetWindow.document.querySelector("[data-rx-teleport-fallback='true'][id='teleports']")!;
-      expect(unsafeFallback.querySelectorAll("#overlay")).toHaveLength(1);
+      const dedicatedTargetWindow = new Window({ url: "http://localhost/" });
+      dedicatedTargetWindow.document.body.innerHTML =
+        /<body[^>]*>([\s\S]*?)<\/body>/.exec(dedicatedTargetDocumentHtml)?.[1] ?? "";
+      const frameworkTarget = dedicatedTargetWindow.document.querySelector(
+        "[data-rx-teleport-fallback='true'][id='teleports']",
+      ) as HTMLElement;
+      expect(frameworkTarget).toBeTruthy();
+      expect(frameworkTarget.localName).toBe("div");
+      expect(frameworkTarget.querySelectorAll("#overlay")).toHaveLength(1);
+      const appSection = dedicatedTargetWindow.document.querySelector("section#teleports");
+      if (appSection) {
+        expect(appSection.querySelector("#explicit-target-existing")).toBeTruthy();
+        expect(appSection.querySelector("#overlay")).toBeNull();
+      }
     }
 
     const body = /<body[^>]*>([\s\S]*?)<\/body>/.exec(documentHtml)?.[1];
@@ -566,6 +565,8 @@ async function script(ctx) {
       await import(keyedFixture.runtimeUrl + "?test=" + nextRuntimeImportQuery());
       const keyedTarget = keyedWindow.document.getElementById("teleports")!;
       await waitForCondition(() => Boolean(keyedTarget.querySelector("#nested-keyed-content")));
+      expect(keyedTarget.querySelectorAll("#nested-keyed-content")).toHaveLength(1);
+      expect(keyedTarget.querySelectorAll("#outer-keyed-tail")).toHaveLength(1);
       keyedWindow.document.getElementById("move-keyed-outer")!.dispatchEvent(
         new keyedWindow.MouseEvent("click", { bubbles: true, button: 0 }),
       );
@@ -607,13 +608,6 @@ async function script(ctx) {
               children: [{ type: "text", value: "Option" }],
             }],
           }],
-        },
-        {
-          type: "element",
-          tag: "div",
-          attrs: [{ kind: "static", name: "id", value: "teleports" }],
-          events: [],
-          children: [],
         },
         {
           type: "element",
@@ -3687,9 +3681,9 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
     expect(teleportedMath.firstElementChild?.namespaceURI).toBe("http://www.w3.org/1998/Math/MathML");
   });
 
-  it("reconciles the default Teleport fallback after a reactive id changes", async () => {
+  it("keeps the Nuxt-compatible default Teleport target framework-owned when app ids change", async () => {
     const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
-      "resux-teleport-reactive-fallback-id",
+      "resux-teleport-reactive-framework-target",
       (runtimeUrl) =>
         'import { createClientComponent } from ' + JSON.stringify(runtimeUrl) + ';\n'
         + 'const template = ['
@@ -3697,7 +3691,7 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
         + '{ type: "element", tag: "div", attrs: [{ kind: "dynamic", name: "id", value: "targetId.value", bindingId: "b0" }], events: [], children: [] }'
         + '];\n'
         + 'async function script(ctx) { const targetId = ctx.useState("targetId", () => "teleports"); function moveId() { targetId.value = "moved-target"; } return { targetId, moveId }; }\n'
-        + 'export default createClientComponent({ id: "m0", name: "ReactiveTeleportFallback", file: "ReactiveTeleportFallback.vue", script, template, handlers: ["moveId"] });\n',
+        + 'export default createClientComponent({ id: "m0", name: "ReactiveTeleportFrameworkTarget", file: "ReactiveTeleportFrameworkTarget.vue", script, template, handlers: ["moveId"] });\n',
     );
 
     const metadata = encodeURIComponent(JSON.stringify({
@@ -3705,34 +3699,33 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
       disabled: false,
       defer: false,
       bindings: {},
-      html: '<p id="fallback-teleport-content">Fallback</p>',
+      html: '<p id="framework-teleport-content">Framework</p>',
     })).replaceAll("-", "%2D");
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML =
-      '<div id="__resux"><button id="move-fallback-id" data-rx-on-click="s0:m0:moveId">Move</button>'
+      '<div id="__resux"><button id="move-framework-id" data-rx-on-click="s0:m0:moveId">Move</button>'
       + '<div id="teleports" data-rx-attr-b0="s0:b0"></div>'
       + '<!--resux-teleport-source:' + metadata + '--><!--resux-teleport-end--></div>'
-      + '<div data-rx-teleport-fallback="true"></div>';
+      + '<div id="teleports" data-rx-teleport-fallback="true"></div>';
 
     installClientRuntimeFixture(window, { targetId: "teleports" }, handlerUrl);
     await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
 
-    const explicit = window.document.querySelector('[data-rx-attr-b0="s0:b0"]') as HTMLElement;
-    const fallback = window.document.querySelector("[data-rx-teleport-fallback='true']") as HTMLElement;
-    await waitForCondition(() => Boolean(explicit.querySelector("#fallback-teleport-content")));
-    expect(explicit.querySelector("#fallback-teleport-content")).toBeTruthy();
-    expect(fallback.hasAttribute("id")).toBe(false);
+    const appOwnedTarget = window.document.querySelector('[data-rx-attr-b0="s0:b0"]') as HTMLElement;
+    const frameworkTarget = window.document.querySelector("[data-rx-teleport-fallback='true']") as HTMLElement;
+    await waitForCondition(() => Boolean(frameworkTarget.querySelector("#framework-teleport-content")));
+    expect(frameworkTarget.id).toBe("teleports");
+    expect(frameworkTarget.querySelector("#framework-teleport-content")).toBeTruthy();
+    expect(appOwnedTarget.querySelector("#framework-teleport-content")).toBeNull();
 
-    window.document.getElementById("move-fallback-id")!.dispatchEvent(
+    window.document.getElementById("move-framework-id")!.dispatchEvent(
       new window.MouseEvent("click", { bubbles: true, button: 0 }),
     );
 
-    await waitForCondition(() => fallback.id === "teleports");
-    await waitForCondition(() => Boolean(fallback.querySelector("#fallback-teleport-content")));
-    expect(fallback.id).toBe("teleports");
-    expect(fallback.querySelector("#fallback-teleport-content")).toBeTruthy();
-    expect(explicit.querySelector("#fallback-teleport-content")).toBeNull();
-    expect(explicit.id).toBe("moved-target");
+    await waitForCondition(() => appOwnedTarget.id === "moved-target");
+    expect(frameworkTarget.id).toBe("teleports");
+    expect(frameworkTarget.querySelector("#framework-teleport-content")).toBeTruthy();
+    expect(appOwnedTarget.querySelector("#framework-teleport-content")).toBeNull();
   });
 
   it("preserves an element-valued reactive Teleport target", async () => {
@@ -3822,6 +3815,94 @@ export default createClientComponent({ id: "m0", name: "TeleportOrder", file: "T
     expect(root.querySelector("#inside-self-target")).toBeTruthy();
     expect(root.querySelector("#self-target-content")?.textContent).toBe("Safe");
     expect(outer.querySelector("#inside-self-target")).toBeNull();
+  });
+
+  it("rejects a Teleport target inside a nested Teleport destination", async () => {
+    const fixture = await createClientComponentRuntimeFixture({
+      prefix: "resux-teleport-nested-self-target",
+      componentName: "NestedSelfTarget",
+      template: [
+        {
+          type: "element",
+          tag: "button",
+          attrs: [],
+          events: [{ name: "click", handler: "move" }],
+          children: [{ type: "text", value: "Move" }],
+        },
+        {
+          type: "element",
+          tag: "teleport",
+          attrs: [{ kind: "dynamic", name: "to", value: "target.value", bindingId: "b0" }],
+          events: [],
+          children: [
+            {
+              type: "element",
+              tag: "teleport",
+              attrs: [{ kind: "static", name: "to", value: "#inner-nested-self-target" }],
+              events: [],
+              children: [{
+                type: "element",
+                tag: "div",
+                attrs: [{ kind: "static", name: "id", value: "nested-self-target" }],
+                events: [],
+                children: [{ type: "text", value: "Nested target" }],
+              }],
+            },
+            {
+              type: "element",
+              tag: "span",
+              attrs: [{ kind: "static", name: "id", value: "outer-nested-tail" }],
+              events: [],
+              children: [{ type: "text", value: "Tail" }],
+            },
+          ],
+        },
+      ],
+      scriptSource: `
+async function script(ctx) {
+  const target = ctx.useState("target", () => "#outer-nested-self-target");
+  function move() { target.value = "#nested-self-target"; }
+  return { target, move };
+}`,
+      handlers: ["move"],
+    });
+    const nestedSource = managedTeleportSourceComment({
+      to: "#inner-nested-self-target",
+      disabled: false,
+      defer: false,
+      html: '<div id="nested-self-target">Nested target</div>',
+    });
+    const outerSource = managedTeleportSourceComment({
+      to: "#outer-nested-self-target",
+      disabled: false,
+      defer: false,
+      bindings: { b0: "s0:b0" },
+      html: nestedSource + '<span id="outer-nested-tail">Tail</span>',
+    });
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="move-nested-self-target" data-rx-on-click="s0:m0:move">Move</button>'
+      + outerSource + '</div><div id="outer-nested-self-target"></div><div id="inner-nested-self-target"></div>';
+
+    installClientRuntimeFixture(window, { target: "#outer-nested-self-target" }, fixture.handlerUrl);
+    try {
+      await import(fixture.runtimeUrl + "?test=" + nextRuntimeImportQuery());
+      const root = window.document.getElementById("__resux")!;
+      const outerTarget = window.document.getElementById("outer-nested-self-target")!;
+      const innerTarget = window.document.getElementById("inner-nested-self-target")!;
+      await waitForCondition(() => Boolean(innerTarget.querySelector("#nested-self-target")));
+      expect(outerTarget.querySelector("#outer-nested-tail")).toBeTruthy();
+
+      clickRuntimeFixture(window, "move-nested-self-target");
+
+      await waitForCondition(() => Boolean(root.querySelector("#outer-nested-tail")));
+      expect(root.querySelector("#outer-nested-tail")?.textContent).toBe("Tail");
+      expect(root.querySelector("#nested-self-target")?.textContent).toBe("Nested target");
+      expect(outerTarget.querySelector("#outer-nested-tail")).toBeNull();
+      expect(innerTarget.querySelector("#nested-self-target")).toBeNull();
+    } finally {
+      resetClientRuntimeFixture();
+    }
   });
 
   it("reparses Teleport content when MathML annotation integration status changes", async () => {

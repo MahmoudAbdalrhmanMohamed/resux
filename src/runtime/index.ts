@@ -15490,7 +15490,12 @@ function replayDeferredManagedTeleportPatches(sources) {
         managedTeleportHasPatch(source, managedTeleportPatchSelector(scopeId, patch))
       )
     );
-    if (replay.length) applyPatches(scopeId, replay, { flushDeferredTeleports: false });
+    if (replay.length) {
+      applyPatches(scopeId, replay, {
+        flushDeferredTeleports: false,
+        recordDeferredTeleportPatches: false
+      });
+    }
   }
   if (!deferredManagedTeleportSources.size) deferredManagedTeleportPatches.clear();
 }
@@ -18952,7 +18957,12 @@ function applyPatches(scopeId, patches, options = {}) {
     reconcileDefaultTeleportTarget();
     resyncDefaultManagedTeleports();
   }
-  if (deferredManagedTeleportSources.size) deferredManagedTeleportPatches.set(scopeId, patches);
+  if (
+    deferredManagedTeleportSources.size
+    && options.recordDeferredTeleportPatches !== false
+  ) {
+    deferredManagedTeleportPatches.set(scopeId, patches);
+  }
   if (options.flushDeferredTeleports !== false) {
     replayDeferredManagedTeleportPatches(flushDeferredManagedTeleports());
   }

@@ -493,10 +493,11 @@ describe("runtime SSR", () => {
       expect(frameworkTarget).toBeTruthy();
       expect(frameworkTarget.localName).toBe("div");
       expect(frameworkTarget.querySelectorAll("#overlay")).toHaveLength(1);
-      const appSection = dedicatedTargetWindow.document.querySelector("section#teleports");
-      if (appSection) {
-        expect(appSection.querySelector("#explicit-target-existing")).toBeTruthy();
-        expect(appSection.querySelector("#overlay")).toBeNull();
+      const explicitExisting = dedicatedTargetWindow.document.querySelector("#explicit-target-existing");
+      if (explicitExisting) {
+        const appSection = explicitExisting.parentElement;
+        expect(appSection?.matches("section#teleports")).toBe(true);
+        expect(appSection?.querySelector("#overlay")).toBeNull();
       }
     }
 

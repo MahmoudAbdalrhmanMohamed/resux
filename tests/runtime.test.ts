@@ -3704,7 +3704,7 @@ export default createClientComponent({ id: "m0", name: "RestoreNamespace", file:
     expect(window.document.getElementById("missing-target-restored")?.textContent).toBe("Inline");
   });
 
-  it("uses HTML namespaces for SVG foreign-content breakout tags", async () => {
+  it("uses HTML namespaces for SVG and MathML foreign-content breakout tags", async () => {
     const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
       "resux-svg-teleport-html-breakout",
       () => "export default {};",
@@ -3716,11 +3716,21 @@ export default createClientComponent({ id: "m0", name: "RestoreNamespace", file:
       bindings: {},
       html: '<div id="svg-breakout-div">HTML</div><font id="svg-breakout-font" color="red">Font</font><font id="svg-plain-font">Plain</font>',
     });
+    const mathSource = managedTeleportSourceComment({
+      to: "#math-breakout-target",
+      disabled: false,
+      defer: false,
+      bindings: {},
+      html: '<div id="math-breakout-div">HTML</div><font id="math-breakout-font" size="2">Font</font><font id="math-plain-font">Plain</font>',
+    });
     const window = new Window({ url: "http://localhost/" });
-    window.document.body.innerHTML = '<div id="__resux">' + source + '</div>';
+    window.document.body.innerHTML = '<div id="__resux">' + source + mathSource + '</div>';
     const svg = window.document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("id", "svg-breakout-target");
     window.document.body.appendChild(svg);
+    const math = window.document.createElementNS("http://www.w3.org/1998/Math/MathML", "mrow");
+    math.setAttribute("id", "math-breakout-target");
+    window.document.body.appendChild(math);
 
     installClientRuntimeFixture(window, {}, handlerUrl);
     try {
@@ -3729,6 +3739,9 @@ export default createClientComponent({ id: "m0", name: "RestoreNamespace", file:
       expect(svg.querySelector("#svg-breakout-div")?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
       expect(svg.querySelector("#svg-breakout-font")?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
       expect(svg.querySelector("#svg-plain-font")?.namespaceURI).toBe("http://www.w3.org/2000/svg");
+      expect(math.querySelector("#math-breakout-div")?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
+      expect(math.querySelector("#math-breakout-font")?.namespaceURI).toBe("http://www.w3.org/1999/xhtml");
+      expect(math.querySelector("#math-plain-font")?.namespaceURI).toBe("http://www.w3.org/1998/Math/MathML");
     } finally {
       resetClientRuntimeFixture();
     }
@@ -4184,6 +4197,13 @@ async function script(ctx) {
         },
         {
           type: "element",
+          tag: "button",
+          attrs: [],
+          events: [{ name: "click", handler: "disable" }],
+          children: [{ type: "text", value: "Disable" }],
+        },
+        {
+          type: "element",
           tag: "table",
           attrs: [{ kind: "static", name: "id", value: "disabled-teleport-table" }],
           events: [],
@@ -4224,9 +4244,10 @@ async function script(ctx) {
 async function script(ctx) {
   const disabled = ctx.useState("disabled", () => true);
   function enable() { disabled.value = false; }
-  return { disabled, enable };
+  function disable() { disabled.value = true; }
+  return { disabled, enable, disable };
 }`,
-      handlers: ["enable"],
+      handlers: ["enable", "disable"],
     });
 
     const metadata = encodeURIComponent(JSON.stringify({
@@ -4239,6 +4260,7 @@ async function script(ctx) {
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML =
       '<div id="__resux"><button id="enable-disabled-table" data-rx-on-click="s0:m0:enable">Enable</button>'
+      + '<button id="disable-disabled-table" data-rx-on-click="s0:m0:disable">Disable</button>'
       + '<table id="disabled-teleport-table"></table></div>'
       + '<div id="teleports" data-rx-teleport-fallback="true"></div>';
     const table = window.document.getElementById("disabled-teleport-table")!;
@@ -4274,6 +4296,68 @@ async function script(ctx) {
       expect(target.querySelector("#disabled-table-row")).toBe(row);
       expect(table.querySelector("#disabled-table-col")).toBeNull();
       expect(table.querySelector("#disabled-table-row")).toBeNull();
+
+      clickRuntimeFixture(window, "disable-disabled-table");
+      await waitForCondition(() => Boolean(table.querySelector("#disabled-table-row")));
+      expect(table.querySelector("#disabled-table-col")).toBe(col);
+      expect(table.querySelector("#disabled-table-row")).toBe(row);
+      expect(col.parentElement?.localName).toBe("colgroup");
+      expect(row.parentElement?.localName).toBe("tbody");
+      expect(target.querySelector("#disabled-table-col")).toBeNull();
+      expect(target.querySelector("#disabled-table-row")).toBeNull();
+    } finally {
+      resetClientRuntimeFixture();
+    }
+  });
+
+  it("removes foster-parented disabled table content when enabling", async () => {
+    const fixture = await createClientComponentRuntimeFixture({
+      prefix: "resux-fostered-disabled-teleport",
+      componentName: "FosteredDisabledTeleport",
+      template: [
+        { type: "element", tag: "button", attrs: [], events: [{ name: "click", handler: "enable" }], children: [] },
+        { type: "element", tag: "teleport", attrs: [
+          { kind: "static", name: "to", value: "#teleports" },
+          { kind: "dynamic", name: "disabled", value: "disabled.value", bindingId: "b0" },
+        ], events: [], children: [
+          { type: "element", tag: "div", attrs: [{ kind: "static", name: "id", value: "fostered-disabled-content" }], events: [], children: [{ type: "text", value: "Inline" }] },
+        ] },
+      ],
+      scriptSource: `
+async function script(ctx) {
+  const disabled = ctx.useState("disabled", () => true);
+  function enable() { disabled.value = false; }
+  return { disabled, enable };
+}`,
+      handlers: ["enable"],
+    });
+
+    const metadata = encodeURIComponent(JSON.stringify({
+      to: "#teleports",
+      disabled: true,
+      defer: false,
+      bindings: { b0: "s0:b0" },
+      html: '<div id="fostered-disabled-content">Inline</div>',
+    })).replaceAll("-", "%2D");
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="enable-fostered" data-rx-on-click="s0:m0:enable">Enable</button>'
+      + '<div id="fostered-disabled-content">Inline</div><table id="fostered-source-table"></table></div>'
+      + '<div id="teleports" data-rx-teleport-fallback="true"></div>';
+    const table = window.document.getElementById("fostered-source-table")!;
+    table.appendChild(window.document.createComment("resux-teleport-source:" + metadata));
+    table.appendChild(window.document.createComment("resux-teleport-end"));
+
+    installClientRuntimeFixture(window, { disabled: true }, fixture.handlerUrl);
+    try {
+      await import(fixture.runtimeUrl + "?test=" + nextRuntimeImportQuery());
+      expect(window.document.querySelectorAll("#fostered-disabled-content")).toHaveLength(1);
+
+      clickRuntimeFixture(window, "enable-fostered");
+      const target = window.document.querySelector("[data-rx-teleport-fallback='true']") as HTMLElement;
+      await waitForCondition(() => Boolean(target.querySelector("#fostered-disabled-content")));
+      expect(window.document.querySelectorAll("#fostered-disabled-content")).toHaveLength(1);
+      expect(target.querySelector("#fostered-disabled-content")?.textContent).toBe("Inline");
     } finally {
       resetClientRuntimeFixture();
     }
@@ -4888,6 +4972,93 @@ export default createClientComponent({ id: "m0", name: "DeferredTeleport", file:
     expect(structuralDefaultTarget.querySelector("#structural-default-content")).toBeNull();
     expect(fallback.id).toBe("teleports");
     expect(fallback.querySelector("#structural-default-content")).toBeTruthy();
+  });
+
+  it("retries deferred Teleports after later sources create their targets during navigation mount", async () => {
+    const fixture = await createClientRuntimeFixture(
+      "resux-deferred-mount-pass",
+      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
+const template = [];
+async function script(ctx) {
+  const pending = ctx.useAsyncData("pending", () => new Promise((resolve) => {
+    globalThis.__RESUX_RELEASE_MOUNT_PASS__ = resolve;
+  }));
+  return { pending };
+}
+export default createClientComponent({ id: "m0", name: "PendingMountPass", file: "PendingMountPass.vue", script, template, handlers: [] });
+`,
+    );
+
+    const earlySource = managedTeleportSourceComment({
+      to: "#mount-pass-target",
+      disabled: false,
+      defer: true,
+      bindings: {},
+      html: '<p id="mount-pass-content">Mounted</p>',
+    });
+    const laterSource = managedTeleportSourceComment({
+      to: "#mount-pass-host",
+      disabled: false,
+      defer: false,
+      bindings: {},
+      html: '<div id="mount-pass-target"></div>',
+    });
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML =
+      '<div id="__resux"><a id="go-mount-pass" href="/next">Next</a><main>Home</main></div>';
+    const originalFetch = globalThis.fetch;
+
+    Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
+      scrollTo: () => undefined,
+      fetch: async () => new Response(
+        JSON.stringify({
+          html: '<main>Next</main>' + earlySource + laterSource + '<div id="mount-pass-host"></div>',
+          head: { title: "Next" },
+          payload: {
+            route: { path: "/next", params: {}, query: {} },
+            scopes: {
+              s0: {
+                id: "s0",
+                moduleId: "m0",
+                state: {},
+                asyncData: { pending: { value: null, pending: true, error: null } },
+              },
+            },
+            modules: { m0: fixture.handlerUrl },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+      __RESUX__: {
+        route: { path: "/", params: {}, query: {} },
+        scopes: {},
+        modules: {},
+      },
+      __RESUX_INSTALLED__: false,
+    });
+
+    try {
+      await import(fixture.runtimeUrl + "?test=" + nextRuntimeImportQuery());
+      clickRuntimeFixture(window, "go-mount-pass");
+      await waitForHtml(window, "<main>Next</main>");
+      const target = window.document.getElementById("mount-pass-target");
+      expect(target).toBeTruthy();
+      expect(target?.querySelector("#mount-pass-content")?.textContent).toBe("Mounted");
+
+      await waitForCondition(() => typeof (globalThis as any).__RESUX_RELEASE_MOUNT_PASS__ === "function");
+      (globalThis as any).__RESUX_RELEASE_MOUNT_PASS__({ done: true });
+      await waitForCondition(() => (globalThis as any).__RESUX__.scopes.s0.asyncData.pending.pending === false);
+    } finally {
+      const release = (globalThis as any).__RESUX_RELEASE_MOUNT_PASS__;
+      if (typeof release === "function") release({ done: true });
+      delete (globalThis as any).__RESUX_RELEASE_MOUNT_PASS__;
+      Object.assign(globalThis, { fetch: originalFetch });
+      resetClientRuntimeFixture();
+    }
   });
 
   it("keeps full deferred patches until another scope creates the target", async () => {

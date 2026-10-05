@@ -14933,9 +14933,6 @@ function managedTeleportElementNamespace(parent, child) {
   }
 
   if (parentNamespace === MATHML_NAMESPACE) {
-    if (managedTeleportUsesHtmlBreakout(child)) {
-      return XHTML_NAMESPACE;
-    }
     if (
       ["mi", "mo", "mn", "ms", "mtext"].includes(parentLocalName)
       && !["mglyph", "malignmark"].includes(childLocalName)
@@ -14955,6 +14952,9 @@ function managedTeleportElementNamespace(parent, child) {
         return XHTML_NAMESPACE;
       }
       return MATHML_NAMESPACE;
+    }
+    if (managedTeleportUsesHtmlBreakout(child)) {
+      return XHTML_NAMESPACE;
     }
     return MATHML_NAMESPACE;
   }
@@ -15438,8 +15438,9 @@ function restoreManagedTeleport(source, content, options = {}) {
   }
 
   const recreated = normalizeManagedTeleportNamespace(content, parent);
+  const restoredNodes = managedTeleportRangeNodes(content);
   const reference = end || (source.nextSibling ?? null);
-  for (const node of nodes) {
+  for (const node of restoredNodes) {
     if (parent === source && source.appendChild) {
       source.appendChild(node);
     } else {
@@ -15448,7 +15449,7 @@ function restoreManagedTeleport(source, content, options = {}) {
   }
 
   if (options.preserveTargetAnchors === true) {
-    if (recreated) initializeRestoredManagedTeleportNodes(nodes, parent, options);
+    if (recreated) initializeRestoredManagedTeleportNodes(restoredNodes, parent, options);
     return;
   }
 
@@ -15456,7 +15457,7 @@ function restoreManagedTeleport(source, content, options = {}) {
   content.end?.remove();
   managedTeleportContent.delete(source);
   managedTeleportMountedSources.delete(source);
-  if (recreated) initializeRestoredManagedTeleportNodes(nodes, parent, options);
+  if (recreated) initializeRestoredManagedTeleportNodes(restoredNodes, parent, options);
 }
 
 function populateManagedTeleportRange(source, content, target, options = {}) {
@@ -15571,7 +15572,8 @@ function mountManagedTeleports(root = document, options = {}) {
     syncManagedTeleportSource(source, options);
   }
   if (options.deferMissingTarget === true && deferredManagedTeleportSources.size) {
-    retryDeferredManagedTeleports(options);
+    const mounted = retryDeferredManagedTeleports(options);
+    if (mounted.length) replayDeferredManagedTeleportPatches(mounted);
   }
 }
 

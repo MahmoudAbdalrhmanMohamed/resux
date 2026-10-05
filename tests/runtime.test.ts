@@ -1650,8 +1650,8 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
             { kind: "static", name: "src", value: "/videos/hero.mp4" },
             { kind: "static", name: "width", value: "1280" },
             { kind: "static", name: "height", value: "720" },
-            { kind: "static", name: "lazy", value: "true" },
-            { kind: "static", name: "placeholder", value: "true" },
+            { kind: "static", name: "poster", value: "/media-test/videos/sample-poster.jpg" },
+            { kind: "static", name: "deferUntilPageReady", value: "true" },
           ],
           events: [],
           children: [],
@@ -1667,6 +1667,8 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
     expect(result.html).toContain("aspect-ratio: 1280 / 720");
     expect(result.html).toContain('style="aspect-ratio: 1280 / 720; display: block; width: 100%; max-width: 100%; height: auto"');
     expect(result.html).toContain('data-resux-video="idle"');
+    expect(result.html).toContain('poster="/media-test/videos/sample-poster.jpg"');
+    expect(getClientRuntimeSource()).toContain('const initialPoster = placeholderSrc || (deferLazy && !deferUntilPageReady ? "" : poster);');
   });
 
   it("renders ResuxVideo hero preload links and skip-control shell attributes", async () => {
@@ -1731,7 +1733,7 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
     expect(videoPreloads).toHaveLength(1);
   });
 
-  it("keeps a poster without preloading a page-ready video", async () => {
+  it("does not emit a video preload link for lazy videos by default", async () => {
     const page = defineComponent({
       id: "m-video-lazy-no-preload",
       name: "VideoLazyNoPreloadPage",
@@ -1746,8 +1748,8 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
           tag: "ResuxVideo",
           attrs: [
             { kind: "static", name: "src", value: "/media-test/videos/sample-video.mp4" },
-            { kind: "static", name: "poster", value: "/media-test/videos/sample-poster.jpg" },
-            { kind: "static", name: "deferUntilPageReady", value: "true" },
+            { kind: "static", name: "lazy", value: "true" },
+            { kind: "static", name: "controls", value: "true" },
           ],
           events: [],
           children: [],
@@ -1763,12 +1765,7 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
     const videoPreloads = (result.head.link ?? []).filter(
       (entry) => entry.rel === "preload" && entry.as === "video",
     );
-    expect([
-      videoPreloads.length,
-      result.html.includes('poster="/media-test/videos/sample-poster.jpg"'),
-      result.html.includes('data-rx-lazy-src="/media-test/videos/sample-video.mp4"'),
-      /<video[^>]*\ssrc="/.test(result.html),
-    ]).toEqual([0, true, true, false]);
+    expect(videoPreloads).toHaveLength(0);
   });
 
   it("normalizes preload as values in SSR head output", async () => {

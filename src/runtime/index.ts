@@ -5405,12 +5405,7 @@ function renderResuxVideo(
     attrs.push('data-resux-placeholder-active="true"');
   }
 
-  const initialPoster = resolveManagedVideoInitialPoster(
-    deferLazy,
-    deferUntilPageReady,
-    placeholderSrc,
-    poster
-  );
+  const initialPoster = resolveManagedVideoInitialPoster(deferLazy, deferUntilPageReady, placeholderSrc, poster);
   if (initialPoster) {
     attrs.push(`poster="${escapeAttribute(initialPoster)}"`);
   }
@@ -17583,12 +17578,7 @@ function renderClientResuxVideo(node, scope, locals, styleScopeId) {
     attrs.push('data-rx-placeholder-active="true"');
     attrs.push('data-resux-placeholder-active="true"');
   }
-  const initialPoster = resolveManagedVideoInitialPoster(
-    deferLazy,
-    deferUntilPageReady,
-    placeholderSrc,
-    poster
-  );
+  const initialPoster = resolveManagedVideoInitialPoster(deferLazy, deferUntilPageReady, placeholderSrc, poster);
   if (initialPoster) {
     attrs.push('poster="' + escapeAttribute(initialPoster) + '"');
   }

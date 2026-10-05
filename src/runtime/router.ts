@@ -3,14 +3,12 @@ export interface ResuxClientNavigationOptions {
   state?: unknown;
 }
 
-/** Resolves the URL used as the base for relative client-navigation targets. */
 function getClientBase(base?: string): string {
   if (base) return base;
   if (typeof location !== "undefined") return location.href;
   return "https://resux.local/";
 }
 
-/** Resolves a navigation target only when it uses an HTTP(S) protocol. */
 function resolveSupportedClientTarget(to: string, base: string): URL | null {
   try {
     const url = new URL(to, base);
@@ -20,10 +18,6 @@ function resolveSupportedClientTarget(to: string, base: string): URL | null {
   }
 }
 
-/**
- * Returns whether a target is a same-origin HTTP(S) application navigation.
- * Non-HTTP schemes and protocol-relative targets stay out of SPA history routing.
- */
 export function isLocalClientNavigation(to: string, base?: string): boolean {
   if (!to || to.startsWith("#")) return true;
   if (to.startsWith("//")) return false;
@@ -39,17 +33,11 @@ export function isLocalClientNavigation(to: string, base?: string): boolean {
   }
 }
 
-/** Resolves a client target against its current URL and returns path, query, and hash. */
 export function normalizeClientPath(to: string, base?: string): string {
   const url = new URL(to, getClientBase(base));
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
-/**
- * Performs lightweight client navigation for local targets and full-page
- * navigation for external HTTP(S) targets while honoring replace-history semantics.
- * Unsupported schemes such as `javascript:` and `data:` are ignored.
- */
 export function navigateClient(
   to: string,
   options: ResuxClientNavigationOptions = {},

@@ -4,7 +4,7 @@ All notable changes to Resux are documented here.
 
 Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaking API changes when they are clearly documented.
 
-## [0.4.0-beta.7] - 2026-10-01
+## [0.4.0-beta.7] - 2026-10-05
 
 ### Navigation, UI compatibility, and motion
 

@@ -14585,14 +14585,33 @@ function managedTeleportFosterParentedNodes(source) {
   const table = source?.parentNode;
   const markup = decodeManagedTeleportSourceMetadata(source).html || "";
   if (String(table?.localName || "").toLowerCase() !== "table" || !table.parentNode || !markup) return [];
+
+  const template = document.createElement("template");
+  template.innerHTML = markup;
+  const tableChildren = "|caption|col|colgroup|form|script|style|table|tbody|td|tfoot|th|thead|template|tr|";
+  const expected = Array.from(template.content.childNodes).filter((node) => {
+    if (node.nodeType === 3) return Boolean(String(node.data || "").trim());
+    if (node.nodeType !== 1) return false;
+    const tag = String(node.localName || "").toLowerCase();
+    return !tableChildren.includes("|" + tag + "|")
+      && !(tag === "input" && String(node.getAttribute?.("type") || "").toLowerCase() === "hidden");
+  });
+  if (!expected.length) return [];
+
   const nodes = [];
-  for (let sibling = table.previousSibling; sibling; sibling = sibling.previousSibling) {
-    if (sibling.nodeType === 3 && !String(sibling.data || "").trim()) continue;
-    const serialized = [1, 3].includes(sibling.nodeType)
-      ? managedTeleportNodesMarkup([sibling])
-      : "";
-    if (!serialized || !markup.includes(serialized)) break;
+  let sibling = table.previousSibling;
+  for (let index = expected.length - 1; index >= 0; index -= 1) {
+    while (sibling?.nodeType === 3 && !String(sibling.data || "").trim()) {
+      sibling = sibling.previousSibling;
+    }
+    if (
+      !sibling
+      || managedTeleportNodesMarkup([sibling]) !== managedTeleportNodesMarkup([expected[index]])
+    ) {
+      return [];
+    }
     nodes.unshift(sibling);
+    sibling = sibling.previousSibling;
   }
   return nodes;
 }
@@ -14610,16 +14629,6 @@ function reconcileDefaultTeleportTarget() {
   const frameworkTarget = document.querySelector("[data-rx-teleport-fallback='true']");
   if (!frameworkTarget) return;
   frameworkTarget.setAttribute("id", "teleports");
-}
-
-function resyncDefaultManagedTeleports() {
-  for (const source of managedTeleportSources(document)) {
-    if (managedTeleportLiveTargets.has(source)) continue;
-    const metadata = decodeManagedTeleportSourceMetadata(source);
-    if ((metadata.to || "#teleports") === "#teleports") {
-      syncManagedTeleportSource(source, { deferMissingTarget: true });
-    }
-  }
 }
 
 function isManagedTeleportElementTarget(value) {
@@ -15236,9 +15245,7 @@ function normalizeManagedTeleportNamespace(content, target) {
   }
 
   restoreManagedTeleportsWithinContent(content);
-  const retokenizedSources = content.parseContext != null
-    ? retokenizeNestedManagedTeleportLiveTargets(content)
-    : [];
+  const retokenizedSources = retokenizeNestedManagedTeleportLiveTargets(content);
   let markup;
   try {
     markup = managedTeleportSourceMarkup(content);
@@ -15390,9 +15397,25 @@ function restoreManagedTeleport(source, content, options = {}) {
   const splitParents = restoreParents?.some((restoreParent) => restoreParent !== parent);
   let recreated = false;
   if (splitParents) {
-    restoredNodes.forEach((node, index) => {
+    restoredNodes = restoredNodes.map((node, index) => {
       const restoreParent = restoreParents[index];
+      if (!managedTeleportNodeNamespaceMatchesTarget(node, restoreParent)) {
+        const parsed = parseManagedTeleportMarkup(
+          managedTeleportNodesMarkup([node]),
+          restoreParent
+        )[0];
+        if (parsed) {
+          if (node.nodeType === 1) {
+            cleanupManagedTeleports(node);
+            unmountVueIslands(node);
+          }
+          node.remove();
+          node = parsed;
+          recreated = true;
+        }
+      }
       restoreParent.insertBefore(node, restoreParent === end?.parentNode ? end : null);
+      return node;
     });
   } else {
     recreated = normalizeManagedTeleportNamespace(content, parent);
@@ -15410,7 +15433,9 @@ function restoreManagedTeleport(source, content, options = {}) {
     managedTeleportContent.delete(source);
     managedTeleportMountedSources.delete(source);
   }
-  if (recreated) initializeRestoredManagedTeleportNodes(restoredNodes, parent, options);
+  if (recreated) {
+    initializeRestoredManagedTeleportNodes(restoredNodes, splitParents ? document : parent, options);
+  }
 }
 
 function populateManagedTeleportRange(source, content, target, options = {}) {
@@ -15516,13 +15541,23 @@ function flushDeferredManagedTeleports(force = false) {
   }
   managedTeleportFlushRequested = false;
   const mounted = [];
-  for (const source of [...deferredManagedTeleportSources]) {
-    deferredManagedTeleportSources.delete(source);
-    if (!source?.isConnected) continue;
-    const hadContent = managedTeleportContent.has(source);
-    syncManagedTeleportSource(source, { deferMissingTarget: true });
-    if (!hadContent && managedTeleportContent.has(source)) mounted.push(source);
-  }
+  let progressed;
+  do {
+    progressed = false;
+    for (const source of [...deferredManagedTeleportSources]) {
+      deferredManagedTeleportSources.delete(source);
+      if (!source?.isConnected) {
+        progressed = true;
+        continue;
+      }
+      const hadContent = managedTeleportContent.has(source);
+      syncManagedTeleportSource(source, { deferMissingTarget: true });
+      if (!deferredManagedTeleportSources.has(source)) {
+        progressed = true;
+        if (!hadContent && managedTeleportContent.has(source)) mounted.push(source);
+      }
+    }
+  } while (progressed && deferredManagedTeleportSources.size);
   return mounted;
 }
 
@@ -18854,7 +18889,6 @@ function replaceManagedRuntimeHtml(element, value, preparedTeleportSources = [])
   reconcileDefaultTeleportTarget();
   mountManagedTeleports(element, { deferMissingTarget: true });
   remountPreparedManagedTeleports(externalTeleportSources, { deferMissingTarget: true });
-  resyncDefaultManagedTeleports();
 }
 
 function refreshPatchedBlock(element, value) {
@@ -19041,7 +19075,6 @@ function applyPatches(scopeId, patches, options = {}) {
   }
   if (needsTeleportFallbackReconciliation) {
     reconcileDefaultTeleportTarget();
-    resyncDefaultManagedTeleports();
   }
   if (
     deferredManagedTeleportSources.size

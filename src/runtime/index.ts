@@ -8462,6 +8462,8 @@ if (typeof globalThis !== "undefined") {
 const routePayloadCache = new Map();
 const routePayloadRequests = new Map();
 const routePayloadFailures = new Map();
+const routeStylePreloadPromises = new Map();
+const routeStylePrefetchPromises = new Map();
 const ROUTE_PAYLOAD_CACHE_MAX_ENTRIES = 64;
 const ROUTE_PAYLOAD_FAILURE_MAX_ENTRIES = 64;
 const ROUTE_PREFETCH_MAX_IN_FLIGHT = 8;
@@ -13227,6 +13229,10 @@ function handleManagedMediaError(event) {
   if (!target || !target.tagName) {
     return;
   }
+  const tag = String(target.tagName).toLowerCase();
+  if (tag !== "img" && tag !== "source" && tag !== "video") {
+    return;
+  }
   const delegatedErrorTarget = target.closest
     ? target.closest("[data-rx-on-error]")
     : null;
@@ -13240,7 +13246,6 @@ function handleManagedMediaError(event) {
       event.stopPropagation();
     }
   }
-  const tag = String(target.tagName).toLowerCase();
   try {
     if (tag === "img") {
       handleManagedImageError(target);
@@ -14215,6 +14220,7 @@ async function navigateTo(target, options = {}) {
     if (!nextPayload) {
       throw new Error("Route payload response is missing payload data.");
     }
+    const routeStylesReady = preloadRouteHeadStyles(result?.head, nextUrl.href);
     await ensureClientPlugins(nextPayload);
     if (transitionToken !== routeTransitionToken) {
       return;
@@ -14240,6 +14246,11 @@ async function navigateTo(target, options = {}) {
       throw new Error("Missing Resux root for client navigation.");
     }
 
+    if (transitionToken !== routeTransitionToken) {
+      return;
+    }
+
+    await routeStylesReady;
     if (transitionToken !== routeTransitionToken) {
       return;
     }
@@ -16051,7 +16062,7 @@ async function prefetchNavigationTarget(event) {
     ? event.target.closest("a[href]")
     : null;
   const routePath = getPrefetchPath(anchor, event.target);
-  if (!routePath || routePayloadCache.has(routePath) || routePayloadRequests.has(routePath)) {
+  if (!routePath || routePayloadRequests.has(routePath) || routeStylePrefetchPromises.has(routePath)) {
     return;
   }
   if (countInFlightRoutePrefetches() >= ROUTE_PREFETCH_MAX_IN_FLIGHT) {
@@ -16062,7 +16073,19 @@ async function prefetchNavigationTarget(event) {
   }
 
   try {
-    await loadRoute(routePath, { reason: "prefetch" });
+    const result = routePayloadCache.has(routePath)
+      ? readCachedRoutePayload(routePath)
+      : await loadRoute(routePath, { reason: "prefetch" });
+    const destinationUrl = new URL(routePath, location.href).href;
+    const stylePromise = preloadRouteHeadStyles(result?.head, destinationUrl);
+    routeStylePrefetchPromises.set(routePath, stylePromise);
+    try {
+      await stylePromise;
+    } finally {
+      if (routeStylePrefetchPromises.get(routePath) === stylePromise) {
+        routeStylePrefetchPromises.delete(routePath);
+      }
+    }
   } catch (error) {
     logManagedMediaDebug("router-prefetch-failed", {
       path: routePath,
@@ -16165,7 +16188,7 @@ function readCachedRoutePayload(key) {
 }
 
 function countInFlightRoutePrefetches() {
-  let count = 0;
+  let count = routeStylePrefetchPromises.size;
   for (const entry of routePayloadRequests.values()) {
     if (entry?.reason === "prefetch") {
       count += 1;
@@ -16504,6 +16527,99 @@ function inferClientPreloadAsFromHint(hint) {
     return "script";
   }
   return undefined;
+}
+
+function resolveClientAssetUrl(value, destinationUrl = location.href) {
+  const href = String(value || "").trim();
+  if (!href) return "";
+  const explicitBase = document.querySelector?.("base[href]");
+  const base = explicitBase ? document.baseURI : destinationUrl;
+  try {
+    return new URL(href, base).href;
+  } catch {
+    return href;
+  }
+}
+
+function findMatchingStylesheet(href, destinationUrl) {
+  const target = resolveClientAssetUrl(href, destinationUrl);
+  if (!target) return null;
+  for (const link of document.querySelectorAll('link[rel="stylesheet"][href]')) {
+    if (resolveClientAssetUrl(link.getAttribute("href"), document.baseURI || location.href) === target) {
+      return link;
+    }
+  }
+  return null;
+}
+
+function routeStyleMatchesCurrentMedia(link) {
+  const media = String(link?.media || "").trim();
+  if (!media || media.toLowerCase() === "all" || typeof matchMedia !== "function") {
+    return true;
+  }
+  try {
+    return matchMedia(media).matches;
+  } catch {
+    return true;
+  }
+}
+
+function preloadRouteStyle(link, destinationUrl) {
+  const href = String(link?.href || "").trim();
+  if (!href || !routeStyleMatchesCurrentMedia(link) || findMatchingStylesheet(href, destinationUrl)) {
+    return Promise.resolve();
+  }
+  const key = resolveClientAssetUrl(href, destinationUrl);
+  const pending = routeStylePreloadPromises.get(key);
+  if (pending) {
+    return pending;
+  }
+
+  const promise = new Promise((resolve) => {
+    const preload = document.createElement("link");
+    const supportsPreload = !preload.relList?.supports || preload.relList.supports("preload");
+    if (!supportsPreload) {
+      resolve();
+      return;
+    }
+    preload.rel = "preload";
+    preload.as = "style";
+    preload.href = key;
+    preload.setAttribute("data-rx-route-style-preload", "true");
+    for (const name of ["crossorigin", "integrity", "referrerpolicy", "media"]) {
+      const value = link?.[name];
+      if (value !== undefined && value !== null && value !== false && (name === "crossorigin" || value !== "")) {
+        preload.setAttribute(name, String(value));
+      }
+    }
+
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      preload.removeEventListener("load", finish);
+      preload.removeEventListener("error", finish);
+      preload.remove();
+      resolve();
+    };
+    const timeout = setTimeout(finish, 4000);
+    preload.addEventListener("load", finish, { once: true });
+    preload.addEventListener("error", finish, { once: true });
+    document.head.appendChild(preload);
+  }).finally(() => {
+    routeStylePreloadPromises.delete(key);
+  });
+
+  routeStylePreloadPromises.set(key, promise);
+  return promise;
+}
+
+async function preloadRouteHeadStyles(head, destinationUrl = location.href) {
+  const styles = normalizeClientHeadLinks(head?.link ?? [])
+    .filter((link) => String(link.rel || "").trim().toLowerCase() === "stylesheet" && link.href);
+  if (!styles.length) return;
+  await Promise.all(styles.map((link) => preloadRouteStyle(link, destinationUrl)));
 }
 
 function applyHead(head) {

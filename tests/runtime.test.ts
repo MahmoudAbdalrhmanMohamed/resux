@@ -1731,7 +1731,7 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
     expect(videoPreloads).toHaveLength(1);
   });
 
-  it("does not emit a video preload link for lazy videos by default", async () => {
+  it("keeps a poster without preloading a page-ready lazy video", async () => {
     const page = defineComponent({
       id: "m-video-lazy-no-preload",
       name: "VideoLazyNoPreloadPage",
@@ -1746,7 +1746,9 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
           tag: "ResuxVideo",
           attrs: [
             { kind: "static", name: "src", value: "/media-test/videos/sample-video.mp4" },
+            { kind: "static", name: "poster", value: "/media-test/videos/sample-poster.jpg" },
             { kind: "static", name: "lazy", value: "true" },
+            { kind: "static", name: "deferUntilPageReady", value: "true" },
             { kind: "static", name: "controls", value: "true" },
           ],
           events: [],
@@ -1764,6 +1766,9 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
       (entry) => entry.rel === "preload" && entry.as === "video",
     );
     expect(videoPreloads).toHaveLength(0);
+    expect(result.html).toContain('poster="/media-test/videos/sample-poster.jpg"');
+    expect(result.html).toContain('data-rx-lazy-src="/media-test/videos/sample-video.mp4"');
+    expect(result.html).not.toMatch(/<video[^>]*\ssrc="/);
   });
 
   it("normalizes preload as values in SSR head output", async () => {
@@ -7360,44 +7365,6 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     expect(video.volume).toBeCloseTo(0.35);
     expect(video.muted).toBe(true);
     expect(playCalls).toBeGreaterThan(0);
-  });
-
-  it("keeps the poster visible while a page-ready video source stays deferred", async () => {
-    const page = defineComponent({
-      id: "m-video-page-ready-poster",
-      name: "VideoPageReadyPosterPage",
-      file: "VideoPageReadyPosterPage.vue",
-      handlers: [],
-      async script() {
-        return {};
-      },
-      template: [
-        {
-          type: "element",
-          tag: "ResuxVideo",
-          attrs: [
-            { kind: "static", name: "src", value: "/media-test/videos/sample-video.mp4" },
-            { kind: "static", name: "poster", value: "/media-test/videos/sample-poster.jpg" },
-            { kind: "static", name: "deferUntilPageReady", value: "true" },
-            { kind: "static", name: "hero", value: "true" },
-            { kind: "static", name: "controls", value: "false" },
-          ],
-          events: [],
-          children: [],
-        },
-      ],
-    });
-
-    const result = await renderApp({
-      page,
-      route: { path: "/media", params: {}, query: {} },
-    });
-
-    expect(result.html).toMatch(/<video[^>]*\sposter="\/media-test\/videos\/sample-poster\.jpg"/);
-    expect(result.html).toContain('data-rx-poster="/media-test/videos/sample-poster.jpg"');
-    expect(result.html).toContain('data-rx-video-defer-ready="true"');
-    expect(result.html).toContain('data-rx-lazy-src="/media-test/videos/sample-video.mp4"');
-    expect(result.html).not.toMatch(/<video[^>]*\ssrc="/);
   });
 
   it("waits for page-ready before revealing defer-until-page-ready videos", async () => {

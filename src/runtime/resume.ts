@@ -2,8 +2,7 @@ export type ResuxResumeHandler = (...args: unknown[]) => unknown | Promise<unkno
 export type ResuxResumeModule = Record<string, unknown>;
 
 export interface ResuxResumeLoadContext {
-  /** Aborted when the configured handler-load deadline expires. */
-  signal: AbortSignal;
+    signal: AbortSignal;
 }
 
 export type ResuxResumeModuleLoader = (
@@ -21,12 +20,7 @@ export interface ResuxResumeRegistration extends ResuxResumeManifestEntry {
 }
 
 export interface ResuxResumeRegistryOptions {
-  /**
-   * Maximum time to wait for one lazy handler module. Set to 0 to disable the
-   * deadline. Defaults to 30 seconds so a broken chunk request cannot leave an
-   * interaction pending forever.
-   */
-  loadTimeoutMs?: number;
+    loadTimeoutMs?: number;
 }
 
 const DEFAULT_RESUME_LOAD_TIMEOUT_MS = 30_000;
@@ -54,13 +48,6 @@ function normalizeLoadTimeout(value: number | undefined): number {
   return timeoutMs;
 }
 
-/**
- * Lazily resolves resumable handlers from manifest-style registrations.
- * Resolved handlers are cached, concurrent loads are deduplicated, and replacing
- * a registration invalidates both cached and in-flight state for that handler id.
- * Handler loads are deadline-bound by default so one failed chunk cannot leave an
- * interaction pending forever.
- */
 export class ResuxResumeHandlerRegistry {
   readonly #entries = new Map<string, ResuxResumeRegistration>();
   readonly #generations = new Map<string, number>();
@@ -72,8 +59,7 @@ export class ResuxResumeHandlerRegistry {
     this.#loadTimeoutMs = normalizeLoadTimeout(options.loadTimeoutMs);
   }
 
-  /** Registers or replaces one resumable handler definition. */
-  register(entry: ResuxResumeRegistration): void {
+    register(entry: ResuxResumeRegistration): void {
     if (!entry.id) throw new Error("Resume handler id must not be empty.");
     if (!entry.exportName) throw new Error(`Resume handler ${entry.id} must declare an export name.`);
 
@@ -90,24 +76,17 @@ export class ResuxResumeHandlerRegistry {
     this.#pending.delete(storedEntry.id);
   }
 
-  /** Registers multiple resumable handler definitions in order. */
-  registerMany(entries: ResuxResumeRegistration[]): void {
+    registerMany(entries: ResuxResumeRegistration[]): void {
     for (const entry of entries) this.register(entry);
   }
 
-  /** Returns whether the registry knows about a handler id. */
-  has(id: string): boolean {
+    has(id: string): boolean {
     return this.#entries.has(id);
   }
 
-  /** Loads one module with a deadline and exposes cancellation to cooperative loaders. */
-  async #loadModule(id: string, entry: ResuxResumeRegistration): Promise<ResuxResumeModule> {
+    async #loadModule(id: string, entry: ResuxResumeRegistration): Promise<ResuxResumeModule> {
     const controller = new AbortController();
     let timeout: ReturnType<typeof setTimeout> | undefined;
-
-    // Promise executors run synchronously. Resolving with the loader's returned
-    // promise adopts its eventual state, while a synchronous loader throw is
-    // converted into a rejection by the Promise constructor itself.
     const modulePromise = new Promise<ResuxResumeModule>((resolve) => {
       resolve(entry.load({ signal: controller.signal }));
     });
@@ -117,8 +96,6 @@ export class ResuxResumeHandlerRegistry {
     const timeoutPromise = new Promise<never>((_resolve, reject) => {
       timeout = setTimeout(() => {
         const error = new ResuxResumeLoadTimeoutError(id, this.#loadTimeoutMs);
-        // Reject the registry deadline first so a cooperative loader cannot replace
-        // the stable timeout error with its own abort error in the Promise race.
         reject(error);
         controller.abort(error);
       }, this.#loadTimeoutMs);
@@ -131,13 +108,7 @@ export class ResuxResumeHandlerRegistry {
     }
   }
 
-  /**
-   * Resolves one handler lazily, reusing cached handlers and deduplicating active loads.
-   * A load that started before a replacement may still resolve for its original caller,
-   * but it cannot overwrite the newer registration or its cache. Timed-out loads follow
-   * the same rule: a late underlying module resolution cannot populate the handler cache.
-   */
-  async load(id: string): Promise<ResuxResumeHandler> {
+    async load(id: string): Promise<ResuxResumeHandler> {
     const cached = this.#handlers.get(id);
     if (cached) return cached;
 
@@ -176,19 +147,16 @@ export class ResuxResumeHandlerRegistry {
     }
   }
 
-  /** Loads and executes one resumable handler with the provided arguments. */
-  async run(id: string, ...args: unknown[]): Promise<unknown> {
+    async run(id: string, ...args: unknown[]): Promise<unknown> {
     const handler = await this.load(id);
     return handler(...args);
   }
 
-  /** Loads and caches one handler without executing it. */
-  preload(id: string): Promise<void> {
+    preload(id: string): Promise<void> {
     return this.load(id).then(() => undefined);
   }
 }
 
-/** Creates a registry and seeds it with optional manifest registrations. */
 export function createResumeHandlerRegistry(
   entries: ResuxResumeRegistration[] = [],
   options: ResuxResumeRegistryOptions = {},
@@ -209,15 +177,6 @@ export interface ResuxResumeBootstrapOptions {
   deferVueIslands?: boolean;
 }
 
-/**
- * Generates the tiny browser bootstrap used by Resume-First documents.
- *
- * It registers only the event types present in the server HTML, preserves
- * synchronous prevent/stop modifiers while the runtime is absent, imports the
- * full client runtime once on first interaction, then hands the original event
- * to the runtime's resumable-event dispatcher. Normal links are intentionally
- * left to the browser until Resux has a reason to resume.
- */
 export function getResumeBootstrapSource(options: ResuxResumeBootstrapOptions): string {
   const eventNames = [...new Set(
     options.eventNames

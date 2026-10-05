@@ -150,6 +150,20 @@ describe("runtime performance regressions", () => {
     expect(documentHtml).not.toContain('#__resux[data-route-transition="loading"] {\n  opacity: 0.72;');
   });
 
+  it("skips page-finish enhancement scans when the DOM declares no enhancements", () => {
+    const source = getClientRuntimeSource();
+
+    const listenerStart = source.indexOf('document.addEventListener("resux:page:finish", () => {');
+    expect(listenerStart).toBeGreaterThanOrEqual(0);
+    const handler = source.slice(listenerStart, listenerStart + 700);
+    const guardIndex = handler.indexOf("if (!collectDeclaredClientEnhancementElements(document).length)");
+    const scanIndex = handler.indexOf("void scanClientEnhancements(document);");
+
+    expect(guardIndex).toBeGreaterThanOrEqual(0);
+    expect(scanIndex).toBeGreaterThan(guardIndex);
+    expect(handler.slice(guardIndex, scanIndex)).toContain("return;");
+  });
+
   it("hydrates i18n from public route payload config without module side effects", () => {
     const source = getClientRuntimeSource();
     expect(source).toContain("function useClientI18n(routeOverride)");

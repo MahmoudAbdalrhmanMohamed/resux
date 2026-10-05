@@ -1731,7 +1731,7 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
     expect(videoPreloads).toHaveLength(1);
   });
 
-  it("keeps a poster without preloading a page-ready lazy video", async () => {
+  it("keeps a poster without preloading a page-ready video", async () => {
     const page = defineComponent({
       id: "m-video-lazy-no-preload",
       name: "VideoLazyNoPreloadPage",
@@ -1747,9 +1747,7 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
           attrs: [
             { kind: "static", name: "src", value: "/media-test/videos/sample-video.mp4" },
             { kind: "static", name: "poster", value: "/media-test/videos/sample-poster.jpg" },
-            { kind: "static", name: "lazy", value: "true" },
             { kind: "static", name: "deferUntilPageReady", value: "true" },
-            { kind: "static", name: "controls", value: "true" },
           ],
           events: [],
           children: [],
@@ -1765,10 +1763,12 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
     const videoPreloads = (result.head.link ?? []).filter(
       (entry) => entry.rel === "preload" && entry.as === "video",
     );
-    expect(videoPreloads).toHaveLength(0);
-    expect(result.html).toContain('poster="/media-test/videos/sample-poster.jpg"');
-    expect(result.html).toContain('data-rx-lazy-src="/media-test/videos/sample-video.mp4"');
-    expect(result.html).not.toMatch(/<video[^>]*\ssrc="/);
+    expect([
+      videoPreloads.length,
+      result.html.includes('poster="/media-test/videos/sample-poster.jpg"'),
+      result.html.includes('data-rx-lazy-src="/media-test/videos/sample-video.mp4"'),
+      /<video[^>]*\ssrc="/.test(result.html),
+    ]).toEqual([0, true, true, false]);
   });
 
   it("normalizes preload as values in SSR head output", async () => {

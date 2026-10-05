@@ -13,6 +13,9 @@ Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaki
 - Fixed fetched SVG icon rendering so root and nested presentation attributes are preserved accurately and exact attribute names such as `d` and `opacity` cannot collide with prefixed SVG attributes.
 - Added resumable Vue-style `<Transition>` and `<TransitionGroup>` support with dynamic transition names, semantic group tags, keyed enter/leave overlap, reduced-motion handling, and correct multi-iteration CSS animation timing.
 - Added Nuxt-compatible `<Teleport>` support with the standard `#teleports` target, reactive `to` and `disabled` props, direct-child target semantics, nested Teleport cleanup, and initialization of moved islands/media/events from their final DOM location.
+- Added the exported `RxVerificationCode` / `ResuxVerificationCode` UI component for production verification-code and OTP flows.
+- Expanded the font pipeline with provider-aware local and remote font APIs so applications can configure framework-managed fonts without app-specific loading workarounds.
+- Fixed locale navigation so preserved layouts refresh correctly when switching locales instead of retaining stale locale-scoped layout state.
 - Kept these fixes in Resux itself so consuming applications do not need local compatibility hacks.
 
 ### Validation

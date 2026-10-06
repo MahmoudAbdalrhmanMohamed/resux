@@ -1667,7 +1667,7 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
     expect(result.html).toContain("aspect-ratio: 1280 / 720");
     expect(result.html).toContain('style="aspect-ratio: 1280 / 720; display: block; width: 100%; max-width: 100%; height: auto"');
     expect(result.html).toContain('data-resux-video="idle"');
-    expect(result.html).toContain('poster="/media-test/videos/sample-poster.jpg"');
+    expect(result.html).toMatch(/<video\b[^>]*\sposter="\/media-test\/videos\/sample-poster\.jpg"(?:\s|>)/);
     expect(result.html).toContain('data-rx-lazy-src="/videos/hero.mp4"');
     expect(result.html).not.toContain(' src="/videos/hero.mp4"');
     expect(getClientRuntimeSource()).toContain('const initialPoster = placeholderSrc || (deferLazy && !deferUntilPageReady ? "" : poster);');

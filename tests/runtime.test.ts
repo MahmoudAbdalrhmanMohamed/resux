@@ -7377,6 +7377,12 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       configurable: true,
       value: "loading",
     });
+    let allowPageLoad = false;
+    window.addEventListener("load", (event) => {
+      if (!allowPageLoad) {
+        event.stopImmediatePropagation();
+      }
+    });
     window.document.body.innerHTML = `
       <div id="__resux"><main>Media</main></div>
       <video
@@ -7432,6 +7438,7 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       configurable: true,
       value: "complete",
     });
+    allowPageLoad = true;
     window.dispatchEvent(new window.Event("load"));
 
     expect(video.getAttribute("data-resux-revealed")).toBe("true");

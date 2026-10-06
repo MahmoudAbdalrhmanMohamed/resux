@@ -7373,9 +7373,10 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
 
     const window = new Window({ url: "http://localhost/media" });
+    let pageReadyState = "loading";
     Object.defineProperty(window.document, "readyState", {
       configurable: true,
-      value: "loading",
+      get: () => pageReadyState,
     });
     let allowPageLoad = false;
     window.addEventListener("load", (event) => {
@@ -7434,10 +7435,7 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     expect(observerConstructed).toBe(0);
     expect(loadCalls).toBe(0);
 
-    Object.defineProperty(window.document, "readyState", {
-      configurable: true,
-      value: "complete",
-    });
+    pageReadyState = "complete";
     allowPageLoad = true;
     window.dispatchEvent(new window.Event("load"));
 

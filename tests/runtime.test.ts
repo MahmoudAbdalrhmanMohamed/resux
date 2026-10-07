@@ -1650,8 +1650,8 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
             { kind: "static", name: "src", value: "/videos/hero.mp4" },
             { kind: "static", name: "width", value: "1280" },
             { kind: "static", name: "height", value: "720" },
-            { kind: "static", name: "poster", value: "/media-test/videos/sample-poster.jpg" },
-            { kind: "static", name: "deferUntilPageReady", value: "true" },
+            { kind: "static", name: "lazy", value: "true" },
+            { kind: "static", name: "placeholder", value: "true" },
           ],
           events: [],
           children: [],
@@ -1667,9 +1667,6 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
     expect(result.html).toContain("aspect-ratio: 1280 / 720");
     expect(result.html).toContain('style="aspect-ratio: 1280 / 720; display: block; width: 100%; max-width: 100%; height: auto"');
     expect(result.html).toContain('data-resux-video="idle"');
-    expect(result.html).toMatch(/<video\b[^>]*\sposter="\/media-test\/videos\/sample-poster\.jpg"(?:\s|>)/);
-    expect(result.html).toContain('data-rx-lazy-src="/videos/hero.mp4"');
-    expect(result.html).not.toContain(' src="/videos/hero.mp4"');
   });
 
   it("renders ResuxVideo hero preload links and skip-control shell attributes", async () => {

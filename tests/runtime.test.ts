@@ -7433,15 +7433,26 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
   });
 
   it("waits for page-ready before revealing defer-until-page-ready videos", async () => {
-    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
-      "resux-video-page-ready",
-      () => "export default {};",
-    );
+    const tempDir = path.join(os.tmpdir(), `resux-video-page-ready-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
 
     const window = new Window({ url: "http://localhost/media" });
-    const readyState = vi.spyOn(window.document, "readyState", "get").mockReturnValue("loading");
-    const windowListeners = new Map<string, EventListenerOrEventListenerObject>();
-    vi.spyOn(window, "addEventListener").mockImplementation((type, listener) => void windowListeners.set(type, listener));
+    let pageReadyState = "loading";
+    Object.defineProperty(window.document, "readyState", {
+      configurable: true,
+      get: () => pageReadyState,
+    });
+    const nativeWindowAddEventListener = window.addEventListener.bind(window);
+    let pageLoadListener: EventListener | null = null;
+    vi.spyOn(window, "addEventListener").mockImplementation((type, listener, options) => {
+      if (type === "load") {
+        pageLoadListener = typeof listener === "function" ? listener : listener.handleEvent.bind(listener);
+        return;
+      }
+      nativeWindowAddEventListener(type, listener, options);
+    });
     window.document.body.innerHTML = `
       <div id="__resux"><main>Media</main></div>
       <video
@@ -7464,11 +7475,22 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       disconnect() {}
     }
 
-    installClientRuntimeFixture(window, {}, handlerUrl);
-    (globalThis as any).__RESUX__.route.path = "/media";
     Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
       IntersectionObserver: MockIntersectionObserver,
-      requestIdleCallback: (callback: () => void) => (callback(), 1),
+      requestIdleCallback: (callback: () => void) => {
+        callback();
+        return 1;
+      },
+      __RESUX__: {
+        route: { path: "/media", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
     });
 
     const video = window.document.querySelector("video") as HTMLVideoElement;
@@ -7477,15 +7499,14 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       loadCalls++;
     };
 
-    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     expect(video.getAttribute("data-resux-revealed")).toBeNull();
     expect(observerConstructed).toBe(0);
     expect(loadCalls).toBe(0);
 
-    readyState.mockReturnValue("complete");
-    const loadListener = windowListeners.get("load");
-    expect(loadListener).toBeTypeOf("function");
-    (loadListener as EventListener)(new window.Event("load"));
+    pageReadyState = "complete";
+    expect(pageLoadListener).toBeTypeOf("function");
+    (pageLoadListener as EventListener)(new window.Event("load"));
 
     expect(video.getAttribute("data-resux-revealed")).toBe("true");
     expect(video.getAttribute("data-resux-video-loading")).toBe("true");

@@ -7365,36 +7365,17 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     expect(playCalls).toBeGreaterThan(0);
   });
 
-  it("renders deferred page-ready poster markup through the client component renderer", async () => {
-    const videoAttrs = [
-      { kind: "static", name: "src", value: "/media-test/videos/sample-video.mp4" },
-      { kind: "static", name: "poster", value: "/media-test/videos/sample-poster.jpg" },
-      { kind: "static", name: "deferUntilPageReady", value: "true" },
-      { kind: "static", name: "controls", value: "false" },
-    ];
-    const { handlerUrl } = await createClientRuntimeFixture(
-      "resux-video-client-poster",
-      (runtimeUrl) => `import { createClientComponent } from ${JSON.stringify(runtimeUrl)};
-const template = [{ type: "element", tag: "ResuxVideo", attrs: ${JSON.stringify(videoAttrs)}, events: [], if: { expression: "true", blockId: "b0" }, children: [] }];
-async function script() { return {}; }
-export default createClientComponent({ id: "m0", name: "PageReadyVideo", file: "PageReadyVideo.vue", script, template, handlers: [] });`,
-    );
-
-    const window = new Window({ url: "http://localhost/media" });
-    window.document.body.innerHTML = '<div id="__resux"></div>';
-    Object.assign(globalThis, {
-      document: window.document,
-      window,
-      location: window.location,
-      history: window.history,
-      __RESUX__: undefined,
-      __RESUX_INSTALLED__: false,
-    });
-
-    const component = (await import(`${handlerUrl}?test=${nextRuntimeImportQuery()}`)).default;
-    const html = component.render({ scope: {}, scopeId: "s0" })
-      .find((patch: { type: string; id: string; value?: string }) => patch.type === "block" && patch.id === "b0")
-      ?.value ?? "";
+  it("renders deferred page-ready poster markup in the generated client renderer", async () => {
+    const runtimeFile = path.join(os.tmpdir(), `resux-video-client-poster-${Date.now()}.mjs`);
+    await writeFile(runtimeFile, getClientRuntimeSource().replace("installResux();", "export { renderClientResuxVideo };"), "utf8");
+    const { renderClientResuxVideo } = await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+    const attrs = Object.entries({
+      src: "/media-test/videos/sample-video.mp4",
+      poster: "/media-test/videos/sample-poster.jpg",
+      deferUntilPageReady: "true",
+      controls: "false",
+    }).map(([name, value]) => ({ kind: "static", name, value }));
+    const html = renderClientResuxVideo({ attrs, children: [] }, {}, {}, "");
 
     expect(html).toMatch(/<video\b[^>]*\sposter="\/media-test\/videos\/sample-poster\.jpg"(?:\s|>)/);
     expect(html).toContain('data-rx-lazy-src="/media-test/videos/sample-video.mp4"');

@@ -4933,6 +4933,17 @@ function resolveVideoThemeDefaults(theme: ResuxVideoTheme): { controlsColor: str
   };
 }
 
+function resolveServerVideoInitialPoster(
+  placeholderSrc: string | undefined,
+  poster: string | undefined,
+  deferLazy: boolean,
+  deferUntilPageReady: boolean,
+): string | undefined {
+  if (placeholderSrc) return placeholderSrc;
+  if (deferLazy && !deferUntilPageReady) return undefined;
+  return poster;
+}
+
 function renderResuxVideo(
   node: ElementTemplateNode,
   context: RenderTemplateContext,
@@ -5394,9 +5405,12 @@ function renderResuxVideo(
     attrs.push('data-resux-placeholder-active="true"');
   }
 
-  const initialPoster = !deferLazy || deferUntilPageReady
-    ? (placeholderSrc ?? poster)
-    : placeholderSrc;
+  const initialPoster = resolveServerVideoInitialPoster(
+    placeholderSrc,
+    poster,
+    deferLazy,
+    deferUntilPageReady,
+  );
   if (initialPoster) {
     attrs.push(`poster="${escapeAttribute(initialPoster)}"`);
   }

@@ -7377,9 +7377,11 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     }).map(([name, value]) => ({ kind: "static", name, value }));
     const html = renderClientResuxVideo({ attrs, children: [] }, {}, {}, "");
 
-    expect(html).toMatch(/<video\b[^>]*\sposter="\/media-test\/videos\/sample-poster\.jpg"(?:\s|>)/);
-    expect(html).toContain('data-rx-lazy-src="/media-test/videos/sample-video.mp4"');
-    expect(html).not.toContain(' src="/media-test/videos/sample-video.mp4"');
+    expect({
+      nativePoster: /<video\b[^>]*\sposter="\/media-test\/videos\/sample-poster\.jpg"(?:\s|>)/.test(html),
+      deferredSource: html.includes('data-rx-lazy-src="/media-test/videos/sample-video.mp4"'),
+      eagerSource: html.includes(' src="/media-test/videos/sample-video.mp4"'),
+    }).toEqual({ nativePoster: true, deferredSource: true, eagerSource: false });
   });
 
   it("waits for page-ready before revealing defer-until-page-ready videos", async () => {

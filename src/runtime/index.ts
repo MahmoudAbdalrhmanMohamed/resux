@@ -5394,7 +5394,9 @@ function renderResuxVideo(
     attrs.push('data-resux-placeholder-active="true"');
   }
 
-  const initialPoster = placeholderSrc ?? (deferLazy && !deferUntilPageReady ? undefined : poster);
+  const initialPoster = !deferLazy || deferUntilPageReady
+    ? (placeholderSrc ?? poster)
+    : placeholderSrc;
   if (initialPoster) {
     attrs.push(`poster="${escapeAttribute(initialPoster)}"`);
   }
@@ -17567,7 +17569,12 @@ function renderClientResuxVideo(node, scope, locals, styleScopeId) {
     attrs.push('data-rx-placeholder-active="true"');
     attrs.push('data-resux-placeholder-active="true"');
   }
-  const initialPoster = placeholderSrc || (deferLazy && !deferUntilPageReady ? "" : poster);
+  let initialPoster = poster;
+  if (placeholderSrc) {
+    initialPoster = placeholderSrc;
+  } else if (deferLazy && !deferUntilPageReady) {
+    initialPoster = "";
+  }
   if (initialPoster) {
     attrs.push('poster="' + escapeAttribute(initialPoster) + '"');
   }

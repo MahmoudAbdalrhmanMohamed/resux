@@ -23,6 +23,54 @@ function nextRuntimeImportQuery() {
   return `${Date.now()}-${runtimeImportCounter}`;
 }
 
+function createTestMatchMedia(matches: (query: string) => boolean) {
+  return (query: string) => ({
+    matches: matches(query),
+    media: query,
+    onchange: null,
+    addListener: () => undefined,
+    removeListener: () => undefined,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    dispatchEvent: () => false
+  });
+}
+
+async function installRouteTestRuntime(
+  window: Window,
+  fetchImpl: typeof fetch,
+  extras: Record<string, unknown> = {},
+): Promise<void> {
+  const tempDir = path.join(os.tmpdir(), `resux-route-runtime-${Date.now()}-${nextRuntimeImportQuery()}`);
+  await mkdir(tempDir, { recursive: true });
+  const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+  await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+  Object.assign(globalThis, {
+    document: window.document,
+    window,
+    location: window.location,
+    history: window.history,
+    fetch: fetchImpl,
+    __RESUX__: {
+      route: { path: window.location.pathname, params: {}, query: {} },
+      scopes: {},
+      modules: {},
+      config: { public: {} }
+    },
+    __RESUX_INSTALLED__: false,
+    ...extras
+  });
+  await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+}
+
+function createRouteTestResponse(pathname: string, html: string, links: Array<Record<string, unknown>>) {
+  return new Response(JSON.stringify({
+    payload: { route: { path: pathname, params: {}, query: {} }, scopes: {}, modules: {}, config: { public: {} } },
+    html,
+    head: { link: links }
+  }), { status: 200, headers: { "content-type": "application/json" } });
+}
+
 async function createClientRuntimeFixture(
   prefix: string,
   moduleSource: (runtimeUrl: string) => string,
@@ -6139,6 +6187,8 @@ export default createClientComponent({ id: "m0", name: "Model", file: "Model.vue
 
     await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     window.document.querySelector("a")!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
+    await waitForCondition(() => Boolean(window.document.querySelector('link[data-rx-route-style-preload="true"]')));
+    window.document.querySelector('link[data-rx-route-style-preload="true"]')?.dispatchEvent(new window.Event("load"));
     await waitForHtml(window, "<main>Post 42</main>");
 
     expect(requestedUrl).toBe("/__resux/route?path=%2Fpost%2F42%3Ftab%3Dinfo");
@@ -6461,7 +6511,7 @@ export default defineResuxRouteMiddleware((to, from) => {
           return new Response(
             JSON.stringify({
               html: "<main>Protected</main>",
-              head: { title: "Protected" },
+              head: { title: "Protected", link: [{ rel: "stylesheet", href: "/protected.css" }] },
               payload: {
                 route: { path: "/protected", params: {}, query: {} },
                 scopes: {},
@@ -6519,6 +6569,7 @@ export default defineResuxRouteMiddleware((to, from) => {
     expect((globalThis as any).__CLIENT_MW_RUNS__).toEqual([
       { to: "/protected", from: "/" }
     ]);
+    expect(window.document.querySelector('link[data-rx-route-style-preload="true"]')).toBeNull();
   });
 
   it("aborts pending async data when leaving the current route", async () => {
@@ -7382,15 +7433,26 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
   });
 
   it("waits for page-ready before revealing defer-until-page-ready videos", async () => {
-    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
-      "resux-video-page-ready",
-      () => "export default {};",
-    );
+    const tempDir = path.join(os.tmpdir(), `resux-video-page-ready-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
 
     const window = new Window({ url: "http://localhost/media" });
-    const readyState = vi.spyOn(window.document, "readyState", "get").mockReturnValue("loading");
-    const windowListeners = new Map<string, EventListenerOrEventListenerObject>();
-    vi.spyOn(window, "addEventListener").mockImplementation((type, listener) => void windowListeners.set(type, listener));
+    let pageReadyState = "loading";
+    Object.defineProperty(window.document, "readyState", {
+      configurable: true,
+      get: () => pageReadyState,
+    });
+    const nativeWindowAddEventListener = window.addEventListener.bind(window);
+    let pageLoadListener: EventListener | null = null;
+    vi.spyOn(window, "addEventListener").mockImplementation((type, listener, options) => {
+      if (type === "load") {
+        pageLoadListener = typeof listener === "function" ? listener : listener.handleEvent.bind(listener);
+        return;
+      }
+      nativeWindowAddEventListener(type, listener, options);
+    });
     window.document.body.innerHTML = `
       <div id="__resux"><main>Media</main></div>
       <video
@@ -7413,11 +7475,22 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       disconnect() {}
     }
 
-    installClientRuntimeFixture(window, {}, handlerUrl);
-    (globalThis as any).__RESUX__.route.path = "/media";
     Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
       IntersectionObserver: MockIntersectionObserver,
-      requestIdleCallback: (callback: () => void) => (callback(), 1),
+      requestIdleCallback: (callback: () => void) => {
+        callback();
+        return 1;
+      },
+      __RESUX__: {
+        route: { path: "/media", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
     });
 
     const video = window.document.querySelector("video") as HTMLVideoElement;
@@ -7426,15 +7499,14 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       loadCalls++;
     };
 
-    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
     expect(video.getAttribute("data-resux-revealed")).toBeNull();
     expect(observerConstructed).toBe(0);
     expect(loadCalls).toBe(0);
 
-    readyState.mockReturnValue("complete");
-    const loadListener = windowListeners.get("load");
-    expect(loadListener).toBeTypeOf("function");
-    (loadListener as EventListener)(new window.Event("load"));
+    pageReadyState = "complete";
+    expect(pageLoadListener).toBeTypeOf("function");
+    (pageLoadListener as EventListener)(new window.Event("load"));
 
     expect(video.getAttribute("data-resux-revealed")).toBe("true");
     expect(video.getAttribute("data-resux-video-loading")).toBe("true");
@@ -7603,6 +7675,249 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
 
     expect(clickEvent.defaultPrevented).toBe(false);
     expect(routeFetchCalls).toBe(0);
+  });
+
+  it("preloads applicable destination route styles before history and DOM swaps", async () => {
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        <a href="/shop/item" id="styled-link">Styled</a>
+        <main>Home</main>
+      </div>
+    `;
+    await installRouteTestRuntime(
+      window,
+      (async () => new Response(
+        JSON.stringify({
+          payload: {
+            route: { path: "/shop/item", params: {}, query: {} },
+            scopes: {},
+            modules: {},
+            config: { public: {} }
+          },
+          html: '<a href="/shop/item" id="styled-link">Styled</a><main>Styled</main>',
+          head: {
+            link: [
+              { rel: "stylesheet", href: "styles.css", crossorigin: "" },
+              { rel: "stylesheet", href: "print.css", media: "print" }
+            ]
+          }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )) as typeof fetch,
+      {
+        matchMedia: createTestMatchMedia((query) => query !== "print"),
+        requestAnimationFrame: (callback: FrameRequestCallback) => {
+          callback(0);
+          return 1;
+        }
+      }
+    );
+
+    window.document.getElementById("styled-link")?.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 })
+    );
+
+    await waitForCondition(() => Boolean(window.document.querySelector('link[data-rx-route-style-preload="true"]')));
+    const preload = window.document.querySelector('link[data-rx-route-style-preload="true"]') as HTMLLinkElement | null;
+
+    expect(preload?.getAttribute("href")).toBe("http://localhost/shop/styles.css");
+    expect(preload?.getAttribute("crossorigin")).toBe("");
+    expect(window.document.querySelectorAll('link[data-rx-route-style-preload="true"]')).toHaveLength(1);
+    expect(window.location.pathname).toBe("/");
+    expect(window.document.getElementById("__resux")?.innerHTML).toContain("<main>Home</main>");
+
+    preload?.dispatchEvent(new window.Event("error"));
+    await waitForHtml(window, "<main>Styled</main>");
+
+    expect(window.location.pathname).toBe("/shop/item");
+    const appliedStyle = window.document.head.querySelector('link[data-rx-head][rel="stylesheet"][href="styles.css"]') as HTMLLinkElement | null;
+    expect(appliedStyle?.href).toBe("http://localhost/shop/styles.css");
+    expect(window.document.head.querySelector('link[data-rx-head][rel="stylesheet"][href="print.css"]')).not.toBeNull();
+    expect(window.document.querySelector('link[data-rx-route-style-preload="true"]')).toBeNull();
+  });
+
+  it("preserves directory URLs and reuses completed route CSS prefetches", async () => {
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = '<div id="__resux"><a href="/docs/" id="docs">Docs</a><main>Home</main></div>';
+    let fetchCalls = 0;
+    await installRouteTestRuntime(window, (async () => {
+      fetchCalls++;
+      return createRouteTestResponse("/docs", "<main>Docs</main>", [{ rel: "stylesheet", href: "theme.css" }]);
+    }) as typeof fetch);
+
+    const anchor = window.document.getElementById("docs")!;
+    anchor.dispatchEvent(new window.MouseEvent("pointerover", { bubbles: true }));
+    await waitForCondition(() => Boolean(window.document.querySelector('link[data-rx-route-style-preload="true"]')));
+    const preload = window.document.querySelector('link[data-rx-route-style-preload="true"]') as HTMLLinkElement;
+    expect(preload.href).toBe("http://localhost/docs/theme.css");
+    preload.dispatchEvent(new window.Event("load"));
+    await waitForCondition(() => !window.document.querySelector('link[data-rx-route-style-preload="true"]'));
+
+    anchor.dispatchEvent(new window.MouseEvent("pointerover", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetchCalls).toBe(1);
+    expect(window.document.querySelector('link[data-rx-route-style-preload="true"]')).toBeNull();
+  });
+
+  it("keys completed route CSS prefetches by payload and destination URL", async () => {
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = '<div id="__resux"><a href="/docs" id="docs-file">Docs file</a><a href="/docs/" id="docs-dir">Docs dir</a><main>Home</main></div>';
+    let fetchCalls = 0;
+    await installRouteTestRuntime(window, (async () => {
+      fetchCalls++;
+      return createRouteTestResponse("/docs", "<main>Docs</main>", [{ rel: "stylesheet", href: "theme.css" }]);
+    }) as typeof fetch);
+
+    const fileAnchor = window.document.getElementById("docs-file")!;
+    const dirAnchor = window.document.getElementById("docs-dir")!;
+
+    fileAnchor.dispatchEvent(new window.MouseEvent("pointerover", { bubbles: true }));
+    await waitForCondition(() => Boolean(window.document.querySelector('link[data-rx-route-style-preload="true"]')));
+    let preload = window.document.querySelector('link[data-rx-route-style-preload="true"]') as HTMLLinkElement;
+    expect(preload.href).toBe("http://localhost/theme.css");
+    preload.dispatchEvent(new window.Event("load"));
+    await waitForCondition(() => !window.document.querySelector('link[data-rx-route-style-preload="true"]'));
+
+    fileAnchor.dispatchEvent(new window.MouseEvent("pointerover", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(window.document.querySelector('link[data-rx-route-style-preload="true"]')).toBeNull();
+
+    dirAnchor.dispatchEvent(new window.MouseEvent("pointerover", { bubbles: true }));
+    await waitForCondition(() => Boolean(window.document.querySelector('link[data-rx-route-style-preload="true"]')));
+    preload = window.document.querySelector('link[data-rx-route-style-preload="true"]') as HTMLLinkElement;
+    expect(preload.href).toBe("http://localhost/docs/theme.css");
+    preload.dispatchEvent(new window.Event("load"));
+    await waitForCondition(() => !window.document.querySelector('link[data-rx-route-style-preload="true"]'));
+
+    dirAnchor.dispatchEvent(new window.MouseEvent("pointerover", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetchCalls).toBe(1);
+    expect(window.document.querySelector('link[data-rx-route-style-preload="true"]')).toBeNull();
+  });
+
+  it("does not block navigation on disabled destination stylesheets", async () => {
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = '<div id="__resux"><a href="/optional" id="optional">Optional</a><main>Home</main></div>';
+    await installRouteTestRuntime(window, (async () =>
+      createRouteTestResponse("/optional", "<main>Optional</main>", [{ rel: "stylesheet", href: "optional.css", disabled: true }])
+    ) as typeof fetch);
+
+    window.document.getElementById("optional")?.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    await waitForHtml(window, "<main>Optional</main>");
+
+    expect(window.document.querySelector('link[data-rx-route-style-preload="true"]')).toBeNull();
+    const applied = window.document.head.querySelector('link[data-rx-head][rel="stylesheet"][href="optional.css"]');
+    expect(applied?.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("awaits an existing matching stylesheet that is still loading", async () => {
+    const window = new Window({ url: "http://localhost/" });
+    const existing = window.document.createElement("link");
+    existing.rel = "stylesheet";
+    existing.href = "/shared.css";
+    Object.defineProperty(existing, "sheet", { configurable: true, value: null });
+    window.document.head.appendChild(existing);
+    window.document.body.innerHTML = '<div id="__resux"><a href="/ready" id="ready">Ready</a><main>Home</main></div>';
+    await installRouteTestRuntime(window, (async () =>
+      createRouteTestResponse("/ready", "<main>Ready</main>", [{ rel: "stylesheet", href: "/shared.css" }])
+    ) as typeof fetch);
+
+    window.document.getElementById("ready")?.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.document.querySelector('link[data-rx-route-style-preload="true"]')).toBeNull();
+    expect(window.location.pathname).toBe("/");
+    expect(window.document.getElementById("__resux")?.innerHTML).toContain("<main>Home</main>");
+
+    existing.dispatchEvent(new window.Event("load"));
+    await waitForHtml(window, "<main>Ready</main>");
+    expect(window.location.pathname).toBe("/ready");
+  });
+
+  it("keeps stylesheet request semantics when preloading", async () => {
+    const window = new Window({ url: "http://localhost/" });
+    window.document.head.innerHTML = '<link rel="stylesheet" href="/shared.css">';
+    window.document.body.innerHTML = '<div id="__resux"><a href="/secure" id="secure">Secure</a><main>Home</main></div>';
+    await installRouteTestRuntime(window, (async () => new Response(JSON.stringify({
+      payload: { route: { path: "/secure", params: {}, query: {} }, scopes: {}, modules: {}, config: { public: {} } },
+      html: "<main>Secure</main>",
+      head: { link: [{ rel: "stylesheet", href: "/shared.css", crossOrigin: "", referrerPolicy: "no-referrer", integrity: "sha256-test" }] }
+    }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch);
+
+    window.document.getElementById("secure")?.dispatchEvent(new window.MouseEvent("pointerover", { bubbles: true }));
+    await waitForCondition(() => Boolean(window.document.querySelector('link[data-rx-route-style-preload="true"]')));
+    const preload = window.document.querySelector('link[data-rx-route-style-preload="true"]') as HTMLLinkElement;
+    expect(preload.getAttribute("crossorigin")).toBe("");
+    expect(preload.getAttribute("referrerpolicy")).toBe("no-referrer");
+    expect(preload.getAttribute("integrity")).toBe("sha256-test");
+    preload.dispatchEvent(new window.Event("load"));
+  });
+
+  it("serializes multi-style route prefetches within the route concurrency bound", async () => {
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = '<div id="__resux"><a href="/chunks" id="chunks">Chunks</a><main>Home</main></div>';
+    await installRouteTestRuntime(window, (async () => new Response(JSON.stringify({
+      payload: { route: { path: "/chunks", params: {}, query: {} }, scopes: {}, modules: {}, config: { public: {} } },
+      html: "<main>Chunks</main>",
+      head: { link: ["a.css", "b.css", "c.css"].map((href) => ({ rel: "stylesheet", href })) }
+    }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch);
+
+    window.document.getElementById("chunks")?.dispatchEvent(new window.MouseEvent("pointerover", { bubbles: true }));
+    await waitForCondition(() => Boolean(window.document.querySelector('link[data-rx-route-style-preload="true"]')));
+    expect(window.document.querySelectorAll('link[data-rx-route-style-preload="true"]')).toHaveLength(1);
+    const first = window.document.querySelector('link[data-rx-route-style-preload="true"]') as HTMLLinkElement;
+    expect(first.href).toBe("http://localhost/a.css");
+    first.dispatchEvent(new window.Event("load"));
+    await waitForCondition(() => (window.document.querySelector('link[data-rx-route-style-preload="true"]') as HTMLLinkElement | null)?.href === "http://localhost/b.css");
+    expect(window.document.querySelectorAll('link[data-rx-route-style-preload="true"]')).toHaveLength(1);
+    (window.document.querySelector('link[data-rx-route-style-preload="true"]') as HTMLLinkElement).dispatchEvent(new window.Event("load"));
+    await waitForCondition(() => (window.document.querySelector('link[data-rx-route-style-preload="true"]') as HTMLLinkElement | null)?.href === "http://localhost/c.css");
+    (window.document.querySelector('link[data-rx-route-style-preload="true"]') as HTMLLinkElement).dispatchEvent(new window.Event("load"));
+  });
+
+  it("counts pending stylesheet preloads toward the route prefetch limit", async () => {
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = `
+      <div id="__resux">
+        ${Array.from({ length: 9 }, (_, index) => `<a href="/route-${index}" id="route-${index}">Route ${index}</a>`).join("")}
+        <main>Home</main>
+      </div>
+    `;
+    let routeFetchCalls = 0;
+    await installRouteTestRuntime(
+      window,
+      (async (input: string | URL | Request) => {
+        routeFetchCalls++;
+        const routePath = new URL(String(input), "http://localhost/").searchParams.get("path") || "/";
+        return new Response(JSON.stringify({
+          payload: { route: { path: routePath, params: {}, query: {} }, scopes: {}, modules: {}, config: { public: {} } },
+          html: `<main>${routePath}</main>`,
+          head: { link: [{ rel: "stylesheet", href: `/assets${routePath}.css` }] }
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }) as typeof fetch,
+      { matchMedia: createTestMatchMedia(() => true) }
+    );
+
+    for (let index = 0; index < 8; index++) {
+      window.document.getElementById(`route-${index}`)?.dispatchEvent(
+        new window.MouseEvent("pointerover", { bubbles: true, cancelable: true })
+      );
+    }
+    await waitForCondition(
+      () => window.document.querySelectorAll('link[data-rx-route-style-preload="true"]').length === 8
+    );
+
+    expect(routeFetchCalls).toBe(8);
+    window.document.getElementById("route-8")?.dispatchEvent(
+      new window.MouseEvent("pointerover", { bubbles: true, cancelable: true })
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(routeFetchCalls).toBe(8);
+
+    for (const preload of window.document.querySelectorAll('link[data-rx-route-style-preload="true"]')) {
+      preload.dispatchEvent(new window.Event("load"));
+    }
   });
 
   it("ignores prefetch for media/static links", async () => {

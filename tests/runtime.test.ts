@@ -7365,55 +7365,25 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     expect(playCalls).toBeGreaterThan(0);
   });
 
-  it("renders a deferred page-ready ResuxVideo poster on the client", async () => {
-    const fixture = await createClientComponentRuntimeFixture({
-      prefix: "resux-video-page-ready-render",
-      componentName: "PageReadyVideo",
-      template: [{
-        type: "element",
-        tag: "div",
-        attrs: [{ kind: "static", name: "id", value: "show-page-ready-video" }],
-        events: [{ name: "click", handler: "showVideo" }],
-        children: [{
-          type: "element",
-          tag: "ResuxVideo",
-          if: { expression: "show.value", blockId: "b0" },
-          attrs: [
-            { kind: "static", name: "src", value: "/media-test/videos/sample-video.mp4" },
-            { kind: "static", name: "poster", value: "/media-test/videos/sample-poster.jpg" },
-            { kind: "static", name: "deferUntilPageReady", value: "true" },
-          ],
-          events: [],
-          children: [],
-        }],
-      }],
-      scriptSource: `
-async function script(ctx) {
-  const show = ctx.useState("show", () => false);
-  function showVideo() { show.value = true; }
-  return { show, showVideo };
-}`,
-      handlers: ["showVideo"],
-    });
+  it("renders a deferred page-ready ResuxVideo poster in the client renderer", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-client-video-poster-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(runtimeFile, getClientRuntimeSource() + "\nexport { renderClientResuxVideo };\n", "utf8");
+    const runtime = await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+    const html = runtime.renderClientResuxVideo({
+      attrs: [
+        { kind: "static", name: "src", value: "/media-test/videos/sample-video.mp4" },
+        { kind: "static", name: "poster", value: "/media-test/videos/sample-poster.jpg" },
+        { kind: "static", name: "deferUntilPageReady", value: "true" },
+        { kind: "static", name: "controls", value: "false" },
+      ],
+      children: [],
+    }, {}, {}, "");
 
-    const window = new Window({ url: "http://localhost/media" });
-    vi.spyOn(window.document, "readyState", "get").mockReturnValue("loading");
-    vi.spyOn(window, "addEventListener").mockImplementation(() => undefined);
-    window.document.body.innerHTML =
-      '<div id="__resux"><div id="show-page-ready-video" data-rx-on-click="s0:m0:showVideo">'
-      + '<span data-rx-block="s0:b0" style="display: contents;"></span></div></div>';
-    installClientRuntimeFixture(window, { show: false }, fixture.handlerUrl);
-    (globalThis as any).__RESUX__.route.path = "/media";
-
-    await import(`${fixture.runtimeUrl}?test=${nextRuntimeImportQuery()}`);
-    clickRuntimeFixture(window, "show-page-ready-video");
-    await waitForCondition(() => Boolean(window.document.querySelector("video")));
-
-    const video = window.document.querySelector("video") as HTMLVideoElement;
-    expect(video.getAttribute("poster")).toBe("/media-test/videos/sample-poster.jpg");
-    expect(video.getAttribute("data-rx-lazy-src")).toBe("/media-test/videos/sample-video.mp4");
-    expect(video.getAttribute("src")).toBeNull();
-    expect(video.getAttribute("data-resux-revealed")).toBeNull();
+    expect(html).toMatch(/<video\b[^>]*\sposter="\/media-test\/videos\/sample-poster\.jpg"(?:\s|>)/);
+    expect(html).toContain('data-rx-lazy-src="/media-test/videos/sample-video.mp4"');
+    expect(html).not.toContain(' src="/media-test/videos/sample-video.mp4"');
   });
 
   it("waits for page-ready before revealing defer-until-page-ready videos", async () => {

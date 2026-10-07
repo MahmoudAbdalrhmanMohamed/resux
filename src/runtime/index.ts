@@ -8475,6 +8475,11 @@ if (typeof globalThis !== "undefined") {
 const routePayloadCache = new Map();
 const routePayloadRequests = new Map();
 const routePayloadFailures = new Map();
+const routeStylePreloadPromises = new Map();
+const routeStylePrefetchPromises = new Map();
+const routeStylePrefetchedDestinations = new WeakMap();
+const routeStyleSettledLinks = new WeakSet();
+let routeStyleNavigationController;
 const ROUTE_PAYLOAD_CACHE_MAX_ENTRIES = 64;
 const ROUTE_PAYLOAD_FAILURE_MAX_ENTRIES = 64;
 const ROUTE_PREFETCH_MAX_IN_FLIGHT = 8;
@@ -13240,6 +13245,10 @@ function handleManagedMediaError(event) {
   if (!target || !target.tagName) {
     return;
   }
+  const tag = String(target.tagName).toLowerCase();
+  if (tag !== "img" && tag !== "source" && tag !== "video") {
+    return;
+  }
   const delegatedErrorTarget = target.closest
     ? target.closest("[data-rx-on-error]")
     : null;
@@ -13253,7 +13262,6 @@ function handleManagedMediaError(event) {
       event.stopPropagation();
     }
   }
-  const tag = String(target.tagName).toLowerCase();
   try {
     if (tag === "img") {
       handleManagedImageError(target);
@@ -13744,559 +13752,192 @@ function setRouteLoading(active) {
   setRouteTransition(active ? "fetching" : "idle");
 }
 
-function setRouteTransition(state, options = {}) {
-  const loader = getRouteTransitionIndicator();
-  const root = document.getElementById("__resux");
-  if (!loader) {
-    return;
+function setRouteTransition(state,options={}){
+  const loader=getRouteTransitionIndicator(),root=document.getElementById("__resux");
+  if(!loader)return;
+  if(state==="start")routeTransitionStartedAt=Date.now();
+  const config=readRouteTransitionConfig(loader);
+  if(routeTransitionHideTimer){clearTimeout(routeTransitionHideTimer);routeTransitionHideTimer=0}
+  const progress=transitionProgress(state,options.progress,config.duration),message=options.message??transitionMessage(state);
+  updateRouteTransitionUi(loader,state,progress,message);
+  const active=state==="start"||state==="fetching"||state==="swapping";
+  if(active){showRouteTransition(loader,config.throttle,false);startRouteTransitionProgressTimer(loader,config.duration)}else stopRouteTransitionProgressTimer();
+  if(root){
+    if(state==="idle"||state==="complete"||state==="error"){root.removeAttribute("aria-busy");root.removeAttribute("data-route-transition")}
+    else{root.setAttribute("aria-busy","true");root.setAttribute("data-route-transition","loading")}
   }
-
-  if (state === "start") {
-    routeTransitionStartedAt = Date.now();
-  }
-
-  const config = readRouteTransitionConfig(loader);
-  if (routeTransitionHideTimer) {
-    clearTimeout(routeTransitionHideTimer);
-    routeTransitionHideTimer = 0;
-  }
-
-  const progress = transitionProgress(state, options.progress, config.duration);
-  const message = options.message ?? transitionMessage(state);
-  updateRouteTransitionUi(loader, state, progress, message);
-
-  const activeState = state === "start" || state === "fetching" || state === "swapping";
-  if (activeState) {
-    showRouteTransition(loader, config.throttle, false);
-    startRouteTransitionProgressTimer(loader, config.duration);
-  } else {
-    stopRouteTransitionProgressTimer();
-  }
-
-  if (root) {
-    if (state === "idle" || state === "complete" || state === "error") {
-      root.removeAttribute("aria-busy");
-      root.removeAttribute("data-route-transition");
-    } else {
-      root.setAttribute("aria-busy", "true");
-      root.setAttribute("data-route-transition", "loading");
-    }
-  }
-
-  dispatchRouteTransition(state, options);
-
-  if (state === "idle" || state === "complete" || state === "error") {
-    const hideDelay = state === "complete" ? 160 : state === "error" ? 640 : 0;
-    routeTransitionHideTimer = setTimeout(() => {
-      hideRouteTransition(loader);
-    }, hideDelay);
+  dispatchRouteTransition(state,options);
+  if(state==="idle"||state==="complete"||state==="error"){
+    const delay=state==="complete"?160:state==="error"?640:0;
+    routeTransitionHideTimer=setTimeout(()=>hideRouteTransition(loader),delay);
   }
 }
-
-function getRouteTransitionIndicator() {
-  if (routeTransitionIndicator && routeTransitionIndicator.isConnected) {
-    return routeTransitionIndicator;
-  }
-
-  routeTransitionIndicator = document.querySelector("[data-rx-loading-indicator]");
-  if (routeTransitionIndicator) {
-    return routeTransitionIndicator;
-  }
-
-  const fallback = createFallbackRouteTransitionIndicator();
-  routeTransitionIndicator = fallback;
-  return fallback;
+function getRouteTransitionIndicator(){
+  if(routeTransitionIndicator?.isConnected)return routeTransitionIndicator;
+  return routeTransitionIndicator=document.querySelector("[data-rx-loading-indicator]")||createFallbackRouteTransitionIndicator();
 }
-
-function createFallbackRouteTransitionIndicator() {
-  if (!document.body) {
-    return null;
-  }
-
-  const fallback = document.createElement("div");
-  fallback.setAttribute("data-rx-loading-indicator", "true");
-  fallback.setAttribute("hidden", "");
-  fallback.setAttribute("data-state", "idle");
-  fallback.setAttribute("aria-live", "polite");
-  fallback.setAttribute("aria-busy", "false");
-  fallback.setAttribute("data-duration", "2000");
-  fallback.setAttribute("data-throttle", "200");
-  fallback.setAttribute("style", "--resux-loader-height: 3px; --resux-loader-color: #2563eb; --resux-loader-error-color: #dc2626;");
-  fallback.innerHTML = '<div class="rx-loading-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Idle"><span class="rx-loading-progress"></span></div>';
-  document.body.appendChild(fallback);
-  return fallback;
+function createFallbackRouteTransitionIndicator(){
+  if(!document.body)return null;
+  const el=document.createElement("div");
+  for(const [name,value] of [["data-rx-loading-indicator","true"],["hidden",""],["data-state","idle"],["aria-live","polite"],["aria-busy","false"],["data-duration","2000"],["data-throttle","200"],["style","--resux-loader-height: 3px; --resux-loader-color: #2563eb; --resux-loader-error-color: #dc2626;"]])el.setAttribute(name,value);
+  el.innerHTML='<div class="rx-loading-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Idle"><span class="rx-loading-progress"></span></div>';
+  document.body.appendChild(el);return el;
 }
-
-function readRouteTransitionConfig(loader) {
-  return {
-    duration: readPositiveInt(loader?.dataset?.duration, 2000, 1),
-    throttle: readPositiveInt(loader?.dataset?.throttle, 200, 0)
-  };
+function readRouteTransitionConfig(loader){return{duration:readPositiveInt(loader?.dataset?.duration,2000,1),throttle:readPositiveInt(loader?.dataset?.throttle,200,0)}}
+function readPositiveInt(value,fallback,min){const n=Number.parseInt(String(value??""),10);return Number.isFinite(n)?Math.max(min,n):fallback}
+function showRouteTransition(loader,throttle,force){
+  if(!loader||routeTransitionShowTimer&&!force)return;
+  if(routeTransitionShowTimer){clearTimeout(routeTransitionShowTimer);routeTransitionShowTimer=0}
+  if(force||throttle<=0||routeTransitionVisible){loader.hidden=false;routeTransitionVisible=true;return}
+  routeTransitionShowTimer=setTimeout(()=>{loader.hidden=false;routeTransitionVisible=true;routeTransitionShowTimer=0},throttle);
 }
-
-function readPositiveInt(value, fallback, min) {
-  const parsed = Number.parseInt(String(value ?? ""), 10);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  return Math.max(min, parsed);
+function hideRouteTransition(loader){
+  if(!loader)return;stopRouteTransitionProgressTimer();
+  if(routeTransitionShowTimer){clearTimeout(routeTransitionShowTimer);routeTransitionShowTimer=0}
+  loader.hidden=true;routeTransitionVisible=false;updateRouteTransitionUi(loader,"idle",0,"Idle");
 }
-
-function showRouteTransition(loader, throttle, force) {
-  if (!loader) {
-    return;
-  }
-  if (routeTransitionShowTimer && !force) {
-    return;
-  }
-  if (routeTransitionShowTimer) {
-    clearTimeout(routeTransitionShowTimer);
-    routeTransitionShowTimer = 0;
-  }
-
-  if (force || throttle <= 0 || routeTransitionVisible) {
-    loader.hidden = false;
-    routeTransitionVisible = true;
-    return;
-  }
-
-  routeTransitionShowTimer = setTimeout(() => {
-    loader.hidden = false;
-    routeTransitionVisible = true;
-    routeTransitionShowTimer = 0;
-  }, throttle);
+function startRouteTransitionProgressTimer(loader,duration){
+  if(routeTransitionProgressTimer)clearInterval(routeTransitionProgressTimer);
+  routeTransitionProgressTimer=setInterval(()=>{
+    if(!loader||loader.hidden)return;
+    const state=loader.dataset?.state??"idle";
+    if(state==="idle"||state==="complete"||state==="error")return;
+    updateRouteTransitionUi(loader,state,transitionProgress(state,undefined,duration),transitionMessage(state));
+  },120);
 }
-
-function hideRouteTransition(loader) {
-  if (!loader) {
-    return;
-  }
-  stopRouteTransitionProgressTimer();
-  if (routeTransitionShowTimer) {
-    clearTimeout(routeTransitionShowTimer);
-    routeTransitionShowTimer = 0;
-  }
-  loader.hidden = true;
-  routeTransitionVisible = false;
-  updateRouteTransitionUi(loader, "idle", 0, "Idle");
-}
-
-function startRouteTransitionProgressTimer(loader, duration) {
-  if (routeTransitionProgressTimer) {
-    clearInterval(routeTransitionProgressTimer);
-  }
-
-  routeTransitionProgressTimer = setInterval(() => {
-    if (!loader || loader.hidden) {
-      return;
-    }
-    const state = loader.dataset?.state ?? "idle";
-    if (state === "idle" || state === "complete" || state === "error") {
-      return;
-    }
-    updateRouteTransitionUi(
-      loader,
-      state,
-      transitionProgress(state, undefined, duration),
-      transitionMessage(state),
-    );
-  }, 120);
-}
-
-function stopRouteTransitionProgressTimer() {
-  if (!routeTransitionProgressTimer) {
-    return;
-  }
-  clearInterval(routeTransitionProgressTimer);
-  routeTransitionProgressTimer = 0;
-}
-
-function updateRouteTransitionUi(loader, state, progress, message) {
-  if (!loader) {
-    return;
-  }
-
-  loader.dataset.state = state;
-  loader.style.setProperty("--resux-progress", progress + "%");
+function stopRouteTransitionProgressTimer(){if(routeTransitionProgressTimer){clearInterval(routeTransitionProgressTimer);routeTransitionProgressTimer=0}}
+function updateRouteTransitionUi(loader,state,progress,message){
+  if(!loader)return;
+  loader.dataset.state=state;loader.style.setProperty("--resux-progress",progress+"%");
   loader.style.setProperty("--resux-progress-scale", String(progress / 100));
-  loader.setAttribute("aria-busy", state === "idle" || state === "complete" || state === "error" ? "false" : "true");
-
-  const progressbar = loader.querySelector("[role='progressbar']");
-  if (progressbar) {
-    progressbar.setAttribute("aria-valuenow", String(progress));
-    progressbar.setAttribute("aria-valuetext", message);
-  }
+  loader.setAttribute("aria-busy",state==="idle"||state==="complete"||state==="error"?"false":"true");
+  const bar=loader.querySelector("[role='progressbar']");
+  if(bar){bar.setAttribute("aria-valuenow",String(progress));bar.setAttribute("aria-valuetext",message)}
 }
-
-function transitionProgress(state, explicitProgress, duration = 2000) {
-  if (typeof explicitProgress === "number") {
-    return clampProgress(explicitProgress);
-  }
-
-  if (state === "idle") {
-    return 0;
-  }
-  if (state === "complete" || state === "error") {
-    return 100;
-  }
-
-  const elapsed = Math.max(0, Date.now() - routeTransitionStartedAt);
-  const estimated = defaultEstimatedProgress(duration, elapsed);
-  if (state === "start") {
-    return Math.max(8, Math.min(32, estimated));
-  }
-  if (state === "fetching") {
-    return Math.max(18, Math.min(88, estimated));
-  }
-  return Math.max(72, Math.min(97, estimated));
+function transitionProgress(state,explicitProgress,duration=2000){
+  if(typeof explicitProgress==="number")return clampProgress(explicitProgress);
+  if(state==="idle")return 0;
+  if(state==="complete"||state==="error")return 100;
+  const estimated=defaultEstimatedProgress(duration,Math.max(0,Date.now()-routeTransitionStartedAt));
+  if(state==="start")return Math.max(8,Math.min(32,estimated));
+  if(state==="fetching")return Math.max(18,Math.min(88,estimated));
+  return Math.max(72,Math.min(97,estimated));
 }
-
-function defaultEstimatedProgress(duration, elapsed) {
-  const safeDuration = Math.max(1, duration);
-  const scaled = (elapsed / safeDuration) * 2;
-  const estimated = (2 / Math.PI * 100) * Math.atan(scaled);
-  return clampProgress(estimated);
-}
-
-function clampProgress(value) {
-  return Math.max(0, Math.min(100, Math.round(value)));
-}
-
-function transitionMessage(state) {
-  if (state === "start" || state === "fetching" || state === "swapping") return "Loading";
-  if (state === "complete") return "Done";
-  if (state === "error") return "Failed";
+function defaultEstimatedProgress(duration,elapsed){return clampProgress((2/Math.PI*100)*Math.atan((elapsed/Math.max(1,duration))*2))}
+function clampProgress(value){return Math.max(0,Math.min(100,Math.round(value)))}
+function transitionMessage(state){
+  if(state==="start"||state==="fetching"||state==="swapping")return "Loading";
+  if(state==="complete")return "Done";
+  if(state==="error")return "Failed";
   return "Ready";
 }
-
-function dispatchRouteTransition(state, detail = {}) {
-  if (typeof window === "undefined" || typeof window.CustomEvent !== "function") {
-    return;
-  }
-  window.dispatchEvent(new window.CustomEvent("resux:route-transition", {
-    detail: {
-      state,
-      path: detail.path,
-      message: detail.message ?? transitionMessage(state),
-      progress: transitionProgress(state, detail.progress)
-    }
-  }));
+function dispatchRouteTransition(state,detail={}){
+  if(typeof window==="undefined"||typeof window.CustomEvent!=="function")return;
+  window.dispatchEvent(new window.CustomEvent("resux:route-transition",{detail:{state,path:detail.path,message:detail.message??transitionMessage(state),progress:transitionProgress(state,detail.progress)}}));
 }
 
-function isManagedMediaDebugEnabled() {
-  if (typeof window === "undefined" || typeof location === "undefined") {
-    return false;
-  }
-  const hostname = String(location.hostname || "").toLowerCase();
-  const isLocalHost = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
-  if (!isLocalHost) {
-    return false;
-  }
-  const explicitFlag = window.__RESUX_MEDIA_DEBUG__ === true;
-  if (explicitFlag) {
-    return true;
-  }
-  try {
-    return window.localStorage?.getItem("resux:media-debug") === "1";
-  } catch {
-    return false;
-  }
+function isManagedMediaDebugEnabled(){
+  if(typeof window==="undefined"||typeof location==="undefined")return false;
+  const host=String(location.hostname||"").toLowerCase();
+  if(host!=="localhost"&&host!=="127.0.0.1"&&host!=="::1")return false;
+  if(window.__RESUX_MEDIA_DEBUG__===true)return true;
+  try{return window.localStorage?.getItem("resux:media-debug")==="1"}catch{return false}
 }
-
-function logManagedMediaDebug(eventName, detail = {}) {
-  if (!isManagedMediaDebugEnabled() || typeof console === "undefined" || typeof console.debug !== "function") {
-    return;
+function logManagedMediaDebug(eventName,detail={}){if(isManagedMediaDebugEnabled()&&typeof console!=="undefined"&&typeof console.debug==="function")console.debug("[resux:media]",eventName,detail)}
+function warnManagedMediaDebug(eventName,detail={}){if(isManagedMediaDebugEnabled()&&typeof console!=="undefined"&&typeof console.warn==="function")console.warn("[resux:media]",eventName,detail)}
+function handleNavigationClick(event){
+  if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return false;
+  const anchor=event.target?.closest?.("a[href]");
+  if(!anchor)return false;
+  const actionTarget=event.target?.closest?.("[data-rx-on-click]");
+  if(actionTarget&&readEventModifiers(actionTarget,"click").includes("prevent"))return false;
+  const resolution=resolveSameOriginAnchorTarget(anchor),target=resolution.url;
+  if(!target){logManagedMediaDebug("router-ignore",{reason:resolution.reason,href:anchor.getAttribute("href")||""});return false}
+  if(isManagedMediaAssetPath(target.pathname)){
+    if(shouldBlockManagedMediaLinkNavigation(anchor,event.target)){warnManagedMediaDebug("router-block-media-navigation",{href:target.href});event.preventDefault();return true}
+    logManagedMediaDebug("router-ignore",{reason:"media-static-path",href:target.href});return false;
   }
-  console.debug("[resux:media]", eventName, detail);
+  if(!isRouterManagedPagePath(target.pathname)){logManagedMediaDebug("router-ignore",{reason:"non-page-route",href:target.href});return false}
+  if(shouldIgnoreNavigationTarget(event.target,anchor)){logManagedMediaDebug("router-ignore",{reason:"ignored-event-target",href:target.href});return false}
+  const nextPath=target.pathname+target.search,currentPath=location.pathname+location.search;
+  if(nextPath===currentPath){
+    if(!target.hash||target.hash===location.hash){event.preventDefault();return true}
+    return false;
+  }
+  event.preventDefault();logManagedMediaDebug("router-navigation-start",{href:target.href,nextPath});void navigateTo(nextPath+target.hash);return true;
 }
-
-function warnManagedMediaDebug(eventName, detail = {}) {
-  if (!isManagedMediaDebugEnabled() || typeof console === "undefined" || typeof console.warn !== "function") {
-    return;
-  }
-  console.warn("[resux:media]", eventName, detail);
+function shouldIgnoreNavigationTarget(eventTarget,anchor){
+  const ignored=eventTarget?.closest?.(ROUTER_IGNORED_EVENT_TARGET_SELECTOR);
+  return !!ignored&&ignored!==anchor;
 }
-
-function handleNavigationClick(event) {
-  if (
-    event.defaultPrevented ||
-    event.button !== 0 ||
-    event.metaKey ||
-    event.ctrlKey ||
-    event.shiftKey ||
-    event.altKey
-  ) {
-    return false;
-  }
-
-  const anchor = event.target && event.target.closest
-    ? event.target.closest("a[href]")
-    : null;
-  if (!anchor) {
-    return false;
-  }
-
-  const actionTarget = event.target && event.target.closest
-    ? event.target.closest("[data-rx-on-click]")
-    : null;
-  if (actionTarget && readEventModifiers(actionTarget, "click").includes("prevent")) {
-    return false;
-  }
-
-  const resolution = resolveSameOriginAnchorTarget(anchor);
-  if (!resolution.url) {
-    logManagedMediaDebug("router-ignore", {
-      reason: resolution.reason,
-      href: anchor.getAttribute("href") || ""
-    });
-    return false;
-  }
-  const target = resolution.url;
-
-  if (isManagedMediaAssetPath(target.pathname)) {
-    if (shouldBlockManagedMediaLinkNavigation(anchor, event.target)) {
-      warnManagedMediaDebug("router-block-media-navigation", { href: target.href });
-      event.preventDefault();
-      return true;
-    }
-    logManagedMediaDebug("router-ignore", {
-      reason: "media-static-path",
-      href: target.href
-    });
-    return false;
-  }
-
-  if (!isRouterManagedPagePath(target.pathname)) {
-    logManagedMediaDebug("router-ignore", {
-      reason: "non-page-route",
-      href: target.href
-    });
-    return false;
-  }
-
-  if (shouldIgnoreNavigationTarget(event.target, anchor)) {
-    logManagedMediaDebug("router-ignore", {
-      reason: "ignored-event-target",
-      href: target.href
-    });
-    return false;
-  }
-
-  const nextPath = target.pathname + target.search;
-  const currentPath = location.pathname + location.search;
-  if (nextPath === currentPath) {
-    if (!target.hash || target.hash === location.hash) {
-      event.preventDefault();
-      return true;
-    }
-    return false;
-  }
-
-  event.preventDefault();
-  logManagedMediaDebug("router-navigation-start", {
-    href: target.href,
-    nextPath
-  });
-  void navigateTo(nextPath + target.hash);
-  return true;
+function shouldBlockManagedMediaLinkNavigation(anchor,eventTarget){
+  if(!anchor||!eventTarget||typeof location==="undefined"||anchor.getAttribute("data-rx-allow-media-navigation")==="true")return false;
+  const media=eventTarget.closest?.(MEDIA_NAVIGATION_BLOCK_TARGET_SELECTOR);
+  if(!media||media===anchor||!anchor.contains(media))return false;
+  const target=resolveSameOriginAnchorTarget(anchor);
+  return !!(target.url&&isManagedMediaAssetPath(target.url.pathname));
 }
-
-function shouldIgnoreNavigationTarget(eventTarget, anchor) {
-  if (!eventTarget || !eventTarget.closest) {
-    return false;
-  }
-  const ignoredTarget = eventTarget.closest(ROUTER_IGNORED_EVENT_TARGET_SELECTOR);
-  if (!ignoredTarget) {
-    return false;
-  }
-  return ignoredTarget !== anchor;
-}
-
-function shouldBlockManagedMediaLinkNavigation(anchor, eventTarget) {
-  if (!anchor || !eventTarget || typeof location === "undefined") {
-    return false;
-  }
-  if (anchor.getAttribute("data-rx-allow-media-navigation") === "true") {
-    return false;
-  }
-  const mediaNode = eventTarget.closest
-    ? eventTarget.closest(MEDIA_NAVIGATION_BLOCK_TARGET_SELECTOR)
-    : null;
-  if (!mediaNode || mediaNode === anchor || !anchor.contains(mediaNode)) {
-    return false;
-  }
-  const target = resolveSameOriginAnchorTarget(anchor);
-  return Boolean(target.url && isManagedMediaAssetPath(target.url.pathname));
-}
-
-function resolveSameOriginAnchorTarget(anchor) {
-  if (!anchor || typeof location === "undefined") {
-    return { url: null, reason: "missing-anchor" };
-  }
-  if (anchor.target || anchor.hasAttribute("target")) {
-    return { url: null, reason: "target-attr" };
-  }
-  if (anchor.hasAttribute("download")) {
-    return { url: null, reason: "download-attr" };
-  }
-  const href = String(anchor.getAttribute("href") || "").trim();
-  if (!href) {
-    return { url: null, reason: "empty-href" };
-  }
-  if (href === "#" || href.startsWith("#")) {
-    return { url: null, reason: "hash-only" };
-  }
-  if (MEDIA_URL_SCHEME_RE.test(href)) {
-    return { url: null, reason: "scheme" };
-  }
+function resolveSameOriginAnchorTarget(anchor){
+  if(!anchor||typeof location==="undefined")return{url:null,reason:"missing-anchor"};
+  if(anchor.target||anchor.hasAttribute("target"))return{url:null,reason:"target-attr"};
+  if(anchor.hasAttribute("download"))return{url:null,reason:"download-attr"};
+  const href=String(anchor.getAttribute("href")||"").trim();
+  if(!href)return{url:null,reason:"empty-href"};
+  if(href==="#"||href.startsWith("#"))return{url:null,reason:"hash-only"};
+  if(MEDIA_URL_SCHEME_RE.test(href))return{url:null,reason:"scheme"};
   let target;
-  try {
-    target = new URL(href, location.href);
-  } catch {
-    return { url: null, reason: "invalid-href" };
-  }
-  if (target.origin !== location.origin) {
-    return { url: null, reason: "external-origin" };
-  }
-  return { url: target, reason: null };
+  try{target=new URL(href,location.href)}catch{return{url:null,reason:"invalid-href"}}
+  return target.origin===location.origin?{url:target,reason:null}:{url:null,reason:"external-origin"};
+}
+function isManagedMediaAssetPath(pathname){
+  const p=String(pathname||"").toLowerCase();
+  return !!p&&(p.startsWith("/__resux/image")||p.startsWith("/__resux/video")||p.startsWith("/_resux/generated/images/")||p.startsWith("/_resux/generated/videos/")||p.startsWith("/media-test/videos/")||p.startsWith("/media-test/images/")||MEDIA_STATIC_EXTENSION_RE.test(p));
 }
 
-function isManagedMediaAssetPath(pathname) {
-  const normalized = String(pathname || "").toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  if (
-    normalized.startsWith("/__resux/image")
-    || normalized.startsWith("/__resux/video")
-    || normalized.startsWith("/_resux/generated/images/")
-    || normalized.startsWith("/_resux/generated/videos/")
-    || normalized.startsWith("/media-test/videos/")
-    || normalized.startsWith("/media-test/images/")
-  ) {
-    return true;
-  }
-  return MEDIA_STATIC_EXTENSION_RE.test(normalized);
-}
-
-async function navigateTo(target, options = {}) {
-  const nextUrl = new URL(target, location.href);
-  const routePath = normalizeRoutePayloadKey(nextUrl.pathname + nextUrl.search);
-  if (!isRouterManagedPagePath(nextUrl.pathname)) {
-    location.assign(nextUrl.href);
-    return;
-  }
-  if (isManagedMediaAssetPath(nextUrl.pathname)) {
-    warnManagedMediaDebug("router-navigation-blocked-media-path", {
-      routePath,
-      href: nextUrl.href
-    });
-    return;
-  }
-  const currentUrl = new URL(location.href);
-  const currentRoutePath = currentUrl.pathname + currentUrl.search;
-  if (!options.force && routePath === currentRoutePath && nextUrl.hash === currentUrl.hash) {
-    return;
-  }
-  logManagedMediaDebug("router-navigation-start", {
-    routePath,
-    hash: nextUrl.hash,
-    replace: options.replace === true
-  });
-  const transitionToken = ++routeTransitionToken;
-  let completed = false;
-  abortPendingAsyncData();
-  setRouteTransition("start", { path: routePath });
-
-  try {
-    setRouteTransition("fetching", { path: routePath });
-    const result = await loadRoute(routePath, {
-      reason: "navigation",
-      force: options.force === true
-    });
-    if (!ensureRoutePayloadBuildCompatibility(result)) {
-      return;
-    }
-    if (transitionToken !== routeTransitionToken) {
-      return;
-    }
-    if (result.redirect) {
-      await navigateTo(result.redirect, { replace: true });
-      return;
-    }
-    const nextPayload = result.payload;
-    if (!nextPayload) {
-      throw new Error("Route payload response is missing payload data.");
-    }
+async function navigateTo(target,options={}){
+  const nextUrl=new URL(target,location.href),routePath=normalizeRoutePayloadKey(nextUrl.pathname+nextUrl.search);
+  if(!isRouterManagedPagePath(nextUrl.pathname)){location.assign(nextUrl.href);return}
+  if(isManagedMediaAssetPath(nextUrl.pathname)){warnManagedMediaDebug("router-navigation-blocked-media-path",{routePath,href:nextUrl.href});return}
+  const currentUrl=new URL(location.href),currentRoutePath=currentUrl.pathname+currentUrl.search;
+  if(!options.force&&routePath===currentRoutePath&&nextUrl.hash===currentUrl.hash)return;
+  logManagedMediaDebug("router-navigation-start",{routePath,hash:nextUrl.hash,replace:options.replace===true});
+  const transitionToken=++routeTransitionToken;
+  routeStyleNavigationController?.abort();
+  const styleController=typeof AbortController==="function"?new AbortController():null;
+  routeStyleNavigationController=styleController;
+  let completed=false;
+  abortPendingAsyncData();setRouteTransition("start",{path:routePath});
+  try{
+    setRouteTransition("fetching",{path:routePath});
+    const result=await loadRoute(routePath,{reason:"navigation",force:options.force===true});
+    if(!ensureRoutePayloadBuildCompatibility(result)||transitionToken!==routeTransitionToken)return;
+    if(result.redirect){await navigateTo(result.redirect,{replace:true});return}
+    const nextPayload=result.payload;
+    if(!nextPayload)throw new Error("Route payload response is missing payload data.");
     await ensureClientPlugins(nextPayload);
-    if (transitionToken !== routeTransitionToken) {
-      return;
-    }
-    const previousPayload = globalThis.__RESUX__;
-    const middlewareResult = await runClientRouteMiddleware(
-      nextPayload,
-      previousPayload?.route ?? { path: "", params: {}, query: {} }
-    );
-    if (transitionToken !== routeTransitionToken) {
-      return;
-    }
-    if (middlewareResult?.type === "redirect") {
-      await navigateTo(middlewareResult.to, { replace: true });
-      return;
-    }
-    if (middlewareResult?.type === "abort") {
-      return;
-    }
-
-    const root = document.getElementById("__resux");
-    if (!root) {
-      throw new Error("Missing Resux root for client navigation.");
-    }
-
-    if (transitionToken !== routeTransitionToken) {
-      return;
-    }
-
-    if (options.replace) {
-      history.replaceState({ __resux: true, path: routePath }, "", nextUrl.href);
-    } else {
-      history.pushState({ __resux: true, path: routePath }, "", nextUrl.href);
-    }
-
-    await disposeClientEnhancements();
-    setRouteTransition("swapping", { path: routePath });
-    const preserveLayout = !didClientLocaleChange(previousPayload, nextPayload);
-    const preserved = replaceRouteHtml(root, result.html, preserveLayout);
-    globalThis.__RESUX__ = mergeClientGlobalState(
-      mergePersistentLayoutPayload(previousPayload, nextPayload, preserved.scopeIds)
-    );
-    getClientResuxApp(globalThis.__RESUX__.route);
-    applyHead(result.head);
-    animateRouteSwap(preserved.root);
-    clearScopeCacheExcept(preserved.scopeIds);
-    void resumePendingAsyncData();
-    mountManagedTeleports(document, { deferMissingTarget: true });
-    initializeManagedRuntimeContent(document);
-
-    if (!options.preserveScroll && nextUrl.hash) {
-      document.getElementById(nextUrl.hash.slice(1))?.scrollIntoView();
-    } else if (!options.preserveScroll && typeof scrollTo === "function") {
-      scrollTo(0, 0);
-    }
-    if (transitionToken === routeTransitionToken) {
-      setRouteTransition("complete", { path: routePath });
-      completed = true;
-    }
-  } catch (error) {
-    setRouteTransition("error", { path: routePath });
-    dispatchManagedEvent(document, "resux:navigation-error", {
-      path: routePath,
-      message: error instanceof Error ? error.message : String(error)
-    });
-  } finally {
-    if (!completed && transitionToken === routeTransitionToken) {
-      setRouteTransition("idle", { path: routePath });
-    }
+    if(transitionToken!==routeTransitionToken)return;
+    const previousPayload=globalThis.__RESUX__,middlewareResult=await runClientRouteMiddleware(nextPayload,previousPayload?.route??{path:"",params:{},query:{}});
+    if(transitionToken!==routeTransitionToken)return;
+    if(middlewareResult?.type==="redirect"){await navigateTo(middlewareResult.to,{replace:true});return}
+    if(middlewareResult?.type==="abort")return;
+    const routeStylesReady=preloadRouteHeadStyles(result?.head,nextUrl.href,styleController?.signal),root=document.getElementById("__resux");
+    if(!root)throw new Error("Missing Resux root for client navigation.");
+    if(transitionToken!==routeTransitionToken)return;
+    if(routeStylesReady){await routeStylesReady;if(transitionToken!==routeTransitionToken)return}
+    history[options.replace?"replaceState":"pushState"]({__resux:true,path:routePath},"",nextUrl.href);
+    await disposeClientEnhancements();setRouteTransition("swapping",{path:routePath});
+    const preserveLayout=!didClientLocaleChange(previousPayload,nextPayload),preserved=replaceRouteHtml(root,result.html,preserveLayout);
+    globalThis.__RESUX__=mergeClientGlobalState(mergePersistentLayoutPayload(previousPayload,nextPayload,preserved.scopeIds));
+    getClientResuxApp(globalThis.__RESUX__.route);applyHead(result.head);animateRouteSwap(preserved.root);clearScopeCacheExcept(preserved.scopeIds);
+    void resumePendingAsyncData();mountManagedTeleports(document,{deferMissingTarget:true});initializeManagedRuntimeContent(document);
+    if(!options.preserveScroll&&nextUrl.hash)document.getElementById(nextUrl.hash.slice(1))?.scrollIntoView();
+    else if(!options.preserveScroll&&typeof scrollTo==="function")scrollTo(0,0);
+    if(transitionToken===routeTransitionToken){setRouteTransition("complete",{path:routePath});completed=true}
+  }catch(error){
+    setRouteTransition("error",{path:routePath});dispatchManagedEvent(document,"resux:navigation-error",{path:routePath,message:error instanceof Error?error.message:String(error)});
+  }finally{
+    styleController?.abort();if(routeStyleNavigationController===styleController)routeStyleNavigationController=null;
+    if(!completed&&transitionToken===routeTransitionToken)setRouteTransition("idle",{path:routePath});
   }
 }
 
@@ -16059,403 +15700,168 @@ function unmountVueIslands(root) {
   }
 }
 
-async function prefetchNavigationTarget(event) {
-  const anchor = event.target && event.target.closest
-    ? event.target.closest("a[href]")
-    : null;
-  const routePath = getPrefetchPath(anchor, event.target);
-  if (!routePath || routePayloadCache.has(routePath) || routePayloadRequests.has(routePath)) {
-    return;
-  }
-  if (countInFlightRoutePrefetches() >= ROUTE_PREFETCH_MAX_IN_FLIGHT) {
-    return;
-  }
-  if (isRoutePrefetchCoolingDown(routePath)) {
-    return;
-  }
-
-  try {
-    await loadRoute(routePath, { reason: "prefetch" });
-  } catch (error) {
-    logManagedMediaDebug("router-prefetch-failed", {
-      path: routePath,
-      message: error instanceof Error ? error.message : String(error)
-    });
-  }
+function hasCompletedRouteStylePrefetch(payload,url){return routeStylePrefetchedDestinations.get(payload)?.has(url)===true}
+function markCompletedRouteStylePrefetch(payload,url){let urls=routeStylePrefetchedDestinations.get(payload);if(!urls){urls=new Set();routeStylePrefetchedDestinations.set(payload,urls)}urls.add(url)}
+async function prefetchNavigationTarget(event){
+  const anchor=event.target?.closest?.("a[href]"),routePath=getPrefetchPath(anchor,event.target);
+  if(!routePath||routePayloadRequests.has(routePath)||routeStylePrefetchPromises.has(routePath)||countInFlightRoutePrefetches() >= ROUTE_PREFETCH_MAX_IN_FLIGHT||isRoutePrefetchCoolingDown(routePath))return;
+  try{
+    const result=routePayloadCache.has(routePath)?readCachedRoutePayload(routePath):await loadRoute(routePath,{ reason: "prefetch" });
+    const url=resolveSameOriginAnchorTarget(anchor).url?.href||new URL(routePath,location.href).href;
+    if(hasCompletedRouteStylePrefetch(result,url))return;
+    const styles=preloadRouteHeadStyles(result?.head,url,null,true);
+    if(!styles){markCompletedRouteStylePrefetch(result,url);return}
+    routeStylePrefetchPromises.set(routePath,styles);
+    try{await styles}finally{if(routeStylePrefetchPromises.get(routePath)===styles)routeStylePrefetchPromises.delete(routePath);markCompletedRouteStylePrefetch(result,url)}
+  }catch(error){logManagedMediaDebug("router-prefetch-failed",{path:routePath,message:error instanceof Error?error.message:String(error)})}
 }
 
-function getPrefetchPath(anchor, eventTarget = null) {
-  if (!anchor) {
-    return null;
-  }
-  const resolution = resolveSameOriginAnchorTarget(anchor);
-  if (!resolution.url) {
-    logManagedMediaDebug("router-prefetch-ignore", {
-      reason: resolution.reason,
-      href: anchor.getAttribute("href") || ""
-    });
-    return null;
-  }
-  const target = resolution.url;
-  if (isManagedMediaAssetPath(target.pathname)) {
-    logManagedMediaDebug("router-prefetch-ignore", {
-      reason: "media-static-path",
-      href: target.href
-    });
-    return null;
-  }
-  if (!isRouterManagedPagePath(target.pathname)) {
-    logManagedMediaDebug("router-prefetch-ignore", {
-      reason: "non-page-route",
-      href: target.href
-    });
-    return null;
-  }
-
-  if (shouldIgnoreNavigationTarget(eventTarget, anchor)) {
-    logManagedMediaDebug("router-prefetch-ignore", {
-      reason: "ignored-event-target",
-      href: target.href
-    });
-    return null;
-  }
-
-  const routePath = normalizeRoutePayloadKey(target.pathname + target.search);
-  if (routePath === normalizeRoutePayloadKey(location.pathname + location.search)) {
-    return null;
-  }
-  return routePath;
+function getPrefetchPath(anchor,eventTarget=null){
+  if(!anchor)return null;
+  const resolution=resolveSameOriginAnchorTarget(anchor),target=resolution.url;
+  if(!target){logManagedMediaDebug("router-prefetch-ignore",{reason:resolution.reason,href:anchor.getAttribute("href")||""});return null}
+  if (isManagedMediaAssetPath(target.pathname)){logManagedMediaDebug("router-prefetch-ignore",{reason:"media-static-path",href:target.href});return null}
+  if (!isRouterManagedPagePath(target.pathname)){logManagedMediaDebug("router-prefetch-ignore",{ reason: "non-page-route", href:target.href});return null}
+  if(shouldIgnoreNavigationTarget(eventTarget,anchor)){logManagedMediaDebug("router-prefetch-ignore",{reason:"ignored-event-target",href:target.href});return null}
+  const routePath=normalizeRoutePayloadKey(target.pathname+target.search);
+  return routePath===normalizeRoutePayloadKey(location.pathname+location.search)?null:routePath;
 }
-
-function isRouterManagedPagePath(pathname) {
-  const normalized = String(pathname || "").toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  return !(
-    normalized === "/api"
-    || normalized.startsWith("/api/")
-    || normalized === "/__resux"
-    || normalized.startsWith("/__resux/")
-    || normalized === "/_resux"
-    || normalized.startsWith("/_resux/")
-  );
+function isRouterManagedPagePath(pathname){
+  const normalized=String(pathname||"").toLowerCase();
+  return !!normalized
+    && normalized!=="/api" && !normalized.startsWith("/api/")
+    && normalized!=="/__resux" && !normalized.startsWith("/__resux/")
+    && normalized!=="/_resux" && !normalized.startsWith("/_resux/");
 }
-
-function normalizeRoutePayloadKey(routePath) {
-  const base = typeof location !== "undefined" && location.href
-    ? location.href
-    : "http://resux.local/";
-  const target = new URL(String(routePath || "/"), base);
-  const pathname = target.pathname === "/"
-    ? "/"
-    : target.pathname.replace(/\/+$/, "") || "/";
+function normalizeRoutePayloadKey(routePath){
+  const target=new URL(String(routePath||"/"),typeof location!=="undefined"&&location.href?location.href:"http://resux.local/");
+  const pathname=target.pathname==="/"?"/":target.pathname.replace(/\/+$/, "")||"/";
   return pathname + target.search;
 }
 
-function setBoundedRouteMapEntry(map, key, value, maxEntries) {
-  if (map.has(key)) {
-    map.delete(key);
-  }
-  map.set(key, value);
-  while (map.size > maxEntries) {
-    const oldestKey = map.keys().next().value;
-    if (oldestKey === undefined) {
-      break;
-    }
-    map.delete(oldestKey);
-  }
+function setBoundedRouteMapEntry(map, key, value, maxEntries){
+  if(map.has(key))map.delete(key);map.set(key,value);
+  while (map.size > maxEntries){const oldestKey=map.keys().next().value;if(oldestKey===undefined)break;map.delete(oldestKey)}
 }
-
-function readCachedRoutePayload(key) {
-  if (!routePayloadCache.has(key)) {
-    return undefined;
-  }
-  const cached = routePayloadCache.get(key);
-  routePayloadCache.delete(key);
-  routePayloadCache.set(key, cached);
-  return cached;
+function readCachedRoutePayload(key){
+  if(!routePayloadCache.has(key))return;
+  const cached=routePayloadCache.get(key);routePayloadCache.delete(key);routePayloadCache.set(key,cached);return cached;
 }
-
-function countInFlightRoutePrefetches() {
-  let count = 0;
-  for (const entry of routePayloadRequests.values()) {
-    if (entry?.reason === "prefetch") {
-      count += 1;
-    }
-  }
+function countInFlightRoutePrefetches(){
+  let count=routeStylePrefetchPromises.size;
+  for(const entry of routePayloadRequests.values())if(entry?.reason==="prefetch")count++;
   return count;
 }
-
-function isRoutePrefetchCoolingDown(routePath, now = Date.now()) {
-  const key = normalizeRoutePayloadKey(routePath);
-  const failure = routePayloadFailures.get(key);
-  if (!failure) {
-    return false;
-  }
-  if ((now - failure.failedAt) >= ROUTE_PREFETCH_FAILURE_COOLDOWN_MS) {
-    routePayloadFailures.delete(key);
-    return false;
-  }
+function isRoutePrefetchCoolingDown(routePath,now=Date.now()){
+  const key=normalizeRoutePayloadKey(routePath),failure=routePayloadFailures.get(key);
+  if(!failure)return false;
+  if(now-failure.failedAt>=ROUTE_PREFETCH_FAILURE_COOLDOWN_MS){routePayloadFailures.delete(key);return false}
   return true;
 }
-
-function invalidateRoutePayload(routePath) {
-  const key = normalizeRoutePayloadKey(routePath);
-  routePayloadCache.delete(key);
-  routePayloadFailures.delete(key);
+function invalidateRoutePayload(routePath){
+  const key=normalizeRoutePayloadKey(routePath);routePayloadCache.delete(key);routePayloadFailures.delete(key);
 }
-
-function invalidateAllRoutePayloads() {
+function invalidateAllRoutePayloads(){
   routePayloadGeneration += 1;
-  routePayloadCache.clear();
-  routePayloadRequests.clear();
-  routePayloadFailures.clear();
+  routePayloadCache.clear();routePayloadRequests.clear();routePayloadFailures.clear();
 }
-
-async function loadRoute(routePath, options = {}) {
-  const key = normalizeRoutePayloadKey(routePath);
-  const reason = options.reason === "prefetch" ? "prefetch" : "navigation";
-  const force = options.force === true;
-
-  if (force) {
-    invalidateRoutePayload(key);
-  } else if (routePayloadCache.has(key)) {
-    return readCachedRoutePayload(key);
-  }
-
-  if (reason === "prefetch" && !force && isRoutePrefetchCoolingDown(key)) {
-    const failure = routePayloadFailures.get(key);
-    throw failure?.error ?? new Error("Route prefetch is cooling down after a recent failure.");
-  }
-
-  const pending = routePayloadRequests.get(key);
-  if (pending) {
-    try {
+async function loadRoute(routePath, options = {}){
+  const key=normalizeRoutePayloadKey(routePath),reason=options.reason==="prefetch"?"prefetch":"navigation",force=options.force===true;
+  if(force)invalidateRoutePayload(key);else if(routePayloadCache.has(key))return readCachedRoutePayload(key);
+  if(reason==="prefetch"&&!force&&isRoutePrefetchCoolingDown(key))throw routePayloadFailures.get(key)?.error??new Error("Route prefetch is cooling down after a recent failure.");
+  const pending=routePayloadRequests.get(key);
+  if(pending){
+    try{
       return await pending.promise;
-    } catch (error) {
-      if (reason === "navigation" && pending.reason === "prefetch") {
-        if (routePayloadRequests.get(key) === pending) {
-          routePayloadRequests.delete(key);
-        }
-        routePayloadFailures.delete(key);
-        return loadRoute(key, { reason: "navigation", force: true });
+    }catch(error){
+      if(reason==="navigation"&&pending.reason === "prefetch"){
+        if(routePayloadRequests.get(key)===pending)routePayloadRequests.delete(key);
+        routePayloadFailures.delete(key);return loadRoute(key, { reason: "navigation", force: true });
       }
       throw error;
     }
   }
-
   const generation = routePayloadGeneration;
-  const promise = fetchRoutePayloadUncached(key);
+  const promise=fetchRoutePayloadUncached(key);
   const entry = { promise, reason };
   routePayloadRequests.set(key, entry);
-
-  try {
-    const result = await promise;
-    if (generation !== routePayloadGeneration) {
-      if (routePayloadRequests.get(key) === entry) {
-        routePayloadRequests.delete(key);
-      }
-      return loadRoute(key, { reason, force: false });
+  try{
+    const result=await promise;
+    if(generation !== routePayloadGeneration){
+      if(routePayloadRequests.get(key) === entry)routePayloadRequests.delete(key);
+      return loadRoute(key,{reason,force:false});
     }
     routePayloadFailures.delete(key);
     setBoundedRouteMapEntry(routePayloadCache, key, result, ROUTE_PAYLOAD_CACHE_MAX_ENTRIES);
     return result;
-  } catch (error) {
-    setBoundedRouteMapEntry(routePayloadFailures, key, {
-      status: "failed",
-      error,
-      failedAt: Date.now()
+  }catch(error){
+    setBoundedRouteMapEntry(routePayloadFailures, key,{status:"failed",error,failedAt:Date.now()
     }, ROUTE_PAYLOAD_FAILURE_MAX_ENTRIES);
     throw error;
-  } finally {
-    if (routePayloadRequests.get(key) === entry) {
-      routePayloadRequests.delete(key);
-    }
-  }
+  }finally{if(routePayloadRequests.get(key) === entry)routePayloadRequests.delete(key)}
 }
+async function fetchRoutePayload(routePath){return loadRoute(routePath,{ reason: "navigation" })}
 
-async function fetchRoutePayload(routePath) {
-  return loadRoute(routePath, { reason: "navigation" });
-}
-
-async function fetchRoutePayloadUncached(routePath) {
-  const isStatic = typeof window !== "undefined" && window["__RESUX_STATIC__"];
-  const url = isStatic
-    ? "/__resux/route/payloads" + (routePath === "/" ? "/index.json" : routePath.replace(/\/$/, "") + ".json")
-    : "/__resux/route?path=" + encodeURIComponent(routePath);
-  const controller = typeof AbortController === "function" ? new AbortController() : null;
-  const timeout = setTimeout(() => {
-    controller?.abort();
-  }, ROUTE_PAYLOAD_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(url, {
-      headers: {
-        accept: "application/json"
-      },
-      ...(controller ? { signal: controller.signal } : {})
-    });
-
-    if (!response.ok) {
-      throw new Error("Route payload request failed: " + response.status);
-    }
-
+async function fetchRoutePayloadUncached(routePath){
+  const isStatic=typeof window!=="undefined"&&window["__RESUX_STATIC__"],url=isStatic?"/__resux/route/payloads"+(routePath==="/"?"/index.json":routePath.replace(/\/$/,"")+".json"):"/__resux/route?path="+encodeURIComponent(routePath);
+  const controller=typeof AbortController==="function"?new AbortController():null,timeout=setTimeout(()=>{controller?.abort();},ROUTE_PAYLOAD_TIMEOUT_MS);
+  try{
+    const response=await fetch(url,{headers:{accept:"application/json"},...(controller?{signal:controller.signal}:{})});
+    if(!response.ok)throw new Error("Route payload request failed: "+response.status);
     return await response.json();
-  } catch (error) {
-    if (controller?.signal.aborted) {
-      throw new Error("Route payload request timed out after " + ROUTE_PAYLOAD_TIMEOUT_MS + "ms.");
-    }
+  }catch(error){
+    if(controller?.signal.aborted)throw new Error("Route payload request timed out after "+ROUTE_PAYLOAD_TIMEOUT_MS+"ms.");
     throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
+  }finally{clearTimeout(timeout);}
 }
 
-function readRoutePayloadBuildId(payload) {
-  const value = payload?.config?.public?.__resuxBuildId;
-  return typeof value === "string" && value ? value : null;
-}
-
-function ensureRoutePayloadBuildCompatibility(result) {
-  const currentBuildId = readRoutePayloadBuildId(globalThis.__RESUX__);
-  const nextBuildId = readRoutePayloadBuildId(result?.payload);
-  if (!currentBuildId || !nextBuildId || currentBuildId === nextBuildId) {
-    return true;
-  }
-
+function readRoutePayloadBuildId(payload){const value=payload?.config?.public?.__resuxBuildId;return typeof value==="string"&&value?value:null}
+function ensureRoutePayloadBuildCompatibility(result){
+  const currentBuildId=readRoutePayloadBuildId(globalThis.__RESUX__),nextBuildId=readRoutePayloadBuildId(result?.payload);
+  if(!currentBuildId||!nextBuildId||currentBuildId === nextBuildId)return true;
   invalidateAllRoutePayloads();
-  dispatchManagedEvent(document, "resux:build-mismatch", {
-    currentBuildId,
-    nextBuildId
-  });
+  dispatchManagedEvent(document, "resux:build-mismatch",{currentBuildId,nextBuildId});
   location.reload();
   return false;
 }
-
-function applyHtmlAttrs(attrs) {
-  const html = document.documentElement;
-  if (!html) {
-    return;
+function applyHtmlAttrs(attrs){
+  const html=document.documentElement;if(!html)return;
+  const marker="data-rx-html-attrs",previous=(html.getAttribute(marker)||"").split(",").map(v=>v.trim()).filter(Boolean),next=attrs&&typeof attrs==="object"?attrs:{},keys=[];
+  for(const key of previous)if(!Object.prototype.hasOwnProperty.call(next,key))html.removeAttribute(key);
+  for(const [key,value] of Object.entries(next)){
+    if(value===undefined||value===null||value===false){html.removeAttribute(key);continue}
+    html.setAttribute(key,String(value));keys.push(key);
   }
-  const markerName = "data-rx-html-attrs";
-  const previousMarker = html.getAttribute(markerName) || "";
-  const previousKeys = previousMarker
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-  const nextAttrs = attrs && typeof attrs === "object" ? attrs : {};
-  const nextKeys = [];
-
-  for (const key of previousKeys) {
-    if (!Object.prototype.hasOwnProperty.call(nextAttrs, key)) {
-      html.removeAttribute(key);
-    }
-  }
-
-  for (const [key, value] of Object.entries(nextAttrs)) {
-    if (value === undefined || value === null || value === false) {
-      html.removeAttribute(key);
-      continue;
-    }
-    html.setAttribute(key, String(value));
-    nextKeys.push(key);
-  }
-
-  if (!nextKeys.includes("lang")) {
-    html.setAttribute("lang", "en");
-    nextKeys.push("lang");
-  }
-
-  html.setAttribute(markerName, nextKeys.join(","));
+  if(!keys.includes("lang")){html.setAttribute("lang","en");keys.push("lang")}
+  html.setAttribute(marker,keys.join(","));
 }
-
-const VALID_CLIENT_PRELOAD_AS_VALUES = new Set([
-  "audio",
-  "document",
-  "embed",
-  "fetch",
-  "font",
-  "image",
-  "object",
-  "script",
-  "style",
-  "track",
-  "video",
-  "worker",
-]);
-
-function normalizeClientHeadLinks(links = []) {
-  const normalized = [];
-  for (const link of links) {
-    const next = normalizeClientHeadLink(link);
-    if (next) {
-      normalized.push(next);
-    }
-  }
-  return normalized;
-}
-
-function normalizeClientHeadLink(link) {
-  if (!link || typeof link !== "object" || Array.isArray(link)) {
+const VALID_CLIENT_PRELOAD_AS_VALUES=new Set(["audio","document","embed","fetch","font","image","object","script","style","track","video","worker"]);
+function normalizeClientHeadLinks(links=[]){const out=[];for(const link of links){const next=normalizeClientHeadLink(link);if(next)out.push(next)}return out}
+function normalizeClientHeadLink(link){
+  if(!link||typeof link!=="object"||Array.isArray(link))return null;
+  const output={};for(const [key,value] of Object.entries(link))if(value!==undefined&&value!==null&&value!==false)output[key]=String(value);
+  const rel=String(output.rel||"").trim().toLowerCase();
+  if(rel==="modulepreload"){delete output.as;return output}
+  if(rel!=="preload")return output;
+  const normalizedAs=normalizeClientPreloadAs(output.as,output);
+  if(!normalizedAs){
+    if(typeof console!=="undefined"&&typeof console.warn==="function"){const href=String(output.href||"").trim();console.warn('[resux] Skipping invalid preload link for "'+(href||"<unknown>")+'". Unsupported as="'+String(output.as||"")+'".')}
     return null;
   }
-  const output = {};
-  for (const [key, value] of Object.entries(link)) {
-    if (value === undefined || value === null || value === false) {
-      continue;
-    }
-    output[key] = String(value);
-  }
-  const rel = String(output.rel || "").trim().toLowerCase();
-  if (rel === "modulepreload") {
-    delete output.as;
-    return output;
-  }
-  if (rel !== "preload") {
-    return output;
-  }
-  const normalizedAs = normalizeClientPreloadAs(output.as, output);
-  if (!normalizedAs) {
-    if (typeof console !== "undefined" && typeof console.warn === "function") {
-      const href = String(output.href || "").trim();
-      console.warn('[resux] Skipping invalid preload link for "' + (href || "<unknown>") + '". Unsupported as="' + String(output.as || "") + '".');
-    }
-    return null;
-  }
-  output.as = normalizedAs;
-  return output;
+  output.as=normalizedAs;return output;
 }
-
-function normalizeClientPreloadAs(value, link) {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (VALID_CLIENT_PRELOAD_AS_VALUES.has(normalized)) {
-    return normalized;
-  }
-  const inferredFromAsValue = inferClientPreloadAsFromHint(normalized);
-  if (inferredFromAsValue && VALID_CLIENT_PRELOAD_AS_VALUES.has(inferredFromAsValue)) {
-    return inferredFromAsValue;
-  }
-  const assetType = detectClientPreloadAssetType(link);
-  if (assetType && VALID_CLIENT_PRELOAD_AS_VALUES.has(assetType)) {
-    return assetType;
-  }
-  return undefined;
+function normalizeClientPreloadAs(value,link){
+  const normalized=String(value||"").trim().toLowerCase();
+  if(VALID_CLIENT_PRELOAD_AS_VALUES.has(normalized))return normalized;
+  const hinted=inferClientPreloadAsFromHint(normalized);
+  if(hinted&&VALID_CLIENT_PRELOAD_AS_VALUES.has(hinted))return hinted;
+  const asset=detectClientPreloadAssetType(link);
+  return asset&&VALID_CLIENT_PRELOAD_AS_VALUES.has(asset)?asset:undefined;
 }
-
-function detectClientPreloadAssetType(link) {
-  const explicitType = String(link.type || "").trim().toLowerCase();
-  const inferredFromType = inferClientPreloadAsFromHint(explicitType);
-  if (inferredFromType) {
-    return inferredFromType;
-  }
-
-  const href = String(link.href || "").trim().toLowerCase().split(/[?#]/)[0];
-  const inferredFromHref = inferClientPreloadAsFromHint(href);
-  if (inferredFromHref) {
-    return inferredFromHref;
-  }
-  return undefined;
+function detectClientPreloadAssetType(link){
+  const byType=inferClientPreloadAsFromHint(String(link.type||"").trim().toLowerCase());
+  if(byType)return byType;
+  return inferClientPreloadAsFromHint(String(link.href||"").trim().toLowerCase().split(/[?#]/)[0]);
 }
 
 function inferClientPreloadAsFromHint(hint) {
@@ -16517,6 +15923,60 @@ function inferClientPreloadAsFromHint(hint) {
     return "script";
   }
   return undefined;
+}
+
+function resolveClientAssetUrl(value,destinationUrl=location.href){
+  const href=String(value||"").trim();if(!href)return "";
+  try{return new URL(href,document.querySelector?.("base[href]")?document.baseURI:destinationUrl).href}catch{return href}
+}
+function routeStyleAttr(link,name,alias=name){return link?.getAttribute?link.getAttribute(name):(link?.[name]??link?.[alias]??null)}
+function routeStyleIsDisabled(link){return link?.hasAttribute?link.hasAttribute("disabled"):!!link&&Object.prototype.hasOwnProperty.call(link,"disabled")}
+function routeStyleRequestKey(link,destinationUrl){
+  const cors=routeStyleAttr(link,"crossorigin","crossOrigin");
+  return [resolveClientAssetUrl(routeStyleAttr(link,"href"),destinationUrl),cors===null?"-":cors,routeStyleAttr(link,"integrity")||"",routeStyleAttr(link,"referrerpolicy","referrerPolicy")||""].join("\n");
+}
+function findMatchingStylesheet(link,destinationUrl){
+  const key=routeStyleRequestKey(link,destinationUrl);
+  for(const current of document.querySelectorAll('link[rel="stylesheet"][href]'))if(routeStyleRequestKey(current,document.baseURI||location.href)===key)return current;
+  return null;
+}
+function routeStyleMatchesCurrentMedia(link){
+  const media=String(routeStyleAttr(link,"media")||"").trim();
+  if(!media||media.toLowerCase()==="all"||typeof matchMedia!=="function")return true;
+  try{return matchMedia(media).matches}catch{return true}
+}
+function waitForRouteStyleLink(link,signal){
+  if(signal?.aborted)return Promise.resolve(false);
+  return new Promise(resolve=>{
+    let done=false;
+    const finish=value=>{if(done)return;done=true;clearTimeout(timeout);link.removeEventListener("load",settled);link.removeEventListener("error",settled);signal?.removeEventListener("abort",cancelled);resolve(value)},settled=()=>finish(true),cancelled=()=>finish(false),timeout=setTimeout(cancelled,4000);
+    link.addEventListener("load",settled,{once:true});link.addEventListener("error",settled,{once:true});signal?.addEventListener("abort",cancelled,{once:true});
+  });
+}
+async function awaitRouteStylesheet(link,signal){
+  if(signal?.aborted||routeStyleSettledLinks.has(link)||link.sheet)return;
+  if(await waitForRouteStyleLink(link,signal))routeStyleSettledLinks.add(link);
+}
+function preloadRouteStyle(link,destinationUrl,signal){
+  if(signal?.aborted||routeStyleIsDisabled(link)||!routeStyleMatchesCurrentMedia(link))return Promise.resolve();
+  const existing=findMatchingStylesheet(link,destinationUrl);
+  if(existing&&!routeStyleIsDisabled(existing)&&routeStyleMatchesCurrentMedia(existing))return awaitRouteStylesheet(existing,signal);
+  const href=resolveClientAssetUrl(routeStyleAttr(link,"href"),destinationUrl);if(!href)return Promise.resolve();
+  const key=routeStyleRequestKey(link,destinationUrl),pending=routeStylePreloadPromises.get(key);if(pending)return pending;
+  const promise=(async()=>{
+    const preload=document.createElement("link");if(preload.relList?.supports&&!preload.relList.supports("preload"))return;
+    preload.rel="preload";preload.as="style";preload.href=href;preload.setAttribute("data-rx-route-style-preload","true");
+    for(const [name,alias] of [["crossorigin","crossOrigin"],["integrity","integrity"],["referrerpolicy","referrerPolicy"],["media","media"]]){
+      const value=routeStyleAttr(link,name,alias);if(value!==null&&value!==false&&(name==="crossorigin"||value!==""))preload.setAttribute(name,String(value));
+    }
+    document.head.appendChild(preload);await waitForRouteStyleLink(preload,signal);preload.remove();
+  })().finally(()=>routeStylePreloadPromises.delete(key));
+  routeStylePreloadPromises.set(key,promise);return promise;
+}
+function preloadRouteHeadStyles(head,destinationUrl=location.href,signal,sequential=false){
+  const styles=normalizeClientHeadLinks(head?.link??[]).filter(link=>String(link.rel||"").trim().toLowerCase()==="stylesheet"&&link.href&&!routeStyleIsDisabled(link)&&routeStyleMatchesCurrentMedia(link));
+  if(!styles.length)return null;
+  return sequential?(async()=>{for(const link of styles)await preloadRouteStyle(link,destinationUrl,signal)})():Promise.all(styles.map(link=>preloadRouteStyle(link,destinationUrl,signal)));
 }
 
 function applyHead(head) {

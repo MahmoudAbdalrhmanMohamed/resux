@@ -26,12 +26,13 @@ function nextRuntimeImportQuery() {
 async function createClientRuntimeFixture(
   prefix: string,
   moduleSource: (runtimeUrl: string) => string,
+  runtimeSuffix = "",
 ): Promise<{ runtimeUrl: string; handlerUrl: string }> {
   const tempDir = path.join(os.tmpdir(), `${prefix}-${Date.now()}-${runtimeImportCounter + 1}`);
   await mkdir(tempDir, { recursive: true });
   const runtimeFile = path.join(tempDir, "runtime-client.mjs");
   const handlerFile = path.join(tempDir, "handler.mjs");
-  await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+  await writeFile(runtimeFile, getClientRuntimeSource() + runtimeSuffix, "utf8");
   const runtimeUrl = pathToFileURL(runtimeFile).href;
   await writeFile(handlerFile, moduleSource(runtimeUrl), "utf8");
   return { runtimeUrl, handlerUrl: pathToFileURL(handlerFile).href };
@@ -7366,11 +7367,12 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
   });
 
   it("renders a deferred page-ready ResuxVideo poster in the client renderer", async () => {
-    const tempDir = path.join(os.tmpdir(), `resux-client-video-poster-${Date.now()}`);
-    await mkdir(tempDir, { recursive: true });
-    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
-    await writeFile(runtimeFile, getClientRuntimeSource() + "\nexport { renderClientResuxVideo };\n", "utf8");
-    const runtime = await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+    const { runtimeUrl } = await createClientRuntimeFixture(
+      "resux-client-video-poster",
+      () => "export default {};",
+      "\nexport { renderClientResuxVideo };\n",
+    );
+    const runtime = await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
     const html = runtime.renderClientResuxVideo({
       attrs: [
         { kind: "static", name: "src", value: "/media-test/videos/sample-video.mp4" },

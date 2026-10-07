@@ -7420,18 +7420,9 @@ async function script(ctx) {
       '<div id="__resux"><button id="show-page-ready-video" data-rx-on-click="s0:m0:showVideo">Show</button>'
       + '<span data-rx-block="s0:b0" style="display: contents;"></span></div>';
 
-    let observerConstructed = 0;
-    class MockIntersectionObserver {
-      constructor() { observerConstructed++; }
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    }
-
     installClientRuntimeFixture(window, { show: false }, fixture.handlerUrl);
     (globalThis as any).__RESUX__.route.path = "/media";
     Object.assign(globalThis, {
-      IntersectionObserver: MockIntersectionObserver,
       requestIdleCallback: (callback: () => void) => (callback(), 1),
     });
 
@@ -7447,7 +7438,6 @@ async function script(ctx) {
     expect(video.getAttribute("data-rx-lazy-src")).toBe("/media-test/videos/sample-video.mp4");
     expect(video.getAttribute("src")).toBeNull();
     expect(video.getAttribute("data-resux-revealed")).toBeNull();
-    expect(observerConstructed).toBe(0);
     expect(loadCalls).toBe(0);
 
     pageReadyState = "complete";

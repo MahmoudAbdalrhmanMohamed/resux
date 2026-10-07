@@ -26,13 +26,12 @@ function nextRuntimeImportQuery() {
 async function createClientRuntimeFixture(
   prefix: string,
   moduleSource: (runtimeUrl: string) => string,
-  runtimeSuffix = "",
 ): Promise<{ runtimeUrl: string; handlerUrl: string }> {
   const tempDir = path.join(os.tmpdir(), `${prefix}-${Date.now()}-${runtimeImportCounter + 1}`);
   await mkdir(tempDir, { recursive: true });
   const runtimeFile = path.join(tempDir, "runtime-client.mjs");
   const handlerFile = path.join(tempDir, "handler.mjs");
-  await writeFile(runtimeFile, getClientRuntimeSource() + runtimeSuffix, "utf8");
+  await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
   const runtimeUrl = pathToFileURL(runtimeFile).href;
   await writeFile(handlerFile, moduleSource(runtimeUrl), "utf8");
   return { runtimeUrl, handlerUrl: pathToFileURL(handlerFile).href };
@@ -7366,49 +7365,21 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     expect(playCalls).toBeGreaterThan(0);
   });
 
-  it("renders a deferred page-ready ResuxVideo poster in the client renderer", async () => {
-    const { runtimeUrl } = await createClientRuntimeFixture(
-      "resux-client-video-poster",
-      () => "export default {};",
-      "\nexport { renderClientResuxVideo };\n",
-    );
-    const runtime = await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
-    const html = runtime.renderClientResuxVideo({
-      attrs: [
-        { kind: "static", name: "src", value: "/media-test/videos/sample-video.mp4" },
-        { kind: "static", name: "poster", value: "/media-test/videos/sample-poster.jpg" },
-        { kind: "static", name: "deferUntilPageReady", value: "true" },
-        { kind: "static", name: "controls", value: "false" },
-      ],
-      children: [],
-    }, {}, {}, "");
-
-    expect(html).toMatch(/<video\b[^>]*\sposter="\/media-test\/videos\/sample-poster\.jpg"(?:\s|>)/);
-    expect(html).toContain('data-rx-lazy-src="/media-test/videos/sample-video.mp4"');
-    expect(html).not.toContain(' src="/media-test/videos/sample-video.mp4"');
-  });
-
-  it("waits for page-ready before revealing defer-until-page-ready videos", async () => {
-    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
-      "resux-video-page-ready",
-      () => "export default {};",
+  it("renders and waits for page-ready before revealing defer-until-page-ready videos", async () => {
+    const tempDir = path.join(os.tmpdir(), `resux-video-page-ready-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+    await writeFile(
+      runtimeFile,
+      getClientRuntimeSource() + "\nexport { renderClientResuxVideo, activateDeferredLazyMedia };\n",
+      "utf8",
     );
 
     const window = new Window({ url: "http://localhost/media" });
     const readyState = vi.spyOn(window.document, "readyState", "get").mockReturnValue("loading");
     const windowListeners = new Map<string, EventListenerOrEventListenerObject>();
     vi.spyOn(window, "addEventListener").mockImplementation((type, listener) => void windowListeners.set(type, listener));
-    window.document.body.innerHTML = `
-      <div id="__resux"><main>Media</main></div>
-      <video
-        data-rx-lazy-video="true"
-        data-rx-lazy-src="/media-test/videos/sample-video.mp4"
-        data-rx-lazy-preload="metadata"
-        data-rx-video-defer-ready="true"
-        data-rx-video-ready-reveal="true"
-        preload="none"
-      ></video>
-    `;
+    window.document.body.innerHTML = '<div id="__resux"><main>Media</main></div>';
 
     let observerConstructed = 0;
     class MockIntersectionObserver {
@@ -7420,20 +7391,44 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       disconnect() {}
     }
 
-    installClientRuntimeFixture(window, {}, handlerUrl);
-    (globalThis as any).__RESUX__.route.path = "/media";
     Object.assign(globalThis, {
+      document: window.document,
+      window,
+      location: window.location,
+      history: window.history,
       IntersectionObserver: MockIntersectionObserver,
       requestIdleCallback: (callback: () => void) => (callback(), 1),
+      __RESUX__: {
+        route: { path: "/media", params: {}, query: {} },
+        scopes: {},
+        modules: {}
+      },
+      __RESUX_INSTALLED__: false
     });
+
+    const runtime = await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+    const markup = runtime.renderClientResuxVideo({
+      attrs: [
+        { kind: "static", name: "src", value: "/media-test/videos/sample-video.mp4" },
+        { kind: "static", name: "poster", value: "/media-test/videos/sample-poster.jpg" },
+        { kind: "static", name: "deferUntilPageReady", value: "true" },
+        { kind: "static", name: "preload", value: "metadata" },
+        { kind: "static", name: "controls", value: "false" },
+      ],
+      children: [],
+    }, {}, {}, "");
+    window.document.getElementById("__resux")!.insertAdjacentHTML("beforeend", markup);
 
     const video = window.document.querySelector("video") as HTMLVideoElement;
     let loadCalls = 0;
     video.load = () => {
       loadCalls++;
     };
+    runtime.activateDeferredLazyMedia();
 
-    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+    expect(video.getAttribute("poster")).toBe("/media-test/videos/sample-poster.jpg");
+    expect(video.getAttribute("data-rx-lazy-src")).toBe("/media-test/videos/sample-video.mp4");
+    expect(video.getAttribute("src")).toBeNull();
     expect(video.getAttribute("data-resux-revealed")).toBeNull();
     expect(observerConstructed).toBe(0);
     expect(loadCalls).toBe(0);

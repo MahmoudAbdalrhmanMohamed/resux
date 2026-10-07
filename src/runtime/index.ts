@@ -17226,6 +17226,11 @@ function renderClientResuxClientEnhance(node, scope, locals, styleScopeId) {
   return "<" + tag + " " + attrs.join(" ") + styleAttr + ">" + children + "</" + tag + ">";
 }
 
+function resolveClientVideoInitialPoster(placeholderSrc, poster, deferLazy, deferUntilPageReady) {
+  const shouldDeferPoster = deferLazy && !deferUntilPageReady && !placeholderSrc;
+  return shouldDeferPoster ? "" : (placeholderSrc || poster);
+}
+
 function renderClientResuxVideo(node, scope, locals, styleScopeId) {
   const props = {};
   for (const attr of node.attrs) {
@@ -17583,12 +17588,12 @@ function renderClientResuxVideo(node, scope, locals, styleScopeId) {
     attrs.push('data-rx-placeholder-active="true"');
     attrs.push('data-resux-placeholder-active="true"');
   }
-  let initialPoster = poster;
-  if (placeholderSrc) {
-    initialPoster = placeholderSrc;
-  } else if (deferLazy && !deferUntilPageReady) {
-    initialPoster = "";
-  }
+  const initialPoster = resolveClientVideoInitialPoster(
+    placeholderSrc,
+    poster,
+    deferLazy,
+    deferUntilPageReady
+  );
   if (initialPoster) {
     attrs.push('poster="' + escapeAttribute(initialPoster) + '"');
   }

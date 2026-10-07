@@ -7369,15 +7369,12 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     const fixture = await createClientComponentRuntimeFixture({
       prefix: "resux-video-page-ready",
       componentName: "PageReadyVideo",
-      template: [
-        {
-          type: "element",
-          tag: "button",
-          attrs: [{ kind: "static", name: "id", value: "show-page-ready-video" }],
-          events: [{ name: "click", handler: "showVideo" }],
-          children: [{ type: "text", value: "Show" }],
-        },
-        {
+      template: [{
+        type: "element",
+        tag: "div",
+        attrs: [{ kind: "static", name: "id", value: "show-page-ready-video" }],
+        events: [{ name: "click", handler: "showVideo" }],
+        children: [{
           type: "element",
           tag: "div",
           attrs: [],
@@ -7395,8 +7392,8 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
             events: [],
             children: [],
           }],
-        },
-      ],
+        }],
+      }],
       scriptSource: `
 async function script(ctx) {
   const show = ctx.useState("show", () => false);
@@ -7417,8 +7414,8 @@ async function script(ctx) {
       if (!allowPageLoad) event.stopImmediatePropagation();
     });
     window.document.body.innerHTML =
-      '<div id="__resux"><button id="show-page-ready-video" data-rx-on-click="s0:m0:showVideo">Show</button>'
-      + '<span data-rx-block="s0:b0" style="display: contents;"></span></div>';
+      '<div id="__resux"><div id="show-page-ready-video" data-rx-on-click="s0:m0:showVideo">'
+      + '<span data-rx-block="s0:b0" style="display: contents;"></span></div></div>';
 
     installClientRuntimeFixture(window, { show: false }, fixture.handlerUrl);
     (globalThis as any).__RESUX__.route.path = "/media";

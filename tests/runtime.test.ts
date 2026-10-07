@@ -1670,7 +1670,6 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
     expect(result.html).toMatch(/<video\b[^>]*\sposter="\/media-test\/videos\/sample-poster\.jpg"(?:\s|>)/);
     expect(result.html).toContain('data-rx-lazy-src="/videos/hero.mp4"');
     expect(result.html).not.toContain(' src="/videos/hero.mp4"');
-    expect(getClientRuntimeSource()).toContain('const initialPoster = placeholderSrc || (deferLazy && !deferUntilPageReady ? "" : poster);');
   });
 
   it("renders ResuxVideo hero preload links and skip-control shell attributes", async () => {
@@ -7366,11 +7365,46 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     expect(playCalls).toBeGreaterThan(0);
   });
 
-  it("waits for page-ready before revealing defer-until-page-ready videos", async () => {
-    const tempDir = path.join(os.tmpdir(), `resux-video-page-ready-${Date.now()}`);
-    await mkdir(tempDir, { recursive: true });
-    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
-    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+  it("renders and reveals defer-until-page-ready ResuxVideo on the client", async () => {
+    const fixture = await createClientComponentRuntimeFixture({
+      prefix: "resux-video-page-ready",
+      componentName: "PageReadyVideo",
+      template: [
+        {
+          type: "element",
+          tag: "button",
+          attrs: [{ kind: "static", name: "id", value: "show-page-ready-video" }],
+          events: [{ name: "click", handler: "showVideo" }],
+          children: [{ type: "text", value: "Show" }],
+        },
+        {
+          type: "element",
+          tag: "div",
+          attrs: [],
+          events: [],
+          if: { expression: "show.value", blockId: "b0" },
+          children: [{
+            type: "element",
+            tag: "ResuxVideo",
+            attrs: [
+              { kind: "static", name: "src", value: "/media-test/videos/sample-video.mp4" },
+              { kind: "static", name: "poster", value: "/media-test/videos/sample-poster.jpg" },
+              { kind: "static", name: "deferUntilPageReady", value: "true" },
+              { kind: "static", name: "preload", value: "metadata" },
+            ],
+            events: [],
+            children: [],
+          }],
+        },
+      ],
+      scriptSource: `
+async function script(ctx) {
+  const show = ctx.useState("show", () => false);
+  function showVideo() { show.value = true; }
+  return { show, showVideo };
+}`,
+      handlers: ["showVideo"],
+    });
 
     const window = new Window({ url: "http://localhost/media" });
     let pageReadyState = "loading";
@@ -7380,57 +7414,38 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     });
     let allowPageLoad = false;
     window.addEventListener("load", (event) => {
-      if (!allowPageLoad) {
-        event.stopImmediatePropagation();
-      }
+      if (!allowPageLoad) event.stopImmediatePropagation();
     });
-    window.document.body.innerHTML = `
-      <div id="__resux"><main>Media</main></div>
-      <video
-        data-rx-lazy-video="true"
-        data-rx-lazy-src="/media-test/videos/sample-video.mp4"
-        data-rx-lazy-preload="metadata"
-        data-rx-video-defer-ready="true"
-        data-rx-video-ready-reveal="true"
-        preload="none"
-      ></video>
-    `;
+    window.document.body.innerHTML =
+      '<div id="__resux"><button id="show-page-ready-video" data-rx-on-click="s0:m0:showVideo">Show</button>'
+      + '<span data-rx-block="s0:b0" style="display: contents;"></span></div>';
 
     let observerConstructed = 0;
     class MockIntersectionObserver {
-      constructor() {
-        observerConstructed++;
-      }
+      constructor() { observerConstructed++; }
       observe() {}
       unobserve() {}
       disconnect() {}
     }
 
+    installClientRuntimeFixture(window, { show: false }, fixture.handlerUrl);
+    (globalThis as any).__RESUX__.route.path = "/media";
     Object.assign(globalThis, {
-      document: window.document,
-      window,
-      location: window.location,
-      history: window.history,
       IntersectionObserver: MockIntersectionObserver,
-      requestIdleCallback: (callback: () => void) => {
-        callback();
-        return 1;
-      },
-      __RESUX__: {
-        route: { path: "/media", params: {}, query: {} },
-        scopes: {},
-        modules: {}
-      },
-      __RESUX_INSTALLED__: false
+      requestIdleCallback: (callback: () => void) => (callback(), 1),
     });
+
+    await import(`${fixture.runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+    clickRuntimeFixture(window, "show-page-ready-video");
+    await waitForCondition(() => Boolean(window.document.querySelector("video")));
 
     const video = window.document.querySelector("video") as HTMLVideoElement;
     let loadCalls = 0;
-    video.load = () => {
-      loadCalls++;
-    };
+    video.load = () => { loadCalls++; };
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+    expect(video.getAttribute("poster")).toBe("/media-test/videos/sample-poster.jpg");
+    expect(video.getAttribute("data-rx-lazy-src")).toBe("/media-test/videos/sample-video.mp4");
+    expect(video.getAttribute("src")).toBeNull();
     expect(video.getAttribute("data-resux-revealed")).toBeNull();
     expect(observerConstructed).toBe(0);
     expect(loadCalls).toBe(0);

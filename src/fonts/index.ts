@@ -558,7 +558,7 @@ async function resolveFallbackFontRules(
       }
 
       const rawFallbacks = (family.fallbacks || [])
-        .map((fallback) => (typeof fallback === "string" ? fallback.trim() : ""))
+        .map((fallback) => sanitizeFontFamilyName(fallback))
         .filter(Boolean);
       const uniqueFallbacks = [...new Set(rawFallbacks)];
 

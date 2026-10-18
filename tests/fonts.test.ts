@@ -623,7 +623,25 @@ describe("fonts module", () => {
     expect(style).toContain('font-family: "NonExistentFontXYZ"');
     expect(style).not.toContain("fallback:");
   });
+
+  it("sanitizes control characters in fallback font names", async () => {
+    const { headList, resux } = createMockResux();
+    await fontsModule.setup(
+      {
+        families: [
+          {
+            name: "Inter",
+            src: "/fonts/inter.woff2",
+            fallbacks: ["Arial\x00", "\x1f"]
+          }
+        ]
+      },
+      resux as any
+    );
+    const style = headList[0].style?.[0]?.css;
+    expect(style).toContain('font-family: "Inter fallback: Arial"');
+    expect(style).toContain('src: local("Arial")');
+    expect(style).not.toContain("\x00");
+    expect(style).not.toContain("\x1f");
+  });
 });
-
-
-

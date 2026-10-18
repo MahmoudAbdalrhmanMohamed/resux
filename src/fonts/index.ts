@@ -1,3 +1,4 @@
+import { generateFontFace, getMetricsForFamily } from "fontaine";
 import { defineResuxModule } from "../kit/index.js";
 
 export type ResuxFontStrategy = "eager" | "preload" | "lazy";
@@ -56,7 +57,9 @@ export interface ResuxFontFamilyInput {
   preload?: boolean;
   variable?: string;
   axes?: Record<string, number | [number, number]>;
+  fallbacks?: string[];
 }
+
 
 export interface ResuxFontsModuleOptions {
   /** Backward-compatible Google Fonts declaration. */
@@ -530,6 +533,67 @@ function createLazyCustomFontLoader(css: string): string {
   return `(function(){var css=${serializedCss};function load(){if(!css||document.querySelector('style[data-resux-font-lazy-runtime="true"]'))return;var style=document.createElement('style');style.setAttribute('data-resux-font-lazy-runtime','true');style.textContent=css;document.head.appendChild(style);}if(document.readyState==='complete'){load();}else{window.addEventListener('load',load,{once:true});}})();`;
 }
 
+async function resolveFallbackFontRules(
+  families: ResuxFontFamilyInput[],
+): Promise<string[]> {
+  const rules: string[] = [];
+  const entries = families.filter(
+    (family) => Array.isArray(family.fallbacks) && family.fallbacks.length > 0,
+  );
+
+  const familyResults = await Promise.all(
+    entries.map(async (family) => {
+      const familyName = sanitizeFontFamilyName(family.name);
+      if (!familyName) {
+        return [];
+      }
+      let metrics: Awaited<ReturnType<typeof getMetricsForFamily>> = null;
+      try {
+        metrics = await getMetricsForFamily(familyName);
+      } catch {
+        metrics = null;
+      }
+      if (!metrics) {
+        return [];
+      }
+
+      const rawFallbacks = (family.fallbacks || [])
+        .map((fallback) => (typeof fallback === "string" ? fallback.trim() : ""))
+        .filter(Boolean);
+      const uniqueFallbacks = [...new Set(rawFallbacks)];
+
+      const fallbackRules = await Promise.all(
+        uniqueFallbacks.map(async (fallbackName) => {
+          try {
+            let fallbackMetrics: Awaited<ReturnType<typeof getMetricsForFamily>> = null;
+            try {
+              fallbackMetrics = await getMetricsForFamily(fallbackName);
+            } catch {
+              fallbackMetrics = null;
+            }
+            const rule = generateFontFace(metrics, {
+              name: `${familyName} fallback: ${fallbackName}`,
+              font: fallbackName,
+              metrics: fallbackMetrics ?? undefined,
+            });
+            return rule ? rule.trim() : null;
+          } catch {
+            return null;
+          }
+        }),
+      );
+
+      return fallbackRules.filter((rule): rule is string => Boolean(rule));
+    }),
+  );
+
+  for (const group of familyResults) {
+    rules.push(...group);
+  }
+
+  return [...new Set(rules)];
+}
+
 export default defineResuxModule<ResuxFontsModuleOptions>({
   defaults: {
     google: [],
@@ -551,80 +615,101 @@ export default defineResuxModule<ResuxFontsModuleOptions>({
       return;
     }
 
-    const groups: Record<ResuxFontStrategy, ResuxFontFamilyInput[]> = {
-      eager: [],
-      preload: [],
-      lazy: [],
+    const allFamilies = [...legacyGoogleFamilies, ...configuredFamilies];
+    const familiesWithFallbacks = allFamilies.filter(
+      (family) => Array.isArray(family.fallbacks) && family.fallbacks.length > 0,
+    );
+
+    const applyModule = (fallbackRules: string[] = []) => {
+      const groups: Record<ResuxFontStrategy, ResuxFontFamilyInput[]> = {
+        eager: [],
+        preload: [],
+        lazy: [],
+      };
+
+      for (const family of googleFamilies) {
+        groups[resolveFamilyStrategy(family, options)].push(family);
+      }
+
+      const headLinks: Array<Record<string, string>> = [];
+      const headScripts: Array<Record<string, string>> = [];
+      const headNoscripts: Array<Record<string, unknown>> = [];
+
+      if (googleFamilies.length > 0 && options.preconnect !== false) {
+        headLinks.push(
+          { rel: "preconnect", href: "https://fonts.googleapis.com" },
+          { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" },
+        );
+      }
+
+      addGoogleFontGroup(groups.eager, "eager", headLinks, headScripts, headNoscripts);
+      addGoogleFontGroup(groups.preload, "preload", headLinks, headScripts, headNoscripts);
+      addGoogleFontGroup(groups.lazy, "lazy", headLinks, headScripts, headNoscripts);
+
+      const customStyles = buildCustomFontStyles(customFamilies, options, headLinks);
+      if (customStyles.lazyCss) {
+        headScripts.push({
+          "data-resux-font-lazy-custom-loader": "true",
+          innerHTML: createLazyCustomFontLoader(customStyles.lazyCss),
+        });
+      }
+
+      const combinedInitialCss = [
+        customStyles.initialCss,
+        ...fallbackRules,
+      ].filter(Boolean).join("\n");
+
+      if (
+        headLinks.length > 0
+        || headScripts.length > 0
+        || headNoscripts.length > 0
+        || combinedInitialCss
+      ) {
+        resux.addHead({
+          link: headLinks,
+          ...(combinedInitialCss ? {
+            style: [{
+              id: "resux-custom-font-faces",
+              css: combinedInitialCss,
+              children: combinedInitialCss,
+              "data-resux-font-faces": "true",
+            }],
+          } : {}),
+          ...(headScripts.length > 0 ? { script: headScripts } : {}),
+          ...(headNoscripts.length > 0 ? { noscript: headNoscripts } : {}),
+        });
+      }
+
+      const providers = [...new Set(allFamilies.map((family) =>
+        legacyGoogleFamilies.includes(family) ? "google" : resolveProvider(family)
+      ))];
+
+      resux.extendRuntimeConfig({
+        public: {
+          fonts: {
+            provider: providers.length === 1 ? providers[0] : "mixed",
+            providers,
+            families: allFamilies.map((family) => family.name),
+            familyConfigs: allFamilies.map((family) => ({
+              name: family.name,
+              strategy: resolveFamilyStrategy(family, options),
+              deferUntilPageLoad: resolveFamilyStrategy(family, options) === "lazy",
+            })),
+            strategy: options.strategy || "preload",
+            deferUntilPageLoad: options.deferUntilPageLoad ?? false,
+          },
+        },
+      });
     };
 
-    for (const family of googleFamilies) {
-      groups[resolveFamilyStrategy(family, options)].push(family);
+    if (familiesWithFallbacks.length === 0) {
+      applyModule();
+      return;
     }
 
-    const headLinks: Array<Record<string, string>> = [];
-    const headScripts: Array<Record<string, string>> = [];
-    const headNoscripts: Array<Record<string, unknown>> = [];
-
-    if (googleFamilies.length > 0 && options.preconnect !== false) {
-      headLinks.push(
-        { rel: "preconnect", href: "https://fonts.googleapis.com" },
-        { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" },
-      );
-    }
-
-    addGoogleFontGroup(groups.eager, "eager", headLinks, headScripts, headNoscripts);
-    addGoogleFontGroup(groups.preload, "preload", headLinks, headScripts, headNoscripts);
-    addGoogleFontGroup(groups.lazy, "lazy", headLinks, headScripts, headNoscripts);
-
-    const customStyles = buildCustomFontStyles(customFamilies, options, headLinks);
-    if (customStyles.lazyCss) {
-      headScripts.push({
-        "data-resux-font-lazy-custom-loader": "true",
-        innerHTML: createLazyCustomFontLoader(customStyles.lazyCss),
-      });
-    }
-
-    if (
-      headLinks.length > 0
-      || headScripts.length > 0
-      || headNoscripts.length > 0
-      || customStyles.initialCss
-    ) {
-      resux.addHead({
-        link: headLinks,
-        ...(customStyles.initialCss ? {
-          style: [{
-            id: "resux-custom-font-faces",
-            css: customStyles.initialCss,
-            children: customStyles.initialCss,
-            "data-resux-font-faces": "true",
-          }],
-        } : {}),
-        ...(headScripts.length > 0 ? { script: headScripts } : {}),
-        ...(headNoscripts.length > 0 ? { noscript: headNoscripts } : {}),
-      });
-    }
-
-    const allFamilies = [...legacyGoogleFamilies, ...configuredFamilies];
-    const providers = [...new Set(allFamilies.map((family) =>
-      legacyGoogleFamilies.includes(family) ? "google" : resolveProvider(family)
-    ))];
-
-    resux.extendRuntimeConfig({
-      public: {
-        fonts: {
-          provider: providers.length === 1 ? providers[0] : "mixed",
-          providers,
-          families: allFamilies.map((family) => family.name),
-          familyConfigs: allFamilies.map((family) => ({
-            name: family.name,
-            strategy: resolveFamilyStrategy(family, options),
-            deferUntilPageLoad: resolveFamilyStrategy(family, options) === "lazy",
-          })),
-          strategy: options.strategy || "preload",
-          deferUntilPageLoad: options.deferUntilPageLoad ?? false,
-        },
-      },
-    });
+    return (async () => {
+      const fallbackRules = await resolveFallbackFontRules(familiesWithFallbacks);
+      applyModule(fallbackRules);
+    })();
   },
 });

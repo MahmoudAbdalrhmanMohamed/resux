@@ -475,4 +475,89 @@ describe("fonts module", () => {
 
     expect(headList).toHaveLength(0);
   });
+
+  it("supports semantic named font weights", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        google: [
+          { name: "Inter", weights: ["medium", "semibold", "bold"] }
+        ]
+      },
+      resux as any
+    );
+    expect(headList[0].link?.[2]?.href).toContain("family=Inter:wght@500;600;700");
+  });
+
+  it("supports arbitrary variable axes in custom families", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        families: [
+          {
+            name: "Inter Variable",
+            src: "/fonts/inter-var.woff2",
+            axes: { opsz: [14, 32], wdth: 100 }
+          }
+        ]
+      },
+      resux as any
+    );
+    const style = headList[0].style?.[0]?.css;
+    expect(style).toContain('font-family: "Inter Variable"');
+    expect(style).toContain('font-variation-settings: "opsz" 14 32, "wdth" 100');
+  });
+
+  it("supports semantic named weights in custom font families and face-level axes override", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        families: [
+          {
+            name: "Custom Sans",
+            weight: "extrabold",
+            axes: { wdth: 100 },
+            faces: [
+              {
+                src: "/fonts/custom-semibold.woff2",
+                weight: "semibold",
+                axes: { opsz: [20, 40] }
+              }
+            ]
+          }
+        ]
+      },
+      resux as any
+    );
+    const style = headList[0].style?.[0]?.css;
+    expect(style).toContain('font-family: "Custom Sans"');
+    expect(style).toContain("font-weight: 600");
+    expect(style).toContain('font-variation-settings: "opsz" 20 40');
+  });
+
+  it("sanitizes axis tags and excludes invalid axis values", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        families: [
+          {
+            name: "Sanitized Font",
+            src: "/fonts/sanitized.woff2",
+            axes: {
+              "opsz": 12,
+              'bad"tag': 50,
+              "wght": NaN as any,
+              "": 100 as any
+            }
+          }
+        ]
+      },
+      resux as any
+    );
+    const style = headList[0].style?.[0]?.css;
+    expect(style).toContain('font-variation-settings: "opsz" 12');
+    expect(style).not.toContain("bad");
+    expect(style).not.toContain("wght");
+  });
 });
+

@@ -4,6 +4,28 @@ export type ResuxFontStrategy = "eager" | "preload" | "lazy";
 export type ResuxFontDisplay = "auto" | "block" | "swap" | "fallback" | "optional";
 export type ResuxFontProvider = "google" | "local" | "remote";
 
+export type ResuxFontWeightName =
+  | "thin"
+  | "hairline"
+  | "extralight"
+  | "extra-light"
+  | "ultralight"
+  | "light"
+  | "normal"
+  | "regular"
+  | "medium"
+  | "semibold"
+  | "semi-bold"
+  | "demibold"
+  | "bold"
+  | "extrabold"
+  | "extra-bold"
+  | "ultrabold"
+  | "black"
+  | "heavy";
+
+export type ResuxFontWeight = number | string | ResuxFontWeightName;
+
 export interface ResuxFontSourceInput {
   url: string;
   format?: "woff2" | "woff" | "truetype" | "opentype" | "embedded-opentype";
@@ -11,27 +33,29 @@ export interface ResuxFontSourceInput {
 
 export interface ResuxFontFaceInput {
   src: string | ResuxFontSourceInput | Array<string | ResuxFontSourceInput>;
-  weight?: number | string;
+  weight?: ResuxFontWeight;
   style?: "normal" | "italic" | "oblique";
   display?: ResuxFontDisplay;
   unicodeRange?: string;
   preload?: boolean;
+  axes?: Record<string, number | [number, number]>;
 }
 
 export interface ResuxFontFamilyInput {
   name: string;
   provider?: ResuxFontProvider;
-  weights?: Array<number | string>;
+  weights?: ResuxFontWeight[];
   display?: ResuxFontDisplay;
   strategy?: ResuxFontStrategy;
   deferUntilPageLoad?: boolean;
   src?: string | ResuxFontSourceInput | Array<string | ResuxFontSourceInput>;
   faces?: ResuxFontFaceInput[];
-  weight?: number | string;
+  weight?: ResuxFontWeight;
   style?: "normal" | "italic" | "oblique";
   unicodeRange?: string;
   preload?: boolean;
   variable?: string;
+  axes?: Record<string, number | [number, number]>;
 }
 
 export interface ResuxFontsModuleOptions {
@@ -72,10 +96,30 @@ function sanitizeFontFamilyName(value: unknown): string {
   return String(value || "").trim().replace(/[\u0000-\u001f\u007f]/g, "");
 }
 
+const NAMED_WEIGHTS: Record<string, string> = {
+  thin: "100",
+  hairline: "100",
+  extralight: "200",
+  "extra-light": "200",
+  ultralight: "200",
+  light: "300",
+  normal: "400",
+  regular: "400",
+  medium: "500",
+  semibold: "600",
+  "semi-bold": "600",
+  demibold: "600",
+  bold: "700",
+  extrabold: "800",
+  "extra-bold": "800",
+  ultrabold: "800",
+  black: "900",
+  heavy: "900",
+};
+
 function normalizeWeight(value: number | string): string | null {
   const normalized = String(value).trim().toLowerCase();
-  if (normalized === "normal") return "400";
-  if (normalized === "bold") return "700";
+  if (NAMED_WEIGHTS[normalized]) return NAMED_WEIGHTS[normalized];
   const match = /^(\d{1,4})(?:\.\.(\d{1,4}))?$/.exec(normalized);
   if (!match) {
     return null;
@@ -309,6 +353,7 @@ function normalizeFaces(family: ResuxFontFamilyInput): ResuxFontFaceInput[] {
     display: family.display,
     unicodeRange: family.unicodeRange,
     preload: family.preload,
+    axes: family.axes,
   }];
 }
 
@@ -370,6 +415,43 @@ function normalizeCssVariable(value: unknown): string | null {
   return /^--[A-Za-z_][A-Za-z0-9_-]*$/.test(variable) ? variable : null;
 }
 
+function sanitizeAxisTag(value: unknown): string | null {
+  const tag = String(value || "").trim();
+  if (/^[A-Za-z0-9_]{4}$/.test(tag)) {
+    return tag;
+  }
+  return null;
+}
+
+function formatVariationSettings(
+  axes?: Record<string, number | [number, number]>,
+): string | null {
+  if (!axes || typeof axes !== "object") return null;
+  const settings: string[] = [];
+
+  for (const [key, value] of Object.entries(axes)) {
+    const tag = sanitizeAxisTag(key);
+    if (!tag) continue;
+
+    if (Array.isArray(value)) {
+      if (
+        value.length === 2 &&
+        Number.isFinite(Number(value[0])) &&
+        Number.isFinite(Number(value[1]))
+      ) {
+        settings.push(`"${tag}" ${Number(value[0])} ${Number(value[1])}`);
+      }
+    } else if (
+      (typeof value === "number" || typeof value === "string") &&
+      Number.isFinite(Number(value))
+    ) {
+      settings.push(`"${tag}" ${Number(value)}`);
+    }
+  }
+
+  return settings.length ? settings.join(", ") : null;
+}
+
 function buildCustomFontStyles(
   families: ResuxFontFamilyInput[],
   options: ResuxFontsModuleOptions,
@@ -410,6 +492,10 @@ function buildCustomFontStyles(
       ];
       if (unicodeRange) {
         declarations.push(`unicode-range: ${unicodeRange}`);
+      }
+      const variationSettings = formatVariationSettings(face.axes ?? family.axes);
+      if (variationSettings) {
+        declarations.push(`font-variation-settings: ${variationSettings}`);
       }
       const rule = `@font-face { ${declarations.join("; ")}; }`;
       (strategy === "lazy" ? lazyRules : initialRules).push(rule);

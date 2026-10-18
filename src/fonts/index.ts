@@ -1,4 +1,5 @@
 import { generateFontFace, getMetricsForFamily } from "fontaine";
+import { fontless } from "fontless";
 import { defineResuxModule } from "../kit/index.js";
 
 export type ResuxFontStrategy = "eager" | "preload" | "lazy";
@@ -62,6 +63,30 @@ export interface ResuxFontFamilyInput {
 
 
 export interface ResuxFontsModuleOptions {
+  /** Enable automatic CSS/template font scanning via fontless. Defaults to true. */
+  autoScan?: boolean;
+
+  /** Global font defaults across all resolved families */
+  defaults?: {
+    preload?: boolean;
+    subsets?: string[];
+    weights?: ResuxFontWeight[];
+    styles?: Array<"normal" | "italic" | "oblique">;
+    fallbacks?: string[];
+  };
+
+  /** Provider configurations (google, bunny, fontshare, fontsource, local) */
+  providers?: {
+    google?: boolean | Record<string, unknown>;
+    bunny?: boolean | Record<string, unknown>;
+    fontshare?: boolean | Record<string, unknown>;
+    fontsource?: boolean | Record<string, unknown>;
+    local?: boolean | Record<string, unknown>;
+  };
+
+  /** Devtools panel toggle during development (defaults to true) */
+  devtools?: boolean;
+
   /** Backward-compatible Google Fonts declaration. */
   google?: ResuxFontFamilyInput[];
   /** Provider-aware families. Local/remote families can provide src/faces; Google families use weights. */
@@ -594,6 +619,39 @@ async function resolveFallbackFontRules(
   return [...new Set(rules)];
 }
 
+function mapConfiguredFamilyToFontless(family: ResuxFontFamilyInput): any[] {
+  const familyName = sanitizeFontFamilyName(family.name);
+  if (!familyName) return [];
+
+  const faces = normalizeFaces(family);
+  if (faces.length > 0) {
+    return faces.map((face) => {
+      const sources = normalizeSources(face.src);
+      const src = sources.length === 1 ? sources[0].url : sources.map((s) => s.url);
+      return {
+        name: familyName,
+        src,
+        ...(face.weight !== undefined || family.weight !== undefined ? { weight: face.weight ?? family.weight } : {}),
+        ...(face.style !== undefined || family.style !== undefined ? { style: face.style ?? family.style } : {}),
+        ...(face.display !== undefined || family.display !== undefined ? { display: face.display ?? family.display } : {}),
+        ...(face.unicodeRange !== undefined || family.unicodeRange !== undefined ? { unicodeRange: face.unicodeRange ?? family.unicodeRange } : {}),
+        ...(face.preload !== undefined || family.preload !== undefined ? { preload: face.preload ?? family.preload } : {}),
+        ...(family.fallbacks ? { fallbacks: family.fallbacks } : {}),
+      };
+    });
+  }
+
+  const provider = resolveProvider(family);
+  return [{
+    name: familyName,
+    ...(provider !== "remote" ? { provider } : {}),
+    ...(family.weights ? { weights: family.weights } : {}),
+    ...(family.display ? { display: family.display } : {}),
+    ...(family.preload !== undefined ? { preload: family.preload } : {}),
+    ...(family.fallbacks ? { fallbacks: family.fallbacks } : {}),
+  }];
+}
+
 export default defineResuxModule<ResuxFontsModuleOptions>({
   defaults: {
     google: [],
@@ -601,10 +659,42 @@ export default defineResuxModule<ResuxFontsModuleOptions>({
     preconnect: true,
     strategy: "preload",
     deferUntilPageLoad: false,
+    autoScan: true,
   },
   setup(options, resux) {
     const legacyGoogleFamilies = Array.isArray(options.google) ? options.google : [];
     const configuredFamilies = Array.isArray(options.families) ? options.families : [];
+
+    if (options.autoScan !== false && typeof (resux as any).addVitePlugin === "function") {
+      const familiesToMap = [
+        ...configuredFamilies,
+        ...legacyGoogleFamilies.map((family) => ({ ...family, provider: "google" as const })),
+      ];
+      const mappedFamilies = familiesToMap.flatMap(mapConfiguredFamilyToFontless);
+      const fontlessOptions: Record<string, unknown> = {};
+
+      if (options.devtools !== undefined) {
+        fontlessOptions.devtools = options.devtools;
+      }
+      if (options.defaults !== undefined) {
+        fontlessOptions.defaults = options.defaults;
+      }
+      if (options.providers !== undefined) {
+        fontlessOptions.providers = options.providers;
+      }
+      if (mappedFamilies.length > 0) {
+        fontlessOptions.families = mappedFamilies;
+      }
+
+      const plugins = fontless(fontlessOptions as any);
+      const pluginList = Array.isArray(plugins) ? plugins.flat() : [plugins];
+      for (const plugin of pluginList) {
+        if (plugin) {
+          (resux as any).addVitePlugin(plugin);
+        }
+      }
+    }
+
     const googleFamilies = [
       ...legacyGoogleFamilies,
       ...configuredFamilies.filter((family) => resolveProvider(family) === "google"),

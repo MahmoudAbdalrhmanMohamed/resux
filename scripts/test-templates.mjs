@@ -112,12 +112,13 @@ if (failed) {
 }
 
 function runCommand(command, args, options) {
+  const needsShell = process.platform === "win32" && !command.toLowerCase().endsWith(".exe");
   return spawnSync(command, args, {
     cwd: options.cwd,
     env: options.env ?? templateTestEnvironment,
     stdio: options.stdio ?? "inherit",
     encoding: "utf8",
-    shell: process.platform === "win32",
+    shell: needsShell,
   });
 }
 

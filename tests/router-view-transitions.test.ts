@@ -523,6 +523,33 @@ describe("View Transitions Types & Detection", () => {
         expect(source).toContain("performSwap();");
       });
 
+      it("generates valid, parseable JavaScript without duplicate exports", async () => {
+        const { getClientRuntimeSource } = await import("../src/runtime/index.js");
+        const source = getClientRuntimeSource();
+        const prevDoc = (globalThis as any).document;
+        const prevWin = (globalThis as any).window;
+        try {
+          (globalThis as any).document = {
+            getElementById: () => null,
+            addEventListener: () => {},
+            querySelectorAll: () => [],
+            createElement: () => ({ setAttribute: () => {} }),
+            head: { appendChild: () => {} }
+          };
+          (globalThis as any).window = {
+            location: { href: "http://localhost/" },
+            addEventListener: () => {},
+            matchMedia: () => ({ matches: false })
+          };
+          const module = await import("data:text/javascript," + encodeURIComponent(source));
+          expect(typeof module.useViewTransition).toBe("function");
+          expect(typeof module.createClientComponent).toBe("function");
+        } finally {
+          (globalThis as any).document = prevDoc;
+          (globalThis as any).window = prevWin;
+        }
+      });
+
       it("invokes executeViewTransition when useTransition is true, running performSwap within the transition callback", async () => {
         let swapCalled = false;
         const performSwap = vi.fn(() => {

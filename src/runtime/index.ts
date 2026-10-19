@@ -130,6 +130,8 @@ export interface PageMeta {
   middleware?: string | string[];
   title?: string | Record<string, string>;
   meta?: Array<Record<string, string>>;
+  viewTransition?: boolean;
+  [key: string]: unknown;
 }
 
 export type HeadAttributePrimitive = string | number | boolean | null | undefined;
@@ -14057,7 +14059,7 @@ async function executeViewTransition(domSwapFn) {
   }
 }
 
-export function useViewTransition() {
+function useViewTransition() {
   return {
     get isSupported() {
       return isViewTransitionSupported();

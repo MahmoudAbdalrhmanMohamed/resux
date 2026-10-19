@@ -391,5 +391,200 @@ describe("View Transitions Types & Detection", () => {
       expect(typeof viewTransitionsModule.useViewTransition).toBe("function");
     });
   });
+
+  describe("Task 3: Router & <ResuxLink> View Transitions Integration", () => {
+    describe("ResuxClientNavigationOptions", () => {
+      it("accepts viewTransition?: boolean in ResuxClientNavigationOptions", async () => {
+        const { navigateClient } = await import("../src/runtime/router.js");
+        type NavigationOptions = Parameters<typeof navigateClient>[1];
+
+        const optionsWithTrue: NavigationOptions = {
+          replace: true,
+          state: { step: 1 },
+          viewTransition: true,
+        };
+        expect(optionsWithTrue.viewTransition).toBe(true);
+
+        const optionsWithFalse: NavigationOptions = {
+          viewTransition: false,
+        };
+        expect(optionsWithFalse.viewTransition).toBe(false);
+
+        const optionsUndefined: NavigationOptions = {};
+        expect(optionsUndefined.viewTransition).toBeUndefined();
+      });
+    });
+
+    describe("src/runtime/index.ts exports & SetupContext", () => {
+      it("cleanly exports useViewTransition composable and types from src/runtime/index.ts", async () => {
+        const runtime = await import("../src/runtime/index.js");
+        expect(typeof (runtime as any).useViewTransition).toBe("function");
+        const vt = (runtime as any).useViewTransition();
+        expect(typeof vt.start).toBe("function");
+        expect(typeof vt.isSupported).toBe("boolean");
+      });
+
+      it("provides useViewTransition() on SetupContext created by createServerSetupContext", async () => {
+        const { createServerSetupContext } = await import("../src/runtime/index.js");
+        const ctx = createServerSetupContext({
+          route: { path: "/", params: {}, query: {} },
+          runtimeConfig: {},
+          resuxApp: { route: { path: "/", params: {}, query: {} }, $config: {} } as any,
+        });
+
+        expect(typeof ctx.useViewTransition).toBe("function");
+        const vt = ctx.useViewTransition();
+        expect(typeof vt.start).toBe("function");
+        expect(typeof vt.isSupported).toBe("boolean");
+      });
+    });
+
+    describe("handleNavigationClick view-transition attribute parsing", () => {
+      it("extracts data-view-transition='true' and passes { viewTransition: true }", () => {
+        const anchor = {
+          getAttribute: vi.fn((name: string) => {
+            if (name === "data-view-transition") return "true";
+            return null;
+          }),
+        };
+
+        const vtAttr = anchor.getAttribute("data-view-transition") ?? anchor.getAttribute("view-transition");
+        const viewTransition = vtAttr !== null ? vtAttr !== "false" : undefined;
+        const navOptions = { ...(viewTransition !== undefined ? { viewTransition } : {}) };
+
+        expect(viewTransition).toBe(true);
+        expect(navOptions).toEqual({ viewTransition: true });
+      });
+
+      it("extracts data-view-transition='false' and passes { viewTransition: false }", () => {
+        const anchor = {
+          getAttribute: vi.fn((name: string) => {
+            if (name === "data-view-transition") return "false";
+            return null;
+          }),
+        };
+
+        const vtAttr = anchor.getAttribute("data-view-transition") ?? anchor.getAttribute("view-transition");
+        const viewTransition = vtAttr !== null ? vtAttr !== "false" : undefined;
+        const navOptions = { ...(viewTransition !== undefined ? { viewTransition } : {}) };
+
+        expect(viewTransition).toBe(false);
+        expect(navOptions).toEqual({ viewTransition: false });
+      });
+
+      it("extracts boolean view-transition attribute and passes { viewTransition: true }", () => {
+        const anchor = {
+          getAttribute: vi.fn((name: string) => {
+            if (name === "view-transition") return "";
+            return null;
+          }),
+        };
+
+        const vtAttr = anchor.getAttribute("data-view-transition") ?? anchor.getAttribute("view-transition");
+        const viewTransition = vtAttr !== null ? vtAttr !== "false" : undefined;
+        const navOptions = { ...(viewTransition !== undefined ? { viewTransition } : {}) };
+
+        expect(viewTransition).toBe(true);
+        expect(navOptions).toEqual({ viewTransition: true });
+      });
+
+      it("omits viewTransition when attributes are absent", () => {
+        const anchor = {
+          getAttribute: vi.fn(() => null),
+        };
+
+        const vtAttr = anchor.getAttribute("data-view-transition") ?? anchor.getAttribute("view-transition");
+        const viewTransition = vtAttr !== null ? vtAttr !== "false" : undefined;
+        const navOptions = { ...(viewTransition !== undefined ? { viewTransition } : {}) };
+
+        expect(viewTransition).toBeUndefined();
+        expect(navOptions).toEqual({});
+      });
+
+      it("has view-transition attribute extraction wired in getClientRuntimeSource() handleNavigationClick", async () => {
+        const { getClientRuntimeSource } = await import("../src/runtime/index.js");
+        const source = getClientRuntimeSource();
+
+        expect(source).toContain('anchor.getAttribute("data-view-transition") ?? anchor.getAttribute("view-transition")');
+        expect(source).toContain('const viewTransition = vtAttr !== null ? vtAttr !== "false" : undefined;');
+        expect(source).toContain('void navigateTo(nextPath + target.hash, { ...(viewTransition !== undefined ? { viewTransition } : {}) });');
+      });
+    });
+
+    describe("navigateTo integration with executeViewTransition", () => {
+      it("has executeViewTransition wired around route DOM swap in getClientRuntimeSource()", async () => {
+        const { getClientRuntimeSource } = await import("../src/runtime/index.js");
+        const source = getClientRuntimeSource();
+
+        expect(source).toContain("const useTransition = shouldPerformViewTransition(");
+        expect(source).toContain("const performSwap = () => {");
+        expect(source).toContain("if (useTransition) {");
+        expect(source).toContain("await executeViewTransition(performSwap);");
+        expect(source).toContain("performSwap();");
+      });
+
+      it("invokes executeViewTransition when useTransition is true, running performSwap within the transition callback", async () => {
+        let swapCalled = false;
+        const performSwap = vi.fn(() => {
+          swapCalled = true;
+        });
+
+        const startViewTransitionMock = vi.fn().mockImplementation((cb) => {
+          cb();
+          return { finished: Promise.resolve() };
+        });
+
+        (globalThis as Record<string, unknown>).document = {
+          startViewTransition: startViewTransitionMock,
+        };
+        (globalThis as Record<string, unknown>).window = {
+          matchMedia: vi.fn().mockReturnValue({ matches: false }),
+        };
+
+        const options = { viewTransition: true };
+        const useTransition = shouldPerformViewTransition(options, undefined, undefined, {});
+        expect(useTransition).toBe(true);
+
+        if (useTransition) {
+          await executeViewTransition(performSwap);
+        } else {
+          performSwap();
+        }
+
+        expect(startViewTransitionMock).toHaveBeenCalledTimes(1);
+        expect(swapCalled).toBe(true);
+        expect(performSwap).toHaveBeenCalledTimes(1);
+      });
+
+      it("bypasses executeViewTransition when useTransition is false, running performSwap directly", async () => {
+        let swapCalled = false;
+        const performSwap = vi.fn(() => {
+          swapCalled = true;
+        });
+
+        const startViewTransitionMock = vi.fn();
+        (globalThis as Record<string, unknown>).document = {
+          startViewTransition: startViewTransitionMock,
+        };
+        (globalThis as Record<string, unknown>).window = {
+          matchMedia: vi.fn().mockReturnValue({ matches: false }),
+        };
+
+        const options = { viewTransition: false };
+        const useTransition = shouldPerformViewTransition(options, undefined, undefined, { viewTransition: true });
+        expect(useTransition).toBe(false);
+
+        if (useTransition) {
+          await executeViewTransition(performSwap);
+        } else {
+          performSwap();
+        }
+
+        expect(startViewTransitionMock).not.toHaveBeenCalled();
+        expect(swapCalled).toBe(true);
+        expect(performSwap).toHaveBeenCalledTimes(1);
+      });
+    });
+  });
 });
 

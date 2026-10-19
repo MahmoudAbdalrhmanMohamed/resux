@@ -1,6 +1,7 @@
 export interface ResuxClientNavigationOptions {
   replace?: boolean;
   state?: unknown;
+  viewTransition?: boolean;
 }
 
 function getClientBase(base?: string): string {

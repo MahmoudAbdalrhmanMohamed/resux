@@ -30,6 +30,13 @@ import {
   RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAME_LENGTH,
   RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAMES,
 } from "./resume.js";
+import {
+  executeViewTransition,
+  shouldPerformViewTransition,
+  useViewTransition,
+  type ResuxViewTransition,
+  type ResuxViewTransitionOptions,
+} from "./view-transitions/index.js";
 
 export type JsonValue =
   | null
@@ -66,6 +73,8 @@ export type {
   ReactiveEffectOptions,
   ReactiveEffectRunner
 } from "../reactivity/index.js";
+export { useViewTransition } from "./view-transitions/index.js";
+export type { ResuxViewTransition, ResuxViewTransitionOptions } from "./view-transitions/index.js";
 
 export interface AsyncDataError {
   name: string;
@@ -553,6 +562,7 @@ export interface SetupContext {
   defineModel<T>(name?: string, options?: unknown): Ref<T>;
   useRoute(): RouteContext;
   useRouter(): ResuxRouter;
+  useViewTransition(): ResuxViewTransition;
   useHead(input: HeadInput): void;
   useSeoMeta(input: SeoMetaInput): void;
   useRuntimeConfig(): RuntimeConfig;
@@ -3080,6 +3090,10 @@ export function createServerSetupContext(
 
     useRouter(): ResuxRouter {
       return createServerRouter();
+    },
+
+    useViewTransition(): ResuxViewTransition {
+      return useViewTransition();
     },
 
     useHead(input: HeadInput): void {
@@ -9493,6 +9507,7 @@ export {
   getClientEnhancement,
   scanClientEnhancements,
   disposeClientEnhancements,
+  useViewTransition,
 };
 
 async function disposeClientEnhancements() {
@@ -11168,6 +11183,9 @@ export function createClientComponent(definition) {
         },
         useRouter() {
           return createClientRouter();
+        },
+        useViewTransition() {
+          return useViewTransition();
         },
         useHead() {
         },
@@ -14004,6 +14022,52 @@ function warnManagedMediaDebug(eventName, detail = {}) {
   console.warn("[resux:media]", eventName, detail);
 }
 
+function isViewTransitionSupported() {
+  return typeof document !== "undefined" && typeof document.startViewTransition === "function";
+}
+
+function prefersReducedMotion() {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches === true;
+}
+
+function shouldPerformViewTransition(options, nextMeta, prevMeta, routerConfig) {
+  if (options?.viewTransition !== undefined) {
+    return Boolean(options.viewTransition);
+  }
+  if (nextMeta?.viewTransition !== undefined) {
+    return Boolean(nextMeta.viewTransition);
+  }
+  if (prevMeta?.viewTransition !== undefined) {
+    return Boolean(prevMeta.viewTransition);
+  }
+  return Boolean(routerConfig?.viewTransition);
+}
+
+async function executeViewTransition(domSwapFn) {
+  if (!isViewTransitionSupported() || prefersReducedMotion()) {
+    await domSwapFn();
+    return;
+  }
+  try {
+    const transition = document.startViewTransition(async () => {
+      await domSwapFn();
+    });
+    await transition.finished;
+  } catch {
+  }
+}
+
+export function useViewTransition() {
+  return {
+    get isSupported() {
+      return isViewTransitionSupported();
+    },
+    async start(updateCallback) {
+      await executeViewTransition(updateCallback);
+    }
+  };
+}
+
 function handleNavigationClick(event) {
   if (
     event.defaultPrevented ||
@@ -14084,7 +14148,9 @@ function handleNavigationClick(event) {
     href: target.href,
     nextPath
   });
-  void navigateTo(nextPath + target.hash);
+  const vtAttr = anchor.getAttribute("data-view-transition") ?? anchor.getAttribute("view-transition");
+  const viewTransition = vtAttr !== null ? vtAttr !== "false" : undefined;
+  void navigateTo(nextPath + target.hash, { ...(viewTransition !== undefined ? { viewTransition } : {}) });
   return true;
 }
 
@@ -14253,10 +14319,27 @@ async function navigateTo(target, options = {}) {
     await disposeClientEnhancements();
     setRouteTransition("swapping", { path: routePath });
     const preserveLayout = !didClientLocaleChange(previousPayload, nextPayload);
-    const preserved = replaceRouteHtml(root, result.html, preserveLayout);
-    globalThis.__RESUX__ = mergeClientGlobalState(
-      mergePersistentLayoutPayload(previousPayload, nextPayload, preserved.scopeIds)
+    let preserved;
+    const routerConfig = globalThis.__RESUX__?.config?.router || {};
+    const useTransition = shouldPerformViewTransition(
+      options,
+      nextPayload?.meta,
+      previousPayload?.meta,
+      routerConfig,
     );
+
+    const performSwap = () => {
+      preserved = replaceRouteHtml(root, result.html, preserveLayout);
+      globalThis.__RESUX__ = mergeClientGlobalState(
+        mergePersistentLayoutPayload(previousPayload, nextPayload, preserved.scopeIds)
+      );
+    };
+
+    if (useTransition) {
+      await executeViewTransition(performSwap);
+    } else {
+      performSwap();
+    }
     getClientResuxApp(globalThis.__RESUX__.route);
     applyHead(result.head);
     animateRouteSwap(preserved.root);

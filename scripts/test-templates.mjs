@@ -85,7 +85,7 @@ for (const template of selectedTemplates) {
 
   try {
     await rewriteFrameworkDependency(projectRoot, tarballPath);
-    runOrFail(`[template:${template}] npm install`, npmExecutable, ["install", "--no-audit", "--no-fund"], projectRoot);
+    runOrFail(`[template:${template}] npm install`, npmExecutable, ["install", "--no-audit", "--no-fund", "--package-lock=false"], projectRoot);
     await runTypecheckIfAvailable(projectRoot, template);
     runOrFail(`[template:${template}] npm run build`, npmExecutable, ["run", "build"], projectRoot);
     const port = await getAvailablePort();

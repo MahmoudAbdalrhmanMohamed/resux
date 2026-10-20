@@ -8,6 +8,8 @@ export async function executeViewTransition(
     await domSwapFn();
     return;
   }
+  let callbackRan = false;
+  let callbackError: unknown = null;
   try {
     const doc = document as unknown as {
       startViewTransition: (callback: () => Promise<void> | void) => {
@@ -15,11 +17,22 @@ export async function executeViewTransition(
       };
     };
     const transition = doc.startViewTransition(async () => {
-      await domSwapFn();
+      callbackRan = true;
+      try {
+        await domSwapFn();
+      } catch (err) {
+        callbackError = err;
+        throw err;
+      }
     });
     await transition.finished;
-  } catch {
-    // If startViewTransition fails, aborts, or is rejected, domSwapFn was executed safely
+  } catch (err) {
+    if (callbackError) {
+      throw callbackError;
+    }
+    if (!callbackRan) {
+      await domSwapFn();
+    }
   }
 }
 

@@ -54,7 +54,15 @@ export function navigateClient(
     return;
   }
   const path = normalizeClientPath(targetUrl.href, baseHref);
+  let historyState: unknown = options.state ?? null;
+  if (options.viewTransition !== undefined) {
+    if (historyState && typeof historyState === "object") {
+      historyState = { ...(historyState as Record<string, unknown>), __viewTransition: options.viewTransition };
+    } else {
+      historyState = { state: historyState, __viewTransition: options.viewTransition };
+    }
+  }
   const method = options.replace ? "replaceState" : "pushState";
-  window.history[method](options.state ?? null, "", path);
-  window.dispatchEvent(new PopStateEvent("popstate", { state: options.state ?? null }));
+  window.history[method](historyState, "", path);
+  window.dispatchEvent(new PopStateEvent("popstate", { state: historyState }));
 }

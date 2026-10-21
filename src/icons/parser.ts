@@ -72,10 +72,22 @@ export function parseSvgText(svgText: string): IconData | null {
     });
   }
 
-  if (!paths.length) return null;
+  const innerMatch = /<svg\b[^>]*>([\s\S]*?)<\/svg>/i.exec(svgText);
+  const innerBody = innerMatch ? innerMatch[1].trim() : "";
+
+  if (!paths.length) {
+    if (!innerBody) return null;
+    return {
+      body: innerBody,
+      viewBox: readSvgAttribute(svgRoot, "viewBox") || "0 0 24 24",
+      ...rootPresentation,
+    };
+  }
+
   return {
     path: paths[0].d,
     paths,
+    body: innerBody || undefined,
     viewBox: readSvgAttribute(svgRoot, "viewBox") || "0 0 24 24",
     ...rootPresentation,
   };

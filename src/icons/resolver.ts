@@ -2,14 +2,18 @@ import { fetchIconifyIcon } from "./api-fetcher.js";
 import { loadLocalSvgIcon, loadLocalSvgIconSync } from "./local-svg.js";
 import { parseIconName } from "./normalize.js";
 import { loadOfflineIcon } from "./offline-loader.js";
-import { getStaticIcon } from "./registry.js";
+import { getStaticIcon, iconAliases } from "./registry.js";
 import type { IconData, ResuxIconsConfig } from "./types.js";
 
 export function resolveIconSync(
   rawName: string,
   config?: ResuxIconsConfig
 ): IconData | null {
-  const parsed = parseIconName(rawName, config?.aliases, config?.collections);
+  const direct = getStaticIcon(rawName);
+  if (direct) return direct;
+
+  const aliases = { ...iconAliases, ...config?.aliases };
+  const parsed = parseIconName(rawName, aliases, config?.collections);
   if (!parsed) return null;
 
   const { prefix, name } = parsed;

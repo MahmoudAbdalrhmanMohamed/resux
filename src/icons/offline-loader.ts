@@ -20,6 +20,14 @@ export interface IconifyJsonCollection {
 
 const offlineCollectionCache = new Map<string, IconifyJsonCollection | null>();
 const offlineIconCache = new Map<string, IconData | null>();
+const MAX_OFFLINE_ICON_CACHE = 1000;
+function setBoundedIconCache(key: string, value: IconData | null) {
+  if (offlineIconCache.size >= MAX_OFFLINE_ICON_CACHE) {
+    const first = offlineIconCache.keys().next().value;
+    if (first) offlineIconCache.delete(first);
+  }
+  offlineIconCache.set(key, value);
+}
 
 export function registerOfflineCollection(prefix: string, data: IconifyJsonCollection): void {
   offlineCollectionCache.set(prefix.toLowerCase(), data);
@@ -79,7 +87,7 @@ export function loadOfflineIcon(prefix: string, name: string): IconData | null {
 
   const collection = resolveCollectionFromPackage(normalizedPrefix);
   if (!collection) {
-    offlineIconCache.set(cacheKey, null);
+    setBoundedIconCache(cacheKey, null);
     return null;
   }
 
@@ -113,6 +121,6 @@ export function loadOfflineIcon(prefix: string, name: string): IconData | null {
     strokeWidth: parsed?.strokeWidth,
   };
 
-  offlineIconCache.set(cacheKey, iconData);
+  setBoundedIconCache(cacheKey, iconData);
   return iconData;
 }

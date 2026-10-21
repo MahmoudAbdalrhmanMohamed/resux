@@ -41,9 +41,14 @@ function iconDataToSvgMarkup(data: IconData, size: string, customClass: string):
 export function transformStaticIcons(templateCode: string, config?: ResuxIconsConfig): string {
   if (!templateCode || typeof templateCode !== "string") return templateCode;
 
-  const iconTagPattern = /<(Icon|ResuxIcon)\b([^>]*?)(?:\/?>|>.*?<\/\1>)/gis;
+  const iconTagPattern = /<(Icon|ResuxIcon)\b([^>]*?)(?:\/>|>[\s\S]*?<\/\1\s*>)/gi;
 
   return templateCode.replace(iconTagPattern, (fullMatch, _tag, attrs) => {
+    // If attrs contains directives or dynamic bindings, preserve component for runtime
+    if (/(?:^|\s)(?:v-|@|:)[a-zA-Z0-9_-]+/i.test(attrs)) {
+      return fullMatch;
+    }
+
     // If name is dynamic (:name="..."), skip compile-time inlining
     if (/\s:name\s*=/i.test(attrs)) {
       return fullMatch;
@@ -57,12 +62,9 @@ export function transformStaticIcons(templateCode: string, config?: ResuxIconsCo
     const customClass = readAttr(attrs, "class") || "";
     const isSsrDisabled = hasBooleanAttr(attrs, "ssr", "false") || config?.ssr === false;
 
-    // If SSR is disabled, emit a lightweight placeholder
+    // Client-only icons must stay as components so they render after hydration
     if (isSsrDisabled) {
-      const placeholderClasses = ["resux-icon-placeholder inline-block shrink-0 align-middle", customClass]
-        .filter(Boolean)
-        .join(" ");
-      return `<span class="${placeholderClasses}" data-icon-name="${name}" data-icon-ssr="false" style="width: ${size}; height: ${size}; display: inline-block;" aria-hidden="true"></span>`;
+      return fullMatch;
     }
 
     // Try resolving statically at build time

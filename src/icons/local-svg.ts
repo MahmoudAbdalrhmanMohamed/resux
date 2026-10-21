@@ -12,7 +12,8 @@ function resolveSafeIconPath(name: string, dir: string, rootDir: string = proces
   const baseDirectory = path.resolve(rootDir, dir);
   const targetPath = path.resolve(baseDirectory, cleanName.endsWith(".svg") ? cleanName : `${cleanName}.svg`);
 
-  if (!targetPath.startsWith(baseDirectory)) {
+  const rel = path.relative(baseDirectory, targetPath);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
     return null;
   }
   return targetPath;

@@ -11,10 +11,15 @@ export function renderSvgIcon(
   const viewBox = data.viewBox || "0 0 24 24";
   const classes = ["inline-block shrink-0 align-middle", customClass].filter(Boolean).join(" ");
 
-  const hasPaths = Boolean(data.paths?.length || data.path);
   const childVNodes: VNode[] = [];
 
-  if (hasPaths) {
+  if (data.body) {
+    childVNodes.push(
+      h("g", {
+        innerHTML: data.body,
+      })
+    );
+  } else if (data.paths?.length || data.path) {
     const paths = data.paths?.length
       ? data.paths
       : [{ d: data.path || "", opacity: data.opacity }];
@@ -36,12 +41,6 @@ export function renderSvgIcon(
         })
       );
     }
-  } else if (data.body) {
-    childVNodes.push(
-      h("g", {
-        innerHTML: data.body,
-      })
-    );
   }
 
   return h(

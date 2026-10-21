@@ -6,6 +6,7 @@ import {
 import { defaultIconCache, type IconCacheManager } from "./cache.js";
 import { normalizeIconApiProvider, parseIconName } from "./normalize.js";
 import { parseSvgText } from "./parser.js";
+import { getStaticIcon } from "./registry.js";
 import type { IconData } from "./types.js";
 
 async function readBoundedIconSvg(response: Response): Promise<string | null> {
@@ -54,6 +55,10 @@ export function fetchIconifyIcon(
 
   const provider = normalizeIconApiProvider(apiProvider);
   const normalizedKey = `${parsed.prefix}:${parsed.name}`;
+  const staticFallback = getStaticIcon(normalizedKey) ?? getStaticIcon(rawName);
+  if (staticFallback) {
+    return Promise.resolve(staticFallback);
+  }
   const cacheKey = `${provider}::${normalizedKey}`;
 
   const cached = cache.get(cacheKey);

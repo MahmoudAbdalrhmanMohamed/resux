@@ -31,15 +31,17 @@ export function normalizeIconApiProvider(value: unknown): string {
 export function parseIconName(
   rawName: string,
   aliases?: Record<string, string>,
-  knownCollections: string[] = []
+  knownCollections: string[] = [],
+  depth: number = 0
 ): ParsedIconName | null {
+  if (depth > 10) return null;
   const input = String(rawName || "").trim().toLowerCase();
   if (!input || input.length > 256) return null;
 
   // Resolve alias if mapped
   const resolved = aliases?.[input] ?? input;
   if (resolved !== input) {
-    return parseIconName(resolved, aliases, knownCollections);
+    return parseIconName(resolved, aliases, knownCollections, depth + 1);
   }
 
   // Nuxt Icon i- prefix format

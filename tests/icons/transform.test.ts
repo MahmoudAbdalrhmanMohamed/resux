@@ -27,15 +27,32 @@ describe("build-time static icon transform", () => {
     expect(transformed).not.toContain('<Icon name="static:bolt"');
   });
 
-  it("replaces with placeholder when :ssr='false' or ssr='false'", () => {
+  it("preserves component tag when :ssr='false' or ssr='false' so client can hydrate", () => {
     registerStaticIcon("static:client-icon", { path: "M1 1" });
 
     const source = `<template><Icon name="static:client-icon" :ssr="false" size="20px" /></template>`;
     const transformed = transformStaticIcons(source);
 
-    expect(transformed).toContain('data-icon-ssr="false"');
-    expect(transformed).toContain('data-icon-name="static:client-icon"');
-    expect(transformed).not.toContain("<svg");
+    expect(transformed).toBe(source);
+  });
+
+  it("leaves components with dynamic attributes or directives intact", () => {
+    registerStaticIcon("static:client-icon", { path: "M1 1" });
+
+    const source = `<template><Icon name="static:client-icon" :size="dynamicSize" @click="handleClick" /></template>`;
+    const transformed = transformStaticIcons(source);
+
+    expect(transformed).toBe(source);
+  });
+
+  it("handles paired <Icon></Icon> tags without leaving orphan closing tags", () => {
+    registerStaticIcon("static:paired", { path: "M2 2", viewBox: "0 0 24 24" });
+
+    const source = `<template><Icon name="static:paired"></Icon></template>`;
+    const transformed = transformStaticIcons(source);
+
+    expect(transformed).toContain("<svg");
+    expect(transformed).not.toContain("</Icon>");
   });
 
   it("leaves dynamic :name bindings intact for runtime component resolution", () => {

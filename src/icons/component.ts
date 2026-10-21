@@ -16,8 +16,17 @@ import type { IconData, IconLoadingMode, IconMode, ResuxIconsConfig } from "./ty
 
 function getIconsRuntimeConfig(): ResuxIconsConfig | undefined {
   try {
-    if (typeof globalThis !== "undefined" && (globalThis as any).__RESUX_RUNTIME_CONFIG__?.public?.icons) {
-      return (globalThis as any).__RESUX_RUNTIME_CONFIG__.public.icons;
+    if (typeof globalThis !== "undefined") {
+      const g = globalThis as any;
+      if (g.__RESUX_APP__?.config?.public?.icons) {
+        return g.__RESUX_APP__.config.public.icons;
+      }
+      if (g.__RESUX__?.config?.icons) {
+        return g.__RESUX__.config.icons;
+      }
+      if (g.__RESUX_RUNTIME_CONFIG__?.public?.icons) {
+        return g.__RESUX_RUNTIME_CONFIG__.public.icons;
+      }
     }
   } catch {
     // Ignore when outside Resux runtime context
@@ -70,6 +79,8 @@ export const Icon = defineComponent({
         if (result && revision === requestRevision && requestedName === props.name) {
           dynamicData.value = result;
         }
+      }).catch(() => {
+        // Keep current or fallback icon when async resolution fails
       });
     };
 

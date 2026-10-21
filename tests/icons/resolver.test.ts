@@ -24,6 +24,16 @@ describe("unified icon resolver", () => {
     expect(resolved?.body).toContain("M5 5l5 5");
   });
 
+  it("resolves built-in bare aliases and raw registry keys like hamburger", () => {
+    registerStaticIcon("hamburger", { path: "M0 0h24v2H0z" });
+    const direct = resolveIconSync("hamburger");
+    expect(direct).not.toBeNull();
+    expect(direct?.path).toBe("M0 0h24v2H0z");
+
+    const bareMail = resolveIconSync("mail");
+    expect(bareMail).not.toBeNull();
+  });
+
   it("resolves via API asynchronously when not available offline", async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(`<svg viewBox="0 0 24 24"><path d="M12 12"/></svg>`, { status: 200 })

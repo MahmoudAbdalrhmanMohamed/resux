@@ -130,6 +130,14 @@ export const iconAliases: Record<string, string> = {
   search: "hugeicons:search-01",
 };
 
+for (const [alias, targetKey] of Object.entries(iconAliases)) {
+  const normAlias = alias.toLowerCase();
+  const normTarget = targetKey.toLowerCase();
+  if (iconRegistry[normTarget] && !iconRegistry[normAlias]) {
+    iconRegistry[normAlias] = iconRegistry[normTarget];
+  }
+}
+
 export function registerStaticIcon(name: string, data: IconData): void {
   const normalized = String(name || "").trim().toLowerCase();
   if (normalized) {

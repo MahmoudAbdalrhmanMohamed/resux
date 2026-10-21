@@ -355,6 +355,52 @@ describe("View Transitions Types & Detection", () => {
         executeViewTransition(() => {}),
       ).resolves.toBeUndefined();
     });
+
+    it("rethrows when domSwapFn rejects with falsy values like undefined or null", async () => {
+      const startViewTransitionMock = vi.fn().mockImplementation((cb) => {
+        const updateCallbackDone = Promise.resolve().then(() => cb());
+        return {
+          finished: updateCallbackDone,
+          updateCallbackDone,
+        };
+      });
+
+      (globalThis as Record<string, unknown>).document = {
+        startViewTransition: startViewTransitionMock,
+      };
+      (globalThis as Record<string, unknown>).window = {
+        matchMedia: vi.fn().mockReturnValue({ matches: false }),
+      };
+
+      await expect(
+        executeViewTransition(async () => {
+          throw undefined;
+        }),
+      ).rejects.toBeUndefined();
+    });
+
+    it("attaches rejection handler to updateCallbackDone avoiding unhandled rejection", async () => {
+      const fakeUpdateCallbackDone = {
+        catch: vi.fn(),
+      };
+
+      const startViewTransitionMock = vi.fn().mockImplementation(() => {
+        return {
+          finished: Promise.resolve(),
+          updateCallbackDone: fakeUpdateCallbackDone,
+        };
+      });
+
+      (globalThis as Record<string, unknown>).document = {
+        startViewTransition: startViewTransitionMock,
+      };
+      (globalThis as Record<string, unknown>).window = {
+        matchMedia: vi.fn().mockReturnValue({ matches: false }),
+      };
+
+      await executeViewTransition(() => {});
+      expect(fakeUpdateCallbackDone.catch).toHaveBeenCalled();
+    });
   });
 
   describe("useViewTransition", () => {
@@ -412,6 +458,34 @@ describe("View Transitions Types & Detection", () => {
 
         const optionsUndefined: NavigationOptions = {};
         expect(optionsUndefined.viewTransition).toBeUndefined();
+      });
+
+      it("preserves options.state original type and value (arrays, dates, primitives) without injecting __viewTransition", async () => {
+        const { navigateClient } = await import("../src/runtime/router.js");
+        const pushStateMock = vi.fn();
+        const dispatchEventMock = vi.fn();
+        (globalThis as any).window = {
+          location: { href: "https://resux.local/from" },
+          history: { pushState: pushStateMock, replaceState: vi.fn() },
+          dispatchEvent: dispatchEventMock,
+        };
+
+        const arrayState = [1, 2, 3];
+        navigateClient("/target", { state: arrayState, viewTransition: true });
+        expect(pushStateMock).toHaveBeenCalledWith(arrayState, "", "/target");
+        expect(Array.isArray(pushStateMock.mock.calls[0][0])).toBe(true);
+        expect(pushStateMock.mock.calls[0][0]).not.toHaveProperty("__viewTransition");
+
+        const dateState = new Date(1700000000000);
+        navigateClient("/target", { state: dateState, viewTransition: true });
+        expect(pushStateMock.mock.calls[1][0]).toBe(dateState);
+
+        const primitiveState = "hello-state";
+        navigateClient("/target", { state: primitiveState, viewTransition: true });
+        expect(pushStateMock.mock.calls[2][0]).toBe("hello-state");
+
+        const lastDispatchedEvent = dispatchEventMock.mock.calls[2][0];
+        expect(lastDispatchedEvent.state).toBe("hello-state");
       });
     });
 

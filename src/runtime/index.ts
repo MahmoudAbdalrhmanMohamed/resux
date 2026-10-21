@@ -14050,12 +14050,31 @@ async function executeViewTransition(domSwapFn) {
     await domSwapFn();
     return;
   }
+  let callbackRan = false;
+  let callbackRejected = false;
+  let callbackError = null;
   try {
     const transition = document.startViewTransition(async () => {
-      await domSwapFn();
+      callbackRan = true;
+      try {
+        await domSwapFn();
+      } catch (err) {
+        callbackRejected = true;
+        callbackError = err;
+        throw err;
+      }
     });
+    if (transition && typeof transition.updateCallbackDone?.catch === "function") {
+      transition.updateCallbackDone.catch(() => {});
+    }
     await transition.finished;
-  } catch {
+  } catch (err) {
+    if (callbackRejected) {
+      throw callbackError;
+    }
+    if (!callbackRan) {
+      await domSwapFn();
+    }
   }
 }
 

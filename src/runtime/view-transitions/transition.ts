@@ -9,11 +9,13 @@ export async function executeViewTransition(
     return;
   }
   let callbackRan = false;
+  let callbackRejected = false;
   let callbackError: unknown = null;
   try {
     const doc = document as unknown as {
       startViewTransition: (callback: () => Promise<void> | void) => {
         finished: Promise<unknown>;
+        updateCallbackDone?: Promise<unknown>;
       };
     };
     const transition = doc.startViewTransition(async () => {
@@ -21,13 +23,17 @@ export async function executeViewTransition(
       try {
         await domSwapFn();
       } catch (err) {
+        callbackRejected = true;
         callbackError = err;
         throw err;
       }
     });
+    if (transition && typeof transition.updateCallbackDone?.catch === "function") {
+      transition.updateCallbackDone.catch(() => {});
+    }
     await transition.finished;
   } catch (err) {
-    if (callbackError) {
+    if (callbackRejected) {
       throw callbackError;
     }
     if (!callbackRan) {

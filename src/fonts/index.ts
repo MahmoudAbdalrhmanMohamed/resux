@@ -147,7 +147,7 @@ const NAMED_WEIGHTS: Record<string, string> = {
 
 function normalizeWeight(value: number | string): string | null {
   const normalized = String(value).trim().toLowerCase();
-  if (NAMED_WEIGHTS[normalized]) return NAMED_WEIGHTS[normalized];
+  if (Object.hasOwn(NAMED_WEIGHTS, normalized)) return NAMED_WEIGHTS[normalized];
   const match = /^(\d{1,4})(?:\.\.(\d{1,4}))?$/.exec(normalized);
   if (!match) {
     return null;
@@ -452,7 +452,7 @@ function sanitizeAxisTag(value: unknown): string | null {
 }
 
 function formatVariationSettings(
-  axes?: Record<string, number | [number, number]>,
+  axes?: Record<string, unknown>,
 ): string | null {
   if (!axes || typeof axes !== "object") return null;
   const settings: string[] = [];
@@ -470,7 +470,7 @@ function formatVariationSettings(
         settings.push(`"${tag}" ${Number(value[0])} ${Number(value[1])}`);
       }
     } else if (
-      (typeof value === "number" || typeof value === "string") &&
+      (typeof value === "number" || (typeof value === "string" && value.trim() !== "")) &&
       Number.isFinite(Number(value))
     ) {
       settings.push(`"${tag}" ${Number(value)}`);
@@ -497,7 +497,12 @@ function buildCustomFontStyles(
     const familyDisplay = normalizeDisplay(family.display);
     const variable = normalizeCssVariable(family.variable);
     if (variable) {
-      variables.push(`${variable}: "${escapeCssString(familyName)}";`);
+      const fallbackNames = (family.fallbacks || [])
+        .map((fallback) => sanitizeFontFamilyName(fallback))
+        .filter(Boolean)
+        .map((fallback) => `"${escapeCssString(`${familyName} fallback: ${fallback}`)}"`);
+      const stack = [`"${escapeCssString(familyName)}"`, ...fallbackNames];
+      variables.push(`${variable}: ${stack.join(", ")};`);
     }
 
     for (const face of normalizeFaces(family)) {
@@ -680,7 +685,15 @@ export default defineResuxModule<ResuxFontsModuleOptions>({
         fontlessOptions.defaults = options.defaults;
       }
       if (options.providers !== undefined) {
-        fontlessOptions.providers = options.providers;
+        const normalizedProviders: Record<string, unknown> = {};
+        for (const [key, val] of Object.entries(options.providers)) {
+          if (typeof val !== "boolean" && val) {
+            normalizedProviders[key] = val;
+          }
+        }
+        if (Object.keys(normalizedProviders).length > 0) {
+          fontlessOptions.providers = normalizedProviders;
+        }
       }
       if (mappedFamilies.length > 0) {
         fontlessOptions.families = mappedFamilies;

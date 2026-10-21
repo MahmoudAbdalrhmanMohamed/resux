@@ -547,7 +547,9 @@ describe("fonts module", () => {
               "opsz": 12,
               'bad"tag': 50,
               "wght": NaN as any,
-              "": 100 as any
+              "": 100 as any,
+              "zero": "" as any,
+              "spc": "   " as any,
             }
           }
         ]
@@ -558,6 +560,46 @@ describe("fonts module", () => {
     expect(style).toContain('font-variation-settings: "opsz" 12');
     expect(style).not.toContain("bad");
     expect(style).not.toContain("wght");
+    expect(style).not.toContain("zero");
+    expect(style).not.toContain("spc");
+  });
+
+  it("does not treat Object.prototype properties as valid named weights", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        families: [
+          {
+            name: "Prototype Test",
+            weight: "constructor" as any,
+            faces: [{ src: "/fonts/test.woff2" }]
+          }
+        ]
+      },
+      resux as any
+    );
+    const css = headList[0].style?.[0]?.css ?? "";
+    expect(css).not.toContain("function Object()");
+    expect(css).toContain("font-weight: 400");
+  });
+
+  it("includes fallback aliases in generated CSS variable when fallbacks are specified", async () => {
+    const { headList, resux } = createMockResux();
+    await fontsModule.setup(
+      {
+        families: [
+          {
+            name: "Inter",
+            variable: "--font-inter",
+            fallbacks: ["Arial", "sans-serif"],
+            faces: [{ src: "/fonts/inter.woff2" }]
+          }
+        ]
+      },
+      resux as any
+    );
+    const css = headList[0].style?.[0]?.children ?? headList[0].style?.[0]?.css ?? "";
+    expect(css).toContain(':root { --font-inter: "Inter", "Inter fallback: Arial", "Inter fallback: sans-serif"; }');
   });
 
   it("generates fallback font metric overrides to eliminate layout shift", async () => {

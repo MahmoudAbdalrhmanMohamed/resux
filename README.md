@@ -94,6 +94,38 @@ The documentation site is the authoritative deep reference for:
 
 Start with the **Framework Tour**, then use the API/reference sections for exact contracts.
 
+## Routing, Links, and View Transitions
+
+Resux provides file-based routing under `pages/` with client route payload navigation, prefetching, and native browser **View Transitions API** support:
+
+```vue
+<template>
+  <!-- Native browser view transition with ResuxLink -->
+  <ResuxLink to="/dashboard" :view-transition="true">
+    Dashboard
+  </ResuxLink>
+</template>
+```
+
+```ts
+// resux.config.ts
+export default defineResuxConfig({
+  router: {
+    // Enable browser View Transitions API globally
+    viewTransition: true
+  }
+})
+```
+
+You can also control transitions programmatically with `navigateTo(to, { viewTransition: true })`, declare per-page metadata with `definePageMeta({ viewTransition: true })`, inspect support via `useViewTransition()`, or pair with speculative preloading (`<script type="speculationrules">`) for zero-latency, smoothly animated page swaps.
+
+## Built-in Teleport and Transitions
+
+Resux includes built-in resumable implementations of `<Teleport>` and `<Transition>` that work without full Vue runtime hydration:
+
+- `<Teleport to="#modal-root" :disabled="false">` renders server HTML with boundary markers and resumes client DOM placement and reactive updates seamlessly.
+- `<Transition name="fade">` applies standard CSS transition lifecycle classes (`fade-enter-active`, `fade-enter-from`, `fade-leave-to`, etc.) during client DOM and state swaps while honoring `prefers-reduced-motion`.
+
 ## First-party images and video
 
 `ResuxImg`, `ResuxPicture`, and `ResuxVideo` are handled by the Resux renderer. They are **not** `resuxjs/ui` Vue components.
@@ -141,36 +173,41 @@ Component catalog: https://mahmoudabdalrhmanmohamed.github.io/resux-docs/compone
 
 ## Icons (`resuxjs/icons`)
 
-The icons package provides a **Vue SVG icon component**, a mutable local SVG-path registry, and optional client-side Iconify-compatible remote fetching.
+The icons package provides a modular icon system with **Nuxt Icon parity**, compile-time SVG inlining, offline icon collection packages, and pure CSS mode:
 
 ```vue
-<script setup lang="ts">
-import { Icon } from 'resuxjs/icons'
-</script>
-
 <template>
-  <Icon name="check" />
-  <Icon name="ph:check-circle" lazy />
+  <!-- Auto-imported or explicit Icon component -->
+  <Icon name="lucide:check" size="1.25rem" />
+  <Icon name="ph:check-circle" mode="css" />
+  <Icon name="custom:logo" />
 </template>
 ```
 
-Current module defaults include `collections: []`, `mode: 'svg'`, component name `Icon`, and `lazy: false`. Local registry entries can render without a remote request; unknown remote icons resolve on the client. `collections` does not automatically mean entire icon collections are pre-bundled.
+Key features:
+- **Compile-time inlining:** Known static icons are transformed directly into inlined `<svg>` markup during Vite compilation with 0 B runtime JavaScript.
+- **Offline collections:** Bundles `@iconify-json/*` icon packages for offline/air-gapped rendering without external network calls.
+- **CSS Mode:** Renders icons via CSS `mask` / `background` for ultra-lightweight, color-inheriting icons.
+- **Custom Local SVGs:** Load custom SVG icons directly from your project's `./assets/icons` directory via `custom:*`.
+- **Nuxt Icon Parity:** Drop-in syntax compatibility with standard collection prefixes and shortcuts.
 
 Deep reference: https://mahmoudabdalrhmanmohamed.github.io/resux-docs/icons/
 
 ## Fonts (`resuxjs/fonts`)
 
-The first-party fonts module is currently a **Google Fonts stylesheet loader**. It supports configured families/weights, `font-display`, preconnect, and eager/preload/lazy loading strategies.
+The first-party fonts module provides an integrated font engine with zero-config automatic scanning, Fontaine-based zero-CLS fallback metrics, local self-hosting, and semantic weight resolution:
 
 ```ts
 export default defineResuxConfig({
   modules: [
     ['resuxjs/fonts', {
-      google: [
+      autoScan: true, // Automatically scan CSS and self-host fonts with fontless
+      families: [
         {
           name: 'Inter',
-          weights: ['100..900'],
-          display: 'swap'
+          weights: ['regular', 'bold'], // Semantic named weights or ranges
+          fallbacks: ['Arial'], // Fontaine zero-CLS font metric overrides
+          variable: '--font-inter',
         }
       ]
     }]
@@ -178,7 +215,12 @@ export default defineResuxConfig({
 })
 ```
 
-It does not currently implement local font discovery, self-host/download management, provider plugins, generated `@font-face`, fallback metric generation, or CSS-variable generation.
+Key capabilities:
+- **Zero-CLS Metric Overrides:** Integrates `fontaine` to calculate and emit `@font-face` fallback rules with `size-adjust`, `ascent-override`, and `descent-override` matching your primary font to eliminate Cumulative Layout Shift (CLS).
+- **Zero-Config Scanning (`autoScan`):** Automatically detects `font-family` declarations across CSS and templates via `fontless`.
+- **Semantic Named Weights:** Normalizes weights like `thin`, `light`, `regular`, `semibold`, `bold`, `black` to numeric values.
+- **Variable Font Axes:** Support for variable font axis configurations (`axes: { wght: 700, wdth: 100 }`).
+- **Provider Support:** Seamlessly supports Google Fonts, local self-hosted files, and custom font providers.
 
 Deep reference: https://mahmoudabdalrhmanmohamed.github.io/resux-docs/fonts/
 

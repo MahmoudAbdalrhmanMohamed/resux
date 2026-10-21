@@ -1,6 +1,7 @@
 export interface ResuxClientNavigationOptions {
   replace?: boolean;
   state?: unknown;
+  viewTransition?: boolean;
 }
 
 function getClientBase(base?: string): string {
@@ -53,7 +54,14 @@ export function navigateClient(
     return;
   }
   const path = normalizeClientPath(targetUrl.href, baseHref);
+  const callerState: unknown = options.state ?? null;
   const method = options.replace ? "replaceState" : "pushState";
-  window.history[method](options.state ?? null, "", path);
-  window.dispatchEvent(new PopStateEvent("popstate", { state: options.state ?? null }));
+  window.history[method](callerState, "", path);
+  const popEvent = typeof PopStateEvent !== "undefined"
+    ? new PopStateEvent("popstate", { state: callerState })
+    : Object.assign(new Event("popstate"), { state: callerState });
+  if (typeof options.viewTransition === "boolean") {
+    (popEvent as any).viewTransition = options.viewTransition;
+  }
+  window.dispatchEvent(popEvent);
 }

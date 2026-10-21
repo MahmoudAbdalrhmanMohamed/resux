@@ -85,7 +85,7 @@ for (const template of selectedTemplates) {
 
   try {
     await rewriteFrameworkDependency(projectRoot, tarballPath);
-    runOrFail(`[template:${template}] npm install`, npmExecutable, ["install", "--no-audit", "--no-fund"], projectRoot);
+    runOrFail(`[template:${template}] npm install`, npmExecutable, ["install", "--no-audit", "--no-fund", "--package-lock=false", "--legacy-peer-deps"], projectRoot);
     await runTypecheckIfAvailable(projectRoot, template);
     runOrFail(`[template:${template}] npm run build`, npmExecutable, ["run", "build"], projectRoot);
     const port = await getAvailablePort();
@@ -117,7 +117,7 @@ function runCommand(command, args, options) {
     env: options.env ?? templateTestEnvironment,
     stdio: options.stdio ?? "inherit",
     encoding: "utf8",
-    shell: process.platform === "win32",
+    shell: process.platform === "win32" && !command.toLowerCase().endsWith(".exe"),
   });
 }
 

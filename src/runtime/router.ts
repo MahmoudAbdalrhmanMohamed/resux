@@ -57,11 +57,11 @@ export function navigateClient(
   const callerState: unknown = options.state ?? null;
   const method = options.replace ? "replaceState" : "pushState";
   window.history[method](callerState, "", path);
-  if (typeof PopStateEvent !== "undefined") {
-    window.dispatchEvent(new PopStateEvent("popstate", { state: callerState }));
-  } else if (typeof Event !== "undefined") {
-    const event = new Event("popstate") as any;
-    event.state = callerState;
-    window.dispatchEvent(event);
+  const popEvent = typeof PopStateEvent !== "undefined"
+    ? new PopStateEvent("popstate", { state: callerState })
+    : Object.assign(new Event("popstate"), { state: callerState });
+  if (typeof options.viewTransition === "boolean") {
+    (popEvent as any).viewTransition = options.viewTransition;
   }
+  window.dispatchEvent(popEvent);
 }

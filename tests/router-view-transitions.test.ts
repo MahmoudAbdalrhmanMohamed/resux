@@ -17,6 +17,24 @@ import type {
 const originalDocument = (globalThis as Record<string, unknown>).document;
 const originalWindow = (globalThis as Record<string, unknown>).window;
 
+function mockBrowserWithViewTransition(startViewTransitionMock: any, motionMatches = false) {
+  (globalThis as Record<string, unknown>).document = {
+    startViewTransition: startViewTransitionMock,
+  };
+  (globalThis as Record<string, unknown>).window = {
+    matchMedia: vi.fn().mockReturnValue({ matches: motionMatches }),
+  };
+}
+
+function parseViewTransitionAttribute(anchor: { getAttribute: (name: string) => string | null }) {
+  const vtAttr = anchor.getAttribute("data-view-transition") ?? anchor.getAttribute("view-transition");
+  const viewTransition = vtAttr !== null ? vtAttr !== "false" : undefined;
+  return {
+    viewTransition,
+    navOptions: { ...(viewTransition !== undefined ? { viewTransition } : {}) },
+  };
+}
+
 afterEach(() => {
   if (originalDocument === undefined) {
     delete (globalThis as Record<string, unknown>).document;
@@ -296,12 +314,7 @@ describe("View Transitions Types & Detection", () => {
         };
       });
 
-      (globalThis as Record<string, unknown>).document = {
-        startViewTransition: startViewTransitionMock,
-      };
-      (globalThis as Record<string, unknown>).window = {
-        matchMedia: vi.fn().mockReturnValue({ matches: false }),
-      };
+      mockBrowserWithViewTransition(startViewTransitionMock);
 
       const executionPromise = executeViewTransition(async () => {
         domSwapExecuted = true;
@@ -323,12 +336,7 @@ describe("View Transitions Types & Detection", () => {
         finished: Promise.reject(new Error("Transition aborted")),
       });
 
-      (globalThis as Record<string, unknown>).document = {
-        startViewTransition: startViewTransitionMock,
-      };
-      (globalThis as Record<string, unknown>).window = {
-        matchMedia: vi.fn().mockReturnValue({ matches: false }),
-      };
+      mockBrowserWithViewTransition(startViewTransitionMock);
 
       let executed = false;
       await expect(
@@ -344,12 +352,7 @@ describe("View Transitions Types & Detection", () => {
         throw new Error("Synchronous failure in startViewTransition");
       });
 
-      (globalThis as Record<string, unknown>).document = {
-        startViewTransition: startViewTransitionMock,
-      };
-      (globalThis as Record<string, unknown>).window = {
-        matchMedia: vi.fn().mockReturnValue({ matches: false }),
-      };
+      mockBrowserWithViewTransition(startViewTransitionMock);
 
       await expect(
         executeViewTransition(() => {}),
@@ -365,12 +368,7 @@ describe("View Transitions Types & Detection", () => {
         };
       });
 
-      (globalThis as Record<string, unknown>).document = {
-        startViewTransition: startViewTransitionMock,
-      };
-      (globalThis as Record<string, unknown>).window = {
-        matchMedia: vi.fn().mockReturnValue({ matches: false }),
-      };
+      mockBrowserWithViewTransition(startViewTransitionMock);
 
       await expect(
         executeViewTransition(async () => {
@@ -391,12 +389,7 @@ describe("View Transitions Types & Detection", () => {
         };
       });
 
-      (globalThis as Record<string, unknown>).document = {
-        startViewTransition: startViewTransitionMock,
-      };
-      (globalThis as Record<string, unknown>).window = {
-        matchMedia: vi.fn().mockReturnValue({ matches: false }),
-      };
+      mockBrowserWithViewTransition(startViewTransitionMock);
 
       await executeViewTransition(() => {});
       expect(fakeUpdateCallbackDone.catch).toHaveBeenCalled();
@@ -522,10 +515,7 @@ describe("View Transitions Types & Detection", () => {
           }),
         };
 
-        const vtAttr = anchor.getAttribute("data-view-transition") ?? anchor.getAttribute("view-transition");
-        const viewTransition = vtAttr !== null ? vtAttr !== "false" : undefined;
-        const navOptions = { ...(viewTransition !== undefined ? { viewTransition } : {}) };
-
+        const { viewTransition, navOptions } = parseViewTransitionAttribute(anchor);
         expect(viewTransition).toBe(true);
         expect(navOptions).toEqual({ viewTransition: true });
       });
@@ -538,10 +528,7 @@ describe("View Transitions Types & Detection", () => {
           }),
         };
 
-        const vtAttr = anchor.getAttribute("data-view-transition") ?? anchor.getAttribute("view-transition");
-        const viewTransition = vtAttr !== null ? vtAttr !== "false" : undefined;
-        const navOptions = { ...(viewTransition !== undefined ? { viewTransition } : {}) };
-
+        const { viewTransition, navOptions } = parseViewTransitionAttribute(anchor);
         expect(viewTransition).toBe(false);
         expect(navOptions).toEqual({ viewTransition: false });
       });
@@ -554,10 +541,7 @@ describe("View Transitions Types & Detection", () => {
           }),
         };
 
-        const vtAttr = anchor.getAttribute("data-view-transition") ?? anchor.getAttribute("view-transition");
-        const viewTransition = vtAttr !== null ? vtAttr !== "false" : undefined;
-        const navOptions = { ...(viewTransition !== undefined ? { viewTransition } : {}) };
-
+        const { viewTransition, navOptions } = parseViewTransitionAttribute(anchor);
         expect(viewTransition).toBe(true);
         expect(navOptions).toEqual({ viewTransition: true });
       });
@@ -567,10 +551,7 @@ describe("View Transitions Types & Detection", () => {
           getAttribute: vi.fn(() => null),
         };
 
-        const vtAttr = anchor.getAttribute("data-view-transition") ?? anchor.getAttribute("view-transition");
-        const viewTransition = vtAttr !== null ? vtAttr !== "false" : undefined;
-        const navOptions = { ...(viewTransition !== undefined ? { viewTransition } : {}) };
-
+        const { viewTransition, navOptions } = parseViewTransitionAttribute(anchor);
         expect(viewTransition).toBeUndefined();
         expect(navOptions).toEqual({});
       });
@@ -635,12 +616,7 @@ describe("View Transitions Types & Detection", () => {
           return { finished: Promise.resolve() };
         });
 
-        (globalThis as Record<string, unknown>).document = {
-          startViewTransition: startViewTransitionMock,
-        };
-        (globalThis as Record<string, unknown>).window = {
-          matchMedia: vi.fn().mockReturnValue({ matches: false }),
-        };
+        mockBrowserWithViewTransition(startViewTransitionMock);
 
         const options = { viewTransition: true };
         const useTransition = shouldPerformViewTransition(options, undefined, undefined, {});
@@ -664,12 +640,7 @@ describe("View Transitions Types & Detection", () => {
         });
 
         const startViewTransitionMock = vi.fn();
-        (globalThis as Record<string, unknown>).document = {
-          startViewTransition: startViewTransitionMock,
-        };
-        (globalThis as Record<string, unknown>).window = {
-          matchMedia: vi.fn().mockReturnValue({ matches: false }),
-        };
+        mockBrowserWithViewTransition(startViewTransitionMock);
 
         const options = { viewTransition: false };
         const useTransition = shouldPerformViewTransition(options, undefined, undefined, { viewTransition: true });

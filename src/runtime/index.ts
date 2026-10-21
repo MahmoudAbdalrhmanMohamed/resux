@@ -4297,7 +4297,9 @@ function collectNativeElementAttributes(
     if (attr.bindingId) {
       attrs.push(`data-rx-attr-${attr.bindingId}="${context.scopeId}:${attr.bindingId}"`);
     }
-    if (value === false || value === null || value === undefined) continue;
+    const isViewTransitionAttr = attrName === "data-view-transition" || attrName === "view-transition";
+    if (!isViewTransitionAttr && (value === false || value === null || value === undefined)) continue;
+    if (isViewTransitionAttr && (value === null || value === undefined)) continue;
 
     attrs.push(`${attrName}="${escapeAttribute(stringifyAttributeValue(attrName, value))}"`);
   }
@@ -8201,6 +8203,9 @@ function nativeAttributeName(node: ElementTemplateNode, name: string): string {
   if (node.tag === "ResuxLink" && name === "to") {
     return "href";
   }
+  if (node.tag === "ResuxLink" && (name === "viewTransition" || name === "view-transition")) {
+    return "data-view-transition";
+  }
   if (node.tag === "ClientEnhance" || node.tag === "ResuxClientEnhance") {
     if (name === "options") return "data-resux-options";
     if (name === "name") return "data-resux-enhancement";
@@ -11441,11 +11446,13 @@ function installResux() {
         activateDeferredLazyMedia();
       }, { once: true });
     }
-    window.addEventListener("popstate", () => {
+    window.addEventListener("popstate", (event) => {
+      const eventViewTransition = event?.viewTransition;
       void navigateTo(location.pathname + location.search + location.hash, {
         replace: true,
         force: true,
         preserveScroll: true,
+        ...(typeof eventViewTransition === "boolean" ? { viewTransition: eventViewTransition } : {}),
       });
     });
     if (!history.state || !history.state.__resux) {
@@ -14341,15 +14348,18 @@ async function navigateTo(target, options = {}) {
     setRouteTransition("swapping", { path: routePath });
     const preserveLayout = !didClientLocaleChange(previousPayload, nextPayload);
     let preserved;
-    const routerConfig = globalThis.__RESUX__?.config?.router || {};
+    const routerConfig = globalThis.__RESUX__?.config?.public?.router ?? globalThis.__RESUX__?.config?.router ?? {};
     const useTransition = shouldPerformViewTransition(
       options,
-      nextPayload?.meta,
-      previousPayload?.meta,
+      nextPayload?.pageMeta ?? nextPayload?.meta,
+      previousPayload?.pageMeta ?? previousPayload?.meta,
       routerConfig,
     );
 
     const performSwap = () => {
+      if (transitionToken !== routeTransitionToken) {
+        return;
+      }
       preserved = replaceRouteHtml(root, result.html, preserveLayout);
       globalThis.__RESUX__ = mergeClientGlobalState(
         mergePersistentLayoutPayload(previousPayload, nextPayload, preserved.scopeIds)
@@ -14360,6 +14370,9 @@ async function navigateTo(target, options = {}) {
       await executeViewTransition(performSwap);
     } else {
       performSwap();
+    }
+    if (transitionToken !== routeTransitionToken || !preserved) {
+      return;
     }
     getClientResuxApp(globalThis.__RESUX__.route);
     applyHead(result.head);
@@ -18857,6 +18870,9 @@ function nativeAttributeName(node, name) {
   if (node.tag === "ResuxLink" && name === "to") {
     return "href";
   }
+  if (node.tag === "ResuxLink" && (name === "viewTransition" || name === "view-transition")) {
+    return "data-view-transition";
+  }
   if (node.tag === "ClientEnhance" || node.tag === "ResuxClientEnhance") {
     if (name === "options") return "data-resux-options";
     if (name === "name") return "data-resux-enhancement";
@@ -19142,7 +19158,8 @@ function applyPatches(scopeId, patches, options = {}) {
         }
       }
       elements.forEach((element) => {
-        const removeAttribute = patch.value === "" || patch.value === "false" || patch.value == null;
+        const isViewTransitionAttr = patch.attr === "data-view-transition" || patch.attr === "view-transition";
+        const removeAttribute = patch.value === "" || (!isViewTransitionAttr && patch.value === "false") || patch.value == null;
         if (patch.attr === "id") {
           const previousId = element.getAttribute("id");
           const nextId = removeAttribute ? null : String(patch.value);

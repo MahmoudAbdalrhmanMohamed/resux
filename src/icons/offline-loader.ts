@@ -30,7 +30,14 @@ function setBoundedIconCache(key: string, value: IconData | null) {
 }
 
 export function registerOfflineCollection(prefix: string, data: IconifyJsonCollection): void {
-  offlineCollectionCache.set(prefix.toLowerCase(), data);
+  const normPrefix = prefix.toLowerCase();
+  offlineCollectionCache.set(normPrefix, data);
+  const prefixMatch = `${normPrefix}:`;
+  for (const key of offlineIconCache.keys()) {
+    if (key.startsWith(prefixMatch)) {
+      offlineIconCache.delete(key);
+    }
+  }
 }
 
 export function clearOfflineCollectionCache(): void {
@@ -102,9 +109,11 @@ export function loadOfflineIcon(prefix: string, name: string): IconData | null {
     return null;
   }
 
+  const left = iconEntry.left ?? 0;
+  const top = iconEntry.top ?? 0;
   const width = iconEntry.width ?? collection.width ?? 24;
   const height = iconEntry.height ?? collection.height ?? 24;
-  const viewBox = `0 0 ${width} ${height}`;
+  const viewBox = `${left} ${top} ${width} ${height}`;
 
   const wrappedSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">${iconEntry.body}</svg>`;
   const parsed = parseSvgText(wrappedSvg);

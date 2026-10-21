@@ -8,15 +8,31 @@ import type { IconData } from "./types.js";
 const localSvgCache = new Map<string, IconData>();
 
 function resolveSafeIconPath(name: string, dir: string, rootDir: string = process.cwd()): string | null {
-  const cleanName = path.normalize(name).replace(/^(\.\.(\/|\\|$))+/, "");
+  if (!name || typeof name !== "string") return null;
+  // Reject absolute paths, Windows drive letters, null bytes, or URL schemes
+  if (path.isAbsolute(name) || /^[a-zA-Z]:|[\\/]{2}/.test(name) || name.includes("\0")) {
+    return null;
+  }
+  const cleanName = path.normalize(name).replace(/^[\\/]+/, "");
+  if (cleanName.startsWith("..") || cleanName.split(/[\\/]/).includes("..")) {
+    return null;
+  }
   const baseDirectory = path.resolve(rootDir, dir);
   const targetPath = path.resolve(baseDirectory, cleanName.endsWith(".svg") ? cleanName : `${cleanName}.svg`);
 
   const rel = path.relative(baseDirectory, targetPath);
-  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+  if (rel.startsWith("..") || path.isAbsolute(rel) || rel.split(/[\\/]/).includes("..")) {
     return null;
   }
   return targetPath;
+}
+
+function cacheAndReturnParsedSvg(cacheKey: string, content: string): IconData | null {
+  const data = parseSvgText(content);
+  if (data) {
+    localSvgCache.set(cacheKey, data);
+  }
+  return data;
 }
 
 export function loadLocalSvgIconSync(
@@ -33,11 +49,7 @@ export function loadLocalSvgIconSync(
 
   try {
     const content = readFileSync(targetPath, "utf-8");
-    const data = parseSvgText(content);
-    if (data) {
-      localSvgCache.set(cacheKey, data);
-    }
-    return data;
+    return cacheAndReturnParsedSvg(cacheKey, content);
   } catch {
     return null;
   }
@@ -57,11 +69,7 @@ export async function loadLocalSvgIcon(
 
   try {
     const content = await readFile(targetPath, "utf-8");
-    const data = parseSvgText(content);
-    if (data) {
-      localSvgCache.set(cacheKey, data);
-    }
-    return data;
+    return cacheAndReturnParsedSvg(cacheKey, content);
   } catch {
     return null;
   }

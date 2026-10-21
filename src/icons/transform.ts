@@ -79,10 +79,11 @@ export function transformStaticIcons(templateCode: string, config?: ResuxIconsCo
       const styleString = Object.entries(style)
         .map(([k, v]) => `${k.replace(/([A-Z])/g, "-$1").toLowerCase()}: ${v}`)
         .join("; ");
+      const escapedStyle = styleString.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
       const cssClasses = ["resux-icon resux-icon--css inline-block shrink-0 align-middle", customClass]
         .filter(Boolean)
         .join(" ");
-      return `<span class="${cssClasses}" style="${styleString};" aria-hidden="true"></span>`;
+      return `<span class="${cssClasses}" style="${escapedStyle};" aria-hidden="true"></span>`;
     }
 
     return iconDataToSvgMarkup(data, size, customClass);
@@ -94,7 +95,7 @@ export function createIconsVitePlugin(config?: ResuxIconsConfig) {
     name: "resux:icons-static-transform",
     enforce: "pre" as const,
     transform(code: string, id: string) {
-      if (id.endsWith(".vue") || id.includes("vue&type=template")) {
+      if (id.endsWith(".vue") || id.includes("vue&type=template") || id.endsWith(".mjs") || id.endsWith(".js") || id.endsWith(".ts")) {
         return {
           code: transformStaticIcons(code, config),
           map: null,

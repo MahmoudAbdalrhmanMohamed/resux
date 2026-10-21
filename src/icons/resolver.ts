@@ -9,31 +9,30 @@ export function resolveIconSync(
   rawName: string,
   config?: ResuxIconsConfig
 ): IconData | null {
-  const direct = getStaticIcon(rawName);
-  if (direct) return direct;
-
   const aliases = { ...iconAliases, ...config?.aliases };
   const parsed = parseIconName(rawName, aliases, config?.collections);
-  if (!parsed) return null;
 
-  const { prefix, name } = parsed;
-  const normalizedKey = `${prefix}:${name}`;
+  if (parsed) {
+    const { prefix, name } = parsed;
+    const normalizedKey = `${prefix}:${name}`;
 
-  // 1. Local custom SVG
-  if (prefix === "custom" || prefix === "local") {
-    const local = loadLocalSvgIconSync(name, config?.customCollectionsDir);
-    if (local) return local;
+    // 1. Local custom SVG
+    if (prefix === "custom" || prefix === "local") {
+      const local = loadLocalSvgIconSync(name, config?.customCollectionsDir);
+      if (local) return local;
+    }
+
+    // 2. Offline @iconify-json bundle (installed collection takes precedence over static fallback)
+    const offline = loadOfflineIcon(prefix, name);
+    if (offline) return offline;
+
+    // 3. Static fallback registry
+    const staticData = getStaticIcon(normalizedKey) ?? getStaticIcon(rawName);
+    if (staticData) return staticData;
   }
 
-  // 2. Static fallback registry
-  const staticData = getStaticIcon(normalizedKey) ?? getStaticIcon(rawName);
-  if (staticData) return staticData;
-
-  // 3. Offline @iconify-json bundle
-  const offline = loadOfflineIcon(prefix, name);
-  if (offline) return offline;
-
-  return null;
+  // 4. Raw static registry check (for direct names like "hamburger")
+  return getStaticIcon(rawName) ?? null;
 }
 
 export async function resolveIconAsync(
@@ -43,7 +42,8 @@ export async function resolveIconAsync(
   const syncResult = resolveIconSync(rawName, config);
   if (syncResult) return syncResult;
 
-  const parsed = parseIconName(rawName, config?.aliases, config?.collections);
+  const aliases = { ...iconAliases, ...config?.aliases };
+  const parsed = parseIconName(rawName, aliases, config?.collections);
   if (!parsed) return null;
 
   const { prefix, name } = parsed;

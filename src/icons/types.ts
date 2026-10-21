@@ -1,8 +1,7 @@
 export type IconMode = "svg" | "css";
 export type IconLoadingMode = "eager" | "lazy";
 
-export interface IconPathData {
-  d: string;
+export interface IconPresentationAttributes {
   opacity?: string;
   fill?: string;
   stroke?: string;
@@ -13,17 +12,13 @@ export interface IconPathData {
   clipRule?: string;
 }
 
-export interface IconData {
+export interface IconPathData extends IconPresentationAttributes {
+  d: string;
+}
+
+export interface IconData extends IconPresentationAttributes {
   path?: string;
   paths?: IconPathData[];
-  opacity?: string;
-  fill?: string;
-  stroke?: string;
-  strokeWidth?: string;
-  strokeLinecap?: string;
-  strokeLinejoin?: string;
-  fillRule?: string;
-  clipRule?: string;
   viewBox?: string;
   width?: number | string;
   height?: number | string;

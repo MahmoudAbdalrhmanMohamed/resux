@@ -75,4 +75,13 @@ describe("icons normalization", () => {
     expect(parseIconName("   ")).toBeNull();
     expect(parseIconName("no-colon-or-prefix")).toBeNull();
   });
+
+  it("rejects cyclic aliases without overflowing stack", () => {
+    const cyclicAliases = {
+      first: "second",
+      second: "first",
+    };
+    expect(parseIconName("first", cyclicAliases)).toBeNull();
+    expect(parseIconName("second", cyclicAliases)).toBeNull();
+  });
 });

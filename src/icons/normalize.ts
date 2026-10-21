@@ -32,16 +32,18 @@ export function parseIconName(
   rawName: string,
   aliases?: Record<string, string>,
   knownCollections: string[] = [],
-  depth: number = 0
+  depth: number = 0,
+  visited: Set<string> = new Set()
 ): ParsedIconName | null {
   if (depth > 10) return null;
   const input = String(rawName || "").trim().toLowerCase();
-  if (!input || input.length > 256) return null;
+  if (!input || input.length > 256 || visited.has(input)) return null;
 
   // Resolve alias if mapped
   const resolved = aliases?.[input] ?? input;
   if (resolved !== input) {
-    return parseIconName(resolved, aliases, knownCollections, depth + 1);
+    const nextVisited = new Set(visited).add(input);
+    return parseIconName(resolved, aliases, knownCollections, depth + 1, nextVisited);
   }
 
   // Nuxt Icon i- prefix format

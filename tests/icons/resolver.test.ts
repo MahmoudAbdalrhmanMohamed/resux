@@ -43,4 +43,21 @@ describe("unified icon resolver", () => {
     expect(resolved).not.toBeNull();
     expect(resolved?.viewBox).toBe("0 0 24 24");
   });
+
+  it("resolves offline collections before static fallbacks", () => {
+    registerOfflineCollection("material-symbols", {
+      prefix: "material-symbols",
+      icons: {
+        mail: {
+          body: '<path d="M99 99"/>',
+          width: 24,
+          height: 24,
+        },
+      },
+    });
+
+    const result = resolveIconSync("material-symbols:mail");
+    expect(result).not.toBeNull();
+    expect(result?.body).toBe('<path d="M99 99"/>');
+  });
 });

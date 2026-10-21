@@ -61,4 +61,11 @@ describe("build-time static icon transform", () => {
 
     expect(transformed).toBe(source);
   });
+
+  it("escapes quotes in CSS mode style attribute", () => {
+    const input = '<Icon name="material-symbols:call" mode="css" />';
+    const output = transformStaticIcons(input);
+    expect(output).toContain('&quot;');
+    expect(output).not.toContain('style="mask: url("data:');
+  });
 });

@@ -18,11 +18,22 @@ function getIconsRuntimeConfig(): ResuxIconsConfig | undefined {
   try {
     if (typeof globalThis !== "undefined") {
       const g = globalThis as any;
-      if (g.__RESUX_APP__?.config?.public?.icons) {
-        return g.__RESUX_APP__.config.public.icons;
+      if (g.__RESUX__?.config?.public?.icons) {
+        return g.__RESUX__.config.public.icons;
       }
       if (g.__RESUX__?.config?.icons) {
         return g.__RESUX__.config.icons;
+      }
+      if (g.__RESUX_APP__?.config?.public?.icons) {
+        return g.__RESUX_APP__.config.public.icons;
+      }
+      if (g.__RESUX_APP__?.config?.icons) {
+        return g.__RESUX_APP__.config.icons;
+      }
+      if (typeof g.useRuntimeConfig === "function") {
+        const rc = g.useRuntimeConfig();
+        if (rc?.public?.icons) return rc.public.icons;
+        if (rc?.icons) return rc.icons;
       }
       if (g.__RESUX_RUNTIME_CONFIG__?.public?.icons) {
         return g.__RESUX_RUNTIME_CONFIG__.public.icons;
@@ -156,7 +167,7 @@ export const Icon = defineComponent({
       };
 
       if (effectiveMode.value === "css") {
-        return renderCssMaskIcon(activeData, sizeValue.value, props.class, mergedAttrs);
+        return renderCssMaskIcon(activeData, sizeValue.value, props.class, { ref: iconRef, ...mergedAttrs });
       }
 
       return renderSvgIcon(activeData, sizeValue.value, props.class, mergedAttrs, iconRef);

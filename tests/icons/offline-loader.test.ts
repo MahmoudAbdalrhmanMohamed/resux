@@ -49,4 +49,45 @@ describe("offline iconify loader", () => {
     expect(loadOfflineIcon("non-existent", "test")).toBeNull();
     expect(loadOfflineIcon("test-coll", "missing")).toBeNull();
   });
+
+  it("includes left and top offsets in the generated viewBox", () => {
+    registerOfflineCollection("offset-test", {
+      prefix: "offset-test",
+      icons: {
+        shifted: {
+          body: '<path d="M0 0h24v24H0z"/>',
+          left: -2,
+          top: -4,
+          width: 28,
+          height: 32,
+        },
+      },
+    });
+
+    const icon = loadOfflineIcon("offset-test", "shifted");
+    expect(icon).not.toBeNull();
+    expect(icon?.viewBox).toBe("-2 -4 28 32");
+  });
+
+  it("invalidates icon cache when collection is re-registered", () => {
+    registerOfflineCollection("dyn", {
+      prefix: "dyn",
+      icons: {
+        item: { body: '<path d="M1 1"/>' },
+      },
+    });
+
+    const v1 = loadOfflineIcon("dyn", "item");
+    expect(v1?.body).toBe('<path d="M1 1"/>');
+
+    registerOfflineCollection("dyn", {
+      prefix: "dyn",
+      icons: {
+        item: { body: '<path d="M2 2"/>' },
+      },
+    });
+
+    const v2 = loadOfflineIcon("dyn", "item");
+    expect(v2?.body).toBe('<path d="M2 2"/>');
+  });
 });

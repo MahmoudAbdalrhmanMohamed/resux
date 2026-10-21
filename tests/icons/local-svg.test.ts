@@ -49,4 +49,10 @@ describe("local svg loader", () => {
     const icon = loadLocalSvgIconSync("../../../etc/passwd", "tests/fixtures/test-icons");
     expect(icon).toBeNull();
   });
+
+  it("rejects absolute paths and drive letters", () => {
+    expect(loadLocalSvgIconSync("/etc/passwd", "tests/fixtures/test-icons")).toBeNull();
+    expect(loadLocalSvgIconSync("C:/Windows/System32/cmd.exe", "tests/fixtures/test-icons")).toBeNull();
+    expect(loadLocalSvgIconSync("test\0star", "tests/fixtures/test-icons")).toBeNull();
+  });
 });

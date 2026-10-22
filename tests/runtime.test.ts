@@ -7796,6 +7796,68 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     expect(window.document.querySelector('link[data-rx-route-style-preload="true"]')).toBeNull();
   });
 
+  it("shares in-flight payload requests while prefetching route styles for distinct destination URLs", async () => {
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = '<div id="__resux"><a href="/docs" id="docs-file">Docs file</a><a href="/docs/" id="docs-dir">Docs dir</a><main>Home</main></div>';
+    let fetchCalls = 0;
+    let resolvePayload: (value: Response) => void;
+    const payloadPromise = new Promise<Response>((resolve) => {
+      resolvePayload = resolve;
+    });
+
+    await installRouteTestRuntime(window, (async () => {
+      fetchCalls++;
+      return payloadPromise;
+    }) as typeof fetch);
+
+    const fileAnchor = window.document.getElementById("docs-file")!;
+    const dirAnchor = window.document.getElementById("docs-dir")!;
+
+    fileAnchor.dispatchEvent(new window.MouseEvent("pointerover", { bubbles: true }));
+    dirAnchor.dispatchEvent(new window.MouseEvent("pointerover", { bubbles: true }));
+
+    expect(fetchCalls).toBe(1);
+
+    resolvePayload!(createRouteTestResponse("/docs", "<main>Docs</main>", [{ rel: "stylesheet", href: "theme.css" }]));
+
+    await waitForCondition(() => window.document.querySelectorAll('link[data-rx-route-style-preload="true"]').length === 2);
+    const preloads = Array.from(window.document.querySelectorAll('link[data-rx-route-style-preload="true"]')) as HTMLLinkElement[];
+    const hrefs = preloads.map(p => p.href).sort();
+    expect(hrefs).toEqual(["http://localhost/docs/theme.css", "http://localhost/theme.css"]);
+
+    for (const p of preloads) p.dispatchEvent(new window.Event("load"));
+    await waitForCondition(() => window.document.querySelectorAll('link[data-rx-route-style-preload="true"]').length === 0);
+  });
+
+  it("preloads declared imported styles before route swapping", async () => {
+    const window = new Window({ url: "http://localhost/" });
+    window.document.body.innerHTML = '<div id="__resux"><a href="/imported" id="imported-link">Imported</a><main>Home</main></div>';
+    await installRouteTestRuntime(
+      window,
+      (async () => createRouteTestResponse("/imported", "<main>Imported</main>", [
+        { rel: "stylesheet", href: "/main.css", imports: ["/imported-child.css"] }
+      ])) as typeof fetch,
+      {
+        matchMedia: createTestMatchMedia(() => true),
+        requestAnimationFrame: (cb: FrameRequestCallback) => { cb(0); return 1; }
+      }
+    );
+
+    window.document.getElementById("imported-link")?.dispatchEvent(
+      new window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 })
+    );
+
+    await waitForCondition(() => window.document.querySelectorAll('link[data-rx-route-style-preload="true"]').length === 2);
+    const preloads = Array.from(window.document.querySelectorAll('link[data-rx-route-style-preload="true"]')) as HTMLLinkElement[];
+    const hrefs = preloads.map(p => p.href).sort();
+    expect(hrefs).toEqual(["http://localhost/imported-child.css", "http://localhost/main.css"]);
+
+    for (const p of preloads) p.dispatchEvent(new window.Event("load"));
+    await waitForHtml(window, "<main>Imported</main>");
+    expect(window.location.pathname).toBe("/imported");
+    expect(window.document.querySelectorAll('link[data-rx-route-style-preload="true"]').length === 0);
+  });
+
   it("does not block navigation on disabled destination stylesheets", async () => {
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML = '<div id="__resux"><a href="/optional" id="optional">Optional</a><main>Home</main></div>';

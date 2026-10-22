@@ -15704,15 +15704,17 @@ function hasCompletedRouteStylePrefetch(payload,url){return routeStylePrefetched
 function markCompletedRouteStylePrefetch(payload,url){let urls=routeStylePrefetchedDestinations.get(payload);if(!urls){urls=new Set();routeStylePrefetchedDestinations.set(payload,urls)}urls.add(url)}
 async function prefetchNavigationTarget(event){
   const anchor=event.target?.closest?.("a[href]"),routePath=getPrefetchPath(anchor,event.target);
-  if(!routePath||routePayloadRequests.has(routePath)||routeStylePrefetchPromises.has(routePath)||countInFlightRoutePrefetches() >= ROUTE_PREFETCH_MAX_IN_FLIGHT||isRoutePrefetchCoolingDown(routePath))return;
+  if(!routePath)return;
+  const url=resolveSameOriginAnchorTarget(anchor).url?.href||new URL(routePath,location.href).href;
+  const key=normalizeRoutePayloadKey(routePath);
+  if(routeStylePrefetchPromises.has(url)||countInFlightRoutePrefetches() >= ROUTE_PREFETCH_MAX_IN_FLIGHT||isRoutePrefetchCoolingDown(key))return;
   try{
-    const result=routePayloadCache.has(routePath)?readCachedRoutePayload(routePath):await loadRoute(routePath,{ reason: "prefetch" });
-    const url=resolveSameOriginAnchorTarget(anchor).url?.href||new URL(routePath,location.href).href;
+    const result=routePayloadCache.has(key)?readCachedRoutePayload(key):routePayloadRequests.has(key)?await routePayloadRequests.get(key)?.promise:await loadRoute(key,{ reason: "prefetch" });
     if(hasCompletedRouteStylePrefetch(result,url))return;
     const styles=preloadRouteHeadStyles(result?.head,url,null,true);
     if(!styles){markCompletedRouteStylePrefetch(result,url);return}
-    routeStylePrefetchPromises.set(routePath,styles);
-    try{await styles}finally{if(routeStylePrefetchPromises.get(routePath)===styles)routeStylePrefetchPromises.delete(routePath);markCompletedRouteStylePrefetch(result,url)}
+    routeStylePrefetchPromises.set(url,styles);
+    try{await styles}finally{if(routeStylePrefetchPromises.get(url)===styles)routeStylePrefetchPromises.delete(url);markCompletedRouteStylePrefetch(result,url)}
   }catch(error){logManagedMediaDebug("router-prefetch-failed",{path:routePath,message:error instanceof Error?error.message:String(error)})}
 }
 
@@ -15970,13 +15972,27 @@ function preloadRouteStyle(link,destinationUrl,signal){
       const value=routeStyleAttr(link,name,alias);if(value!==null&&value!==false&&(name==="crossorigin"||value!==""))preload.setAttribute(name,String(value));
     }
     document.head.appendChild(preload);await waitForRouteStyleLink(preload,signal);preload.remove();
+    const raw=link.imports??link["data-imports"];
+    const declaredImports=Array.isArray(raw)?raw:typeof raw==="string"?raw.split(",").map(s=>s.trim()).filter(Boolean):[];
+    if(declaredImports.length>0){
+      await Promise.all(declaredImports.map(imported=>preloadRouteStyle({href:imported,crossorigin:routeStyleAttr(link,"crossorigin","crossOrigin")},destinationUrl,signal)));
+    }
   })().finally(()=>routeStylePreloadPromises.delete(key));
   routeStylePreloadPromises.set(key,promise);return promise;
 }
 function preloadRouteHeadStyles(head,destinationUrl=location.href,signal,sequential=false){
   const styles=normalizeClientHeadLinks(head?.link??[]).filter(link=>String(link.rel||"").trim().toLowerCase()==="stylesheet"&&link.href&&!routeStyleIsDisabled(link)&&routeStyleMatchesCurrentMedia(link));
   if(!styles.length)return null;
-  return sequential?(async()=>{for(const link of styles)await preloadRouteStyle(link,destinationUrl,signal)})():Promise.all(styles.map(link=>preloadRouteStyle(link,destinationUrl,signal)));
+  const allStyles=[];
+  for(const link of styles){
+    allStyles.push(link);
+    const raw=link.imports??link["data-imports"];
+    const declaredImports=Array.isArray(raw)?raw:typeof raw==="string"?raw.split(",").map(s=>s.trim()).filter(Boolean):[];
+    for(const imp of declaredImports){
+      allStyles.push({href:imp,rel:"stylesheet",crossorigin:routeStyleAttr(link,"crossorigin","crossOrigin")});
+    }
+  }
+  return sequential?(async()=>{for(const link of allStyles)await preloadRouteStyle(link,destinationUrl,signal)})():Promise.all(allStyles.map(link=>preloadRouteStyle(link,destinationUrl,signal)));
 }
 
 function applyHead(head) {

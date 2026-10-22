@@ -2827,10 +2827,12 @@ async function handleRequest(
     if (
       options.dev &&
       options.vite &&
-      isViteInternalRequest(requestUrl.pathname)
+      (isViteInternalRequest(requestUrl.pathname) || requestUrl.pathname.endsWith(".css"))
     ) {
       await serveViteMiddleware(request, response, options.vite);
-      return;
+      if (response.writableEnded) {
+        return;
+      }
     }
 
     if (options.dev && requestUrl.pathname === "/__resux/dev-events") {
@@ -5399,9 +5401,17 @@ async function ensureDevBuild(
         ...buildOptions,
         vite: "dev",
       })
-        .then(() => {
+        .then((buildResult) => {
           devBuildRevision++;
           vite?.moduleGraph.invalidateAll();
+          if (buildResult?.contributions?.vitePlugins && (vite?.config as any)?.plugins) {
+            const existingPlugins = (vite!.config as any).plugins as any[];
+            for (const newPlugin of buildResult.contributions.vitePlugins) {
+              if (newPlugin && !existingPlugins.includes(newPlugin)) {
+                existingPlugins.push(newPlugin);
+              }
+            }
+          }
         })
         .finally(() => {
           activeDevBuild = null;
@@ -5664,7 +5674,9 @@ function isViteInternalRequest(pathname: string): boolean {
   return (
     pathname === "/runtime-client.mjs" ||
     pathname.startsWith("/@") ||
-    pathname.startsWith("/node_modules/.vite/")
+    pathname.startsWith("/node_modules/.vite/") ||
+    pathname.startsWith("/assets/_fonts/") ||
+    pathname.includes("/_fonts/")
   );
 }
 

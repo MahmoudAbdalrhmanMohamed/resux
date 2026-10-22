@@ -688,8 +688,12 @@ export default defineResuxModule<ResuxFontsModuleOptions>({
         const normalizedProviders: Record<string, unknown> = {};
         for (const [key, val] of Object.entries(options.providers)) {
           if (key === "local") continue;
-          if (typeof val !== "boolean" && val) {
+          if (typeof val === "boolean") {
+            if (val === false) normalizedProviders[key] = false;
+          } else if (typeof val === "function") {
             normalizedProviders[key] = val;
+          } else if (val && typeof val === "object") {
+            fontlessOptions[key] = val;
           }
         }
         if (Object.keys(normalizedProviders).length > 0) {

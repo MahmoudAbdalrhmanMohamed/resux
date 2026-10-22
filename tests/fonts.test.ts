@@ -475,4 +475,298 @@ describe("fonts module", () => {
 
     expect(headList).toHaveLength(0);
   });
+
+  it("supports semantic named font weights", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        google: [
+          { name: "Inter", weights: ["medium", "semibold", "bold"] }
+        ]
+      },
+      resux as any
+    );
+    expect(headList[0].link?.[2]?.href).toContain("family=Inter:wght@500;600;700");
+  });
+
+  it("supports arbitrary variable axes in custom families", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        families: [
+          {
+            name: "Inter Variable",
+            src: "/fonts/inter-var.woff2",
+            axes: { opsz: [14, 32], wdth: 100 }
+          }
+        ]
+      },
+      resux as any
+    );
+    const style = headList[0].style?.[0]?.css;
+    expect(style).toContain('font-family: "Inter Variable"');
+    expect(style).toContain('font-variation-settings: "opsz" 14 32, "wdth" 100');
+  });
+
+  it("supports semantic named weights in custom font families and face-level axes override", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        families: [
+          {
+            name: "Custom Sans",
+            weight: "extrabold",
+            axes: { wdth: 100 },
+            faces: [
+              {
+                src: "/fonts/custom-semibold.woff2",
+                weight: "semibold",
+                axes: { opsz: [20, 40] }
+              }
+            ]
+          }
+        ]
+      },
+      resux as any
+    );
+    const style = headList[0].style?.[0]?.css;
+    expect(style).toContain('font-family: "Custom Sans"');
+    expect(style).toContain("font-weight: 600");
+    expect(style).toContain('font-variation-settings: "opsz" 20 40');
+  });
+
+  it("sanitizes axis tags and excludes invalid axis values", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        families: [
+          {
+            name: "Sanitized Font",
+            src: "/fonts/sanitized.woff2",
+            axes: {
+              "opsz": 12,
+              'bad"tag': 50,
+              "wght": NaN as any,
+              "": 100 as any,
+              "zero": "" as any,
+              "spc": "   " as any,
+            }
+          }
+        ]
+      },
+      resux as any
+    );
+    const style = headList[0].style?.[0]?.css;
+    expect(style).toContain('font-variation-settings: "opsz" 12');
+    expect(style).not.toContain("bad");
+    expect(style).not.toContain("wght");
+    expect(style).not.toContain("zero");
+    expect(style).not.toContain("spc");
+  });
+
+  it("does not treat Object.prototype properties as valid named weights", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        families: [
+          {
+            name: "Prototype Test",
+            weight: "constructor" as any,
+            faces: [{ src: "/fonts/test.woff2" }]
+          }
+        ]
+      },
+      resux as any
+    );
+    const css = headList[0].style?.[0]?.css ?? "";
+    expect(css).not.toContain("function Object()");
+    expect(css).toContain("font-weight: 400");
+  });
+
+  it("includes fallback aliases in generated CSS variable when fallbacks are specified", async () => {
+    const { headList, resux } = createMockResux();
+    await fontsModule.setup(
+      {
+        families: [
+          {
+            name: "Inter",
+            variable: "--font-inter",
+            fallbacks: ["Arial", "sans-serif"],
+            faces: [{ src: "/fonts/inter.woff2" }]
+          }
+        ]
+      },
+      resux as any
+    );
+    const css = headList[0].style?.[0]?.children ?? headList[0].style?.[0]?.css ?? "";
+    expect(css).toContain(':root { --font-inter: "Inter", "Inter fallback: Arial", "Inter fallback: sans-serif"; }');
+  });
+
+  it("generates fallback font metric overrides to eliminate layout shift", async () => {
+    const { headList, resux } = createMockResux();
+    await fontsModule.setup(
+      {
+        families: [
+          {
+            name: "Inter",
+            src: "/fonts/inter.woff2",
+            fallbacks: ["Arial", "sans-serif"]
+          }
+        ]
+      },
+      resux as any
+    );
+    const style = headList[0].style?.[0]?.css;
+    expect(style).toContain('font-family: "Inter"');
+    expect(style).toContain('font-family: "Inter fallback: Arial"');
+    expect(style).toContain('src: local("Arial")');
+    expect(style).toContain("ascent-override:");
+    expect(style).toContain("descent-override:");
+    expect(style).toContain("size-adjust:");
+  });
+
+  it("generates fallback font metric overrides for Google fonts", async () => {
+    const { headList, resux } = createMockResux();
+    await fontsModule.setup(
+      {
+        google: [
+          {
+            name: "Roboto",
+            weights: [400],
+            fallbacks: ["Arial", "sans-serif"]
+          }
+        ]
+      },
+      resux as any
+    );
+    const style = headList[0].style?.[0]?.css;
+    expect(style).toContain('font-family: "Roboto fallback: Arial"');
+    expect(style).toContain('src: local("Arial")');
+    expect(style).toContain("ascent-override:");
+    expect(style).toContain("size-adjust:");
+    expect(headList[0].link?.some((l) => l.href?.includes("family=Roboto"))).toBe(true);
+  });
+
+  it("gracefully ignores fallback generation if primary font metrics are unavailable", async () => {
+    const { headList, resux } = createMockResux();
+    await fontsModule.setup(
+      {
+        families: [
+          {
+            name: "NonExistentFontXYZ",
+            src: "/fonts/unknown.woff2",
+            fallbacks: ["Arial"]
+          }
+        ]
+      },
+      resux as any
+    );
+    const style = headList[0].style?.[0]?.css;
+    expect(style).toContain('font-family: "NonExistentFontXYZ"');
+    expect(style).not.toContain("fallback:");
+  });
+
+  it("sanitizes control characters in fallback font names", async () => {
+    const { headList, resux } = createMockResux();
+    await fontsModule.setup(
+      {
+        families: [
+          {
+            name: "Inter",
+            src: "/fonts/inter.woff2",
+            fallbacks: ["Arial\x00", "\x1f"]
+          }
+        ]
+      },
+      resux as any
+    );
+    const style = headList[0].style?.[0]?.css;
+    expect(style).toContain('font-family: "Inter fallback: Arial"');
+    expect(style).toContain('src: local("Arial")');
+    expect(style).not.toContain("\x00");
+    expect(style).not.toContain("\x1f");
+  });
+
+  it("registers fontless Vite plugin when autoScan is enabled by default", () => {
+    const plugins: any[] = [];
+    const resux = {
+      addVitePlugin(plugin: any) { plugins.push(plugin); },
+      addHead() {},
+      extendRuntimeConfig() {}
+    };
+    fontsModule.setup({}, resux as any);
+    expect(plugins.length).toBeGreaterThan(0);
+    expect(plugins.some((p: any) => p.name === "vite-plugin-fontless")).toBe(true);
+  });
+
+  it("does not register fontless Vite plugin when autoScan is explicitly false", () => {
+    const plugins: any[] = [];
+    const resux = {
+      addVitePlugin(plugin: any) { plugins.push(plugin); },
+      addHead() {},
+      extendRuntimeConfig() {}
+    };
+    fontsModule.setup({ autoScan: false }, resux as any);
+    expect(plugins.length).toBe(0);
+  });
+
+  it("does not throw when addVitePlugin is not provided on resux", () => {
+    const resux = {
+      addHead() {},
+      extendRuntimeConfig() {}
+    };
+    expect(() => fontsModule.setup({}, resux as any)).not.toThrow();
+  });
+
+  it("passes devtools, defaults, providers and mapped families to fontless", () => {
+    const plugins: any[] = [];
+    const resux = {
+      addVitePlugin(plugin: any) { plugins.push(plugin); },
+      addHead() {},
+      extendRuntimeConfig() {}
+    };
+    fontsModule.setup(
+      {
+        devtools: false,
+        defaults: {
+          preload: true,
+          subsets: ["latin"],
+          weights: [400, 700]
+        },
+        providers: {
+          google: true,
+          bunny: false
+        },
+        families: [
+          { name: "Inter", provider: "google", weights: [400, 700] },
+          { name: "Custom", src: "/fonts/custom.woff2", fallbacks: ["Arial"] }
+        ]
+      },
+      resux as any
+    );
+    expect(plugins.length).toBeGreaterThan(0);
+    const fontlessPlugin = plugins.find((p: any) => p.name === "vite-plugin-fontless");
+    expect(fontlessPlugin).toBeDefined();
+    expect(fontlessPlugin.devtools).toBeUndefined();
+  });
+
+  it("registers Vite plugin and populates head links simultaneously", () => {
+    const plugins: any[] = [];
+    const headList: any[] = [];
+    const resux = {
+      addVitePlugin(plugin: any) { plugins.push(plugin); },
+      addHead(head: any) { headList.push(head); },
+      extendRuntimeConfig() {}
+    };
+    fontsModule.setup(
+      {
+        google: [{ name: "Roboto", weights: [400] }]
+      },
+      resux as any
+    );
+    expect(plugins.length).toBeGreaterThan(0);
+    expect(plugins.some((p: any) => p.name === "vite-plugin-fontless")).toBe(true);
+    expect(headList.length).toBe(1);
+    expect(headList[0].link.some((l: any) => l.href?.includes("family=Roboto"))).toBe(true);
+  });
 });

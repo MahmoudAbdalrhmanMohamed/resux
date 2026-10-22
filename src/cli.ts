@@ -23,6 +23,7 @@ import {
 } from "./security/path-boundary.js";
 import type { ViteDevServer } from "vite";
 import type { BuildOptions } from "./compiler/index.js";
+import type { ResuxModuleContributions } from "./core/module-container.js";
 import { createResux } from "./core/resux.js";
 import { normalizeResuxGeneratedPath } from "./core/config.js";
 import { runCreateResux } from "./create.js";
@@ -488,11 +489,11 @@ export async function runResuxCli(args: string[]): Promise<void> {
       }
       await runTailwindBuild(appRoot, tailwind, false);
       startTailwindWatch(appRoot, tailwind);
-      await runCompilerBuild(appRoot, outDir, { ...buildOptions, vite: "dev" });
+      const devBuildResult = await runCompilerBuild(appRoot, outDir, { ...buildOptions, vite: "dev" });
       await ensureGeneratedDirectories(appRoot, outDir, { debug: cliOptions.debug === true });
       await ensureGeneratedPlaceholders(appRoot, outDir);
       await ensureNitroBuildFiles(appRoot);
-      const vite = await startViteDevServer(outDir, buildOptions, cliOptions);
+      const vite = await startViteDevServer(outDir, buildOptions, cliOptions, devBuildResult?.contributions);
       startDevWatcher(vite, appRoot, outDir, buildOptions);
       await startServer({
         appRoot,
@@ -2300,6 +2301,7 @@ async function startViteDevServer(
   outDir: string,
   buildOptions: BuildOptions,
   cliOptions: CliOptions,
+  contributions?: ResuxModuleContributions,
 ): Promise<ViteDevServer> {
   const appRoot = path.dirname(outDir);
   const [{ createServer: createViteServer }, { default: vuePlugin }] =
@@ -2315,7 +2317,7 @@ async function startViteDevServer(
     appType: "custom",
     clearScreen: false,
     logLevel: "warn",
-    plugins: [vuePlugin()],
+    plugins: [vuePlugin(), ...(contributions?.vitePlugins ?? [])],
     resolve: {
       alias: {
         "/__resux/runtime-client.mjs": path.join(
@@ -2825,10 +2827,12 @@ async function handleRequest(
     if (
       options.dev &&
       options.vite &&
-      isViteInternalRequest(requestUrl.pathname)
+      (isViteInternalRequest(requestUrl.pathname) || requestUrl.pathname.endsWith(".css"))
     ) {
       await serveViteMiddleware(request, response, options.vite);
-      return;
+      if (response.writableEnded) {
+        return;
+      }
     }
 
     if (options.dev && requestUrl.pathname === "/__resux/dev-events") {
@@ -5397,9 +5401,35 @@ async function ensureDevBuild(
         ...buildOptions,
         vite: "dev",
       })
-        .then(() => {
+        .then(async (buildResult) => {
           devBuildRevision++;
           vite?.moduleGraph.invalidateAll();
+          if (vite && buildResult?.contributions?.vitePlugins) {
+            const inlineConfig = (vite.config as any)?.inlineConfig;
+            const currentPlugins: any[] = inlineConfig?.plugins ?? (vite.config as any)?.plugins ?? [];
+            const contributedPlugins = buildResult.contributions.vitePlugins.filter(Boolean);
+            const hasNewOrChanged = contributedPlugins.some((p: any) => !currentPlugins.includes(p));
+            if (hasNewOrChanged) {
+              if (inlineConfig) {
+                const updated = [...(Array.isArray(inlineConfig.plugins) ? inlineConfig.plugins : [])];
+                for (const plugin of contributedPlugins) {
+                  const pluginName = (plugin as { name?: string })?.name;
+                  const existingIdx = pluginName
+                    ? updated.findIndex((p: any) => p && p.name === pluginName)
+                    : updated.indexOf(plugin);
+                  if (existingIdx !== -1) {
+                    updated[existingIdx] = plugin;
+                  } else {
+                    updated.push(plugin);
+                  }
+                }
+                inlineConfig.plugins = updated;
+              }
+              if (typeof vite.restart === "function") {
+                await vite.restart();
+              }
+            }
+          }
         })
         .finally(() => {
           activeDevBuild = null;
@@ -5531,11 +5561,6 @@ async function serveViteMiddleware(
         return;
       }
 
-      if (!response.writableEnded) {
-        response.writeHead(404);
-        response.end("Not found");
-      }
-
       resolve();
     });
   });
@@ -5662,7 +5687,9 @@ function isViteInternalRequest(pathname: string): boolean {
   return (
     pathname === "/runtime-client.mjs" ||
     pathname.startsWith("/@") ||
-    pathname.startsWith("/node_modules/.vite/")
+    pathname.startsWith("/node_modules/.vite/") ||
+    pathname.startsWith("/assets/_fonts/") ||
+    pathname.includes("/_fonts/")
   );
 }
 

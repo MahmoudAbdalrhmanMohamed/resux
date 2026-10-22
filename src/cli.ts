@@ -5401,14 +5401,32 @@ async function ensureDevBuild(
         ...buildOptions,
         vite: "dev",
       })
-        .then((buildResult) => {
+        .then(async (buildResult) => {
           devBuildRevision++;
           vite?.moduleGraph.invalidateAll();
-          if (buildResult?.contributions?.vitePlugins && (vite?.config as any)?.plugins) {
-            const existingPlugins = (vite!.config as any).plugins as any[];
-            for (const newPlugin of buildResult.contributions.vitePlugins) {
-              if (newPlugin && !existingPlugins.includes(newPlugin)) {
-                existingPlugins.push(newPlugin);
+          if (vite && buildResult?.contributions?.vitePlugins) {
+            const inlineConfig = (vite.config as any)?.inlineConfig;
+            const currentPlugins: any[] = inlineConfig?.plugins ?? (vite.config as any)?.plugins ?? [];
+            const contributedPlugins = buildResult.contributions.vitePlugins.filter(Boolean);
+            const hasNewOrChanged = contributedPlugins.some((p: any) => !currentPlugins.includes(p));
+            if (hasNewOrChanged) {
+              if (inlineConfig) {
+                const updated = [...(Array.isArray(inlineConfig.plugins) ? inlineConfig.plugins : [])];
+                for (const plugin of contributedPlugins) {
+                  const pluginName = (plugin as { name?: string })?.name;
+                  const existingIdx = pluginName
+                    ? updated.findIndex((p: any) => p && p.name === pluginName)
+                    : updated.indexOf(plugin);
+                  if (existingIdx !== -1) {
+                    updated[existingIdx] = plugin;
+                  } else {
+                    updated.push(plugin);
+                  }
+                }
+                inlineConfig.plugins = updated;
+              }
+              if (typeof vite.restart === "function") {
+                await vite.restart();
               }
             }
           }
@@ -5541,11 +5559,6 @@ async function serveViteMiddleware(
       if (error) {
         reject(error instanceof Error ? error : new Error(String(error)));
         return;
-      }
-
-      if (!response.writableEnded) {
-        response.writeHead(404);
-        response.end("Not found");
       }
 
       resolve();

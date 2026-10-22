@@ -133,6 +133,8 @@ async function rewriteFrameworkDependency(projectRoot, tarballPath) {
   const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
   packageJson.dependencies = packageJson.dependencies ?? {};
   packageJson.dependencies.resuxjs = `file:${tarballPath.replaceAll("\\", "/")}`;
+  packageJson.overrides = packageJson.overrides ?? {};
+  packageJson.overrides.undici = packageJson.overrides.undici ?? "^6.21.1";
   await writeFile(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`, "utf8");
 }
 

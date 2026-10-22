@@ -108,6 +108,7 @@
   "overrides": {
     "nitropack": {
       "rollup-plugin-visualizer": "6.0.11"
-    }
+    },
+    "undici": "^6.21.1"
   }
 }

@@ -527,6 +527,7 @@ function createStarterPackageJson(
       node: ">=20.19.0",
     },
     overrides: {
+      undici: "^6.21.1",
       nitropack: {
         "rollup-plugin-visualizer": "6.0.11",
       },

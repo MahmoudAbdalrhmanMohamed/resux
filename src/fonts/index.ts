@@ -687,6 +687,7 @@ export default defineResuxModule<ResuxFontsModuleOptions>({
       if (options.providers !== undefined) {
         const normalizedProviders: Record<string, unknown> = {};
         for (const [key, val] of Object.entries(options.providers)) {
+          if (key === "local") continue;
           if (typeof val !== "boolean" && val) {
             normalizedProviders[key] = val;
           }
@@ -703,6 +704,21 @@ export default defineResuxModule<ResuxFontsModuleOptions>({
       const pluginList = Array.isArray(plugins) ? plugins.flat() : [plugins];
       for (const plugin of pluginList) {
         if (plugin) {
+          const originalTransform = (plugin as any).transform;
+          if (typeof originalTransform === "function") {
+            (plugin as any).transform = async function (code: string, id: string, ...rest: any[]) {
+              if (id.endsWith(".vue") || id.includes("vue&type=style")) {
+                const styleMatches = code.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi);
+                for (const match of styleMatches) {
+                  const styleContent = match[1];
+                  if (styleContent) {
+                    await originalTransform.call(this, styleContent, id + ".css", ...rest);
+                  }
+                }
+              }
+              return originalTransform.call(this, code, id, ...rest);
+            };
+          }
           (resux as any).addVitePlugin(plugin);
         }
       }

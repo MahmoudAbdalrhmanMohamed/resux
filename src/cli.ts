@@ -23,6 +23,7 @@ import {
 } from "./security/path-boundary.js";
 import type { ViteDevServer } from "vite";
 import type { BuildOptions } from "./compiler/index.js";
+import type { ResuxModuleContributions } from "./core/module-container.js";
 import { createResux } from "./core/resux.js";
 import { normalizeResuxGeneratedPath } from "./core/config.js";
 import { runCreateResux } from "./create.js";
@@ -488,11 +489,11 @@ export async function runResuxCli(args: string[]): Promise<void> {
       }
       await runTailwindBuild(appRoot, tailwind, false);
       startTailwindWatch(appRoot, tailwind);
-      await runCompilerBuild(appRoot, outDir, { ...buildOptions, vite: "dev" });
+      const devBuildResult = await runCompilerBuild(appRoot, outDir, { ...buildOptions, vite: "dev" });
       await ensureGeneratedDirectories(appRoot, outDir, { debug: cliOptions.debug === true });
       await ensureGeneratedPlaceholders(appRoot, outDir);
       await ensureNitroBuildFiles(appRoot);
-      const vite = await startViteDevServer(outDir, buildOptions, cliOptions);
+      const vite = await startViteDevServer(outDir, buildOptions, cliOptions, devBuildResult?.contributions);
       startDevWatcher(vite, appRoot, outDir, buildOptions);
       await startServer({
         appRoot,
@@ -2300,6 +2301,7 @@ async function startViteDevServer(
   outDir: string,
   buildOptions: BuildOptions,
   cliOptions: CliOptions,
+  contributions?: ResuxModuleContributions,
 ): Promise<ViteDevServer> {
   const appRoot = path.dirname(outDir);
   const [{ createServer: createViteServer }, { default: vuePlugin }] =
@@ -2315,7 +2317,7 @@ async function startViteDevServer(
     appType: "custom",
     clearScreen: false,
     logLevel: "warn",
-    plugins: [vuePlugin()],
+    plugins: [vuePlugin(), ...(contributions?.vitePlugins ?? [])],
     resolve: {
       alias: {
         "/__resux/runtime-client.mjs": path.join(

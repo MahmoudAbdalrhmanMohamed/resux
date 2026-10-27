@@ -90,6 +90,38 @@ export function validatePolicyConfig(config: Record<string, any>): ResuxHalalPol
   return config as ResuxHalalPolicy;
 }
 
+export function loadProjectDotEnv(appRoot: string): void {
+  const envFiles = [".env", ".env.local"];
+  for (const file of envFiles) {
+    const fullPath = path.join(appRoot, file);
+    if (existsSync(fullPath)) {
+      try {
+        const content = readFileSync(fullPath, "utf8");
+        for (const line of content.split(/\r?\n/)) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith("#")) {
+            continue;
+          }
+          const equalIndex = trimmed.indexOf("=");
+          if (equalIndex === -1) {
+            continue;
+          }
+          const key = trimmed.slice(0, equalIndex).trim();
+          let value = trimmed.slice(equalIndex + 1).trim();
+          if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+            value = value.slice(1, -1);
+          }
+          if (key && process.env[key] === undefined) {
+            process.env[key] = value;
+          }
+        }
+      } catch {
+        // Ignore unreadable .env files
+      }
+    }
+  }
+}
+
 export async function loadMainResuxConfig(appRoot: string): Promise<Record<string, any>> {
   const possiblePaths = [
     path.join(appRoot, "resux.config.ts"),
@@ -114,12 +146,8 @@ export async function loadMainResuxConfig(appRoot: string): Promise<Record<strin
           compiledSource = readFileSync(configPath, "utf8");
         }
 
-        const tempDir = path.join(appRoot, ".resux", "server");
+        const tempPath = path.join(appRoot, `.resux-temp-config-${Date.now()}-${Math.random().toString(36).slice(2)}.mjs`);
         const fs = await import("node:fs");
-        if (!fs.existsSync(tempDir)) {
-          fs.mkdirSync(tempDir, { recursive: true });
-        }
-        const tempPath = path.join(tempDir, `halal-temp-config-${Date.now()}.mjs`);
         fs.writeFileSync(tempPath, compiledSource, "utf8");
 
         try {
@@ -141,6 +169,7 @@ export async function loadMainResuxConfig(appRoot: string): Promise<Record<strin
 }
 
 export async function loadProjectPolicy(appRoot: string): Promise<ResuxHalalPolicy> {
+  loadProjectDotEnv(appRoot);
   const policy: ResuxHalalPolicy = {};
 
   try {

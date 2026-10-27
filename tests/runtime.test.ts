@@ -7876,6 +7876,55 @@ export default createClientComponent({ id: "m0", name: "Counter", file: "Counter
     expect(doc).not.toContain("</script><script>alert(1)</script>");
   });
 
+  it("renders critical head meta tags before title and preload links and supports textContent in styles", () => {
+    const result = {
+      html: "<div>test</div>",
+      payload: { route: { path: "/", params: {}, query: {} }, scopes: {}, modules: {}, config: {} },
+      head: {
+        title: "Test Page",
+        meta: [
+          { name: "description", content: "A regular page description" },
+          { charset: "utf-8" },
+          { name: "viewport", content: "width=device-width, initial-scale=1" },
+          { "http-equiv": "X-UA-Compatible", content: "IE=edge" },
+          { property: "og:title", content: "OG Title" }
+        ],
+        link: [
+          { rel: "preload", href: "/large-hero.jpg", as: "image", fetchpriority: "high" },
+          { rel: "preload", href: "/critical.css", as: "style" },
+          { rel: "stylesheet", href: "/theme.css" }
+        ],
+        style: [
+          { id: "s-text", textContent: "h1 { font-size: 2rem; }" }
+        ]
+      }
+    };
+    const doc = renderDocument(result as any, "Test Title");
+
+    const charsetIndex = doc.indexOf('<meta data-rx-head="true" charset="utf-8">');
+    const viewportIndex = doc.indexOf('<meta data-rx-head="true" name="viewport" content="width=device-width, initial-scale=1">');
+    const httpEquivIndex = doc.indexOf('<meta data-rx-head="true" http-equiv="X-UA-Compatible" content="IE=edge">');
+    const titleIndex = doc.indexOf('<title>Test Page</title>');
+    const preloadImageIndex = doc.indexOf('href="/large-hero.jpg"');
+    const descIndex = doc.indexOf('name="description"');
+
+    expect(charsetIndex).toBeGreaterThan(-1);
+    expect(viewportIndex).toBeGreaterThan(-1);
+    expect(httpEquivIndex).toBeGreaterThan(-1);
+    expect(charsetIndex).toBeLessThan(titleIndex);
+    expect(viewportIndex).toBeLessThan(titleIndex);
+    expect(httpEquivIndex).toBeLessThan(titleIndex);
+    expect(titleIndex).toBeLessThan(preloadImageIndex);
+    expect(preloadImageIndex).toBeLessThan(descIndex);
+
+    const preloadStyleIndex = doc.indexOf('href="/critical.css"');
+    const stylesheetIndex = doc.indexOf('href="/theme.css"');
+    expect(preloadStyleIndex).toBeLessThan(stylesheetIndex);
+
+    expect(doc).toContain('<style data-rx-head="true" data-rx-style="s-text">h1 { font-size: 2rem; }</style>');
+    expect(doc).not.toContain("[object Object]");
+  });
+
   it("renders built-in <Icon>, <ResuxIcon>, and <NuxtIcon> tags without throwing Unknown component error", async () => {
     const template: TemplateNode[] = [
       {

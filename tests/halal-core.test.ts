@@ -1,11 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { evaluateRules } from "../src/halal-core/rules/defaultBlockedRules.js";
-import { validatePolicyConfig } from "../src/halal-core/config.js";
+import { validatePolicyConfig, loadProjectDotEnv, loadMainResuxConfig } from "../src/halal-core/config.js";
 import { generateReportSignature } from "../src/halal-core/report/signReport.js";
 import { verifyReportSignature, isReportValid } from "../src/halal-core/report/verifyReport.js";
 import { verifyReviewApproval } from "../src/halal-core/review/verifyReviewApproval.js";
 import { generateReviewSignature, type SignedReviewApproval } from "../src/halal-core/review/signedReviewFile.js";
-import { writeFileSync, unlinkSync, existsSync } from "node:fs";
+import { writeFileSync, unlinkSync, existsSync, mkdirSync, rmSync, readdirSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 const REPORT_SECRET = "resux-halal-core-report-secret-at-least-32-characters";
@@ -263,6 +264,75 @@ describe("resux-halal-core Unit & System Tests", () => {
       const check = verifyReviewApproval(appRoot, "blocked");
       expect(check.approved).toBe(false);
       expect(check.reason).toContain("cannot override clearly blocked");
+    });
+  });
+
+  describe("Project Environment & Config Resolution", () => {
+    it("should load .env and .env.local into process.env without overriding existing variables", () => {
+      const tempDir = path.join(os.tmpdir(), `resux-halal-env-test-${Date.now()}`);
+      mkdirSync(tempDir, { recursive: true });
+
+      const envFile = path.join(tempDir, ".env");
+      const envLocalFile = path.join(tempDir, ".env.local");
+
+      writeFileSync(envFile, [
+        "# Comment line",
+        "TEST_HALAL_KEY=my-secret-token",
+        'TEST_QUOTED_KEY="hello-world"',
+        "TEST_EXISTING_KEY=from-env-file",
+        ""
+      ].join("\n"), "utf8");
+
+      writeFileSync(envLocalFile, [
+        "TEST_LOCAL_KEY='local-secret'",
+        ""
+      ].join("\n"), "utf8");
+
+      process.env.TEST_EXISTING_KEY = "already-set-in-shell";
+
+      try {
+        loadProjectDotEnv(tempDir);
+
+        expect(process.env.TEST_HALAL_KEY).toBe("my-secret-token");
+        expect(process.env.TEST_QUOTED_KEY).toBe("hello-world");
+        expect(process.env.TEST_LOCAL_KEY).toBe("local-secret");
+        expect(process.env.TEST_EXISTING_KEY).toBe("already-set-in-shell");
+      } finally {
+        delete process.env.TEST_HALAL_KEY;
+        delete process.env.TEST_QUOTED_KEY;
+        delete process.env.TEST_LOCAL_KEY;
+        delete process.env.TEST_EXISTING_KEY;
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it("should transpile and load resux.config.ts in project root without creating .resux/server and cleanly unlink temp files", async () => {
+      const tempDir = path.join(os.tmpdir(), `resux-halal-config-test-${Date.now()}`);
+      mkdirSync(tempDir, { recursive: true });
+
+      const configFile = path.join(tempDir, "resux.config.ts");
+      writeFileSync(configFile, [
+        "export default {",
+        "  projectName: 'TestHalalApp',",
+        "  halalAI: { strict: true }",
+        "};",
+        ""
+      ].join("\n"), "utf8");
+
+      try {
+        const config = await loadMainResuxConfig(tempDir);
+        expect(config.projectName).toBe("TestHalalApp");
+        expect(config.halalAI?.strict).toBe(true);
+
+        const serverDir = path.join(tempDir, ".resux", "server");
+        expect(existsSync(serverDir)).toBe(false);
+
+        const files = readdirSync(tempDir);
+        const tempFiles = files.filter(f => f.startsWith(".resux-temp-config-"));
+        expect(tempFiles.length).toBe(0);
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
     });
   });
 

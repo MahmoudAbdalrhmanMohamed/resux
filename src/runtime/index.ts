@@ -7594,8 +7594,26 @@ function mergeHead(entries: HeadEntry[]): HeadEntry {
   return merged;
 }
 
+function isCriticalHeadMeta(meta: Record<string, unknown>): boolean {
+  if (meta.charset !== undefined) {
+    return true;
+  }
+  const name = String(meta.name ?? "").toLowerCase();
+  const httpEquiv = String(meta["http-equiv"] ?? meta.httpEquiv ?? "").toLowerCase();
+  return name === "viewport" || Boolean(httpEquiv);
+}
+
 function renderHead(head: HeadEntry): string {
   const tags: string[] = [];
+
+  const metaList = head.meta ?? [];
+  const criticalMetas = metaList.filter((meta) => isCriticalHeadMeta(meta as Record<string, unknown>));
+  const remainingMetas = metaList.filter((meta) => !isCriticalHeadMeta(meta as Record<string, unknown>));
+
+  for (const meta of criticalMetas) {
+    tags.push(`<meta data-rx-head="true" ${renderAttributes(meta)}>`);
+  }
+
   tags.push(`<title>${escapeHtml(head.title ?? "Resux App")}</title>`);
 
   const links = sortHeadLinksForPriority(normalizeHeadLinks(head.link ?? []));
@@ -7610,7 +7628,7 @@ function renderHead(head: HeadEntry): string {
     tags.push(`<link data-rx-head="true" ${renderAttributes(link)}>`);
   }
 
-  for (const meta of head.meta ?? []) {
+  for (const meta of remainingMetas) {
     tags.push(`<meta data-rx-head="true" ${renderAttributes(meta)}>`);
   }
 
@@ -7684,15 +7702,21 @@ function escapeNoscriptContent(source: string): string {
 
 function sortHeadLinksForPriority(links: Record<string, string>[]): Record<string, string>[] {
   return links
-    .map((link, index) => ({
-      link,
-      index,
-      priority: isPriorityImagePreloadLink(link)
+    .map((link, index) => {
+      const rel = normalizeHeadLinkRel(link);
+      const isPreload = rel === "preload";
+      const as = String(link.as ?? "").trim().toLowerCase();
+      const priority = (isPreload && as === "style") || isPriorityImagePreloadLink(link)
         ? 0
-        : normalizeHeadLinkRel(link) === "preload"
+        : isPreload
           ? 1
-          : 2,
-    }))
+          : 2;
+      return {
+        link,
+        index,
+        priority,
+      };
+    })
     .sort((left, right) => left.priority - right.priority || left.index - right.index)
     .map((entry) => entry.link);
 }
@@ -7906,6 +7930,8 @@ function escapeStyleContent(css: unknown): string {
       str = (css as any).children ?? "";
     } else if ("innerHTML" in (css as any)) {
       str = (css as any).innerHTML ?? "";
+    } else if ("textContent" in (css as any)) {
+      str = (css as any).textContent ?? "";
     } else {
       str = String(css);
     }

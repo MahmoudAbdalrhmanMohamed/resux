@@ -7855,6 +7855,22 @@ export default createClientComponent({ id: "m0", name: "Counter", file: "Counter
     expect(doc).toContain('<style data-rx-head="true">body { background: black; }</style>');
   });
 
+  it("emits the fallback charset before long head links when no charset is declared", () => {
+    const result = {
+      html: "<div>test</div>",
+      payload: { route: { path: "/", params: {}, query: {} }, scopes: {}, modules: {}, config: {} },
+      head: {
+        link: [{ rel: "preload", href: `/${"hero-".repeat(300)}.jpg`, as: "image" }]
+      }
+    };
+    const doc = renderDocument(result as any, "Test Title");
+    const charsetIndex = doc.indexOf('<meta charset="utf-8">');
+    const preloadIndex = doc.indexOf('href="/hero-');
+    expect(charsetIndex).toBeGreaterThan(-1);
+    expect(charsetIndex).toBeLessThan(preloadIndex);
+    expect(doc.match(/<meta charset=/g)).toHaveLength(1);
+  });
+
   it("renders head script and noscript entries used by async font loading", () => {
     const result = {
       html: "<div>test</div>",
@@ -7919,6 +7935,7 @@ export default createClientComponent({ id: "m0", name: "Counter", file: "Counter
 
     const preloadStyleIndex = doc.indexOf('href="/critical.css"');
     const stylesheetIndex = doc.indexOf('href="/theme.css"');
+    expect(preloadStyleIndex).toBeLessThan(descIndex);
     expect(preloadStyleIndex).toBeLessThan(stylesheetIndex);
 
     expect(doc).toContain('<style data-rx-head="true" data-rx-style="s-text">h1 { font-size: 2rem; }</style>');

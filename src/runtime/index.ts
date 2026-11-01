@@ -16565,7 +16565,7 @@ function applyHead(head) {
   }
 
   for (const style of head.style ?? []) {
-    nextEntries.push({ tag: "style", attrs: { "data-rx-style": style.id }, text: style.css ?? "" });
+    nextEntries.push({ tag: "style", attrs: { "data-rx-style": style.id }, text: style.textContent ?? style.css ?? "" });
   }
 
   const existing = new Map();

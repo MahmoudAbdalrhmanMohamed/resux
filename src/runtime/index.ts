@@ -135,7 +135,7 @@ export interface HeadEntry {
   title?: string;
   meta?: Array<Record<string, string>>;
   link?: Array<Record<string, string>>;
-  style?: ComponentStyle[];
+  style?: Array<ComponentStyle | HeadTextContentStyle>;
   script?: Array<Record<string, unknown>>;
   noscript?: Array<Record<string, unknown> | string>;
   htmlAttrs?: HeadAttributes;
@@ -156,6 +156,12 @@ export type HeadInput = {
 export interface ComponentStyle {
   id: string;
   css: string;
+  scoped?: boolean;
+}
+
+export interface HeadTextContentStyle {
+  id: string;
+  textContent: string;
   scoped?: boolean;
 }
 
@@ -2334,6 +2340,7 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
     })
     : "";
   const mergedHead = mergeHead([{ title }, result.head]);
+  const hasExplicitCharset = (mergedHead.meta ?? []).some((meta) => meta.charset !== undefined);
   const htmlAttrs = {
     lang: "en",
     ...(mergedHead.htmlAttrs ?? {})
@@ -2348,8 +2355,8 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
     "<!doctype html>",
     `<html ${renderAttributes(htmlAttrs)}>`,
     "<head>",
+    ...(hasExplicitCharset ? [] : ['<meta charset="utf-8">']),
     renderHead(mergedHead),
-    '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<style>
 [data-rx-block] {
@@ -7617,14 +7624,14 @@ function renderHead(head: HeadEntry): string {
   tags.push(`<title>${escapeHtml(head.title ?? "Resux App")}</title>`);
 
   const links = sortHeadLinksForPriority(normalizeHeadLinks(head.link ?? []));
-  const highPriorityImagePreloads = links.filter((link) =>
-    isPriorityImagePreloadLink(link)
+  const highPriorityPreloads = links.filter((link) =>
+    isPriorityImagePreloadLink(link) || isPriorityStylePreloadLink(link)
   );
   const remainingLinks = links.filter((link) =>
-    !isPriorityImagePreloadLink(link)
+    !isPriorityImagePreloadLink(link) && !isPriorityStylePreloadLink(link)
   );
 
-  for (const link of highPriorityImagePreloads) {
+  for (const link of highPriorityPreloads) {
     tags.push(`<link data-rx-head="true" ${renderAttributes(link)}>`);
   }
 
@@ -7884,6 +7891,11 @@ function isPriorityImagePreloadLink(link: Record<string, string>): boolean {
     return false;
   }
   return String(link.as ?? "").trim().toLowerCase() === "image";
+}
+
+function isPriorityStylePreloadLink(link: Record<string, string>): boolean {
+  return normalizeHeadLinkRel(link) === "preload"
+    && String(link.as ?? "").trim().toLowerCase() === "style";
 }
 
 function isPriorityImagePreloadEntry(entry: HeadEntry): boolean {

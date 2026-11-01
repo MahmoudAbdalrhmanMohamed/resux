@@ -6718,7 +6718,10 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
           html: '<main class="about">About</main>',
           head: {
             title: "About",
-            style: [{ id: "m1-0", css: ".about{color:blue}" }]
+            style: [
+              { id: "m1-0", css: ".about{color:blue}" },
+              { id: "m1-1", textContent: ".about{background-color:white}" }
+            ]
           },
           payload: { route: { path: "/about", params: {}, query: {} }, scopes: {}, modules: {} }
         }),
@@ -6741,6 +6744,7 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
 
     expect(window.document.querySelector('style[data-rx-style="m0-0"]')).toBeNull();
     expect(window.document.querySelector('style[data-rx-style="m1-0"]')?.textContent).toBe(".about{color:blue}");
+    expect(window.document.querySelector('style[data-rx-style="m1-1"]')?.textContent).toBe(".about{background-color:white}");
   });
 
   it("reports route transition phases with progress and accessibility state", async () => {

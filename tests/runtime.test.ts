@@ -2253,7 +2253,10 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
       { name: "twitter:card", content: "summary_large_image" },
       { property: "fb:app_id", content: "123" }
     ]));
-    expect(documentHtml.indexOf("<title>Share Title</title>")).toBe("<!doctype html><html lang=\"en\"><head>".length);
+    const fallbackCharsetIndex = documentHtml.indexOf('<meta charset="utf-8">');
+    const shareTitleIndex = documentHtml.indexOf("<title>Share Title</title>");
+    expect(fallbackCharsetIndex).toBeGreaterThan("<!doctype html><html lang=\"en\"><head>".length);
+    expect(fallbackCharsetIndex).toBeLessThan(shareTitleIndex);
     expect(documentHtml.indexOf("<title>Share Title</title>")).toBeLessThan(documentHtml.indexOf("<style>"));
     expect(documentHtml.indexOf('property="og:title"')).toBeLessThan(documentHtml.indexOf("<style>"));
     expect(documentHtml.indexOf('property="og:title"')).toBeLessThan(documentHtml.indexOf('charset="utf-8"'));

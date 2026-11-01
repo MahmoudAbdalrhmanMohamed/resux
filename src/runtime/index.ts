@@ -135,7 +135,7 @@ export interface HeadEntry {
   title?: string;
   meta?: Array<Record<string, string>>;
   link?: Array<Record<string, string>>;
-  style?: ComponentStyle[];
+  style?: Array<ComponentStyle | HeadTextContentStyle>;
   script?: Array<Record<string, unknown>>;
   noscript?: Array<Record<string, unknown> | string>;
   htmlAttrs?: HeadAttributes;
@@ -156,6 +156,12 @@ export type HeadInput = {
 export interface ComponentStyle {
   id: string;
   css: string;
+  scoped?: boolean;
+}
+
+export interface HeadTextContentStyle {
+  id: string;
+  textContent: string;
   scoped?: boolean;
 }
 
@@ -2334,6 +2340,7 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
     })
     : "";
   const mergedHead = mergeHead([{ title }, result.head]);
+  const hasExplicitCharset = (mergedHead.meta ?? []).some((meta) => meta.charset !== undefined);
   const htmlAttrs = {
     lang: "en",
     ...(mergedHead.htmlAttrs ?? {})
@@ -2348,8 +2355,8 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
     "<!doctype html>",
     `<html ${renderAttributes(htmlAttrs)}>`,
     "<head>",
+    ...(hasExplicitCharset ? [] : ['<meta charset="utf-8">']),
     renderHead(mergedHead),
-    '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<style>
 [data-rx-block] {
@@ -7594,23 +7601,41 @@ function mergeHead(entries: HeadEntry[]): HeadEntry {
   return merged;
 }
 
+function isCriticalHeadMeta(meta: Record<string, unknown>): boolean {
+  if (meta.charset !== undefined) {
+    return true;
+  }
+  const name = String(meta.name ?? "").toLowerCase();
+  const httpEquiv = String(meta["http-equiv"] ?? meta.httpEquiv ?? "").toLowerCase();
+  return name === "viewport" || Boolean(httpEquiv);
+}
+
 function renderHead(head: HeadEntry): string {
   const tags: string[] = [];
+
+  const metaList = head.meta ?? [];
+  const criticalMetas = metaList.filter((meta) => isCriticalHeadMeta(meta as Record<string, unknown>));
+  const remainingMetas = metaList.filter((meta) => !isCriticalHeadMeta(meta as Record<string, unknown>));
+
+  for (const meta of criticalMetas) {
+    tags.push(`<meta data-rx-head="true" ${renderAttributes(meta)}>`);
+  }
+
   tags.push(`<title>${escapeHtml(head.title ?? "Resux App")}</title>`);
 
   const links = sortHeadLinksForPriority(normalizeHeadLinks(head.link ?? []));
-  const highPriorityImagePreloads = links.filter((link) =>
-    isPriorityImagePreloadLink(link)
+  const highPriorityPreloads = links.filter((link) =>
+    isPriorityImagePreloadLink(link) || isPriorityStylePreloadLink(link)
   );
   const remainingLinks = links.filter((link) =>
-    !isPriorityImagePreloadLink(link)
+    !isPriorityImagePreloadLink(link) && !isPriorityStylePreloadLink(link)
   );
 
-  for (const link of highPriorityImagePreloads) {
+  for (const link of highPriorityPreloads) {
     tags.push(`<link data-rx-head="true" ${renderAttributes(link)}>`);
   }
 
-  for (const meta of head.meta ?? []) {
+  for (const meta of remainingMetas) {
     tags.push(`<meta data-rx-head="true" ${renderAttributes(meta)}>`);
   }
 
@@ -7684,15 +7709,21 @@ function escapeNoscriptContent(source: string): string {
 
 function sortHeadLinksForPriority(links: Record<string, string>[]): Record<string, string>[] {
   return links
-    .map((link, index) => ({
-      link,
-      index,
-      priority: isPriorityImagePreloadLink(link)
+    .map((link, index) => {
+      const rel = normalizeHeadLinkRel(link);
+      const isPreload = rel === "preload";
+      const as = String(link.as ?? "").trim().toLowerCase();
+      const priority = (isPreload && as === "style") || isPriorityImagePreloadLink(link)
         ? 0
-        : normalizeHeadLinkRel(link) === "preload"
+        : isPreload
           ? 1
-          : 2,
-    }))
+          : 2;
+      return {
+        link,
+        index,
+        priority,
+      };
+    })
     .sort((left, right) => left.priority - right.priority || left.index - right.index)
     .map((entry) => entry.link);
 }
@@ -7862,6 +7893,11 @@ function isPriorityImagePreloadLink(link: Record<string, string>): boolean {
   return String(link.as ?? "").trim().toLowerCase() === "image";
 }
 
+function isPriorityStylePreloadLink(link: Record<string, string>): boolean {
+  return normalizeHeadLinkRel(link) === "preload"
+    && String(link.as ?? "").trim().toLowerCase() === "style";
+}
+
 function isPriorityImagePreloadEntry(entry: HeadEntry): boolean {
   return (
     !entry.title
@@ -7906,6 +7942,8 @@ function escapeStyleContent(css: unknown): string {
       str = (css as any).children ?? "";
     } else if ("innerHTML" in (css as any)) {
       str = (css as any).innerHTML ?? "";
+    } else if ("textContent" in (css as any)) {
+      str = (css as any).textContent ?? "";
     } else {
       str = String(css);
     }
@@ -16527,7 +16565,7 @@ function applyHead(head) {
   }
 
   for (const style of head.style ?? []) {
-    nextEntries.push({ tag: "style", attrs: { "data-rx-style": style.id }, text: style.css ?? "" });
+    nextEntries.push({ tag: "style", attrs: { "data-rx-style": style.id }, text: style.textContent ?? style.css ?? "" });
   }
 
   const existing = new Map();

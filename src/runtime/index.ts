@@ -30,6 +30,10 @@ import {
   RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAME_LENGTH,
   RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAMES,
 } from "./resume.js";
+import {
+  useViewTransition,
+  type ResuxViewTransition,
+} from "./view-transitions/index.js";
 
 export type JsonValue =
   | null
@@ -66,6 +70,8 @@ export type {
   ReactiveEffectOptions,
   ReactiveEffectRunner
 } from "../reactivity/index.js";
+export { useViewTransition } from "./view-transitions/index.js";
+export type { ResuxViewTransition, ResuxViewTransitionOptions } from "./view-transitions/index.js";
 
 export interface AsyncDataError {
   name: string;
@@ -121,6 +127,8 @@ export interface PageMeta {
   middleware?: string | string[];
   title?: string | Record<string, string>;
   meta?: Array<Record<string, string>>;
+  viewTransition?: boolean;
+  [key: string]: unknown;
 }
 
 export type HeadAttributePrimitive = string | number | boolean | null | undefined;
@@ -559,6 +567,7 @@ export interface SetupContext {
   defineModel<T>(name?: string, options?: unknown): Ref<T>;
   useRoute(): RouteContext;
   useRouter(): ResuxRouter;
+  useViewTransition(): ResuxViewTransition;
   useHead(input: HeadInput): void;
   useSeoMeta(input: SeoMetaInput): void;
   useRuntimeConfig(): RuntimeConfig;
@@ -3092,6 +3101,10 @@ export function createServerSetupContext(
       return createServerRouter();
     },
 
+    useViewTransition(): ResuxViewTransition {
+      return useViewTransition();
+    },
+
     useHead(input: HeadInput): void {
       headEntries.push(resolveHeadEntry(input));
     },
@@ -4291,7 +4304,9 @@ function collectNativeElementAttributes(
     if (attr.bindingId) {
       attrs.push(`data-rx-attr-${attr.bindingId}="${context.scopeId}:${attr.bindingId}"`);
     }
-    if (value === false || value === null || value === undefined) continue;
+    const isViewTransitionAttr = attrName === "data-view-transition" || attrName === "view-transition";
+    if (!isViewTransitionAttr && (value === false || value === null || value === undefined)) continue;
+    if (isViewTransitionAttr && (value === null || value === undefined)) continue;
 
     attrs.push(`${attrName}="${escapeAttribute(stringifyAttributeValue(attrName, value))}"`);
   }
@@ -8237,17 +8252,22 @@ function nativeElementTag(node: ElementTemplateNode): string {
   return node.tag;
 }
 
+const CLIENT_ENHANCE_ATTR_MAP: Record<string, string> = {
+  options: "data-resux-options",
+  name: "data-resux-enhancement",
+  trigger: "data-resux-trigger",
+  mode: "data-resux-mode",
+  noCls: "data-resux-no-cls",
+  demo: "data-resux-demo",
+};
+
 function nativeAttributeName(node: ElementTemplateNode, name: string): string {
-  if (node.tag === "ResuxLink" && name === "to") {
-    return "href";
+  if (node.tag === "ResuxLink") {
+    if (name === "to") return "href";
+    if (name === "viewTransition" || name === "view-transition") return "data-view-transition";
   }
   if (node.tag === "ClientEnhance" || node.tag === "ResuxClientEnhance") {
-    if (name === "options") return "data-resux-options";
-    if (name === "name") return "data-resux-enhancement";
-    if (name === "trigger") return "data-resux-trigger";
-    if (name === "mode") return "data-resux-mode";
-    if (name === "noCls") return "data-resux-no-cls";
-    if (name === "demo") return "data-resux-demo";
+    return CLIENT_ENHANCE_ATTR_MAP[name] ?? name;
   }
   return name;
 }
@@ -9554,6 +9574,7 @@ export {
   getClientEnhancement,
   scanClientEnhancements,
   disposeClientEnhancements,
+  useViewTransition,
 };
 
 async function disposeClientEnhancements() {
@@ -11230,6 +11251,9 @@ export function createClientComponent(definition) {
         useRouter() {
           return createClientRouter();
         },
+        useViewTransition() {
+          return useViewTransition();
+        },
         useHead() {
         },
         useSeoMeta() {
@@ -11483,11 +11507,13 @@ function installResux() {
         activateDeferredLazyMedia(installedDoc);
       }, { once: true });
     }
-    window.addEventListener("popstate", () => {
+    window.addEventListener("popstate", (event) => {
+      const eventViewTransition = event?.viewTransition;
       void navigateTo(location.pathname + location.search + location.hash, {
         replace: true,
         force: true,
         preserveScroll: true,
+        ...(typeof eventViewTransition === "boolean" ? { viewTransition: eventViewTransition } : {}),
       });
     });
     if (!history.state || !history.state.__resux) {
@@ -13909,11 +13935,38 @@ function handleNavigationClick(event){
     if(!target.hash||target.hash===location.hash){event.preventDefault();return true}
     return false;
   }
-  event.preventDefault();logManagedMediaDebug("router-navigation-start",{href:target.href,nextPath});void navigateTo(nextPath+target.hash);return true;
+  const vtAttr=anchor.getAttribute("data-view-transition")??anchor.getAttribute("view-transition"),viewTransition=vtAttr!==null?vtAttr!=="false":undefined;
+  event.preventDefault();logManagedMediaDebug("router-navigation-start",{href:target.href,nextPath});void navigateTo(nextPath+target.hash,{...(viewTransition!==undefined?{viewTransition}:{})});return true;
 }
 function shouldIgnoreNavigationTarget(eventTarget,anchor){
   const ignored=eventTarget?.closest?.(ROUTER_IGNORED_EVENT_TARGET_SELECTOR);
   return !!ignored&&ignored!==anchor;
+}
+function isViewTransitionSupported(){return typeof document!=="undefined"&&typeof document.startViewTransition==="function"}
+function prefersReducedMotion(){return typeof window!=="undefined"&&typeof window.matchMedia==="function"&&window.matchMedia("(prefers-reduced-motion: reduce)").matches===true}
+function shouldPerformViewTransition(options,nextMeta,prevMeta,routerConfig){
+  if(options?.viewTransition!==undefined)return Boolean(options.viewTransition);
+  if(nextMeta?.viewTransition!==undefined)return Boolean(nextMeta.viewTransition);
+  if(prevMeta?.viewTransition!==undefined)return Boolean(prevMeta.viewTransition);
+  return Boolean(routerConfig?.viewTransition);
+}
+async function executeViewTransition(domSwapFn){
+  if(!isViewTransitionSupported()||prefersReducedMotion()){await domSwapFn();return}
+  let callbackRan=false,callbackRejected=false,callbackError=null;
+  try{
+    const transition=document.startViewTransition(async()=>{
+      callbackRan=true;
+      try{await domSwapFn()}catch(err){callbackRejected=true;callbackError=err;throw err}
+    });
+    if(transition&&typeof transition.updateCallbackDone?.catch==="function")transition.updateCallbackDone.catch(()=>{});
+    await transition.finished;
+  }catch{
+    if(callbackRejected)throw callbackError;
+    if(!callbackRan)await domSwapFn();
+  }
+}
+function useViewTransition(){
+  return{get isSupported(){return isViewTransitionSupported()},async start(updateCallback){await executeViewTransition(updateCallback)}};
 }
 function shouldBlockManagedMediaLinkNavigation(anchor,eventTarget){
   if(!anchor||!eventTarget||typeof location==="undefined"||anchor.getAttribute("data-rx-allow-media-navigation")==="true")return false;
@@ -13971,8 +14024,14 @@ async function navigateTo(target,options={}){
     if(routeStylesReady){await routeStylesReady;if(transitionToken!==routeTransitionToken)return}
     history[options.replace?"replaceState":"pushState"]({__resux:true,path:routePath},"",nextUrl.href);
     await disposeClientEnhancements();setRouteTransition("swapping",{path:routePath});
-    const preserveLayout=!didClientLocaleChange(previousPayload,nextPayload),preserved=replaceRouteHtml(root,result.html,preserveLayout);
-    globalThis.__RESUX__=mergeClientGlobalState(mergePersistentLayoutPayload(previousPayload,nextPayload,preserved.scopeIds));
+    const preserveLayout=!didClientLocaleChange(previousPayload,nextPayload);
+    let preserved;
+    await runRouteViewTransitionSwap(options,nextPayload,previousPayload,()=>{
+      if(transitionToken!==routeTransitionToken)return;
+      preserved=replaceRouteHtml(root,result.html,preserveLayout);
+      globalThis.__RESUX__=mergeClientGlobalState(mergePersistentLayoutPayload(previousPayload,nextPayload,preserved.scopeIds));
+    });
+    if(!preserved)return;
     getClientResuxApp(globalThis.__RESUX__.route);applyHead(result.head);animateRouteSwap(preserved.root);clearScopeCacheExcept(preserved.scopeIds);
     void resumePendingAsyncData();mountManagedTeleports(document,{deferMissingTarget:true});initializeManagedRuntimeContent(document);
     if(!options.preserveScroll&&nextUrl.hash)document.getElementById(nextUrl.hash.slice(1))?.scrollIntoView();
@@ -13984,6 +14043,11 @@ async function navigateTo(target,options={}){
     styleController?.abort();if(routeStyleNavigationController===styleController)routeStyleNavigationController=null;
     if(!completed&&transitionToken===routeTransitionToken)setRouteTransition("idle",{path:routePath});
   }
+}
+async function runRouteViewTransitionSwap(options,nextPayload,previousPayload,performSwap){
+  const routerConfig=globalThis.__RESUX__?.config?.public?.router??globalThis.__RESUX__?.config?.router??{};
+  if(shouldPerformViewTransition(options,nextPayload?.pageMeta??nextPayload?.meta,previousPayload?.pageMeta??previousPayload?.meta,routerConfig))await executeViewTransition(performSwap);
+  else performSwap();
 }
 
 function abortPendingAsyncData() {
@@ -16530,7 +16594,8 @@ function renderElement(node, scope, locals, styleScopeId, scopeId, moduleId) {
       if (attr.bindingId) {
         attrs.push('data-rx-attr-' + attr.bindingId + '="' + scopeId + ':' + attr.bindingId + '"');
       }
-      if (value !== false && value !== null && value !== undefined) {
+      const isViewTransitionAttr = attrName === "data-view-transition" || attrName === "view-transition";
+      if (value !== null && value !== undefined && (value !== false || isViewTransitionAttr)) {
         attrs.push(attrName + '="' + escapeAttribute(stringifyAttributeValue(attrName, value)) + '"');
       }
     }
@@ -18299,6 +18364,9 @@ function nativeAttributeName(node, name) {
   if (node.tag === "ResuxLink" && name === "to") {
     return "href";
   }
+  if (node.tag === "ResuxLink" && (name === "viewTransition" || name === "view-transition")) {
+    return "data-view-transition";
+  }
   if (node.tag === "ClientEnhance" || node.tag === "ResuxClientEnhance") {
     if (name === "options") return "data-resux-options";
     if (name === "name") return "data-resux-enhancement";
@@ -18584,7 +18652,8 @@ function applyPatches(scopeId, patches, options = {}) {
         }
       }
       elements.forEach((element) => {
-        const removeAttribute = patch.value === "" || patch.value === "false" || patch.value == null;
+        const isViewTransitionAttr = patch.attr === "data-view-transition" || patch.attr === "view-transition";
+        const removeAttribute = patch.value === "" || (!isViewTransitionAttr && patch.value === "false") || patch.value == null;
         if (patch.attr === "id") {
           const previousId = element.getAttribute("id");
           const nextId = removeAttribute ? null : String(patch.value);

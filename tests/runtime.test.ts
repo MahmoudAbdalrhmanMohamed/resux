@@ -6674,6 +6674,7 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       </div>
     `;
     const stylesheet = window.document.querySelector('link[href="/styles.css"]');
+    Object.defineProperty(stylesheet, "sheet", { configurable: true, value: {} });
 
     const routePayloads: Record<string, unknown> = {
       "/about": {

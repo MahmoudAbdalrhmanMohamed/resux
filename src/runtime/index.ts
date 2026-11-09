@@ -11434,9 +11434,10 @@ function installResux() {
     if (managedPageLoadReady) {
       managedPageLoadReady = true;
     } else {
+      const installedDoc = document;
       window.addEventListener("load", () => {
         managedPageLoadReady = true;
-        activateDeferredLazyMedia();
+        activateDeferredLazyMedia(installedDoc);
       }, { once: true });
     }
     window.addEventListener("popstate", () => {
@@ -11634,6 +11635,7 @@ function activateDeferredLazyVideos(root = document) {
   if (!videos.length) {
     return;
   }
+  const pageReady = managedPageLoadReady && (!root?.readyState || root.readyState === "complete");
   for (const video of videos) {
     if (!isManagedMediaConnected(video)) {
       continue;
@@ -11649,10 +11651,10 @@ function activateDeferredLazyVideos(root = document) {
     }
     const deferUntilReady = video.getAttribute("data-rx-video-defer-ready") === "true";
     const revealOnReady = video.getAttribute("data-rx-video-ready-reveal") === "true";
-    if (deferUntilReady && !managedPageLoadReady) {
+    if (deferUntilReady && !pageReady) {
       continue;
     }
-    if (deferUntilReady && managedPageLoadReady && revealOnReady) {
+    if (deferUntilReady && revealOnReady) {
       scheduleManagedVideoReveal(video);
       continue;
     }

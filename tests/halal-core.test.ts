@@ -329,7 +329,7 @@ describe("resux-halal-core Unit & System Tests", () => {
 
         const files = readdirSync(tempDir);
         const tempFiles = files.filter(f => f.startsWith(".resux-temp-config-"));
-        expect(tempFiles.length).toBe(0);
+        expect(tempFiles).toHaveLength(0);
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
       }

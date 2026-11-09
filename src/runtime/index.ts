@@ -4933,6 +4933,18 @@ function resolveVideoThemeDefaults(theme: ResuxVideoTheme): { controlsColor: str
   };
 }
 
+function appendServerDeferredVideoPoster(
+  attrs: string[],
+  placeholderSrc: string | undefined,
+  poster: string | undefined,
+  deferLazy: boolean,
+  deferUntilPageReady: boolean,
+): void {
+  if (!deferLazy) return;
+  const deferredPoster = placeholderSrc ?? (deferUntilPageReady ? poster : undefined);
+  if (deferredPoster) attrs.push(`poster="${escapeAttribute(deferredPoster)}"`);
+}
+
 function renderResuxVideo(
   node: ElementTemplateNode,
   context: RenderTemplateContext,
@@ -5394,6 +5406,7 @@ function renderResuxVideo(
     attrs.push('data-resux-placeholder-active="true"');
   }
 
+  appendServerDeferredVideoPoster(attrs, placeholderSrc, poster, deferLazy, deferUntilPageReady);
   const initialPoster = deferLazy
     ? undefined
     : (placeholderSrc ?? poster);
@@ -17212,6 +17225,17 @@ function renderClientResuxClientEnhance(node, scope, locals, styleScopeId) {
   return "<" + tag + " " + attrs.join(" ") + styleAttr + ">" + children + "</" + tag + ">";
 }
 
+function appendClientDeferredVideoPoster(attrs, placeholderSrc, poster, deferLazy, deferUntilPageReady) {
+  if (!deferLazy) return;
+  let deferredPoster = placeholderSrc;
+  if (!deferredPoster && deferUntilPageReady) {
+    deferredPoster = poster;
+  }
+  if (deferredPoster) {
+    attrs.push('poster="' + escapeAttribute(deferredPoster) + '"');
+  }
+}
+
 function renderClientResuxVideo(node, scope, locals, styleScopeId) {
   const props = {};
   for (const attr of node.attrs) {
@@ -17569,6 +17593,7 @@ function renderClientResuxVideo(node, scope, locals, styleScopeId) {
     attrs.push('data-rx-placeholder-active="true"');
     attrs.push('data-resux-placeholder-active="true"');
   }
+  appendClientDeferredVideoPoster(attrs, placeholderSrc, poster, deferLazy, deferUntilPageReady);
   const initialPoster = deferLazy
     ? undefined
     : (placeholderSrc || poster);

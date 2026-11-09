@@ -7362,17 +7362,35 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     expect(playCalls).toBeGreaterThan(0);
   });
 
+  it("renders deferred page-ready poster markup in the generated client renderer", async () => {
+    const runtimeFile = path.join(os.tmpdir(), `resux-video-client-poster-${Date.now()}.mjs`);
+    await writeFile(runtimeFile, getClientRuntimeSource().replace("installResux();", "export { renderClientResuxVideo };"), "utf8");
+    const { renderClientResuxVideo } = await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+    const attrs = Object.entries({
+      src: "/media-test/videos/sample-video.mp4",
+      poster: "/media-test/videos/sample-poster.jpg",
+      deferUntilPageReady: "true",
+      controls: "false",
+    }).map(([name, value]) => ({ kind: "static", name, value }));
+    const html = renderClientResuxVideo({ attrs, children: [] }, {}, {}, "");
+
+    expect({
+      nativePoster: /<video\b[^>]*\sposter="\/media-test\/videos\/sample-poster\.jpg"(?:\s|>)/.test(html),
+      deferredSource: html.includes('data-rx-lazy-src="/media-test/videos/sample-video.mp4"'),
+      eagerSource: html.includes(' src="/media-test/videos/sample-video.mp4"'),
+    }).toEqual({ nativePoster: true, deferredSource: true, eagerSource: false });
+  });
+
   it("waits for page-ready before revealing defer-until-page-ready videos", async () => {
-    const tempDir = path.join(os.tmpdir(), `resux-video-page-ready-${Date.now()}`);
-    await mkdir(tempDir, { recursive: true });
-    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
-    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+    const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
+      "resux-video-page-ready",
+      () => "export default {};",
+    );
 
     const window = new Window({ url: "http://localhost/media" });
-    Object.defineProperty(window.document, "readyState", {
-      configurable: true,
-      value: "loading",
-    });
+    const readyState = vi.spyOn(window.document, "readyState", "get").mockReturnValue("loading");
+    const windowListeners = new Map<string, EventListenerOrEventListenerObject>();
+    vi.spyOn(window, "addEventListener").mockImplementation((type, listener) => void windowListeners.set(type, listener));
     window.document.body.innerHTML = `
       <div id="__resux"><main>Media</main></div>
       <video
@@ -7395,22 +7413,11 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       disconnect() {}
     }
 
+    installClientRuntimeFixture(window, {}, handlerUrl);
+    (globalThis as any).__RESUX__.route.path = "/media";
     Object.assign(globalThis, {
-      document: window.document,
-      window,
-      location: window.location,
-      history: window.history,
       IntersectionObserver: MockIntersectionObserver,
-      requestIdleCallback: (callback: () => void) => {
-        callback();
-        return 1;
-      },
-      __RESUX__: {
-        route: { path: "/media", params: {}, query: {} },
-        scopes: {},
-        modules: {}
-      },
-      __RESUX_INSTALLED__: false
+      requestIdleCallback: (callback: () => void) => (callback(), 1),
     });
 
     const video = window.document.querySelector("video") as HTMLVideoElement;
@@ -7419,16 +7426,15 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
       loadCalls++;
     };
 
-    await import(`${pathToFileURL(runtimeFile).href}?test=${nextRuntimeImportQuery()}`);
+    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
     expect(video.getAttribute("data-resux-revealed")).toBeNull();
     expect(observerConstructed).toBe(0);
     expect(loadCalls).toBe(0);
 
-    Object.defineProperty(window.document, "readyState", {
-      configurable: true,
-      value: "complete",
-    });
-    window.dispatchEvent(new window.Event("load"));
+    readyState.mockReturnValue("complete");
+    const loadListener = windowListeners.get("load");
+    expect(loadListener).toBeTypeOf("function");
+    (loadListener as EventListener)(new window.Event("load"));
 
     expect(video.getAttribute("data-resux-revealed")).toBe("true");
     expect(video.getAttribute("data-resux-video-loading")).toBe("true");

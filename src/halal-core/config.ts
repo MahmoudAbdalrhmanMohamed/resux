@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
@@ -90,6 +90,66 @@ export function validatePolicyConfig(config: Record<string, any>): ResuxHalalPol
   return config as ResuxHalalPolicy;
 }
 
+function stripUnquotedComment(value: string): string {
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+    } else if (ch === '"' && !inSingle && value[i - 1] !== "\\") {
+      inDouble = !inDouble;
+    } else if (ch === "#" && !inSingle && !inDouble) {
+      return value.slice(0, i).trim();
+    }
+  }
+  return value.trim();
+}
+
+function stripWrappingQuotes(value: string): string {
+  const clean = stripUnquotedComment(value);
+  const isDoubleQuoted = clean.startsWith('"') && clean.endsWith('"');
+  const isSingleQuoted = clean.startsWith("'") && clean.endsWith("'");
+  const unquoted = isDoubleQuoted || isSingleQuoted ? clean.slice(1, -1) : clean;
+  return isSingleQuoted ? unquoted : unquoted.replaceAll(String.raw`\$`, "$");
+}
+
+function applyDotEnvLine(line: string): void {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("#")) {
+    return;
+  }
+  const equalIndex = trimmed.indexOf("=");
+  if (equalIndex === -1) {
+    return;
+  }
+  const rawKey = trimmed.slice(0, equalIndex).trim();
+  const key = rawKey.startsWith("export ") ? rawKey.slice(7).trim() : rawKey;
+  if (!key || key.startsWith("VITE_") || process.env[key] !== undefined) {
+    return;
+  }
+  const rawValue = trimmed.slice(equalIndex + 1).trim();
+  process.env[key] = stripWrappingQuotes(rawValue);
+}
+
+export function loadProjectDotEnv(appRoot: string): void {
+  const envFiles = [".env.local", ".env"];
+  for (const file of envFiles) {
+    const fullPath = path.join(appRoot, file);
+    if (!existsSync(fullPath)) {
+      continue;
+    }
+    try {
+      const content = readFileSync(fullPath, "utf8");
+      for (const line of content.split(/\r?\n/)) {
+        applyDotEnvLine(line);
+      }
+    } catch {
+      // Ignore unreadable .env files
+    }
+  }
+}
+
 export async function loadMainResuxConfig(appRoot: string): Promise<Record<string, any>> {
   const possiblePaths = [
     path.join(appRoot, "resux.config.ts"),
@@ -114,13 +174,8 @@ export async function loadMainResuxConfig(appRoot: string): Promise<Record<strin
           compiledSource = readFileSync(configPath, "utf8");
         }
 
-        const tempDir = path.join(appRoot, ".resux", "server");
-        const fs = await import("node:fs");
-        if (!fs.existsSync(tempDir)) {
-          fs.mkdirSync(tempDir, { recursive: true });
-        }
-        const tempPath = path.join(tempDir, `halal-temp-config-${Date.now()}.mjs`);
-        fs.writeFileSync(tempPath, compiledSource, "utf8");
+        const tempPath = path.join(appRoot, `.resux-temp-config-${Date.now()}-${Math.random().toString(36).slice(2)}.mjs`);
+        writeFileSync(tempPath, compiledSource, "utf8");
 
         try {
           const fileUrl = pathToFileURL(tempPath).href;
@@ -129,8 +184,10 @@ export async function loadMainResuxConfig(appRoot: string): Promise<Record<strin
           return config;
         } finally {
           try {
-            fs.unlinkSync(tempPath);
-          } catch {}
+            unlinkSync(tempPath);
+          } catch {
+            // Ignore cleanup errors for temporary config file
+          }
         }
       } catch (err: any) {
         console.warn(`[resux-halal-core] Warning: failed to load resux.config.ts for Halal AI check: ${err.message}`);
@@ -141,6 +198,7 @@ export async function loadMainResuxConfig(appRoot: string): Promise<Record<strin
 }
 
 export async function loadProjectPolicy(appRoot: string): Promise<ResuxHalalPolicy> {
+  loadProjectDotEnv(appRoot);
   const policy: ResuxHalalPolicy = {};
 
   try {

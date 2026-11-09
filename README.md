@@ -117,7 +117,7 @@ export default defineResuxConfig({
 })
 ```
 
-You can also control transitions programmatically with `navigateClient(to, { viewTransition: true }) from `resuxjs/runtime/router``, declare per-page metadata with `definePageMeta({ viewTransition: true })`, inspect support via `useViewTransition()`, or pair with speculative preloading (`<script type="speculationrules">`) for zero-latency, smoothly animated page swaps.
+You can also control transitions programmatically with `navigateClient(to, { viewTransition: true })` from `resuxjs/runtime/router`, declare per-page metadata with `definePageMeta({ viewTransition: true })`, inspect support via `useViewTransition()`, or pair with speculative preloading (`<script type="speculationrules">`) for zero-latency, smoothly animated page swaps.
 
 ## Built-in Teleport and Transitions
 

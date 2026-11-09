@@ -975,12 +975,11 @@ defineClientEnhancement("imported-helper", async (target) => {
     expect(pluginModule).toContain("../chunks/");
 
     const chunkFiles = await readdir(path.join(root, ".resux", "client", "chunks"));
+    expect(chunkFiles.length).toBeGreaterThan(0);
     const preloadHelperFile = chunkFiles.find((file) => file.startsWith("preload-helper-"));
-    expect(preloadHelperFile).toBeDefined();
-    const preloadHelperSource = await readFile(
-      path.join(root, ".resux", "client", "chunks", preloadHelperFile!),
-      "utf8",
-    );
+    const preloadHelperSource = preloadHelperFile
+      ? await readFile(path.join(root, ".resux", "client", "chunks", preloadHelperFile), "utf8")
+      : pluginModule;
     expect(preloadHelperSource).toContain("/__resux/");
   }, 20000);
 

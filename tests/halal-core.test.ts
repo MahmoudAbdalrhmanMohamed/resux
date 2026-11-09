@@ -277,9 +277,10 @@ describe("resux-halal-core Unit & System Tests", () => {
 
       writeFileSync(envFile, [
         "# Comment line",
-        "TEST_HALAL_KEY=my-secret-token",
-        'TEST_QUOTED_KEY="hello-world"',
+        "TEST_HALAL_KEY=my-secret-token # inline comment",
+        'TEST_QUOTED_KEY="hello # world" # trailing comment',
         "TEST_EXISTING_KEY=from-env-file",
+        "VITE_CLIENT_ONLY=from-env-file",
         ""
       ].join("\n"), "utf8");
 
@@ -294,14 +295,16 @@ describe("resux-halal-core Unit & System Tests", () => {
         loadProjectDotEnv(tempDir);
 
         expect(process.env.TEST_HALAL_KEY).toBe("my-secret-token");
-        expect(process.env.TEST_QUOTED_KEY).toBe("hello-world");
+        expect(process.env.TEST_QUOTED_KEY).toBe("hello # world");
         expect(process.env.TEST_LOCAL_KEY).toBe("local-secret");
         expect(process.env.TEST_EXISTING_KEY).toBe("already-set-in-shell");
+        expect(process.env.VITE_CLIENT_ONLY).toBeUndefined();
       } finally {
         delete process.env.TEST_HALAL_KEY;
         delete process.env.TEST_QUOTED_KEY;
         delete process.env.TEST_LOCAL_KEY;
         delete process.env.TEST_EXISTING_KEY;
+        delete process.env.VITE_CLIENT_ONLY;
         rmSync(tempDir, { recursive: true, force: true });
       }
     });

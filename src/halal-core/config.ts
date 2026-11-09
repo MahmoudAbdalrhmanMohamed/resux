@@ -90,10 +90,28 @@ export function validatePolicyConfig(config: Record<string, any>): ResuxHalalPol
   return config as ResuxHalalPolicy;
 }
 
+function stripUnquotedComment(value: string): string {
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+    } else if (ch === '"' && !inSingle && value[i - 1] !== "\\") {
+      inDouble = !inDouble;
+    } else if (ch === "#" && !inSingle && !inDouble) {
+      return value.slice(0, i).trim();
+    }
+  }
+  return value.trim();
+}
+
 function stripWrappingQuotes(value: string): string {
-  const isDoubleQuoted = value.startsWith('"') && value.endsWith('"');
-  const isSingleQuoted = value.startsWith("'") && value.endsWith("'");
-  return isDoubleQuoted || isSingleQuoted ? value.slice(1, -1) : value;
+  const clean = stripUnquotedComment(value);
+  const isDoubleQuoted = clean.startsWith('"') && clean.endsWith('"');
+  const isSingleQuoted = clean.startsWith("'") && clean.endsWith("'");
+  const unquoted = isDoubleQuoted || isSingleQuoted ? clean.slice(1, -1) : clean;
+  return isSingleQuoted ? unquoted : unquoted.replaceAll(String.raw`\$`, "$");
 }
 
 function applyDotEnvLine(line: string): void {
@@ -107,7 +125,7 @@ function applyDotEnvLine(line: string): void {
   }
   const rawKey = trimmed.slice(0, equalIndex).trim();
   const key = rawKey.startsWith("export ") ? rawKey.slice(7).trim() : rawKey;
-  if (!key || process.env[key] !== undefined) {
+  if (!key || key.startsWith("VITE_") || process.env[key] !== undefined) {
     return;
   }
   const rawValue = trimmed.slice(equalIndex + 1).trim();

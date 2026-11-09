@@ -7855,7 +7855,7 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
     for (const p of preloads) p.dispatchEvent(new window.Event("load"));
     await waitForHtml(window, "<main>Imported</main>");
     expect(window.location.pathname).toBe("/imported");
-    expect(window.document.querySelectorAll('link[data-rx-route-style-preload="true"]').length === 0);
+    expect(window.document.querySelectorAll('link[data-rx-route-style-preload="true"]')).toHaveLength(0);
   });
 
   it("does not block navigation on disabled destination stylesheets", async () => {

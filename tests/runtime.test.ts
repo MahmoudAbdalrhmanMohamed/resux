@@ -2301,10 +2301,13 @@ export default createClientComponent({ id: "m0", name: "TableTeleport", file: "T
       { name: "twitter:card", content: "summary_large_image" },
       { property: "fb:app_id", content: "123" }
     ]));
-    expect(documentHtml.indexOf("<title>Share Title</title>")).toBe("<!doctype html><html lang=\"en\"><head>".length);
+    const fallbackCharsetIndex = documentHtml.indexOf('<meta charset="utf-8">');
+    const shareTitleIndex = documentHtml.indexOf("<title>Share Title</title>");
+    expect(fallbackCharsetIndex).toBeGreaterThanOrEqual("<!doctype html><html lang=\"en\"><head>".length);
+    expect(fallbackCharsetIndex).toBeLessThan(shareTitleIndex);
     expect(documentHtml.indexOf("<title>Share Title</title>")).toBeLessThan(documentHtml.indexOf("<style>"));
     expect(documentHtml.indexOf('property="og:title"')).toBeLessThan(documentHtml.indexOf("<style>"));
-    expect(documentHtml.indexOf('property="og:title"')).toBeLessThan(documentHtml.indexOf('charset="utf-8"'));
+    expect(documentHtml.indexOf('charset="utf-8"')).toBeLessThan(documentHtml.indexOf('property="og:title"'));
     expect(documentHtml.indexOf('property="og:title"')).toBeGreaterThan(documentHtml.indexOf("<head>"));
   });
 
@@ -6767,7 +6770,10 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
           html: '<main class="about">About</main>',
           head: {
             title: "About",
-            style: [{ id: "m1-0", css: ".about{color:blue}" }]
+            style: [
+              { id: "m1-0", css: ".about{color:blue}" },
+              { id: "m1-1", textContent: ".about{background-color:white}" }
+            ]
           },
           payload: { route: { path: "/about", params: {}, query: {} }, scopes: {}, modules: {} }
         }),
@@ -6790,6 +6796,7 @@ export default createClientComponent({ id: "m0", name: "Home", file: "Home.vue",
 
     expect(window.document.querySelector('style[data-rx-style="m0-0"]')).toBeNull();
     expect(window.document.querySelector('style[data-rx-style="m1-0"]')?.textContent).toBe(".about{color:blue}");
+    expect(window.document.querySelector('style[data-rx-style="m1-1"]')?.textContent).toBe(".about{background-color:white}");
   });
 
   it("reports route transition phases with progress and accessibility state", async () => {
@@ -8239,6 +8246,26 @@ export default createClientComponent({ id: "m0", name: "Counter", file: "Counter
     expect(doc).toContain('<style data-rx-head="true">body { background: black; }</style>');
   });
 
+  it("emits the fallback charset before long head links when no charset is declared", () => {
+    const result = {
+      html: "<div>test</div>",
+      payload: { route: { path: "/", params: {}, query: {} }, scopes: {}, modules: {}, config: {} },
+      head: {
+        link: [{ rel: "preload", href: `/${"hero-".repeat(300)}.jpg`, as: "image" }]
+      }
+    };
+    const doc = renderDocument(result as any, "Test Title");
+    const charsetIndex = doc.indexOf('<meta charset="utf-8">');
+    const viewportIndex = doc.indexOf('<meta name="viewport" content="width=device-width, initial-scale=1">');
+    const preloadIndex = doc.indexOf('href="/hero-');
+    expect(charsetIndex).toBeGreaterThan(-1);
+    expect(viewportIndex).toBeGreaterThan(-1);
+    expect(charsetIndex).toBeLessThan(preloadIndex);
+    expect(viewportIndex).toBeLessThan(preloadIndex);
+    expect(doc.match(/<meta charset=/g)).toHaveLength(1);
+    expect(doc.match(/name="viewport"/g)).toHaveLength(1);
+  });
+
   it("renders head script and noscript entries used by async font loading", () => {
     const result = {
       html: "<div>test</div>",
@@ -8258,6 +8285,57 @@ export default createClientComponent({ id: "m0", name: "Counter", file: "Counter
     expect(doc).toContain('data-resux-font-loader="true"');
     expect(doc).toContain("<\\/script>");
     expect(doc).not.toContain("</script><script>alert(1)</script>");
+  });
+
+  it("renders critical head meta tags before title and preload links and supports textContent in styles", () => {
+    const result = {
+      html: "<div>test</div>",
+      payload: { route: { path: "/", params: {}, query: {} }, scopes: {}, modules: {}, config: {} },
+      head: {
+        title: "Test Page",
+        meta: [
+          { name: "description", content: "A regular page description" },
+          { charset: "utf-8" },
+          { name: "viewport", content: "width=device-width, initial-scale=1" },
+          { "http-equiv": "X-UA-Compatible", content: "IE=edge" },
+          { property: "og:title", content: "OG Title" }
+        ],
+        link: [
+          { rel: "preload", href: "/large-hero.jpg", as: "image", fetchpriority: "high" },
+          { rel: "preload", href: "/critical.css", as: "style" },
+          { rel: "stylesheet", href: "/theme.css" }
+        ],
+        style: [
+          { id: "s-text", textContent: "h1 { font-size: 2rem; }" }
+        ]
+      }
+    };
+    const doc = renderDocument(result as any, "Test Title");
+
+    const charsetIndex = doc.indexOf('<meta data-rx-head="true" charset="utf-8">');
+    const viewportIndex = doc.indexOf('<meta data-rx-head="true" name="viewport" content="width=device-width, initial-scale=1">');
+    const httpEquivIndex = doc.indexOf('<meta data-rx-head="true" http-equiv="X-UA-Compatible" content="IE=edge">');
+    const titleIndex = doc.indexOf('<title>Test Page</title>');
+    const preloadImageIndex = doc.indexOf('href="/large-hero.jpg"');
+    const descIndex = doc.indexOf('name="description"');
+
+    expect(charsetIndex).toBeGreaterThan(-1);
+    expect(viewportIndex).toBeGreaterThan(-1);
+    expect(httpEquivIndex).toBeGreaterThan(-1);
+    expect(charsetIndex).toBeLessThan(titleIndex);
+    expect(viewportIndex).toBeLessThan(titleIndex);
+    expect(httpEquivIndex).toBeLessThan(titleIndex);
+    expect(titleIndex).toBeLessThan(preloadImageIndex);
+    expect(preloadImageIndex).toBeLessThan(descIndex);
+
+    const preloadStyleIndex = doc.indexOf('href="/critical.css"');
+    const stylesheetIndex = doc.indexOf('href="/theme.css"');
+    expect(preloadStyleIndex).toBeLessThan(descIndex);
+    expect(preloadStyleIndex).toBeLessThan(stylesheetIndex);
+
+    expect(doc).toContain('<style data-rx-head="true" data-rx-style="s-text">h1 { font-size: 2rem; }</style>');
+    expect(doc).not.toContain("[object Object]");
+    expect(doc.match(/name="viewport"/g)).toHaveLength(1);
   });
 
   it("renders built-in <Icon>, <ResuxIcon>, and <NuxtIcon> tags without throwing Unknown component error", async () => {

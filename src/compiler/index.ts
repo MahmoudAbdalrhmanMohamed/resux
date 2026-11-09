@@ -137,6 +137,7 @@ export interface BuildResult {
   serverHandlers: ServerHandlerRecord[];
   vueIslands: VueIslandRecord[];
   routeRules: Record<string, RouteRuleConfig>;
+  contributions?: ResuxModuleContributions;
   app?: CompiledComponent;
   error?: CompiledComponent;
 }
@@ -704,6 +705,7 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
       serverHandlers,
       vueIslands,
       routeRules,
+      contributions,
       app,
       error
     };

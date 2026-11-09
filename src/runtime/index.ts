@@ -13935,8 +13935,11 @@ function handleNavigationClick(event){
     if(!target.hash||target.hash===location.hash){event.preventDefault();return true}
     return false;
   }
-  const vtAttr=anchor.getAttribute("data-view-transition")??anchor.getAttribute("view-transition"),viewTransition=vtAttr!==null?vtAttr!=="false":undefined;
-  event.preventDefault();logManagedMediaDebug("router-navigation-start",{href:target.href,nextPath});void navigateTo(nextPath+target.hash,{...(viewTransition!==undefined?{viewTransition}:{})});return true;
+  const vtAttr = anchor.getAttribute("data-view-transition") ?? anchor.getAttribute("view-transition");
+  const viewTransition = vtAttr !== null ? vtAttr !== "false" : undefined;
+  event.preventDefault();logManagedMediaDebug("router-navigation-start",{href:target.href,nextPath});
+  void navigateTo(nextPath + target.hash, { ...(viewTransition !== undefined ? { viewTransition } : {}) });
+  return true;
 }
 function shouldIgnoreNavigationTarget(eventTarget,anchor){
   const ignored=eventTarget?.closest?.(ROUTER_IGNORED_EVENT_TARGET_SELECTOR);
@@ -14026,11 +14029,12 @@ async function navigateTo(target,options={}){
     await disposeClientEnhancements();setRouteTransition("swapping",{path:routePath});
     const preserveLayout=!didClientLocaleChange(previousPayload,nextPayload);
     let preserved;
-    await runRouteViewTransitionSwap(options,nextPayload,previousPayload,()=>{
+    const performSwap = () => {
       if(transitionToken!==routeTransitionToken)return;
       preserved=replaceRouteHtml(root,result.html,preserveLayout);
       globalThis.__RESUX__=mergeClientGlobalState(mergePersistentLayoutPayload(previousPayload,nextPayload,preserved.scopeIds));
-    });
+    };
+    await runRouteViewTransitionSwap(options,nextPayload,previousPayload,performSwap);
     if(!preserved)return;
     getClientResuxApp(globalThis.__RESUX__.route);applyHead(result.head);animateRouteSwap(preserved.root);clearScopeCacheExcept(preserved.scopeIds);
     void resumePendingAsyncData();mountManagedTeleports(document,{deferMissingTarget:true});initializeManagedRuntimeContent(document);
@@ -14046,8 +14050,12 @@ async function navigateTo(target,options={}){
 }
 async function runRouteViewTransitionSwap(options,nextPayload,previousPayload,performSwap){
   const routerConfig=globalThis.__RESUX__?.config?.public?.router??globalThis.__RESUX__?.config?.router??{};
-  if(shouldPerformViewTransition(options,nextPayload?.pageMeta??nextPayload?.meta,previousPayload?.pageMeta??previousPayload?.meta,routerConfig))await executeViewTransition(performSwap);
-  else performSwap();
+  const useTransition = shouldPerformViewTransition(options,nextPayload?.pageMeta??nextPayload?.meta,previousPayload?.pageMeta??previousPayload?.meta,routerConfig);
+  if (useTransition) {
+    await executeViewTransition(performSwap);
+  } else {
+    performSwap();
+  }
 }
 
 function abortPendingAsyncData() {

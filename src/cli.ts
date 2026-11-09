@@ -3317,7 +3317,11 @@ async function serveRoutePayload(
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
   });
-  response.end(JSON.stringify(normalizedRendered));
+  response.end(JSON.stringify({
+    html: normalizedRendered.html,
+    payload: normalizedRendered.payload,
+    head: normalizedRendered.head,
+  }));
 }
 
 type ResuxImageFit = "cover" | "contain" | "fill" | "inside" | "outside";

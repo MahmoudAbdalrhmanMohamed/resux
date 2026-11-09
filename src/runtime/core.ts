@@ -13,13 +13,9 @@ export interface ResuxBrowserCoreOptions {
   trigger?: ResuxBrowserTrigger;
   signal?: AbortSignal;
   onError?: (error: unknown) => void;
-  /** Maximum time to wait for an idle period before activating anyway. */
   idleTimeoutMs?: number;
-  /** Delay used by the `timer` trigger. */
   timerMs?: number;
-  /** Media query used by the `media-query` trigger. */
   mediaQuery?: string;
-  /** IntersectionObserver options used by the `visible` trigger. */
   intersectionObserver?: IntersectionObserverInit;
 }
 
@@ -54,15 +50,6 @@ function normalizeDelay(value: number | undefined, fallback: number, optionName:
   return resolved;
 }
 
-/**
- * Schedules one browser enhancement without importing the monolithic runtime.
- * The activation callback runs at most once and all registered trigger resources
- * are released after activation, disposal, or abort.
- *
- * The trigger set intentionally mirrors proven progressive-interactivity patterns:
- * interaction/visibility/idle for demand-driven work, hover for intent prewarming,
- * media-query/timer for conditional work, and `never` for permanently static output.
- */
 export function scheduleBrowserEnhancement(
   target: Element,
   activate: () => void | Promise<void>,
@@ -79,12 +66,10 @@ export function scheduleBrowserEnhancement(
   let activated = false;
   const cleanups: Array<() => void> = [];
 
-  /** Releases every resource registered for this schedule. */
   const disposeListeners = () => {
     while (cleanups.length > 0) cleanups.pop()?.();
   };
 
-  /** Routes activation failures through the configured browser-safe error path. */
   const reportActivationError = (error: unknown) => {
     if (options.onError) {
       options.onError(error);
@@ -100,7 +85,6 @@ export function scheduleBrowserEnhancement(
     }, 0);
   };
 
-  /** Activates the enhancement once and handles synchronous or async failures. */
   const run = () => {
     if (disabled || disposed || activated || options.signal?.aborted) return;
     activated = true;
@@ -115,7 +99,6 @@ export function scheduleBrowserEnhancement(
     }
   };
 
-  /** Prevents future activation and releases registered trigger resources. */
   const dispose = () => {
     if (disposed) return;
     disposed = true;

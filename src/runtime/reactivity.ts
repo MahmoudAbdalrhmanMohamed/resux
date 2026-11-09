@@ -1,4 +1,3 @@
-/** Lightweight runtime entrypoint for the standalone Resux reactivity API. */
 export {
   computed,
   isComputed,

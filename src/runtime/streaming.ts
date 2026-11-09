@@ -18,7 +18,6 @@ type ResuxInternalHtmlStreamOptions = ResuxHtmlStreamOptions & {
   [bodyCleanupObserver]?: (cleanup: Promise<void>) => void;
 };
 
-/** Returns whether a response is safe to commit through the streaming path. */
 export function shouldStreamResponse(context: ResuxStreamingDecisionContext = {}): boolean {
   if (context.enabled === false) return false;
   if (context.redirected) return false;
@@ -52,7 +51,6 @@ async function closeIterator(iterator: ResuxBodyIterator): Promise<void> {
   try {
     await iterator.return();
   } catch {
-    // Closing is best-effort; the original stream error/abort remains authoritative.
   }
 }
 
@@ -79,7 +77,6 @@ async function nextBodyChunk(
   }
 }
 
-/** Yields shell, body, and tail HTML while propagating request cancellation upstream. */
 export async function* streamResuxHtml(options: ResuxHtmlStreamOptions): AsyncGenerator<string> {
   throwIfAborted(options.signal);
   if (options.shell) yield options.shell;
@@ -147,7 +144,6 @@ function endsWithHighSurrogate(value: string): boolean {
   return code >= 0xd800 && code <= 0xdbff;
 }
 
-/** Creates a Web ReadableStream that UTF-8 encodes streamed HTML without splitting surrogate pairs. */
 export function createResuxHtmlReadableStream(options: ResuxHtmlStreamOptions): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const streamAbort = new AbortController();
@@ -180,7 +176,6 @@ export function createResuxHtmlReadableStream(options: ResuxHtmlStreamOptions): 
           try {
             await iterator.return(reason);
           } catch {
-            // The abort remains authoritative if generator cleanup fails.
           }
         }
         await bodyCleanup;
@@ -241,7 +236,6 @@ export function createResuxHtmlReadableStream(options: ResuxHtmlStreamOptions): 
   });
 }
 
-/** Buffers the same shell/body/tail pipeline into a single HTML string. */
 export async function bufferResuxHtml(options: ResuxHtmlStreamOptions): Promise<string> {
   let html = "";
   for await (const chunk of streamResuxHtml(options)) html += chunk;

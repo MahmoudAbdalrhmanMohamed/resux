@@ -405,6 +405,36 @@ function save() {
     expect(component.expressions?.some((e) => e.transformed === "!(visible.value)")).toBe(true);
   });
 
+  it("keeps Teleport and Transition boundaries in the resumable template", () => {
+    const component = compileVueSource(
+      `<script setup>
+const visible = useState("visible", () => true)
+</script>
+<template>
+  <teleport to="#teleports" disabled defer>
+    <transition name="fade">
+      <div v-if="visible">Overlay</div>
+    </transition>
+  </teleport>
+</template>`,
+      {
+        file: "TeleportTransition.vue",
+        id: "m0",
+        name: "TeleportTransition"
+      }
+    );
+
+    const template = JSON.stringify(component.template);
+    expect(template).toContain('"tag":"teleport"');
+    expect(template).toContain('"name":"to","value":"#teleports"');
+    expect(template).toContain('"name":"disabled","value":""');
+    expect(template).toContain('"name":"defer","value":""');
+    expect(template).toContain('"tag":"transition"');
+    expect(template).toContain('"name":"name","value":"fade"');
+    expect(template).toContain('"expression":"__rx_expr_0"');
+    expect(component.expressions?.some((entry) => entry.transformed === "visible.value")).toBe(true);
+  });
+
   it("compiles v-text into a resumable text binding", () => {
     const component = compileVueSource(
       `<script setup>

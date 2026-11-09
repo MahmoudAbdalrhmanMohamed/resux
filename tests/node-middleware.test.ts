@@ -87,7 +87,10 @@ describe("route middleware and server middleware integration", () => {
     const root = path.join(os.tmpdir(), `resux-node-safe-routes-${Date.now()}`);
     await mkdir(path.join(root, "pages"), { recursive: true });
     await mkdir(path.join(root, "public", "media-test", "videos"), { recursive: true });
-    await writeFile(path.join(root, "pages", "index.vue"), "<template><main>Home</main></template>");
+    await writeFile(
+      path.join(root, "pages", "index.vue"),
+      '<template><main>Home</main><Teleport to="#teleports"><aside id="route-payload-teleport">Payload</aside></Teleport></template>',
+    );
     await writeFile(path.join(root, "public", "media-test", "videos", "sample-video.mp4"), Buffer.from("resux-video-fixture"));
 
     await buildProject(root);
@@ -106,6 +109,15 @@ describe("route middleware and server middleware integration", () => {
 
     const badRoutePayload = await fetch(`${server.origin}/__resux/route?path=%2F%2F`, { redirect: "manual" });
     expect(badRoutePayload.status).toBe(400);
+
+    const routePayloadResponse = await fetch(`${server.origin}/__resux/route?path=%2F`);
+    expect(routePayloadResponse.status).toBe(200);
+    const routePayload = await routePayloadResponse.json() as {
+      html?: string;
+      teleports?: unknown;
+    };
+    expect(routePayload.html).toContain("resux-teleport-source:");
+    expect(routePayload.teleports).toBeUndefined();
 
     const missingImageResponse = await fetch(
       `${server.origin}/__resux/image?src=%2Fmedia-test%2Fimages%2Fmissing.jpg&w=860&fit=cover`,

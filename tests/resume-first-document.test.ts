@@ -18,6 +18,45 @@ describe("resume-first document boot", () => {
     expect(document).toContain('<a href="/docs">Docs</a>');
   });
 
+  it("keeps inert disabled Teleports on the zero-JS path", () => {
+    const source = (
+      metadata: { disabled: boolean; bindings: Record<string, string>; html: string },
+      children = "",
+    ) =>
+      "<!--resux-teleport-source:"
+      + encodeURIComponent(JSON.stringify({ to: "#teleports", defer: false, ...metadata })).replaceAll("-", "%2D")
+      + "-->" + children + "<!--resux-teleport-end-->";
+
+    const inert = source(
+      { disabled: true, bindings: {}, html: '<span id="static-teleport">Static</span>' },
+      '<span id="static-teleport">Static</span>',
+    );
+    const inertResult = createRuntimeResult("<main>" + inert + "</main>");
+    expect(getClientRuntimeBootPlan(inertResult).mode).toBe("none");
+    expect(shouldLoadClientRuntime(inertResult)).toBe(false);
+    expect(renderDocument(inertResult)).not.toContain("window.__RESUX__=");
+
+    const dynamicDisabled = createRuntimeResult(source({
+      disabled: true,
+      bindings: { b0: "s0:b0" },
+      html: '<span data-rx-text="s0:b0">Dynamic</span>',
+    }));
+    expect(getClientRuntimeBootPlan(dynamicDisabled).mode).toBe("eager");
+
+    const active = source({
+      disabled: false,
+      bindings: {},
+      html: '<span id="active-teleport">Active</span>',
+    });
+    expect(getClientRuntimeBootPlan(createRuntimeResult(active)).mode).toBe("eager");
+
+    const nestedActive = source(
+      { disabled: true, bindings: {}, html: active },
+      active,
+    );
+    expect(getClientRuntimeBootPlan(createRuntimeResult(nestedActive)).mode).toBe("eager");
+  });
+
   it("defers event-only pages until their first resumable interaction", () => {
     const result = createRuntimeResult(
       '<button data-rx-on-click="s0:c0:increment">Increment</button>',

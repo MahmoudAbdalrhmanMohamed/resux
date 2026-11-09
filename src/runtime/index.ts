@@ -2341,6 +2341,9 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
     : "";
   const mergedHead = mergeHead([{ title }, result.head]);
   const hasExplicitCharset = (mergedHead.meta ?? []).some((meta) => meta.charset !== undefined);
+  const hasExplicitViewport = (mergedHead.meta ?? []).some(
+    (meta) => typeof meta.name === "string" && meta.name.toLowerCase() === "viewport"
+  );
   const htmlAttrs = {
     lang: "en",
     ...(mergedHead.htmlAttrs ?? {})
@@ -2356,8 +2359,8 @@ export function renderDocument(result: RenderResult, title = "Resux App", option
     `<html ${renderAttributes(htmlAttrs)}>`,
     "<head>",
     ...(hasExplicitCharset ? [] : ['<meta charset="utf-8">']),
+    ...(hasExplicitViewport ? [] : ['<meta name="viewport" content="width=device-width, initial-scale=1">']),
     renderHead(mergedHead),
-    '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<style>
 [data-rx-block] {
   display: contents !important;
@@ -7605,8 +7608,10 @@ function isCriticalHeadMeta(meta: Record<string, unknown>): boolean {
   if (meta.charset !== undefined) {
     return true;
   }
-  const name = String(meta.name ?? "").toLowerCase();
-  const httpEquiv = String(meta["http-equiv"] ?? meta.httpEquiv ?? "").toLowerCase();
+  const rawName = meta.name;
+  const name = typeof rawName === "string" ? rawName.toLowerCase() : "";
+  const rawHttpEquiv = meta["http-equiv"] ?? meta.httpEquiv;
+  const httpEquiv = typeof rawHttpEquiv === "string" ? rawHttpEquiv.toLowerCase() : "";
   return name === "viewport" || Boolean(httpEquiv);
 }
 
@@ -7707,23 +7712,23 @@ function escapeNoscriptContent(source: string): string {
   return source.replace(/<\/noscript/gi, "<\\/noscript");
 }
 
+function getHeadLinkPriority(link: Record<string, string>): number {
+  const rel = normalizeHeadLinkRel(link);
+  const isPreload = rel === "preload";
+  const as = String(link.as ?? "").trim().toLowerCase();
+  if ((isPreload && as === "style") || isPriorityImagePreloadLink(link)) {
+    return 0;
+  }
+  return isPreload ? 1 : 2;
+}
+
 function sortHeadLinksForPriority(links: Record<string, string>[]): Record<string, string>[] {
   return links
-    .map((link, index) => {
-      const rel = normalizeHeadLinkRel(link);
-      const isPreload = rel === "preload";
-      const as = String(link.as ?? "").trim().toLowerCase();
-      const priority = (isPreload && as === "style") || isPriorityImagePreloadLink(link)
-        ? 0
-        : isPreload
-          ? 1
-          : 2;
-      return {
-        link,
-        index,
-        priority,
-      };
-    })
+    .map((link, index) => ({
+      link,
+      index,
+      priority: getHeadLinkPriority(link),
+    }))
     .sort((left, right) => left.priority - right.priority || left.index - right.index)
     .map((entry) => entry.link);
 }

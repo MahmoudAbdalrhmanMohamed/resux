@@ -7872,10 +7872,14 @@ export default createClientComponent({ id: "m0", name: "Counter", file: "Counter
     };
     const doc = renderDocument(result as any, "Test Title");
     const charsetIndex = doc.indexOf('<meta charset="utf-8">');
+    const viewportIndex = doc.indexOf('<meta name="viewport" content="width=device-width, initial-scale=1">');
     const preloadIndex = doc.indexOf('href="/hero-');
     expect(charsetIndex).toBeGreaterThan(-1);
+    expect(viewportIndex).toBeGreaterThan(-1);
     expect(charsetIndex).toBeLessThan(preloadIndex);
+    expect(viewportIndex).toBeLessThan(preloadIndex);
     expect(doc.match(/<meta charset=/g)).toHaveLength(1);
+    expect(doc.match(/name="viewport"/g)).toHaveLength(1);
   });
 
   it("renders head script and noscript entries used by async font loading", () => {
@@ -7947,6 +7951,7 @@ export default createClientComponent({ id: "m0", name: "Counter", file: "Counter
 
     expect(doc).toContain('<style data-rx-head="true" data-rx-style="s-text">h1 { font-size: 2rem; }</style>');
     expect(doc).not.toContain("[object Object]");
+    expect(doc.match(/name="viewport"/g)).toHaveLength(1);
   });
 
   it("renders built-in <Icon>, <ResuxIcon>, and <NuxtIcon> tags without throwing Unknown component error", async () => {

@@ -5404,32 +5404,7 @@ async function ensureDevBuild(
         .then(async (buildResult) => {
           devBuildRevision++;
           vite?.moduleGraph.invalidateAll();
-          if (vite && buildResult?.contributions?.vitePlugins) {
-            const inlineConfig = (vite.config as any)?.inlineConfig;
-            const currentPlugins: any[] = inlineConfig?.plugins ?? (vite.config as any)?.plugins ?? [];
-            const contributedPlugins = buildResult.contributions.vitePlugins.filter(Boolean);
-            const hasNewOrChanged = contributedPlugins.some((p: any) => !currentPlugins.includes(p));
-            if (hasNewOrChanged) {
-              if (inlineConfig) {
-                const updated = [...(Array.isArray(inlineConfig.plugins) ? inlineConfig.plugins : [])];
-                for (const plugin of contributedPlugins) {
-                  const pluginName = (plugin as { name?: string })?.name;
-                  const existingIdx = pluginName
-                    ? updated.findIndex((p: any) => p && p.name === pluginName)
-                    : updated.indexOf(plugin);
-                  if (existingIdx !== -1) {
-                    updated[existingIdx] = plugin;
-                  } else {
-                    updated.push(plugin);
-                  }
-                }
-                inlineConfig.plugins = updated;
-              }
-              if (typeof vite.restart === "function") {
-                await vite.restart();
-              }
-            }
-          }
+          await syncDevContributedVitePlugins(vite, buildResult);
         })
         .finally(() => {
           activeDevBuild = null;
@@ -5440,6 +5415,46 @@ async function ensureDevBuild(
   }
 
   return devBuildRevision !== startedAtRevision;
+}
+
+function mergeContributedVitePlugins(existingPlugins: any[], contributedPlugins: any[]): any[] {
+  const updated = [...existingPlugins];
+  for (const plugin of contributedPlugins) {
+    const pluginName = (plugin as { name?: string })?.name;
+    const existingIdx = pluginName
+      ? updated.findIndex((p: any) => p?.name === pluginName)
+      : updated.indexOf(plugin);
+    if (existingIdx === -1) {
+      updated.push(plugin);
+    } else {
+      updated[existingIdx] = plugin;
+    }
+  }
+  return updated;
+}
+
+async function syncDevContributedVitePlugins(
+  vite: ViteDevServer | undefined,
+  buildResult: { contributions?: { vitePlugins?: any[] } } | undefined,
+): Promise<void> {
+  const rawPlugins = buildResult?.contributions?.vitePlugins;
+  if (!vite || !rawPlugins) {
+    return;
+  }
+  const inlineConfig = (vite.config as any)?.inlineConfig;
+  const currentPlugins: any[] = inlineConfig?.plugins ?? (vite.config as any)?.plugins ?? [];
+  const contributedPlugins = rawPlugins.filter(Boolean);
+  const hasNewOrChanged = contributedPlugins.some((p: any) => !currentPlugins.includes(p));
+  if (!hasNewOrChanged) {
+    return;
+  }
+  if (inlineConfig) {
+    const basePlugins = Array.isArray(inlineConfig.plugins) ? inlineConfig.plugins : [];
+    inlineConfig.plugins = mergeContributedVitePlugins(basePlugins, contributedPlugins);
+  }
+  if (typeof vite.restart === "function") {
+    await vite.restart();
+  }
 }
 
 function serveDevEvents(

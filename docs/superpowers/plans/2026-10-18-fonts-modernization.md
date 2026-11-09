@@ -183,15 +183,15 @@ git commit -m "feat(fonts): support semantic named weights and variable axes"
 
 Add test to `tests/fonts.test.ts`:
 ```typescript
-it("generates fallback font metric overrides to eliminate layout shift", () => {
+it("generates fallback font metric overrides to eliminate layout shift", async () => {
   const { headList, resux } = createMockResux();
-  fontsModule.setup(
+  await fontsModule.setup(
     {
       families: [
         {
           name: "Inter",
           src: "/fonts/inter.woff2",
-          fallbacks: ["system-ui", "Arial", "sans-serif"]
+          fallbacks: ["Arial", "sans-serif"]
         }
       ]
     },
@@ -199,7 +199,7 @@ it("generates fallback font metric overrides to eliminate layout shift", () => {
   );
   const style = headList[0].style?.[0]?.css;
   expect(style).toContain('font-family: "Inter fallback: Arial"');
-  expect(style).toContain("src: local(\"Arial\")");
+  expect(style).toContain('src: local("Arial")');
   expect(style).toContain("ascent-override:");
   expect(style).toContain("descent-override:");
   expect(style).toContain("size-adjust:");

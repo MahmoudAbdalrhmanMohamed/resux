@@ -26,7 +26,7 @@ export type ResuxFontWeightName =
   | "black"
   | "heavy";
 
-export type ResuxFontWeight = number | string | ResuxFontWeightName;
+export type ResuxFontWeight = number | ResuxFontWeightName | (string & {});
 
 export interface ResuxFontSourceInput {
   url: string;
@@ -438,14 +438,14 @@ function fontMimeType(format: ResuxFontSourceInput["format"]): string | undefine
 }
 
 function normalizeCssVariable(value: unknown): string | null {
-  const variable = String(value || "").trim();
+  const variable = typeof value === "string" ? value.trim() : "";
   if (!variable) return null;
-  return /^--[A-Za-z_][A-Za-z0-9_-]*$/.test(variable) ? variable : null;
+  return /^--[A-Za-z_][\w-]*$/.test(variable) ? variable : null;
 }
 
 function sanitizeAxisTag(value: unknown): string | null {
-  const tag = String(value || "").trim();
-  if (/^[A-Za-z0-9_]{4}$/.test(tag)) {
+  const tag = typeof value === "string" ? value.trim() : "";
+  if (/^\w{4}$/.test(tag)) {
     return tag;
   }
   return null;
@@ -500,7 +500,10 @@ function buildCustomFontStyles(
       const fallbackNames = (family.fallbacks || [])
         .map((fallback) => sanitizeFontFamilyName(fallback))
         .filter(Boolean)
-        .map((fallback) => `"${escapeCssString(`${familyName} fallback: ${fallback}`)}"`);
+        .map((fallback) => {
+          const alias = escapeCssString(`${familyName} fallback: ${fallback}`);
+          return `"${alias}"`;
+        });
       const stack = [`"${escapeCssString(familyName)}"`, ...fallbackNames];
       variables.push(`${variable}: ${stack.join(", ")};`);
     }
@@ -563,6 +566,20 @@ function createLazyCustomFontLoader(css: string): string {
   return `(function(){var css=${serializedCss};function load(){if(!css||document.querySelector('style[data-resux-font-lazy-runtime="true"]'))return;var style=document.createElement('style');style.setAttribute('data-resux-font-lazy-runtime','true');style.textContent=css;document.head.appendChild(style);}if(document.readyState==='complete'){load();}else{window.addEventListener('load',load,{once:true});}})();`;
 }
 
+const fontMetricsCache = new Map<string, Promise<Awaited<ReturnType<typeof getMetricsForFamily>>>>();
+
+function loadCachedFamilyMetrics(
+  familyName: string,
+): Promise<Awaited<ReturnType<typeof getMetricsForFamily>>> {
+  const cached = fontMetricsCache.get(familyName);
+  if (cached) {
+    return cached;
+  }
+  const lookup = Promise.resolve(getMetricsForFamily(familyName)).catch(() => null);
+  fontMetricsCache.set(familyName, lookup);
+  return lookup;
+}
+
 async function resolveFallbackFontRules(
   families: ResuxFontFamilyInput[],
 ): Promise<string[]> {
@@ -577,12 +594,7 @@ async function resolveFallbackFontRules(
       if (!familyName) {
         return [];
       }
-      let metrics: Awaited<ReturnType<typeof getMetricsForFamily>> = null;
-      try {
-        metrics = await getMetricsForFamily(familyName);
-      } catch {
-        metrics = null;
-      }
+      const metrics = await loadCachedFamilyMetrics(familyName);
       if (!metrics) {
         return [];
       }
@@ -595,12 +607,7 @@ async function resolveFallbackFontRules(
       const fallbackRules = await Promise.all(
         uniqueFallbacks.map(async (fallbackName) => {
           try {
-            let fallbackMetrics: Awaited<ReturnType<typeof getMetricsForFamily>> = null;
-            try {
-              fallbackMetrics = await getMetricsForFamily(fallbackName);
-            } catch {
-              fallbackMetrics = null;
-            }
+            const fallbackMetrics = await loadCachedFamilyMetrics(fallbackName);
             const rule = generateFontFace(metrics, {
               name: `${familyName} fallback: ${fallbackName}`,
               font: fallbackName,
@@ -712,13 +719,15 @@ export default defineResuxModule<ResuxFontsModuleOptions>({
           if (typeof originalTransform === "function") {
             (plugin as any).transform = async function (code: string, id: string, ...rest: any[]) {
               if (id.endsWith(".vue") || id.includes("vue&type=style")) {
-                const styleMatches = code.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi);
-                for (const match of styleMatches) {
-                  const styleContent = match[1];
-                  if (styleContent) {
-                    await originalTransform.call(this, styleContent, id + ".css", ...rest);
-                  }
-                }
+                const styleBlocks = Array.from(
+                  code.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi),
+                  (match) => match[1],
+                ).filter(Boolean);
+                await Promise.all(
+                  styleBlocks.map((styleContent) =>
+                    originalTransform.call(this, styleContent, `${id}.css`, ...rest),
+                  ),
+                );
               }
               return originalTransform.call(this, code, id, ...rest);
             };

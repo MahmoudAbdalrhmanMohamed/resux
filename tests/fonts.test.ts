@@ -707,7 +707,7 @@ describe("fonts module", () => {
       extendRuntimeConfig() {}
     };
     fontsModule.setup({ autoScan: false }, resux as any);
-    expect(plugins.length).toBe(0);
+    expect(plugins).toHaveLength(0);
   });
 
   it("does not throw when addVitePlugin is not provided on resux", () => {
@@ -766,7 +766,7 @@ describe("fonts module", () => {
     );
     expect(plugins.length).toBeGreaterThan(0);
     expect(plugins.some((p: any) => p.name === "vite-plugin-fontless")).toBe(true);
-    expect(headList.length).toBe(1);
+    expect(headList).toHaveLength(1);
     expect(headList[0].link.some((l: any) => l.href?.includes("family=Roboto"))).toBe(true);
   });
 });

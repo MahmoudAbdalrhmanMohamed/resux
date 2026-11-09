@@ -14,35 +14,27 @@ import { resolveIconAsync, resolveIconSync } from "./resolver.js";
 import { renderSvgIcon } from "./svg-mode.js";
 import type { IconData, IconLoadingMode, IconMode, ResuxIconsConfig } from "./types.js";
 
+function extractIconsConfig(source: any): ResuxIconsConfig | undefined {
+  return source?.public?.icons ?? source?.icons;
+}
+
 function getIconsRuntimeConfig(): ResuxIconsConfig | undefined {
+  if (typeof globalThis === "undefined") {
+    return undefined;
+  }
   try {
-    if (typeof globalThis !== "undefined") {
-      const g = globalThis as any;
-      if (g.__RESUX__?.config?.public?.icons) {
-        return g.__RESUX__.config.public.icons;
-      }
-      if (g.__RESUX__?.config?.icons) {
-        return g.__RESUX__.config.icons;
-      }
-      if (g.__RESUX_APP__?.config?.public?.icons) {
-        return g.__RESUX_APP__.config.public.icons;
-      }
-      if (g.__RESUX_APP__?.config?.icons) {
-        return g.__RESUX_APP__.config.icons;
-      }
-      if (typeof g.useRuntimeConfig === "function") {
-        const rc = g.useRuntimeConfig();
-        if (rc?.public?.icons) return rc.public.icons;
-        if (rc?.icons) return rc.icons;
-      }
-      if (g.__RESUX_RUNTIME_CONFIG__?.public?.icons) {
-        return g.__RESUX_RUNTIME_CONFIG__.public.icons;
-      }
-    }
+    const g = globalThis as Record<string, any>;
+    const runtimeHookConfig = typeof g.useRuntimeConfig === "function" ? g.useRuntimeConfig() : undefined;
+    return (
+      extractIconsConfig(g.__RESUX__?.config) ??
+      extractIconsConfig(g.__RESUX_APP__?.config) ??
+      extractIconsConfig(runtimeHookConfig) ??
+      extractIconsConfig(g.__RESUX_RUNTIME_CONFIG__)
+    );
   } catch {
     // Ignore when outside Resux runtime context
+    return undefined;
   }
-  return undefined;
 }
 
 export const Icon = defineComponent({

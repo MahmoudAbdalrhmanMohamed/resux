@@ -4,12 +4,12 @@ import { resolveIconSync } from "./resolver.js";
 import type { IconData, ResuxIconsConfig } from "./types.js";
 
 function readAttr(tag: string, name: string): string | null {
-  const match = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i").exec(tag);
+  const match = new RegExp(String.raw`(?:^|\s)${name}\s*=\s*(?:"([^"]*)"|'([^']*)')`, "i").exec(tag);
   return match?.[1] ?? match?.[2] ?? null;
 }
 
 function hasBooleanAttr(tag: string, name: string, value: string): boolean {
-  return new RegExp(`(?:^|\\s):?${name}\\s*=\\s*(?:"${value}"|'${value}')`, "i").test(tag);
+  return new RegExp(String.raw`(?:^|\s):?${name}\s*=\s*(?:"${value}"|'${value}')`, "i").test(tag);
 }
 
 function iconDataToSvgMarkup(data: IconData, size: string, customClass: string): string {
@@ -32,7 +32,8 @@ function iconDataToSvgMarkup(data: IconData, size: string, customClass: string):
       })
       .join("");
   } else if (data.path) {
-    content = `<path d="${data.path}"${data.opacity ? ` opacity="${data.opacity}"` : ""}/>`;
+    const opacityAttr = data.opacity ? ` opacity="${data.opacity}"` : "";
+    content = `<path d="${data.path}"${opacityAttr}/>`;
   }
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" width="${size}" height="${size}" fill="${fill}" class="${classes}" style="width: ${size}; height: ${size};" aria-hidden="true">${content}</svg>`;
@@ -43,9 +44,9 @@ export function transformStaticIcons(templateCode: string, config?: ResuxIconsCo
 
   const iconTagPattern = /<(Icon|ResuxIcon)\b([^>]*?)(?:\/>|>[\s\S]*?<\/\1\s*>)/gi;
 
-  return templateCode.replace(iconTagPattern, (fullMatch, _tag, attrs) => {
+  return templateCode.replaceAll(iconTagPattern, (fullMatch, _tag, attrs) => {
     // If attrs contains directives or dynamic bindings, preserve component for runtime
-    if (/(?:^|\s)(?:v-|@|:)[a-zA-Z0-9_-]+/i.test(attrs)) {
+    if (/(?:^|\s)(?:v-|@|:)[a-z0-9_-]+/i.test(attrs)) {
       return fullMatch;
     }
 
@@ -77,9 +78,9 @@ export function transformStaticIcons(templateCode: string, config?: ResuxIconsCo
     if (mode === "css") {
       const style = buildCssMaskStyle(data, size);
       const styleString = Object.entries(style)
-        .map(([k, v]) => `${k.replace(/([A-Z])/g, "-$1").toLowerCase()}: ${v}`)
+        .map(([k, v]) => `${k.replaceAll(/([A-Z])/g, "-$1").toLowerCase()}: ${v}`)
         .join("; ");
-      const escapedStyle = styleString.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+      const escapedStyle = styleString.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
       const cssClasses = ["resux-icon resux-icon--css inline-block shrink-0 align-middle", customClass]
         .filter(Boolean)
         .join(" ");

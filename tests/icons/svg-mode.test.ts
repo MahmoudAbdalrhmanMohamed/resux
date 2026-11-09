@@ -27,6 +27,6 @@ describe("svg mode renderer", () => {
     const vnode = renderSvgIcon(data, "2rem", "custom-class");
     expect(vnode.props?.class).toContain("custom-class");
     expect(Array.isArray(vnode.children)).toBe(true);
-    expect((vnode.children as any[]).length).toBe(2);
+    expect(vnode.children as any[]).toHaveLength(2);
   });
 });

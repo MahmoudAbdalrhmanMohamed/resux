@@ -30,13 +30,13 @@ export function iconDataToSvgString(data: IconData): string {
 
 export function svgToDataUri(svg: string): string {
   // Clean, minimal escaping for inline svg in CSS url()
-  const cleanSvg = svg.trim().replace(/\s+/g, " ");
+  const cleanSvg = svg.trim().replaceAll(/\s+/g, " ");
   const encoded = encodeURIComponent(cleanSvg)
-    .replace(/%20/g, " ")
-    .replace(/%3D/g, "=")
-    .replace(/%3A/g, ":")
-    .replace(/%2F/g, "/")
-    .replace(/%22/g, "'");
+    .replaceAll("%20", " ")
+    .replaceAll("%3D", "=")
+    .replaceAll("%3A", ":")
+    .replaceAll("%2F", "/")
+    .replaceAll("%22", "'");
 
   return `data:image/svg+xml;utf8,${encoded}`;
 }

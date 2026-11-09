@@ -3,7 +3,7 @@ import type { ParsedIconName } from "./types.js";
 
 export function stripTrailingSlashes(value: string): string {
   let end = value.length;
-  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+  while (end > 0 && value.codePointAt(end - 1) === 47) {
     end -= 1;
   }
   return value.slice(0, end);
@@ -28,6 +28,35 @@ export function normalizeIconApiProvider(value: unknown): string {
   return DEFAULT_ICON_API_PROVIDER;
 }
 
+function splitIconDelimiter(candidate: string, delimiter: ":" | "/"): ParsedIconName | null {
+  if (!candidate.includes(delimiter)) return null;
+  const [prefix, ...rest] = candidate.split(delimiter);
+  const name = rest.join(delimiter);
+  return prefix && name ? { prefix, name } : null;
+}
+
+function matchKnownCollectionPrefix(candidate: string, knownCollections: string[]): ParsedIconName | null {
+  for (const collection of knownCollections) {
+    const normalizedColl = collection.toLowerCase();
+    if (candidate.startsWith(`${normalizedColl}-`)) {
+      const name = candidate.slice(normalizedColl.length + 1);
+      if (name) return { prefix: normalizedColl, name };
+    }
+  }
+  return null;
+}
+
+function splitHyphenatedIconName(candidate: string): ParsedIconName | null {
+  const firstHyphen = candidate.indexOf("-");
+  if (firstHyphen > 0 && firstHyphen < candidate.length - 1) {
+    return {
+      prefix: candidate.slice(0, firstHyphen),
+      name: candidate.slice(firstHyphen + 1),
+    };
+  }
+  return null;
+}
+
 export function parseIconName(
   rawName: string,
   aliases?: Record<string, string>,
@@ -50,39 +79,10 @@ export function parseIconName(
   const hasIPrefix = input.startsWith("i-") || input.startsWith("i:");
   const candidate = hasIPrefix ? input.slice(2) : input;
 
-  // Format: prefix:name
-  if (candidate.includes(":")) {
-    const [prefix, ...rest] = candidate.split(":");
-    const name = rest.join(":");
-    return prefix && name ? { prefix, name } : null;
-  }
-
-  // Format: prefix/name
-  if (candidate.includes("/")) {
-    const [prefix, ...rest] = candidate.split("/");
-    const name = rest.join("/");
-    return prefix && name ? { prefix, name } : null;
-  }
-
-  // Format: i-collection-icon-name or matching known collections
-  for (const collection of knownCollections) {
-    const normalizedColl = collection.toLowerCase();
-    if (candidate.startsWith(normalizedColl + "-")) {
-      const name = candidate.slice(normalizedColl.length + 1);
-      if (name) return { prefix: normalizedColl, name };
-    }
-  }
-
-  // If it explicitly had i- prefix, allow splitting on first hyphen
-  if (hasIPrefix) {
-    const firstHyphen = candidate.indexOf("-");
-    if (firstHyphen > 0 && firstHyphen < candidate.length - 1) {
-      return {
-        prefix: candidate.slice(0, firstHyphen),
-        name: candidate.slice(firstHyphen + 1),
-      };
-    }
-  }
-
-  return null;
+  return (
+    splitIconDelimiter(candidate, ":") ??
+    splitIconDelimiter(candidate, "/") ??
+    matchKnownCollectionPrefix(candidate, knownCollections) ??
+    (hasIPrefix ? splitHyphenatedIconName(candidate) : null)
+  );
 }

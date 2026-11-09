@@ -104,7 +104,7 @@ export function loadOfflineIcon(prefix: string, name: string): IconData | null {
     iconEntry = collection.icons?.[parentName];
   }
 
-  if (!iconEntry || !iconEntry.body) {
+  if (!iconEntry?.body) {
     offlineIconCache.set(cacheKey, null);
     return null;
   }

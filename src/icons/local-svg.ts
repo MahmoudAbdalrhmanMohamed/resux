@@ -10,7 +10,7 @@ const localSvgCache = new Map<string, IconData>();
 function resolveSafeIconPath(name: string, dir: string, rootDir: string = process.cwd()): string | null {
   if (!name || typeof name !== "string") return null;
   // Reject absolute paths, Windows drive letters, null bytes, or URL schemes
-  if (path.isAbsolute(name) || /^[a-zA-Z]:|[\\/]{2}/.test(name) || name.includes("\0")) {
+  if (path.isAbsolute(name) || /^(?:[a-zA-Z]:|[\\/]{2})/.test(name) || name.includes("\0")) {
     return null;
   }
   const cleanName = path.normalize(name).replace(/^[\\/]+/, "");

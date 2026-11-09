@@ -3377,6 +3377,9 @@ function createRuntimeConfig(config: Record<string, unknown>): Record<string, un
   const videoConfig = isPlainObject((config as ResuxConfig).video)
     ? (config as ResuxConfig).video as Record<string, unknown>
     : null;
+  const routerConfig = isPlainObject(config.router)
+    ? config.router
+    : null;
   const publicConfig = (runtimeConfig?.public && typeof runtimeConfig.public === "object" && !Array.isArray(runtimeConfig.public))
     ? runtimeConfig.public as Record<string, unknown>
     : {};
@@ -3386,6 +3389,7 @@ function createRuntimeConfig(config: Record<string, unknown>): Record<string, un
       ...publicConfig,
       ...(packagesConfig ? { packages: packagesConfig } : {}),
       ...(videoConfig ? { video: videoConfig } : {}),
+      ...(routerConfig ? { router: routerConfig } : {}),
     }
   };
 

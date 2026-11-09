@@ -112,12 +112,13 @@ if (failed) {
 }
 
 function runCommand(command, args, options) {
+  const needsShell = process.platform === "win32" && !command.toLowerCase().endsWith(".exe");
   return spawnSync(command, args, {
     cwd: options.cwd,
     env: options.env ?? templateTestEnvironment,
     stdio: options.stdio ?? "inherit",
     encoding: "utf8",
-    shell: process.platform === "win32" && !command.toLowerCase().endsWith(".exe"),
+    shell: needsShell,
   });
 }
 
@@ -133,8 +134,6 @@ async function rewriteFrameworkDependency(projectRoot, tarballPath) {
   const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
   packageJson.dependencies = packageJson.dependencies ?? {};
   packageJson.dependencies.resuxjs = `file:${tarballPath.replaceAll("\\", "/")}`;
-  packageJson.overrides = packageJson.overrides ?? {};
-  packageJson.overrides.undici = packageJson.overrides.undici ?? "^6.21.1";
   await writeFile(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`, "utf8");
 }
 

@@ -57,6 +57,7 @@ import {
   enforcePreviewGuard,
   enforceProductionServerGuard,
   enforceDeploymentGuard,
+  loadProjectDotEnv,
   loadProjectPolicy,
   scanProject,
   evaluateRules,
@@ -295,6 +296,7 @@ export async function runResuxCli(args: string[]): Promise<void> {
     const subcommand = commandArgs[0];
     const cliOptions = readCliOptions(commandArgs.slice(1), subcommand);
     const appRoot = path.resolve(cliOptions.appRoot);
+    loadProjectDotEnv(appRoot);
     const resolvedBuildDir = normalizeResuxGeneratedPath(await resolveConfiguredBuildDir(appRoot));
     const outDir = path.resolve(appRoot, resolvedBuildDir);
 
@@ -326,6 +328,7 @@ export async function runResuxCli(args: string[]): Promise<void> {
 
   const cliOptions = readCliOptions(commandArgs, command);
   const appRoot = path.resolve(cliOptions.appRoot);
+  loadProjectDotEnv(appRoot);
   const resolvedBuildDir = normalizeResuxGeneratedPath(await resolveConfiguredBuildDir(appRoot));
   const outDir = path.resolve(appRoot, resolvedBuildDir);
   const buildOptions: BuildOptions = {

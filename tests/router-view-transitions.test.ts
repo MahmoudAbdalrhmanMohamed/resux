@@ -566,12 +566,12 @@ describe("View Transitions Types & Detection", () => {
       });
 
       it("renders ResuxLink dynamic view-transition=false as data-view-transition='false' in both SSR and client runtime", async () => {
-        const { defineComponent, getClientRuntimeSource, renderApplication } = await import("../src/runtime/index.js");
+        const { defineComponent, getClientRuntimeSource, renderApp } = await import("../src/runtime/index.js");
         const Page = defineComponent({
           id: "vt-link-page",
           name: "VtLinkPage",
           file: "VtLinkPage.vue",
-          setup: () => ({ disableVt: false }),
+          script: () => ({ disableVt: false }),
           template: [
             {
               type: "element",
@@ -586,7 +586,7 @@ describe("View Transitions Types & Detection", () => {
           ],
         });
 
-        const rendered = await renderApplication({
+        const rendered = await renderApp({
           page: Page,
           route: { path: "/", params: {}, query: {} },
         });

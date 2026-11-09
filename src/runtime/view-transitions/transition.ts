@@ -32,7 +32,8 @@ export async function executeViewTransition(
       transition.updateCallbackDone.catch(() => {});
     }
     await transition.finished;
-  } catch (err) {
+  } catch {
+    // Ignore browser view-transition abort or cancellation errors once the DOM swap has run
     if (callbackRejected) {
       throw callbackError;
     }

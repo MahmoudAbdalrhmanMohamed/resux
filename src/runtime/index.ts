@@ -31,11 +31,8 @@ import {
   RESUX_RESUME_BOOTSTRAP_MAX_EVENT_NAMES,
 } from "./resume.js";
 import {
-  executeViewTransition,
-  shouldPerformViewTransition,
   useViewTransition,
   type ResuxViewTransition,
-  type ResuxViewTransitionOptions,
 } from "./view-transitions/index.js";
 
 export type JsonValue =
@@ -8199,20 +8196,22 @@ function nativeElementTag(node: ElementTemplateNode): string {
   return node.tag;
 }
 
+const CLIENT_ENHANCE_ATTR_MAP: Record<string, string> = {
+  options: "data-resux-options",
+  name: "data-resux-enhancement",
+  trigger: "data-resux-trigger",
+  mode: "data-resux-mode",
+  noCls: "data-resux-no-cls",
+  demo: "data-resux-demo",
+};
+
 function nativeAttributeName(node: ElementTemplateNode, name: string): string {
-  if (node.tag === "ResuxLink" && name === "to") {
-    return "href";
-  }
-  if (node.tag === "ResuxLink" && (name === "viewTransition" || name === "view-transition")) {
-    return "data-view-transition";
+  if (node.tag === "ResuxLink") {
+    if (name === "to") return "href";
+    if (name === "viewTransition" || name === "view-transition") return "data-view-transition";
   }
   if (node.tag === "ClientEnhance" || node.tag === "ResuxClientEnhance") {
-    if (name === "options") return "data-resux-options";
-    if (name === "name") return "data-resux-enhancement";
-    if (name === "trigger") return "data-resux-trigger";
-    if (name === "mode") return "data-resux-mode";
-    if (name === "noCls") return "data-resux-no-cls";
-    if (name === "demo") return "data-resux-demo";
+    return CLIENT_ENHANCE_ATTR_MAP[name] ?? name;
   }
   return name;
 }
@@ -17113,7 +17112,8 @@ function renderElement(node, scope, locals, styleScopeId, scopeId, moduleId) {
       if (attr.bindingId) {
         attrs.push('data-rx-attr-' + attr.bindingId + '="' + scopeId + ':' + attr.bindingId + '"');
       }
-      if (value !== false && value !== null && value !== undefined) {
+      const isViewTransitionAttr = attrName === "data-view-transition" || attrName === "view-transition";
+      if (value !== null && value !== undefined && (value !== false || isViewTransitionAttr)) {
         attrs.push(attrName + '="' + escapeAttribute(stringifyAttributeValue(attrName, value)) + '"');
       }
     }

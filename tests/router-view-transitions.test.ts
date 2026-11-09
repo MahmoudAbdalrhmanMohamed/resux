@@ -564,6 +564,38 @@ describe("View Transitions Types & Detection", () => {
         expect(source).toContain('const viewTransition = vtAttr !== null ? vtAttr !== "false" : undefined;');
         expect(source).toContain('void navigateTo(nextPath + target.hash, { ...(viewTransition !== undefined ? { viewTransition } : {}) });');
       });
+
+      it("renders ResuxLink dynamic view-transition=false as data-view-transition='false' in both SSR and client runtime", async () => {
+        const { createServerComponent, getClientRuntimeSource, renderApplication } = await import("../src/runtime/index.js");
+        const Page = createServerComponent({
+          id: "vt-link-page",
+          name: "VtLinkPage",
+          file: "VtLinkPage.vue",
+          setup: () => ({ disableVt: false }),
+          template: [
+            {
+              type: "element",
+              tag: "ResuxLink",
+              attrs: [
+                { name: "to", kind: "static", value: "/next" },
+                { name: "view-transition", kind: "dynamic", value: "disableVt", bindingId: "b0" },
+              ],
+              events: [],
+              children: [{ type: "text", kind: "static", value: "Next" }],
+            },
+          ],
+        });
+
+        const rendered = await renderApplication({
+          page: Page,
+          route: { path: "/", params: {}, query: {} },
+        });
+        expect(rendered.html).toContain('data-view-transition="false"');
+
+        const clientSource = getClientRuntimeSource();
+        expect(clientSource).toContain('const isViewTransitionAttr = attrName === "data-view-transition" || attrName === "view-transition";');
+        expect(clientSource).toContain('if (value !== null && value !== undefined && (value !== false || isViewTransitionAttr))');
+      });
     });
 
     describe("navigateTo integration with executeViewTransition", () => {

@@ -218,15 +218,16 @@ export const RxVerificationCode = defineComponent({
         "aria-describedby": status === "error" && props.errorText ? messageId : ariaDescribedby,
         style: {
           position: "absolute",
-          width: "1px",
-          height: "1px",
+          top: "0",
+          left: "0",
+          width: "100%",
+          height: "100%",
           padding: "0",
-          margin: "-1px",
-          overflow: "hidden",
-          clip: "rect(0, 0, 0, 0)",
-          whiteSpace: "nowrap",
+          margin: "0",
           border: "0",
-          opacity: "0"
+          opacity: "0.0001",
+          cursor: props.disabled ? "not-allowed" : "text",
+          zIndex: "2"
         },
         onInput: handleInput,
         onFocus: handleFocus,
@@ -415,6 +416,7 @@ export const verificationCodeStyles = `
   width: 100%;
   min-height: 3rem;
   perspective: 700px;
+  pointer-events: none;
 }
 .rx-verification-code-cell {
   display: inline-flex;

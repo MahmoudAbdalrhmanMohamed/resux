@@ -53,6 +53,7 @@ export const RxVerificationCode = defineComponent({
   props: {
     modelValue: { type: String, default: "" },
     length: { type: Number, default: 4 },
+    digits: { type: Number },
     status: { type: String, default: "idle" },
     mode: { type: String, default: "numeric" },
     autoFocus: { type: Boolean, default: false },
@@ -67,6 +68,7 @@ export const RxVerificationCode = defineComponent({
   },
   emits: ["update:modelValue", "change", "complete", "focus", "blur"],
   setup(props, { emit, attrs }) {
+    const getLength = () => normalizedLength(props.digits ?? props.length);
     const inputRef = ref<HTMLInputElement | null>(null);
     const focused = ref(false);
     const messageId = `rx-verification-code-${useId()}-message`;
@@ -117,7 +119,7 @@ export const RxVerificationCode = defineComponent({
 
         phase.value = "collapsing";
         clearTransitionTimer();
-        transitionTimer = setTimeout(settleRequestedStatus, collapseDurationMs(normalizedLength(props.length)));
+        transitionTimer = setTimeout(settleRequestedStatus, collapseDurationMs(getLength()));
         return;
       }
 
@@ -136,7 +138,7 @@ export const RxVerificationCode = defineComponent({
 
     const handleInput = (event: Event) => {
       const input = event.target as HTMLInputElement;
-      const length = normalizedLength(props.length);
+      const length = getLength();
       const mode: VerificationCodeMode = props.mode === "alphanumeric" ? "alphanumeric" : "numeric";
       const nextValue = sanitizeValue(input.value, mode, length);
 
@@ -171,7 +173,7 @@ export const RxVerificationCode = defineComponent({
     onBeforeUnmount(clearTransitionTimer);
 
     return () => {
-      const length = normalizedLength(props.length);
+      const length = getLength();
       const mode: VerificationCodeMode = props.mode === "alphanumeric" ? "alphanumeric" : "numeric";
       const code = sanitizeValue(String(props.modelValue || ""), mode, length);
       const status = normalizeStatus(props.status);

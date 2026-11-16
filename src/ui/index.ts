@@ -1,4 +1,4 @@
-import { defineComponent, h, mergeProps, onMounted, ref } from "vue";
+import { defineComponent, h, mergeProps, onMounted, ref, watch } from "vue";
 import type { ResuxModuleDefinition } from "../kit/index.js";
 import {
   RxVerificationCode,
@@ -242,14 +242,28 @@ export const RxButton = defineComponent({
     size: { type: String, default: "md" },
     type: { type: String, default: "button" },
     disabled: { type: Boolean, default: false },
+    loading: { type: Boolean, default: false },
     unstyled: { type: Boolean, default: false }
   },
   setup(props, { slots, attrs }) {
     return () => {
       const classes = props.unstyled
         ? (attrs.class || "")
-        : ["rx-btn", `rx-btn-${props.variant}`, `rx-btn-${props.size}`, attrs.class].filter(Boolean).join(" ");
-      return h("button", { ...attrs, type: props.type, disabled: props.disabled, class: classes }, slots.default ? slots.default() : []);
+        : [
+            "rx-btn",
+            `rx-btn-${props.variant}`,
+            `rx-btn-${props.size}`,
+            props.loading ? "is-loading" : "",
+            attrs.class
+          ].filter(Boolean).join(" ");
+      return h(
+        "button",
+        { ...attrs, type: props.type, disabled: props.disabled || props.loading, class: classes },
+        [
+          props.loading ? h("span", { class: props.unstyled ? undefined : "rx-btn-spinner", "aria-hidden": "true" }, "⏳") : null,
+          slots.default ? slots.default() : []
+        ]
+      );
     };
   }
 });
@@ -265,7 +279,15 @@ export const RxCard = defineComponent({
       const classes = props.unstyled
         ? (attrs.class || "")
         : ["rx-card", props.variant !== "default" ? `rx-card-${props.variant}` : "", attrs.class].filter(Boolean).join(" ");
-      return h("div", { ...attrs, class: classes }, slots.default ? slots.default() : []);
+      const hasSections = !!(slots.header || slots.footer);
+      if (!hasSections) {
+        return h("div", { ...attrs, class: classes }, slots.default ? slots.default() : []);
+      }
+      return h("div", { ...attrs, class: classes }, [
+        slots.header ? h("div", { class: props.unstyled ? undefined : "rx-card-header" }, slots.header()) : null,
+        slots.default ? h("div", { class: props.unstyled ? undefined : "rx-card-body" }, slots.default()) : null,
+        slots.footer ? h("div", { class: props.unstyled ? undefined : "rx-card-footer" }, slots.footer()) : null
+      ]);
     };
   }
 });
@@ -274,6 +296,7 @@ export const RxBadge = defineComponent({
   name: "RxBadge",
   props: {
     variant: { type: String, default: "default" },
+    dot: { type: Boolean, default: false },
     unstyled: { type: Boolean, default: false }
   },
   setup(props, { slots, attrs }) {
@@ -281,7 +304,10 @@ export const RxBadge = defineComponent({
       const classes = props.unstyled
         ? (attrs.class || "")
         : ["rx-badge", `rx-badge-${props.variant}`, attrs.class].filter(Boolean).join(" ");
-      return h("span", { ...attrs, class: classes }, slots.default ? slots.default() : []);
+      return h("span", { ...attrs, class: classes }, [
+        props.dot ? h("span", { class: props.unstyled ? undefined : "rx-badge-dot", "aria-hidden": "true" }) : null,
+        slots.default ? slots.default() : []
+      ]);
     };
   }
 });
@@ -479,9 +505,9 @@ export const RxAlert = defineComponent({
     return () => {
       const classes = props.unstyled ? (attrs.class || "") : ["rx-alert", `rx-alert-${props.variant}`, attrs.class].filter(Boolean).join(" ");
       return h("div", { ...attrs, class: classes, role: "alert" }, [
-        props.title ? h("div", { class: props.unstyled ? "" : "rx-alert-title" }, props.title) : null,
+        slots.title ? h("div", { class: props.unstyled ? "" : "rx-alert-title" }, slots.title()) : (props.title ? h("div", { class: props.unstyled ? "" : "rx-alert-title" }, props.title) : null),
         h("div", { class: props.unstyled ? "" : "rx-alert-content" }, slots.default ? slots.default() : []),
-        props.dismissible ? h("button", { class: props.unstyled ? "" : "rx-alert-close", onClick: () => emit("dismiss") }, "×") : null
+        props.dismissible ? h("button", { type: "button", class: props.unstyled ? "" : "rx-alert-close", "aria-label": "Close alert", onClick: () => emit("dismiss") }, "×") : null
       ]);
     };
   }
@@ -494,15 +520,20 @@ export const RxAccordion = defineComponent({
     open: { type: Boolean, default: false },
     unstyled: { type: Boolean, default: false }
   },
-  setup(props, { slots, attrs }) {
+  emits: ["update:open"],
+  setup(props, { slots, emit, attrs }) {
     const isOpen = ref(props.open);
-    const toggle = () => (isOpen.value = !isOpen.value);
+    watch(() => props.open, (val) => { isOpen.value = val; });
+    const toggle = () => {
+      isOpen.value = !isOpen.value;
+      emit("update:open", isOpen.value);
+    };
     return () => {
       const classes = props.unstyled ? (attrs.class || "") : ["rx-accordion", attrs.class].filter(Boolean).join(" ");
       return h("div", { ...attrs, class: classes }, [
-        h("button", { class: props.unstyled ? "" : "rx-accordion-header", onClick: toggle }, [
-          h("span", props.title),
-          h("span", isOpen.value ? "−" : "+")
+        h("button", { type: "button", class: props.unstyled ? "" : "rx-accordion-header", "aria-expanded": String(isOpen.value), onClick: toggle }, [
+          slots.title ? slots.title() : h("span", props.title),
+          h("span", { class: props.unstyled ? undefined : "rx-accordion-icon" }, isOpen.value ? "−" : "+")
         ]),
         isOpen.value ? h("div", { class: props.unstyled ? "" : "rx-accordion-body" }, slots.default ? slots.default() : []) : null
       ]);
@@ -524,11 +555,13 @@ export const RxTooltip = defineComponent({
       return h("div", {
         class: classes,
         onMouseenter: () => (visible.value = true),
-        onMouseleave: () => (visible.value = false)
+        onMouseleave: () => (visible.value = false),
+        onFocusin: () => (visible.value = true),
+        onFocusout: () => (visible.value = false)
       }, [
         slots.default ? slots.default() : null,
-        visible.value && props.text
-          ? h("div", { class: props.unstyled ? "" : `rx-tooltip rx-tooltip-${props.placement}`, ...attrs }, props.text)
+        visible.value && (props.text || slots.content)
+          ? h("div", { class: props.unstyled ? "" : `rx-tooltip rx-tooltip-${props.placement}`, role: "tooltip", ...attrs }, slots.content ? slots.content() : props.text)
           : null
       ]);
     };
@@ -538,24 +571,27 @@ export const RxTooltip = defineComponent({
 export const RxDropdown = defineComponent({
   name: "RxDropdown",
   props: {
-    items: { type: Array as () => Array<{ label: string; action?: () => void }>, default: () => [] },
+    items: { type: Array as () => Array<{ label: string; action?: () => void; disabled?: boolean }>, default: () => [] },
     open: { type: Boolean, default: false },
     unstyled: { type: Boolean, default: false }
   },
-  emits: ["update:open"],
+  emits: ["update:open", "select"],
   setup(props, { slots, emit, attrs }) {
     const toggle = () => emit("update:open", !props.open);
     return () => {
       const classes = props.unstyled ? (attrs.class || "") : ["rx-dropdown", attrs.class].filter(Boolean).join(" ");
       return h("div", { class: classes }, [
-        h("div", { onClick: toggle }, slots.trigger ? slots.trigger() : [h("button", "Menu")]),
+        h("div", { onClick: toggle }, slots.trigger ? slots.trigger() : [h("button", { type: "button" }, "Menu")]),
         props.open
-          ? h("ul", { class: props.unstyled ? "" : "rx-dropdown-menu", ...attrs },
+          ? h("ul", { class: props.unstyled ? "" : "rx-dropdown-menu", role: "menu", ...attrs },
               props.items.map((item) =>
                 h("li", {
-                  class: props.unstyled ? "" : "rx-dropdown-item",
+                  class: [props.unstyled ? "" : "rx-dropdown-item", item.disabled ? "is-disabled" : ""].filter(Boolean).join(" "),
+                  role: "menuitem",
                   onClick: () => {
+                    if (item.disabled) return;
                     if (item.action) item.action();
+                    emit("select", item);
                     emit("update:open", false);
                   }
                 }, item.label)
@@ -570,7 +606,7 @@ export const RxDropdown = defineComponent({
 export const RxTabs = defineComponent({
   name: "RxTabs",
   props: {
-    items: { type: Array as () => Array<{ label: string; key: string }>, default: () => [] },
+    items: { type: Array as () => Array<{ label: string; key: string; disabled?: boolean }>, default: () => [] },
     modelValue: { type: String, default: "" },
     unstyled: { type: Boolean, default: false }
   },
@@ -578,12 +614,18 @@ export const RxTabs = defineComponent({
   setup(props, { emit, attrs }) {
     return () => {
       const classes = props.unstyled ? (attrs.class || "") : ["rx-tabs", attrs.class].filter(Boolean).join(" ");
-      return h("div", { ...attrs, class: classes }, [
+      return h("div", { ...attrs, class: classes, role: "tablist" }, [
         h("div", { class: props.unstyled ? "" : "rx-tabs-header" },
           props.items.map((item) =>
             h("button", {
+              type: "button",
+              role: "tab",
+              "aria-selected": String(item.key === props.modelValue),
+              disabled: item.disabled === true,
               class: [props.unstyled ? "" : "rx-tab-btn", item.key === props.modelValue ? "active" : ""].filter(Boolean).join(" "),
-              onClick: () => emit("update:modelValue", item.key)
+              onClick: () => {
+                if (!item.disabled) emit("update:modelValue", item.key);
+              }
             }, item.label)
           )
         )
@@ -597,7 +639,7 @@ export const RxTextarea = defineComponent({
   inheritAttrs: false,
   props: {
     modelValue: { type: String, default: "" },
-    rows: { type: Number, default: 3 },
+    rows: { type: [Number, String], default: 3 },
     placeholder: { type: String, default: "" },
     disabled: { type: Boolean, default: false },
     unstyled: { type: Boolean, default: false }
@@ -605,7 +647,7 @@ export const RxTextarea = defineComponent({
   emits: ["update:modelValue"],
   setup(props, { emit, attrs }) {
     return () => h("textarea", mergeProps(attrs, {
-      rows: props.rows,
+      rows: Number(props.rows),
       value: props.modelValue,
       placeholder: props.placeholder,
       disabled: props.disabled,
@@ -624,7 +666,7 @@ export const RxSwitch = defineComponent({
     unstyled: { type: Boolean, default: false }
   },
   emits: ["update:modelValue"],
-  setup(props, { emit, attrs }) {
+  setup(props, { emit, slots, attrs }) {
     const toggle = () => {
       if (!props.disabled) emit("update:modelValue", !props.modelValue);
     };
@@ -637,7 +679,8 @@ export const RxSwitch = defineComponent({
       class: props.unstyled ? undefined : ["rx-switch", props.modelValue ? "checked" : ""],
       onClick: toggle
     }), [
-      h("span", { class: props.unstyled ? undefined : "rx-switch-thumb", "aria-hidden": "true" })
+      h("span", { class: props.unstyled ? undefined : "rx-switch-thumb", "aria-hidden": "true" }),
+      slots?.default ? h("span", { class: props.unstyled ? undefined : "rx-switch-label" }, slots.default()) : null
     ]);
   }
 });
@@ -710,9 +753,10 @@ export const RxModal = defineComponent({
       const backdropClasses = props.unstyled ? "" : "rx-modal-backdrop";
       const contentClasses = props.unstyled ? "" : "rx-modal-content";
       return h("div", { class: backdropClasses, onClick: close }, [
-        h("div", { class: contentClasses, onClick: (e: Event) => e.stopPropagation(), ...attrs }, [
-          props.title ? h("h3", { style: { marginTop: 0 } }, props.title) : null,
-          slots.default ? slots.default() : null
+        h("div", { class: contentClasses, role: "dialog", "aria-modal": "true", onClick: (e: Event) => e.stopPropagation(), ...attrs }, [
+          slots.header ? slots.header() : (props.title ? h("h3", { style: { marginTop: 0 } }, props.title) : null),
+          slots.default ? slots.default() : null,
+          slots.footer ? slots.footer() : null
         ])
       ]);
     };
@@ -792,6 +836,9 @@ const uiPrimitiveStyles = `
 .rx-btn-sm { padding: 0.25rem 0.625rem; font-size: 0.75rem; }
 .rx-btn-md { padding: 0.5rem 1rem; font-size: 0.875rem; }
 .rx-btn-lg { padding: 0.75rem 1.5rem; font-size: 1rem; }
+.rx-btn.is-loading { opacity: 0.8; cursor: wait; }
+.rx-btn-spinner { display: inline-block; margin-right: 0.35rem; animation: rxSpin 1s linear infinite; }
+@keyframes rxSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 .rx-card {
   background-color: #1e293b;
@@ -800,6 +847,12 @@ const uiPrimitiveStyles = `
   border: 1px solid #334155;
   color: #f8fafc;
 }
+.rx-card-elevated { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); }
+.rx-card-outlined { background-color: transparent; border: 1.5px solid #334155; }
+.rx-card-subtle { background-color: #0f172a; border-color: transparent; }
+.rx-card-header { margin-bottom: 0.75rem; font-weight: 600; }
+.rx-card-body { margin-bottom: 0.75rem; }
+.rx-card-footer { border-top: 1px solid #334155; padding-top: 0.75rem; }
 .rx-card-glass {
   background: rgba(30, 41, 59, 0.7);
   backdrop-filter: blur(12px);
@@ -813,6 +866,14 @@ const uiPrimitiveStyles = `
   border-radius: 9999px;
   font-size: 0.75rem;
   font-weight: 600;
+}
+.rx-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background-color: currentColor;
+  margin-right: 5px;
+  display: inline-block;
 }
 .rx-badge-default { background-color: #334155; color: #e2e8f0; }
 .rx-badge-success { background-color: rgba(16, 185, 129, 0.2); color: #34d399; }

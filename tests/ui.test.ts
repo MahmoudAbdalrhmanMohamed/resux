@@ -310,4 +310,172 @@ describe("UI & Motion Primitives (resuxjs/ui)", () => {
     expect(addedHead[0].style.length).toBe(1);
     expect(publicConfigs[0].public.ui.defaultStyles).toBe(false);
   });
+
+  it("renders RxButton with loading state and disabled behavior", () => {
+    const comp = RxButton as any;
+    const renderNormal = comp.setup({ variant: "outline", size: "lg", disabled: false, loading: false, unstyled: false }, { slots: { default: () => "Click" }, attrs: {} });
+    const normal = renderNormal();
+    expect(normal.type).toBe("button");
+    expect(normal.props.class).toContain("rx-btn-outline");
+    expect(normal.props.class).toContain("rx-btn-lg");
+    expect(normal.props.disabled).toBe(false);
+
+    const renderLoading = comp.setup({ variant: "primary", size: "md", disabled: false, loading: true, unstyled: false }, { slots: { default: () => "Submitting" }, attrs: {} });
+    const loading = renderLoading();
+    expect(loading.props.class).toContain("is-loading");
+    expect(loading.props.disabled).toBe(true);
+    expect(loading.children[0].type).toBe("span");
+    expect(loading.children[0].props.class).toBe("rx-btn-spinner");
+  });
+
+  it("renders RxCard supporting header, default, and footer slots", () => {
+    const comp = RxCard as any;
+    const render = comp.setup(
+      { variant: "elevated", unstyled: false },
+      {
+        slots: {
+          header: () => "Card Header",
+          default: () => "Card Body",
+          footer: () => "Card Footer"
+        },
+        attrs: {}
+      }
+    );
+    const card = render();
+    expect(card.props.class).toContain("rx-card-elevated");
+    expect(card.children[0].props.class).toBe("rx-card-header");
+    expect(card.children[1].props.class).toBe("rx-card-body");
+    expect(card.children[2].props.class).toBe("rx-card-footer");
+  });
+
+  it("renders RxBadge supporting dot indicator", () => {
+    const comp = RxBadge as any;
+    const render = comp.setup({ variant: "success", dot: true, unstyled: false }, { slots: { default: () => "Active" }, attrs: {} });
+    const badge = render();
+    expect(badge.props.class).toContain("rx-badge-success");
+    expect(badge.children[0].props.class).toBe("rx-badge-dot");
+  });
+
+  it("renders RxAlert with title slot and emits dismiss", () => {
+    const emitted: any[] = [];
+    const comp = RxAlert as any;
+    const render = comp.setup(
+      { variant: "warning", dismissible: true, unstyled: false },
+      {
+        emit: (event: string) => emitted.push(event),
+        slots: { title: () => "Alert Header", default: () => "Warning description" },
+        attrs: {}
+      }
+    );
+    const alert = render();
+    expect(alert.props.class).toContain("rx-alert-warning");
+    expect(alert.props.role).toBe("alert");
+    expect(alert.children[0].props.class).toBe("rx-alert-title");
+    const closeBtn = alert.children[2];
+    expect(closeBtn.props["aria-label"]).toBe("Close alert");
+    closeBtn.props.onClick();
+    expect(emitted).toContain("dismiss");
+  });
+
+  it("renders RxAccordion with toggle and emits update:open", () => {
+    const emitted: Array<[string, unknown]> = [];
+    const comp = RxAccordion as any;
+    const render = comp.setup(
+      { title: "FAQ", open: false, unstyled: false },
+      {
+        emit: (event: string, value: unknown) => emitted.push([event, value]),
+        slots: { default: () => "FAQ Answer" },
+        attrs: {}
+      }
+    );
+    let accordion = render();
+    const headerBtn = accordion.children[0];
+    expect(headerBtn.props["aria-expanded"]).toBe("false");
+    headerBtn.props.onClick();
+    expect(emitted).toContainEqual(["update:open", true]);
+  });
+
+  it("renders RxModal with role dialog and emits close", () => {
+    const emitted: Array<[string, unknown]> = [];
+    const comp = RxModal as any;
+    const render = comp.setup(
+      { open: true, title: "Dialog Title", unstyled: false },
+      {
+        emit: (event: string, value: unknown) => emitted.push([event, value]),
+        slots: { default: () => "Modal Content" },
+        attrs: {}
+      }
+    );
+    const modal = render();
+    expect(modal.props.class).toBe("rx-modal-backdrop");
+    const content = modal.children[0];
+    expect(content.props.role).toBe("dialog");
+    expect(content.props["aria-modal"]).toBe("true");
+
+    modal.props.onClick();
+    expect(emitted).toContainEqual(["update:open", false]);
+    expect(emitted.some(([evt]) => evt === "close")).toBe(true);
+  });
+
+  it("renders RxDropdown with menu items and emits select", () => {
+    const emitted: Array<[string, unknown]> = [];
+    const comp = RxDropdown as any;
+    let actionRun = false;
+    const item = { label: "Action 1", action: () => { actionRun = true; } };
+    const render = comp.setup(
+      { items: [item], open: true, unstyled: false },
+      {
+        emit: (event: string, value: unknown) => emitted.push([event, value]),
+        slots: {},
+        attrs: {}
+      }
+    );
+    const dropdown = render();
+    const menu = dropdown.children[1];
+    expect(menu.props.role).toBe("menu");
+    const menuItem = menu.children[0];
+    expect(menuItem.props.role).toBe("menuitem");
+    menuItem.props.onClick();
+    expect(actionRun).toBe(true);
+    expect(emitted).toContainEqual(["select", item]);
+    expect(emitted).toContainEqual(["update:open", false]);
+  });
+
+  it("renders RxTabs with tablist semantics and emits update:modelValue", () => {
+    const emitted: Array<[string, unknown]> = [];
+    const comp = RxTabs as any;
+    const items = [
+      { label: "Tab A", key: "a" },
+      { label: "Tab B", key: "b" }
+    ];
+    const render = comp.setup(
+      { items, modelValue: "a", unstyled: false },
+      {
+        emit: (event: string, value: unknown) => emitted.push([event, value]),
+        attrs: {}
+      }
+    );
+    const tabs = render();
+    expect(tabs.props.role).toBe("tablist");
+    const tabA = tabs.children[0].children[0];
+    expect(tabA.props.role).toBe("tab");
+    expect(tabA.props["aria-selected"]).toBe("true");
+    const tabB = tabs.children[0].children[1];
+    expect(tabB.props["aria-selected"]).toBe("false");
+    tabB.props.onClick();
+    expect(emitted).toContainEqual(["update:modelValue", "b"]);
+  });
+
+  it("supports digits prop as an alias for length in RxVerificationCode", () => {
+    const comp = RxVerificationCode as any;
+    const render = comp.setup(
+      { modelValue: "12", digits: 6, status: "idle", unstyled: false },
+      { emit: () => {}, attrs: {} }
+    );
+    const code = render();
+    expect(code.type).toBe("div");
+    expect(code.props.class).toContain("rx-verification-code");
+    const cellsWrapper = code.children[1];
+    expect(cellsWrapper.children).toHaveLength(6);
+  });
 });

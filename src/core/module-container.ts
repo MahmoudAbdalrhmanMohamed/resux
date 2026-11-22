@@ -280,7 +280,7 @@ function mergeHead(current: Record<string, unknown>, next: Record<string, unknow
     meta: mergeHeadArray(current.meta, next.meta),
     link: mergeHeadArray(current.link, next.link),
     style: mergeHeadArray(current.style, next.style),
-    script: mergeHeadArray(current.script, next.script),
+    script: dedupeHeadScripts(mergeHeadArray(current.script, next.script)),
     noscript: mergeHeadArray(current.noscript, next.noscript),
     htmlAttrs: {
       ...(isObject(current.htmlAttrs) ? current.htmlAttrs : {}),
@@ -291,6 +291,32 @@ function mergeHead(current: Record<string, unknown>, next: Record<string, unknow
       ...(isObject(next.bodyAttrs) ? next.bodyAttrs : {}),
     },
   };
+}
+
+function dedupeHeadScripts(scripts: unknown[]): unknown[] {
+  const map = new Map<string, unknown>();
+  const result: unknown[] = [];
+  for (const item of scripts) {
+    if (!item || typeof item !== "object") continue;
+    const script = item as Record<string, unknown>;
+    const dedupeKey = (script.key as string) ?? (script.id as string) ?? (script.src as string);
+    if (dedupeKey) {
+      if (map.has(dedupeKey)) {
+        const existing = map.get(dedupeKey)!;
+        const idx = result.indexOf(existing);
+        if (idx !== -1) {
+          result[idx] = script;
+        }
+        map.set(dedupeKey, script);
+      } else {
+        map.set(dedupeKey, script);
+        result.push(script);
+      }
+    } else {
+      result.push(script);
+    }
+  }
+  return result;
 }
 
 function mergeHeadArray(current: unknown, next: unknown): unknown[] {

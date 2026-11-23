@@ -9,9 +9,10 @@ export interface ReactiveEffectLike {
 
 export type Dep = Set<ReactiveEffectLike>;
 type KeyToDepMap = Map<PropertyKey, Dep>;
-export type TriggerOperation = "set" | "add" | "delete";
+export type TriggerOperation = "set" | "add" | "delete" | "clear";
 
 export const ITERATE_KEY = Symbol("resux-iterate");
+export const MAP_KEY_ITERATE_KEY = Symbol("resux-map-key-iterate");
 
 const targetMap = new WeakMap<object, KeyToDepMap>();
 
@@ -148,7 +149,12 @@ export function trigger(
     }
   };
 
-  if (Array.isArray(target) && key === "length") {
+  if (operation === "clear") {
+    // Clearing a collection invalidates every dependency it owns.
+    for (const dep of depsMap.values()) {
+      addEffects(dep);
+    }
+  } else if (Array.isArray(target) && key === "length") {
     const nextLength = Number(newValue);
     for (const [depKey, dep] of depsMap) {
       if (
@@ -163,6 +169,14 @@ export function trigger(
     addEffects(depsMap.get(key));
 
     if (operation === "add" || operation === "delete") {
+      addEffects(depsMap.get(ITERATE_KEY));
+      if (target instanceof Map) {
+        addEffects(depsMap.get(MAP_KEY_ITERATE_KEY));
+      }
+    } else if (operation === "set" && target instanceof Map) {
+      // A changed value is visible to values()/entries()/forEach iteration and
+      // size, which all track ITERATE_KEY on maps. keys() iteration is not
+      // affected by value changes.
       addEffects(depsMap.get(ITERATE_KEY));
     }
 

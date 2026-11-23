@@ -2690,7 +2690,8 @@ function createDefaultHtmlContext(
 
   const headElements: string[] = [
     ...(hasExplicitCharset ? [] : ['<meta charset="utf-8">']),
-    renderHead(mergedHead, { fallbackViewport: !hasExplicitViewport, nonce, csp }),
+    ...(hasExplicitViewport ? [] : ['<meta name="viewport" content="width=device-width, initial-scale=1">']),
+    renderHead(mergedHead, { nonce, csp }),
     getBuiltinFrameworkStyles(),
   ];
 
@@ -7820,13 +7821,10 @@ function renderScriptAttributes(attributes: Record<string, unknown>): string {
     .join(" ");
 }
 
-function renderHead(head: HeadEntry, options: { fallbackViewport?: boolean; nonce?: string; csp?: string } = {}): string {
+function renderHead(head: HeadEntry, options: { nonce?: string; csp?: string } = {}): string {
   const tags: string[] = [];
 
   const metaList = [...(head.meta ?? [])];
-  if (options.fallbackViewport && !metaList.some((m) => typeof (m as any).name === "string" && (m as any).name.toLowerCase() === "viewport")) {
-    metaList.push({ name: "viewport", content: "width=device-width, initial-scale=1" });
-  }
 
   const criticalMetas = metaList.filter((meta) => isCriticalHeadMeta(meta as Record<string, unknown>));
   criticalMetas.sort((a, b) => getCriticalMetaOrder(a as Record<string, unknown>) - getCriticalMetaOrder(b as Record<string, unknown>));

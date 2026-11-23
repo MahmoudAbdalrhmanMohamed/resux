@@ -1,6 +1,33 @@
 import { ITERATE_KEY, track, trigger } from "./effect.js";
 import { hasOwn, isObject, ReactiveFlags } from "./utils.js";
 
+type ArrayIdentityMethod = "includes" | "indexOf" | "lastIndexOf";
+
+const ARRAY_IDENTITY_METHODS = new Set<string>(["includes", "indexOf", "lastIndexOf"]);
+
+// Array elements are stored raw (the set trap unwraps incoming proxies), while
+// reads through the proxy wrap objects lazily. A naive pass-through of the
+// identity methods therefore compares a raw argument against lazily wrapped
+// elements (or a proxy argument against raw elements) and reports misses for
+// values that are actually present. Run the lookup against the raw target and
+// retry with unwrapped arguments, tracking each visited index so effects
+// depending on the result stay reactive.
+function arrayIdentityMethod(method: ArrayIdentityMethod): (this: unknown[], ...args: unknown[]) => unknown {
+  return function (this: unknown[], ...args: unknown[]): unknown {
+    const rawArray = toRaw(this) as unknown[];
+    track(rawArray, "length");
+    for (let index = 0; index < rawArray.length; index++) {
+      track(rawArray, String(index));
+    }
+    const implementation = Array.prototype[method] as (...args: unknown[]) => unknown;
+    const result = implementation.apply(rawArray, args);
+    if (result === -1 || result === false) {
+      return implementation.apply(rawArray, args.map((argument) => toRaw(argument)));
+    }
+    return result;
+  };
+}
+
 const reactiveMap = new WeakMap<object, object>();
 const readonlyMap = new WeakMap<object, object>();
 const proxyToRaw = new WeakMap<object, object>();
@@ -17,6 +44,10 @@ const mutableHandlers: ProxyHandler<object> = {
     }
     if (key === ReactiveFlags.RAW) {
       return target;
+    }
+
+    if (Array.isArray(target) && typeof key === "string" && ARRAY_IDENTITY_METHODS.has(key)) {
+      return arrayIdentityMethod(key as ArrayIdentityMethod);
     }
 
     const result = Reflect.get(target, key, receiver);

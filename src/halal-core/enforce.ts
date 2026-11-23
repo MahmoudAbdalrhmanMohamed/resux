@@ -6,6 +6,7 @@ import { generateHalalReport } from "./report/generateHalalReport.js";
 import { createReviewEvidenceHash } from "./review/signedReviewFile.js";
 import { verifyReviewApproval } from "./review/verifyReviewApproval.js";
 import { checkOnDiskReportSignature } from "./tamper/verifyReportSignature.js";
+import { randomBytes } from "node:crypto";
 import { verifyCoreIntegrity } from "./tamper/verifyCoreIntegrity.js";
 
 export async function enforceDevGuard(appRoot: string, outDir: string): Promise<void> {
@@ -47,8 +48,12 @@ export async function enforceDevGuard(appRoot: string, outDir: string): Promise<
   }
 }
 
-export async function enforceBuildGuard(appRoot: string, outDir: string): Promise<void> {
-  if (process.env.VITEST || process.env.NODE_ENV === "test") {
+export async function enforceBuildGuard(
+  appRoot: string,
+  outDir: string,
+  options: { ignoreTestEnv?: boolean } = {}
+): Promise<void> {
+  if ((process.env.VITEST || process.env.NODE_ENV === "test") && !options.ignoreTestEnv) {
     return;
   }
 
@@ -59,8 +64,31 @@ export async function enforceBuildGuard(appRoot: string, outDir: string): Promis
 
   const policy = await loadProjectPolicy(appRoot);
   const scanned = scanProject(appRoot);
+
+  const requireAuthenticated = policy.halalAI?.requireAuthenticated === true || process.env.RESUX_HALAL_REPORT_REQUIRE_AUTHENTICATED === "true";
+  let signingSecret: string | undefined = process.env.RESUX_HALAL_REPORT_SIGNING_SECRET;
+  let requireAuth = requireAuthenticated;
+
+  if (!signingSecret) {
+    if (requireAuthenticated) {
+      console.error(
+        "[resux-halal-core] Build failed: RESUX_HALAL_REPORT_SIGNING_SECRET must be configured with at least 32 characters when Halal report authentication is enabled (policy.halalAI.requireAuthenticated = true). Configure it in your .env or environment variables. See https://resux.dev/getting-started for details."
+      );
+      process.exit(1);
+    } else {
+      const ephemeralSecret = randomBytes(32).toString("hex");
+      signingSecret = ephemeralSecret;
+      process.env.RESUX_HALAL_REPORT_SIGNING_SECRET = ephemeralSecret;
+      console.warn(
+        "\x1b[33m[resux-halal-core] Warning: RESUX_HALAL_REPORT_SIGNING_SECRET is not configured. Generated an ephemeral signing secret for this build. For production deployments requiring authenticated Halal reports, configure RESUX_HALAL_REPORT_SIGNING_SECRET (at least 32 characters) in your environment or .env file.\x1b[0m"
+      );
+      requireAuth = true;
+    }
+  }
+
   const report = generateHalalReport(scanned, policy, outDir, {
-    requireAuthenticated: true,
+    requireAuthenticated: requireAuth,
+    signingSecret,
   });
 
   const blockProductionBuild = policy.halalAI?.blockProductionBuild !== false;

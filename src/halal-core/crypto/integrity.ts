@@ -68,7 +68,7 @@ function resolveIntegritySecret(options: IntegrityOptions): string | undefined {
   if (secret === undefined || secret === "") {
     if (options.requireSecret === true) {
       throw new Error(
-        `${options.envName} must be configured with at least 32 characters before creating authenticated signatures.`,
+        `${options.envName} must be configured with at least 32 characters before creating authenticated signatures. Add it to your .env or environment variables. See https://resux.dev/getting-started for details.`,
       );
     }
     return undefined;

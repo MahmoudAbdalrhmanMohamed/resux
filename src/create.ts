@@ -606,7 +606,7 @@ async function ensureStarterProjectStructure(
   );
   await ensureFile(
     path.join(root, ".env.example"),
-    "# Runtime environment defaults\nAPP_ORIGIN=http://localhost:3000\n",
+    "# Runtime environment defaults\nAPP_ORIGIN=http://localhost:3000\n\n# Secret for signing production Halal Core safety reports (minimum 32 characters)\nRESUX_HALAL_REPORT_SIGNING_SECRET=\n",
   );
   await ensureFile(
     path.join(root, "types", "app.d.ts"),

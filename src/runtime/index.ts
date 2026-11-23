@@ -2350,42 +2350,8 @@ export function shouldLoadClientRuntime(result: RenderResult): boolean {
   return getClientRuntimeBootPlan(result).mode !== "none";
 }
 
-export function renderDocument(result: RenderResult, title = "Resux App", options: RenderDocumentOptions = {}): string {
-  const bootPlan = getClientRuntimeBootPlan(result);
-  const needsClientRuntime = bootPlan.mode !== "none";
-  const payload = needsClientRuntime
-    ? escapeJsonForHtml(JSON.stringify(result.payload))
-    : "";
-  const resumeBootstrap = bootPlan.mode === "interaction"
-    ? getResumeBootstrapSource({
-      eventNames: bootPlan.eventNames,
-      deferEnhancements: bootPlan.deferEnhancements,
-      deferVueIslands: bootPlan.deferVueIslands,
-    })
-    : "";
-  const mergedHead = mergeHead([{ title }, result.head]);
-  const hasExplicitCharset = (mergedHead.meta ?? []).some((meta) => meta.charset !== undefined);
-  const hasExplicitViewport = (mergedHead.meta ?? []).some(
-    (meta) => typeof meta.name === "string" && meta.name.toLowerCase() === "viewport"
-  );
-  const htmlAttrs = {
-    lang: "en",
-    ...(mergedHead.htmlAttrs ?? {})
-  };
-  const renderedBodyAttrs = renderAttributes(mergedHead.bodyAttrs ?? {});
-  const bodyOpenTag = renderedBodyAttrs ? `<body ${renderedBodyAttrs}>` : "<body>";
-  const defaultTeleportHtml = result.teleports?.["#teleports"] ?? "";
-  const renderedAppHtml = result.html;
-  const defaultTeleportTarget =
-    `<div id="teleports" data-rx-teleport-fallback="true">${defaultTeleportHtml}</div>`;
-  return [
-    "<!doctype html>",
-    `<html ${renderAttributes(htmlAttrs)}>`,
-    "<head>",
-    ...(hasExplicitCharset ? [] : ['<meta charset="utf-8">']),
-    ...(hasExplicitViewport ? [] : ['<meta name="viewport" content="width=device-width, initial-scale=1">']),
-    renderHead(mergedHead),
-    `<style>
+function getBuiltinFrameworkStyles(): string {
+  return `<style>
 [data-rx-block] {
   display: contents !important;
 }
@@ -2684,9 +2650,51 @@ html[dir="rtl"] [data-rx-loading-indicator] .rx-loading-progress {
     transition: none;
   }
 }
-</style>`,
-    "</head>",
-    bodyOpenTag,
+</style>`;
+}
+
+function createDefaultHtmlContext(
+  result: RenderResult,
+  title = "Resux App",
+  options: RenderDocumentOptions = {},
+): RenderHtmlContext {
+  const bootPlan = getClientRuntimeBootPlan(result);
+  const needsClientRuntime = bootPlan.mode !== "none";
+  const payload = needsClientRuntime
+    ? escapeJsonForHtml(JSON.stringify(result.payload))
+    : "";
+  const resumeBootstrap = bootPlan.mode === "interaction"
+    ? getResumeBootstrapSource({
+      eventNames: bootPlan.eventNames,
+      deferEnhancements: bootPlan.deferEnhancements,
+      deferVueIslands: bootPlan.deferVueIslands,
+    })
+    : "";
+  const mergedHead = mergeHead([{ title }, result.head]);
+  const hasExplicitCharset = (mergedHead.meta ?? []).some((meta) => meta.charset !== undefined);
+  const hasExplicitViewport = (mergedHead.meta ?? []).some(
+    (meta) => typeof meta.name === "string" && meta.name.toLowerCase() === "viewport"
+  );
+  const csp = options.csp ?? extractCspFromHead(mergedHead);
+  const nonce = options.nonce ?? (result.payload?.config as any)?.resuxSecurity?.nonce;
+  const htmlAttrs = {
+    lang: "en",
+    ...(mergedHead.htmlAttrs ?? {})
+  };
+  const renderedHtmlAttrs = renderAttributes(htmlAttrs);
+  const renderedBodyAttrs = renderAttributes(mergedHead.bodyAttrs ?? {});
+  const defaultTeleportHtml = result.teleports?.["#teleports"] ?? "";
+  const renderedAppHtml = result.html;
+  const defaultTeleportTarget =
+    `<div id="teleports" data-rx-teleport-fallback="true">${defaultTeleportHtml}</div>`;
+
+  const headElements: string[] = [
+    ...(hasExplicitCharset ? [] : ['<meta charset="utf-8">']),
+    renderHead(mergedHead, { fallbackViewport: !hasExplicitViewport, nonce, csp }),
+    getBuiltinFrameworkStyles(),
+  ];
+
+  const bodyElements: string[] = [
     '<div id="__resux">',
     renderedAppHtml,
     "</div>",
@@ -2702,9 +2710,68 @@ html[dir="rtl"] [data-rx-loading-indicator] .rx-loading-progress {
       : (bootPlan.mode === "interaction"
         ? `<script type="module">${resumeBootstrap}</script>`
         : ""),
+  ];
+
+  return {
+    htmlAttrs: renderedHtmlAttrs ? [renderedHtmlAttrs] : [],
+    head: headElements,
+    bodyPrepend: [],
+    body: bodyElements,
+    bodyAppend: [],
+    bodyAttrs: renderedBodyAttrs ? [renderedBodyAttrs] : [],
+  };
+}
+
+function assembleHtmlDocument(htmlContext: RenderHtmlContext): string {
+  const htmlOpen = htmlContext.htmlAttrs.length ? `<html ${htmlContext.htmlAttrs.join(" ")}>` : "<html>";
+  const bodyOpen = htmlContext.bodyAttrs.length ? `<body ${htmlContext.bodyAttrs.join(" ")}>` : "<body>";
+
+  return [
+    "<!doctype html>",
+    htmlOpen,
+    "<head>",
+    ...htmlContext.head,
+    "</head>",
+    bodyOpen,
+    ...htmlContext.bodyPrepend,
+    ...htmlContext.body,
+    ...htmlContext.bodyAppend,
     "</body>",
-    "</html>"
+    "</html>",
   ].join("");
+}
+
+export function renderDocument(
+  result: RenderResult,
+  title = "Resux App",
+  options: RenderDocumentOptions = {},
+): string {
+  const htmlContext = createDefaultHtmlContext(result, title, options);
+
+  if (options.hooks) {
+    const hookResult = options.hooks.callHook("render:html", htmlContext);
+    if (hookResult && typeof (hookResult as any).catch === "function") {
+      (hookResult as Promise<void>).catch((err) => {
+        console.error("[resux] Error in render:html hook:", err);
+      });
+    }
+  }
+
+  return assembleHtmlDocument(htmlContext);
+}
+
+export async function renderDocumentAsync(
+  result: RenderResult,
+  title = "Resux App",
+  options: RenderDocumentOptions = {},
+): Promise<string> {
+  const htmlContext = createDefaultHtmlContext(result, title, options);
+
+  if (options.hooks) {
+    await options.hooks.callHook("render:html", htmlContext);
+  }
+
+  return assembleHtmlDocument(htmlContext);
 }
 
 function getDevReloadScript(): string {

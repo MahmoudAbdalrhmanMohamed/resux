@@ -37,6 +37,7 @@ import {
   type ClientRouteMiddlewareManifestRecord,
   renderApp,
   renderDocument,
+  renderDocumentAsync,
   type ComponentDefinition,
   type EventHandler,
   type HeadEntry,
@@ -252,6 +253,7 @@ export interface ResuxNodeHandlerOptions {
   appRoot?: string;
   outDir?: string;
   securityHeaders?: boolean;
+  hooks?: any;
 }
 
 export function createResuxNodeHandler(options: ResuxNodeHandlerOptions = {}) {
@@ -269,6 +271,7 @@ export function createResuxNodeHandler(options: ResuxNodeHandlerOptions = {}) {
       dev: false,
       buildOptions,
       securityHeaders: options.securityHeaders ?? true,
+      hooks: options.hooks,
     });
   };
 }
@@ -2147,23 +2150,23 @@ function createNitroConfig(): string {
   return `import { defineNitroConfig } from "nitropack/config";
 
 export default defineNitroConfig({
-  srcDir: ".resux-nitro",
   compatibilityDate: "2026-05-02",
   cloudflare: {
     nodeCompat: true
   },
   // Resux uses top-level /plugins, /modules, and /middleware for app features.
-  // Nitro auto-scans these folders too, so exclude them from Nitro scanning.
-  ignore: ["plugins/**", "modules/**", "middleware/**", "assets/**"],
-  // Keep Nitro discovery scoped to the generated adapter directory.
-  scanDirs: ["."],
+  // Nitro auto-scans these folders too, so exclude only top-level Resux folders.
+  ignore: ["./plugins/**", "./modules/**", "./middleware/**", "assets/**"],
+  // Keep Nitro discovery scoped to the generated adapter directory and server directory.
+  scanDirs: [".resux-nitro", "server"],
+  plugins: ["server/plugins/**"],
   publicAssets: [
     {
-      dir: "../public",
+      dir: "public",
       baseURL: "/"
     },
     {
-      dir: "../.resux/client",
+      dir: ".resux/client",
       baseURL: "/__resux",
       fallthrough: true
     }
@@ -2171,7 +2174,7 @@ export default defineNitroConfig({
   serverAssets: [
     {
       baseName: "resux",
-      dir: "../.resux/server"
+      dir: ".resux/server"
     }
   ],
   handlers: [
@@ -2248,11 +2251,24 @@ export default defineNitroConfig({
 function createNitroHandler(): string {
   return `import { fromNodeMiddleware } from "h3";
 import { createResuxNodeHandler } from "resuxjs/node";
+import { useNitroApp } from "nitropack/runtime";
 
-const resuxHandler = createResuxNodeHandler();
+let resuxHandler: any;
+function getResuxHandler() {
+  if (!resuxHandler) {
+    let hooks: any;
+    try {
+      const nitroApp = useNitroApp();
+      hooks = nitroApp?.hooks;
+    } catch {}
+    resuxHandler = createResuxNodeHandler({ hooks });
+  }
+  return resuxHandler;
+}
 
 export default fromNodeMiddleware((req, res, next) => {
-  resuxHandler(req, res);
+  const handler = getResuxHandler();
+  handler(req, res);
 
   if (res.writableEnded) {
     return;
@@ -2811,6 +2827,7 @@ async function handleRequest(
     buildOptions: BuildOptions;
     vite?: ViteDevServer;
     securityHeaders: boolean;
+    hooks?: any;
   },
 ): Promise<void> {
   const requestOrigin = requestOriginFromHeaders(request);
@@ -3007,8 +3024,9 @@ async function handleRequest(
 
     const normalizedRendered = withPrioritizedHeadImagePreloads(rendered);
     let html = promoteDocumentImagePreloads(
-      renderDocument(normalizedRendered, "Resux App", {
+      await renderDocumentAsync(normalizedRendered, "Resux App", {
         devReload: options.dev,
+        hooks: options.hooks ?? options.buildOptions?.hooks,
       }),
     );
 
@@ -3061,6 +3079,7 @@ async function serveErrorDocument(
     buildOptions: BuildOptions;
     vite?: ViteDevServer;
     securityHeaders: boolean;
+    hooks?: any;
   },
   loadedManifest: LoadedManifest | undefined,
   statusCode: number,

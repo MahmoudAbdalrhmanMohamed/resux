@@ -1,10 +1,11 @@
 export default {
   compatibilityDate: "2026-05-02",
   // Resux uses top-level /plugins, /modules, and /middleware for app features.
-  // Nitro auto-scans these folders too, so exclude them from Nitro scanning.
-  ignore: ["plugins/**", "modules/**", "middleware/**"],
-  // Keep Nitro discovery scoped to the generated adapter directory.
-  scanDirs: [".resux-nitro"],
+  // Nitro auto-scans these folders too, so exclude only top-level Resux folders.
+  ignore: ["./plugins/**", "./modules/**", "./middleware/**"],
+  // Keep Nitro discovery scoped to the generated adapter directory and server directory.
+  scanDirs: [".resux-nitro", "server"],
+  plugins: ["server/plugins/**"],
   publicAssets: [
     {
       dir: "public",

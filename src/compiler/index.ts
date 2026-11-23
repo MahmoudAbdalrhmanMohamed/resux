@@ -242,7 +242,7 @@ interface BuiltinResuxModule {
   setup: ResuxModuleSetup;
 }
 
-const RESUMABLE_HANDLER_ALLOWED_GLOBALS = new Set([
+export const RESUMABLE_HANDLER_ALLOWED_GLOBALS = new Set([
   "Math",
   "Number",
   "String",
@@ -256,6 +256,14 @@ const RESUMABLE_HANDLER_ALLOWED_GLOBALS = new Set([
   "console",
   "undefined",
   "globalThis",
+  "window",
+  "document",
+  "navigator",
+  "localStorage",
+  "sessionStorage",
+  "location",
+  "history",
+  "alert",
   "performance",
   "fetch",
   "Headers",
@@ -2610,7 +2618,7 @@ function validateTemplateHandlers(events: TemplateEvent[], analysis: ScriptAnaly
     const unsupportedCapture = findUnsupportedCapture(handlerNode, event.handler, analysis, locals);
     if (unsupportedCapture) {
       throw new ResuxCompileError(
-        `Handler "${event.handler}" captures "${unsupportedCapture}", which is not resumable in Resux.`,
+        `Handler "${event.handler}" captures "${unsupportedCapture}", which is not resumable in Resux. If this is a client or browser API, access it via "globalThis.${unsupportedCapture}" or move client-only logic into onMounted() or useClientEnhancement(). See https://resux.dev/guide/resumability-handlers for allowed globals and resumability rules.`,
         locationFromTsNode(file, analysis.sourceFile, handlerNode)
       );
     }

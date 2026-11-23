@@ -16140,7 +16140,7 @@ function ensureRoutePayloadBuildCompatibility(result){
   const currentBuildId=readRoutePayloadBuildId(globalThis.__RESUX__),nextBuildId=readRoutePayloadBuildId(result?.payload);
   if(!currentBuildId||!nextBuildId||currentBuildId === nextBuildId)return true;
   invalidateAllRoutePayloads();
-  dispatchManagedEvent(typeof document !== "undefined" ? document : null, "resux:build-mismatch",{currentBuildId,nextBuildId});
+  dispatchManagedEvent(document, "resux:build-mismatch",{currentBuildId,nextBuildId});
   location.reload();
   return false;
 }

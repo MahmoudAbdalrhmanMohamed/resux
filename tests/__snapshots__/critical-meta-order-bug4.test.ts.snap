@@ -1,0 +1,304 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`bug 4: critical meta order in head > renders charset first, http-equiv second, and viewport third before links and styles 1`] = `
+"<meta data-rx-head="true" charset="utf-8"><meta data-rx-head="true" http-equiv="Content-Security-Policy" content="default-src 'self'"><meta data-rx-head="true" http-equiv="X-UA-Compatible" content="IE=edge"><meta data-rx-head="true" name="viewport" content="width=device-width, initial-scale=1"><title>Ordering Test</title><link data-rx-head="true" rel="preload" href="/hero.jpg" as="image"><meta data-rx-head="true" name="description" content="A test description"><link data-rx-head="true" rel="stylesheet" href="/app.css"><style data-rx-head="true" data-rx-style="custom">body { margin: 0; }</style><script data-rx-head="true" src="/app.js" defer></script><style>
+[data-rx-block] {
+  display: contents !important;
+}
+[data-rx-video-shell="true"] {
+  position: relative;
+  display: block;
+  isolation: isolate;
+}
+.resux-video {
+  position: relative;
+  display: block;
+  isolation: isolate;
+  --resux-video-radius: 0.9rem;
+  --resux-video-accent: #38bdf8;
+  --resux-video-controls-color: #e2e8f0;
+  --resux-video-controls-bg: rgba(2, 6, 23, 0.74);
+}
+.resux-video.resux-video--rounded .resux-video__stage,
+.resux-video.resux-video--rounded video {
+  border-radius: var(--resux-video-radius, 0.9rem);
+}
+.resux-video.resux-video--shadow .resux-video__stage {
+  box-shadow: 0 14px 36px rgba(2, 6, 23, 0.35);
+}
+.resux-video[data-rx-video-theme="light"] {
+  --resux-video-controls-color: #0f172a;
+  --resux-video-controls-bg: rgba(248, 250, 252, 0.84);
+}
+.resux-video[data-rx-video-theme="dark"] {
+  --resux-video-controls-color: #e2e8f0;
+  --resux-video-controls-bg: rgba(2, 6, 23, 0.74);
+}
+[data-rx-video-shell="true"] .resux-video__stage {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  --rx-video-controls-hit-area: 0px;
+}
+[data-rx-video-shell="true"] > video {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #020617;
+}
+[data-rx-video-shell="true"] .resux-video__stage > video {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #020617;
+}
+[data-rx-video-shell="true"][data-rx-video-native-controls="true"] .resux-video__stage {
+  --rx-video-controls-hit-area: 4.25rem;
+}
+[data-rx-video-click-zones] {
+  position: absolute;
+  inset: 0 0 var(--rx-video-controls-hit-area, 0px) 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  pointer-events: none;
+  z-index: 2;
+}
+[data-rx-video-click-zones][hidden] {
+  display: none;
+}
+[data-rx-video-click-zones] .rx-video-zone {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: #e2e8f0;
+  font: inherit;
+  cursor: default;
+  pointer-events: none;
+  position: relative;
+}
+[data-rx-video-click-zones] .rx-video-zone::after {
+  content: attr(data-rx-skip-indicator);
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  min-width: 4.3rem;
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  text-align: center;
+  font-size: 0.7rem;
+  letter-spacing: 0.01em;
+  font-weight: 700;
+  background: rgba(2, 6, 23, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  opacity: 0;
+  transition: opacity 140ms ease;
+  pointer-events: none;
+}
+[data-rx-video-click-zones] .rx-video-zone[data-resux-video-zone="center"]::after {
+  content: "";
+}
+[data-rx-video-click-zones] .rx-video-zone:hover::after,
+[data-rx-video-click-zones] .rx-video-zone:focus-visible::after {
+  opacity: 1;
+}
+[data-rx-video-feedback] {
+  position: absolute;
+  inset: 0 0 var(--rx-video-controls-hit-area, 0px) 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0;
+  transform: scale(0.94);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+[data-rx-video-feedback][data-rx-video-feedback-visible="true"] {
+  opacity: 1;
+  transform: scale(1);
+}
+[data-rx-video-feedback] > span {
+  min-width: 3.4rem;
+  border-radius: 999px;
+  padding: 0.35rem 0.72rem;
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  background: rgba(2, 6, 23, 0.72);
+  color: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+}
+[data-rx-video-controls] {
+  position: absolute;
+  left: 0.75rem;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 0.8rem;
+  background: var(--rx-video-controls-bg, var(--resux-video-controls-bg, rgba(2, 6, 23, 0.74)));
+  color: var(--rx-video-controls-fg, var(--resux-video-controls-color, #e2e8f0));
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  backdrop-filter: blur(8px);
+  opacity: 0;
+  transform: translateY(0.45rem);
+  transition: opacity 160ms ease, transform 160ms ease;
+  pointer-events: none;
+  z-index: 3;
+}
+[data-rx-video-shell="true"]:hover [data-rx-video-controls],
+[data-rx-video-shell="true"]:focus-within [data-rx-video-controls],
+[data-rx-video-shell="true"][data-rx-video-state="paused"] [data-rx-video-controls] {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+[data-rx-video-shell="true"][data-rx-video-controls-ready="false"] [data-rx-video-controls] {
+  opacity: 0;
+  transform: translateY(0.55rem);
+  pointer-events: none;
+}
+[data-rx-video-controls] .rx-video-btn {
+  appearance: none;
+  border: 0;
+  border-radius: 0.6rem;
+  background: rgba(15, 23, 42, 0.86);
+  color: inherit;
+  font: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.01em;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.45rem 0.6rem;
+  min-width: 2.35rem;
+  cursor: pointer;
+}
+[data-rx-video-controls] .rx-video-btn:hover {
+  background: rgba(30, 41, 59, 0.94);
+}
+[data-rx-video-controls] .rx-video-time {
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
+}
+[data-rx-video-controls] .rx-video-seek {
+  flex: 1 1 auto;
+  min-width: 3.5rem;
+}
+[data-rx-video-controls] .rx-video-volume {
+  width: 4.4rem;
+}
+[data-rx-video-controls] input[type="range"] {
+  accent-color: var(--rx-video-controls-accent, var(--resux-video-accent, #38bdf8));
+}
+[data-rx-video-controls].rx-video-controls-compact {
+  left: auto;
+  right: 0.75rem;
+  max-width: calc(100% - 1.5rem);
+  width: auto;
+  display: inline-flex;
+  gap: 0.35rem;
+}
+[data-rx-video-controls] .rx-video-quality-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+[data-rx-video-controls] .rx-video-quality-prefix {
+  font-size: 0.67rem;
+  font-weight: 700;
+  opacity: 0.9;
+}
+[data-rx-video-controls] .rx-video-quality-select {
+  appearance: none;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 0.55rem;
+  background: rgba(15, 23, 42, 0.86);
+  color: inherit;
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.2;
+  max-width: 6.6rem;
+  min-width: 3.8rem;
+  padding: 0.38rem 0.45rem;
+}
+[data-rx-video-controls] .rx-video-quality-select:focus-visible,
+[data-rx-video-controls] .rx-video-btn:focus-visible {
+  outline: 2px solid var(--rx-video-controls-accent, #38bdf8);
+  outline-offset: 1px;
+}
+@media (max-width: 640px) {
+  [data-rx-video-controls] {
+    flex-wrap: wrap;
+    row-gap: 0.35rem;
+  }
+  [data-rx-video-controls].rx-video-controls-compact {
+    right: 0.5rem;
+    left: 0.5rem;
+    width: calc(100% - 1rem);
+    justify-content: flex-end;
+  }
+  [data-rx-video-controls] .rx-video-quality-select {
+    max-width: 5.4rem;
+  }
+}
+[data-rx-loading-indicator] {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 9999;
+  pointer-events: none;
+}
+[data-rx-loading-indicator][hidden] {
+  display: none;
+}
+[data-rx-loading-indicator] .rx-loading-bar {
+  height: var(--resux-loader-height, 3px);
+  overflow: hidden;
+  background: rgba(24, 24, 27, 0.12);
+}
+[data-rx-loading-indicator] .rx-loading-progress {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform: scaleX(var(--resux-progress-scale, 0.08));
+  transform-origin: left center;
+  will-change: transform;
+  background: var(--resux-loader-color, #2563eb);
+  box-shadow: 0 0 18px rgba(37, 99, 235, 0.45);
+  transition: transform 160ms ease, background 160ms ease;
+}
+html[dir="rtl"] [data-rx-loading-indicator] .rx-loading-progress {
+  transform-origin: right center;
+}
+[data-rx-loading-indicator] .rx-loading-slot {
+  width: fit-content;
+  max-width: min(28rem, calc(100vw - 2rem));
+  margin: 0.75rem auto 0;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid rgba(24, 24, 27, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 12px 32px rgba(24, 24, 27, 0.12);
+  backdrop-filter: blur(12px);
+  pointer-events: auto;
+}
+[data-rx-loading-indicator][data-state="error"] .rx-loading-progress {
+  background: var(--resux-loader-error-color, #dc2626);
+}
+[data-rx-loading-indicator][data-state="complete"] .rx-loading-progress {
+  background: #16a34a;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-rx-loading-indicator] .rx-loading-progress {
+    transition: none;
+  }
+}
+</style>"
+`;

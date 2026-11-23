@@ -5070,9 +5070,21 @@ function promoteDocumentImagePreloads(html: string): string {
 
   const headWithoutPreloads = headContent.replace(preloadPattern, "");
   const titleMatch = headWithoutPreloads.match(/<title\b[^>]*>[\s\S]*?<\/title>/i);
-  const insertionPoint = titleMatch
-    ? headWithoutPreloads.indexOf(titleMatch[0]) + titleMatch[0].length
-    : 0;
+  let insertionPoint = 0;
+  if (titleMatch) {
+    insertionPoint = headWithoutPreloads.indexOf(titleMatch[0]) + titleMatch[0].length;
+  } else {
+    const metaMatches = [...headWithoutPreloads.matchAll(/<meta\b[^>]*>/gi)];
+    for (const match of metaMatches) {
+      const tag = match[0].toLowerCase();
+      if (tag.includes("charset") || tag.includes("http-equiv") || tag.includes('name="viewport"') || tag.includes("name='viewport'")) {
+        const endPos = (match.index ?? 0) + match[0].length;
+        if (endPos > insertionPoint) {
+          insertionPoint = endPos;
+        }
+      }
+    }
+  }
   const reorderedHeadContent =
     headWithoutPreloads.slice(0, insertionPoint)
     + preloadTags.join("")

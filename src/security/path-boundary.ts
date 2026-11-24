@@ -2,8 +2,16 @@ import { lstat, mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
 
 export function isPathWithinBoundary(boundary: string, target: string): boolean {
-  const absoluteBoundary = path.resolve(boundary);
-  const absoluteTarget = path.resolve(target);
+  let absoluteBoundary = path.resolve(boundary);
+  let absoluteTarget = path.resolve(target);
+  if (process.platform === "win32") {
+    // Windows filesystems are case-insensitive, so compare case-folded
+    // paths; a differently-cased spelling of the same directory is still
+    // inside the boundary there. On POSIX the casing distinguishes real
+    // directories, so the comparison must stay case-sensitive.
+    absoluteBoundary = absoluteBoundary.toLowerCase();
+    absoluteTarget = absoluteTarget.toLowerCase();
+  }
   const relative = path.relative(absoluteBoundary, absoluteTarget);
   return relative === ""
     || (

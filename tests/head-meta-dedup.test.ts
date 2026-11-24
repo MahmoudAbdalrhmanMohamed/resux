@@ -1,44 +1,35 @@
 import { describe, expect, it } from "vitest";
 import { defineComponent, renderApp, renderDocument } from "resuxjs/runtime";
 
-function makeLayout(meta: Array<Record<string, string>>) {
+function makeHeadComponent(kind: "layout" | "page", meta: Array<Record<string, string>>) {
   return defineComponent({
-    id: "layout",
-    name: "DefaultLayout",
-    file: "layouts/default.vue",
+    id: kind,
+    name: kind === "layout" ? "DefaultLayout" : "IndexPage",
+    file: kind === "layout" ? "layouts/default.vue" : "pages/index.vue",
     handlers: [],
     async script(ctx) {
       ctx.useHead({ meta });
       return {};
     },
-    template: [
-      {
-        type: "element",
-        tag: "section",
-        attrs: [],
-        events: [],
-        children: [{ type: "element", tag: "slot", attrs: [], events: [], children: [] }]
-      }
-    ]
+    template: kind === "layout"
+      ? [
+          {
+            type: "element",
+            tag: "section",
+            attrs: [],
+            events: [],
+            children: [{ type: "element", tag: "slot", attrs: [], events: [], children: [] }]
+          }
+        ]
+      : []
   });
 }
 
-function makePage(meta: Array<Record<string, string>>) {
+const makeLayout = (meta: Array<Record<string, string>>) => makeHeadComponent("layout", meta);
+const makePage = (meta: Array<Record<string, string>>) => makeHeadComponent("page", meta);
+
+function makeApp() {
   return defineComponent({
-    id: "page",
-    name: "IndexPage",
-    file: "pages/index.vue",
-    handlers: [],
-    async script(ctx) {
-      ctx.useHead({ meta });
-      return {};
-    },
-    template: []
-  });
-}
-
-async function renderHeadMeta(layoutMeta: Array<Record<string, string>>, pageMeta: Array<Record<string, string>>) {
-  const app = defineComponent({
     id: "app",
     name: "App",
     file: "app.vue",
@@ -56,8 +47,11 @@ async function renderHeadMeta(layoutMeta: Array<Record<string, string>>, pageMet
       }
     ]
   });
+}
+
+async function renderHeadMeta(layoutMeta: Array<Record<string, string>>, pageMeta: Array<Record<string, string>>) {
   const result = await renderApp({
-    app,
+    app: makeApp(),
     page: makePage(pageMeta),
     route: { path: "/", params: {}, query: {} },
     layouts: { default: makeLayout(layoutMeta) }
@@ -150,33 +144,15 @@ describe("head meta deduplication", () => {
   });
 
   it("renders a single tag in the document head for overridden meta", async () => {
-    const app = defineComponent({
-      id: "app",
-      name: "App",
-      file: "app.vue",
-      handlers: [],
-      async script() {
-        return {};
-      },
-      template: [
-        {
-          type: "element",
-          tag: "ResuxLayout",
-          attrs: [],
-          events: [],
-          children: [{ type: "element", tag: "ResuxPage", attrs: [], events: [], children: [] }]
-        }
-      ]
-    });
     const result = await renderApp({
-      app,
+      app: makeApp(),
       page: makePage([{ property: "og:title", content: "Page title" }]),
       route: { path: "/", params: {}, query: {} },
       layouts: { default: makeLayout([{ property: "og:title", content: "Layout title" }]) }
     });
     const html = renderDocument(result);
     const matches = html.match(/og:title/g) ?? [];
-    expect(matches.length).toBe(1);
+    expect(matches).toHaveLength(1);
     expect(html).toContain("Page title");
     expect(html).not.toContain("Layout title");
   });

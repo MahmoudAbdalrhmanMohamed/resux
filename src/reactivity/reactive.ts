@@ -1,4 +1,4 @@
-import { ITERATE_KEY, track, trigger } from "./effect.js";
+import { ITERATE_KEY, isTracking, track, trigger } from "./effect.js";
 import { hasOwn, isObject, ReactiveFlags } from "./utils.js";
 
 type ArrayIdentityMethod = "includes" | "indexOf" | "lastIndexOf";
@@ -12,19 +12,84 @@ const ARRAY_IDENTITY_METHODS = new Set<string>(["includes", "indexOf", "lastInde
 // values that are actually present. Run the lookup against the raw target and
 // retry with unwrapped arguments, tracking each visited index so effects
 // depending on the result stay reactive.
+function toIntegerIndex(value: unknown): number {
+  const n = Number(value);
+  if (Number.isNaN(n)) {
+    return 0;
+  }
+  if (!Number.isFinite(n)) {
+    return n;
+  }
+  return Math.trunc(n);
+}
+
+// Mirrors the native fromIndex handling of includes / indexOf / lastIndexOf.
+function identitySearchStart(method: ArrayIdentityMethod, length: number, args: unknown[]): number {
+  if (method === "lastIndexOf") {
+    if (args.length < 2) {
+      return length - 1;
+    }
+    const n = toIntegerIndex(args[1]);
+    if (n === Infinity) {
+      return length - 1;
+    }
+    if (n === -Infinity) {
+      return -1;
+    }
+    return n >= 0 ? Math.min(n, length - 1) : length + n;
+  }
+  const n = args.length > 1 ? toIntegerIndex(args[1]) : 0;
+  if (n === Infinity) {
+    return length;
+  }
+  if (n === -Infinity) {
+    return 0;
+  }
+  return n >= 0 ? n : Math.max(length + n, 0);
+}
+
 function arrayIdentityMethod(method: ArrayIdentityMethod): (this: unknown[], ...args: unknown[]) => unknown {
   return function (this: unknown[], ...args: unknown[]): unknown {
     const rawArray = toRaw(this) as unknown[];
-    track(rawArray, "length");
-    for (let index = 0; index < rawArray.length; index++) {
-      track(rawArray, String(index));
+    if (isTracking()) {
+      track(rawArray, "length");
+      for (let index = 0; index < rawArray.length; index++) {
+        track(rawArray, String(index));
+      }
     }
     const implementation = Array.prototype[method] as (...args: unknown[]) => unknown;
-    const result = implementation.apply(rawArray, args);
-    if (result === -1 || result === false) {
-      return implementation.apply(rawArray, args.map((argument) => toRaw(argument)));
+    const arg = args[0];
+    const rawArg = toRaw(arg);
+    // === covers +0/-0; Object.is covers NaN. Either means no unwrapping.
+    if (rawArg === arg || Object.is(rawArg, arg)) {
+      // No unwrapping applies, so the native lookup is exactly right — and it
+      // must not run twice, because visited elements can be getters with side
+      // effects and native semantics read each of them at most once.
+      return implementation.apply(rawArray, args);
     }
-    return result;
+    // The search argument unwraps to a different identity (a reactive proxy
+    // of a raw element). Elements may be stored raw or proxied, so compare
+    // normalized identities in traversal order: an exact proxy match later in
+    // the array must not hide an equivalent raw element stored earlier. Each
+    // visited element is read at most once, matching native getter semantics.
+    const length = rawArray.length;
+    const start = identitySearchStart(method, length, args);
+    if (method === "lastIndexOf") {
+      for (let index = Math.min(start, length - 1); index >= 0; index--) {
+        const element = rawArray[index];
+        if (element === arg || toRaw(element) === rawArg) {
+          return index;
+        }
+      }
+      return -1;
+    }
+    for (let index = Math.max(start, 0); index < length; index++) {
+      const element = rawArray[index];
+      if (element === arg || toRaw(element) === rawArg) {
+        return method === "includes" ? true : index;
+      }
+    }
+    return method === "includes" ? false : -1;
   };
 }
 
@@ -47,6 +112,14 @@ const mutableHandlers: ProxyHandler<object> = {
     }
 
     if (Array.isArray(target) && typeof key === "string" && ARRAY_IDENTITY_METHODS.has(key)) {
+      // Own or inherited overrides of these methods must win over the
+      // instrumentation — for a non-configurable, non-writable override the
+      // proxy invariants even forbid returning anything but the exact value.
+      const existing = Reflect.get(target, key, receiver);
+      if (existing !== (Array.prototype as unknown as Record<string, unknown>)[key]) {
+        track(target, key);
+        return existing;
+      }
       return arrayIdentityMethod(key as ArrayIdentityMethod);
     }
 

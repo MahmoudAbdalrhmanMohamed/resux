@@ -60,7 +60,15 @@ describe("framework public CSS, Windows serving, and head style retention", () =
     it("handles boundary check across different case variations on Windows", () => {
       expect(isPathWithinBoundary(publicDir, path.join(publicDir, "styles.css"))).toBe(true);
       expect(isPathWithinBoundary(publicDir.toLowerCase(), path.join(publicDir, "styles.css"))).toBe(true);
-      expect(isPathWithinBoundary(publicDir.toUpperCase(), path.join(publicDir, "styles.css"))).toBe(true);
+      if (process.platform === "win32") {
+        // Windows filesystems are case-insensitive, so a differently-cased
+        // spelling of the same directory stays inside the boundary.
+        expect(isPathWithinBoundary(publicDir.toUpperCase(), path.join(publicDir, "styles.css"))).toBe(true);
+      } else {
+        // On POSIX the casing distinguishes real directories, so an
+        // uppercased boundary is genuinely a different location.
+        expect(isPathWithinBoundary(publicDir.toUpperCase(), path.join(publicDir, "styles.css"))).toBe(false);
+      }
     });
   });
 

@@ -630,6 +630,54 @@ async function applyStarterFeatureScaffold(
   await annotateStarterReadme(root, selected);
 }
 
+const STARTER_MAIN_CSS = `:root {
+  --rx-bg: #020617;
+  --rx-surface: #0f172a;
+  --rx-text: #e2e8f0;
+  --rx-muted: #94a3b8;
+  --rx-accent: #22d3ee;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background: radial-gradient(circle at top, #111827 0%, var(--rx-bg) 60%);
+  color: var(--rx-text);
+}
+`;
+
+const STARTER_LINK_CSS = `a {
+  color: var(--rx-accent);
+}
+`;
+
+async function ensureStarterBaseFiles(root: string, options: { includeLinkStyles: boolean }): Promise<void> {
+  await ensureFile(
+    path.join(root, ".npmrc"),
+    "engine-strict=true\n",
+  );
+  await ensureFile(
+    path.join(root, ".env.example"),
+    "# Runtime environment defaults\nAPP_ORIGIN=http://localhost:3000\n\n# Secret for signing production Halal Core safety reports (minimum 32 characters)\nRESUX_HALAL_REPORT_SIGNING_SECRET=\n",
+  );
+  await ensureFile(
+    path.join(root, "types", "app.d.ts"),
+    'import "resuxjs/globals";\n\nexport {};\n',
+  );
+  await ensureFile(
+    path.join(root, "types", "assets.d.ts"),
+    'declare module "*.css";\n',
+  );
+  await ensureFile(
+    path.join(root, "assets", "css", "main.css"),
+    options.includeLinkStyles ? STARTER_MAIN_CSS + STARTER_LINK_CSS : STARTER_MAIN_CSS,
+  );
+}
+
 async function ensureStarterProjectStructure(
   root: string,
   title: string,
@@ -650,44 +698,7 @@ async function ensureStarterProjectStructure(
       await mkdir(path.join(root, relativeDir), { recursive: true });
     }
 
-    await ensureFile(
-      path.join(root, ".npmrc"),
-      "engine-strict=true\n",
-    );
-    await ensureFile(
-      path.join(root, ".env.example"),
-      "# Runtime environment defaults\nAPP_ORIGIN=http://localhost:3000\n\n# Secret for signing production Halal Core safety reports (minimum 32 characters)\nRESUX_HALAL_REPORT_SIGNING_SECRET=\n",
-    );
-    await ensureFile(
-      path.join(root, "types", "app.d.ts"),
-      'import "resuxjs/globals";\n\nexport {};\n',
-    );
-    await ensureFile(
-      path.join(root, "types", "assets.d.ts"),
-      'declare module "*.css";\n',
-    );
-    await ensureFile(
-      path.join(root, "assets", "css", "main.css"),
-      `:root {
-  --rx-bg: #020617;
-  --rx-surface: #0f172a;
-  --rx-text: #e2e8f0;
-  --rx-muted: #94a3b8;
-  --rx-accent: #22d3ee;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  font-family: "Segoe UI", system-ui, sans-serif;
-  background: radial-gradient(circle at top, #111827 0%, var(--rx-bg) 60%);
-  color: var(--rx-text);
-}
-`,
-    );
+    await ensureStarterBaseFiles(root, { includeLinkStyles: false });
     await ensureFile(
       path.join(root, "public", "favicon.svg"),
       `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Resux">
@@ -728,47 +739,7 @@ body {
     await mkdir(path.join(root, relativeDir), { recursive: true });
   }
 
-  await ensureFile(
-    path.join(root, ".npmrc"),
-    "engine-strict=true\n",
-  );
-  await ensureFile(
-    path.join(root, ".env.example"),
-    "# Runtime environment defaults\nAPP_ORIGIN=http://localhost:3000\n\n# Secret for signing production Halal Core safety reports (minimum 32 characters)\nRESUX_HALAL_REPORT_SIGNING_SECRET=\n",
-  );
-  await ensureFile(
-    path.join(root, "types", "app.d.ts"),
-    'import "resuxjs/globals";\n\nexport {};\n',
-  );
-  await ensureFile(
-    path.join(root, "types", "assets.d.ts"),
-    'declare module "*.css";\n',
-  );
-  await ensureFile(
-    path.join(root, "assets", "css", "main.css"),
-    `:root {
-  --rx-bg: #020617;
-  --rx-surface: #0f172a;
-  --rx-text: #e2e8f0;
-  --rx-muted: #94a3b8;
-  --rx-accent: #22d3ee;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  font-family: "Segoe UI", system-ui, sans-serif;
-  background: radial-gradient(circle at top, #111827 0%, var(--rx-bg) 60%);
-  color: var(--rx-text);
-}
-a {
-  color: var(--rx-accent);
-}
-`,
-  );
+  await ensureStarterBaseFiles(root, { includeLinkStyles: true });
   await ensureFile(
     path.join(root, "components", "AppHeader.vue"),
     `<template>

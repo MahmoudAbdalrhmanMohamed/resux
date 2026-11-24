@@ -2350,8 +2350,9 @@ export function shouldLoadClientRuntime(result: RenderResult): boolean {
   return getClientRuntimeBootPlan(result).mode !== "none";
 }
 
-function getBuiltinFrameworkStyles(): string {
-  return `<style>
+function getBuiltinFrameworkStyles(nonce?: string): string {
+  const nonceAttr = nonce ? ` nonce="${escapeAttribute(nonce)}"` : "";
+  return `<style${nonceAttr}>
 [data-rx-block] {
   display: contents !important;
 }
@@ -2692,7 +2693,7 @@ function createDefaultHtmlContext(
     ...(hasExplicitCharset ? [] : ['<meta charset="utf-8">']),
     ...(hasExplicitViewport ? [] : ['<meta name="viewport" content="width=device-width, initial-scale=1">']),
     renderHead(mergedHead, { nonce, csp }),
-    getBuiltinFrameworkStyles(),
+    getBuiltinFrameworkStyles(nonce),
   ];
 
   const bodyElements: string[] = [
@@ -2789,6 +2790,34 @@ if (typeof EventSource !== "undefined" && !window.__RESUX_DEV_RELOAD__) {
     }
   });
   events.addEventListener("reload", () => window.location.reload());
+}
+if (typeof window !== "undefined") {
+  const checkStylesheets = () => {
+    document.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
+      const href = link.getAttribute("href");
+      if (!href) return;
+      link.addEventListener("error", () => {
+        console.warn(\`[resux] Warning: Stylesheet "\${href}" failed to load.\`);
+      });
+      if ((!href.startsWith("http://") && !href.startsWith("https://") && !href.startsWith("//")) || href.startsWith(window.location.origin)) {
+        fetch(href, { method: "HEAD" }).then((res) => {
+          if (!res.ok) {
+            console.warn(\`[resux] Warning: Stylesheet "\${href}" failed with HTTP \${res.status}.\`);
+            return;
+          }
+          const ct = res.headers.get("content-type") || "";
+          if (ct && !ct.includes("text/css")) {
+            console.warn(\`[resux] Warning: Stylesheet "\${href}" returned non-CSS Content-Type: "\${ct}". Expected "text/css".\`);
+          }
+        }).catch(() => {});
+      }
+    });
+  };
+  if (document.readyState === "loading") {
+    window.addEventListener("DOMContentLoaded", checkStylesheets);
+  } else {
+    checkStylesheets();
+  }
 }
 </script>`;
 }
@@ -7844,8 +7873,10 @@ function renderHead(head: HeadEntry, options: { nonce?: string; csp?: string } =
     !isPriorityImagePreloadLink(link) && !isPriorityStylePreloadLink(link)
   );
 
+  const linkNonceAttr = options.nonce ? ` nonce="${escapeAttribute(options.nonce)}"` : "";
   for (const link of highPriorityPreloads) {
-    tags.push(`<link data-rx-head="true" ${renderAttributes(link)}>`);
+    const nonceStr = (options.nonce && link.rel === "stylesheet" && !link.nonce) ? linkNonceAttr : "";
+    tags.push(`<link data-rx-head="true"${nonceStr} ${renderAttributes(link)}>`);
   }
 
   for (const meta of remainingMetas) {
@@ -7853,17 +7884,40 @@ function renderHead(head: HeadEntry, options: { nonce?: string; csp?: string } =
   }
 
   for (const link of remainingLinks) {
-    tags.push(`<link data-rx-head="true" ${renderAttributes(link)}>`);
+    const nonceStr = (options.nonce && link.rel === "stylesheet" && !link.nonce) ? linkNonceAttr : "";
+    tags.push(`<link data-rx-head="true"${nonceStr} ${renderAttributes(link)}>`);
   }
 
+  const styles: any[] = [];
+  const styleMap = new Map<string, any>();
   for (const style of head.style ?? []) {
     if (!style) {
       continue;
     }
     const styleId = typeof style === "object" && (style as any).id ? String((style as any).id) : "";
+    if (styleId) {
+      if (styleMap.has(styleId)) {
+        const existing = styleMap.get(styleId);
+        const idx = styles.indexOf(existing);
+        if (idx !== -1) {
+          styles[idx] = style;
+        }
+        styleMap.set(styleId, style);
+      } else {
+        styleMap.set(styleId, style);
+        styles.push(style);
+      }
+    } else {
+      styles.push(style);
+    }
+  }
+
+  const styleNonceAttr = options.nonce ? ` nonce="${escapeAttribute(options.nonce)}"` : "";
+  for (const style of styles) {
+    const styleId = typeof style === "object" && (style as any).id ? String((style as any).id) : "";
     const styleIdAttr = styleId ? ` data-rx-style="${escapeAttribute(styleId)}"` : "";
     const cssContent = escapeStyleContent(style);
-    tags.push(`<style data-rx-head="true"${styleIdAttr}>${cssContent}</style>`);
+    tags.push(`<style data-rx-head="true"${styleNonceAttr}${styleIdAttr}>${cssContent}</style>`);
   }
 
   for (const noscript of head.noscript ?? []) {
@@ -16152,7 +16206,15 @@ function applyHtmlAttrs(attrs){
     if(value===undefined||value===null||value===false){html.removeAttribute(key);continue}
     html.setAttribute(key,String(value));keys.push(key);
   }
-  if(!keys.includes("lang")){html.setAttribute("lang","en");keys.push("lang")}
+  if(!keys.includes("lang")){
+    const currentLang = html.getAttribute("lang");
+    if (!currentLang) {
+      html.setAttribute("lang","en");
+      keys.push("lang");
+    } else {
+      keys.push("lang");
+    }
+  }
   html.setAttribute(marker,keys.join(","));
 }
 const VALID_CLIENT_PRELOAD_AS_VALUES=new Set(["audio","document","embed","fetch","font","image","object","script","style","track","video","worker"]);
@@ -16334,7 +16396,15 @@ function applyHead(head) {
   }
 
   for (const style of head.style ?? []) {
-    nextEntries.push({ tag: "style", attrs: { "data-rx-style": style.id }, text: style.textContent ?? style.css ?? "" });
+    if (!style) continue;
+    const attrs = {};
+    if (typeof style === "object" && style.id) {
+      attrs["data-rx-style"] = String(style.id);
+    }
+    const text = typeof style === "string"
+      ? style
+      : (style.textContent ?? style.css ?? style.content ?? style.children ?? style.innerHTML ?? "");
+    nextEntries.push({ tag: "style", attrs, text });
   }
 
   const scripts = [];
@@ -16424,6 +16494,7 @@ function headElementKey(element) {
 
 function headEntryKey(tag, attrs) {
   const normalized = Object.entries(attrs || {})
+    .filter(([_, value]) => value !== undefined && value !== null && value !== false)
     .map(([key, value]) => [key, String(value)])
     .sort(([a], [b]) => a.localeCompare(b));
   return tag + ":" + JSON.stringify(normalized);

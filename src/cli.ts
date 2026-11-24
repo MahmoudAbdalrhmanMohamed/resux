@@ -2850,6 +2850,22 @@ async function handleRequest(
     hooks?: any;
   },
 ): Promise<void> {
+  const rawSetHeader = response.setHeader.bind(response);
+  response.setHeader = function (name: string, value: any) {
+    if (response.headersSent) {
+      return response;
+    }
+    return rawSetHeader(name, value);
+  };
+
+  const rawWriteHead = response.writeHead.bind(response);
+  response.writeHead = function (statusCode: number, ...args: any[]) {
+    if (response.headersSent) {
+      return response;
+    }
+    return rawWriteHead(statusCode, ...args);
+  };
+
   const requestOrigin = requestOriginFromHeaders(request);
   const requestUrl = safeParseRequestUrl(request.url, requestOrigin);
 
@@ -2974,6 +2990,22 @@ async function handleRequest(
       return;
     }
 
+    if (routeRule?.redirect) {
+      serveRouteRuleRedirect(response, routeRule.redirect);
+      return;
+    }
+
+    const publicHandled = await servePublicFile(
+      request,
+      response,
+      options.appRoot,
+      requestUrl.pathname,
+      options.dev,
+    );
+    if (publicHandled) {
+      return;
+    }
+
     const middlewareHandled = await runServerMiddleware(
       request,
       response,
@@ -2981,11 +3013,6 @@ async function handleRequest(
       manifest,
     );
     if (middlewareHandled) {
-      return;
-    }
-
-    if (routeRule?.redirect) {
-      serveRouteRuleRedirect(response, routeRule.redirect);
       return;
     }
 
@@ -2997,15 +3024,6 @@ async function handleRequest(
       routeRule,
     );
     if (serverHandled) {
-      return;
-    }
-
-    const publicHandled = await servePublicFile(
-      response,
-      options.appRoot,
-      requestUrl.pathname,
-    );
-    if (publicHandled) {
       return;
     }
 
@@ -3054,13 +3072,20 @@ async function handleRequest(
       html = html.replace("</body>", `<script>${devHalalOverlayScript}</script></body>`);
     }
 
-    response.writeHead(routeRule?.statusCode ?? 200, {
-      "content-type": "text/html; charset=utf-8",
-    });
+    if (!response.headersSent) {
+      response.writeHead(routeRule?.statusCode ?? 200, {
+        "content-type": "text/html; charset=utf-8",
+      });
+    }
     response.end(html);
   } catch (error) {
     console.error("Request failed:", error);
-    if (response.writableEnded) {
+    if (response.writableEnded || response.headersSent) {
+      try {
+        if (!response.writableEnded) {
+          response.end();
+        }
+      } catch {}
       return;
     }
     await serveErrorDocument(response, options, undefined, 500, error);
@@ -3105,6 +3130,14 @@ async function serveErrorDocument(
   statusCode: number,
   error: unknown,
 ): Promise<void> {
+  if (response.writableEnded || response.headersSent) {
+    try {
+      if (!response.writableEnded) {
+        response.end();
+      }
+    } catch {}
+    return;
+  }
   const statusMessage =
     statusCode === 404 ? "Not Found" : "Internal Server Error";
   const errorPayload = createErrorPayload(
@@ -3139,6 +3172,7 @@ async function serveErrorDocument(
       });
       response.writeHead(statusCode, {
         "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store, no-cache, must-revalidate",
       });
       const normalizedRendered = withPrioritizedHeadImagePreloads(rendered);
       response.end(
@@ -3154,6 +3188,7 @@ async function serveErrorDocument(
 
   response.writeHead(statusCode, {
     "content-type": "text/plain; charset=utf-8",
+    "cache-control": "no-store, no-cache, must-revalidate",
   });
   response.end(createPlainErrorBody(errorPayload, options.dev));
 }
@@ -5371,9 +5406,11 @@ function isServerAbortResult(
 }
 
 async function servePublicFile(
+  request: IncomingMessage,
   response: ServerResponse,
   appRoot: string,
   pathname: string,
+  isDev = false,
 ): Promise<boolean> {
   const publicRoot = path.resolve(appRoot, "public");
   const candidates: Array<{ base: string; boundary: string }> = [
@@ -5399,12 +5436,30 @@ async function servePublicFile(
       continue;
     }
 
-    response.writeHead(200, {
+    const etag = `W/"${fileStats.size.toString(16)}-${fileStats.mtimeMs.toString(16)}"`;
+    if (request.headers["if-none-match"] === etag) {
+      response.writeHead(304, {
+        etag,
+        "x-content-type-options": "nosniff",
+        "cache-control": isDev
+          ? "no-cache"
+          : ((response.getHeader("cache-control") as string) ?? "public, max-age=86400"),
+      });
+      response.end();
+      return true;
+    }
+
+    const headers: Record<string, string> = {
       "content-type": mimeType(resolved),
-      ...(!response.hasHeader("cache-control")
-        ? { "cache-control": "no-store" }
-        : {}),
-    });
+      "x-content-type-options": "nosniff",
+      etag,
+    };
+
+    if (!response.hasHeader("cache-control")) {
+      headers["cache-control"] = isDev ? "no-cache" : "public, max-age=86400";
+    }
+
+    response.writeHead(200, headers);
     response.end(await readFile(resolved));
     return true;
   }
@@ -5431,6 +5486,14 @@ function mimeType(file: string): string {
     ".webm": "video/webm",
     ".mov": "video/quicktime",
     ".ico": "image/x-icon",
+    ".woff2": "font/woff2",
+    ".woff": "font/woff",
+    ".ttf": "font/ttf",
+    ".otf": "font/otf",
+    ".eot": "application/vnd.ms-fontobject",
+    ".wasm": "application/wasm",
+    ".xml": "application/xml; charset=utf-8",
+    ".map": "application/json; charset=utf-8",
   };
   return types[ext] ?? "application/octet-stream";
 }

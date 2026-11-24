@@ -9,6 +9,8 @@ export function isPathWithinBoundary(boundary: string, target: string): boolean 
     || (
       relative !== ".."
       && !relative.startsWith(`..${path.sep}`)
+      && !relative.startsWith("../")
+      && !relative.startsWith("..\\")
       && !path.isAbsolute(relative)
     );
 }
@@ -25,7 +27,12 @@ export function resolveRequestPathWithinBoundary(
     return null;
   }
 
-  const resolved = path.resolve(base, `.${decodedPath}`);
+  const cleanRelative = decodedPath.replace(/^[/\\]+/, "");
+  if (path.isAbsolute(cleanRelative) || /^[a-zA-Z]:/.test(cleanRelative)) {
+    return null;
+  }
+
+  const resolved = path.resolve(base, cleanRelative);
   return isPathWithinBoundary(boundary, resolved) ? resolved : null;
 }
 

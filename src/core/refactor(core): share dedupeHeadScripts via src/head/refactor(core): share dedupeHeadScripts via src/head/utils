@@ -1,4 +1,5 @@
 import type { ResuxHooks, ResuxHookName, ResuxHookPayloads } from "./hooks.js";
+import { dedupeHeadScripts } from "../head/utils.js";
 
 export type ResuxSupportMode = "all" | "server" | "client";
 
@@ -291,32 +292,6 @@ function mergeHead(current: Record<string, unknown>, next: Record<string, unknow
       ...(isObject(next.bodyAttrs) ? next.bodyAttrs : {}),
     },
   };
-}
-
-function dedupeHeadScripts(scripts: unknown[]): unknown[] {
-  const map = new Map<string, unknown>();
-  const result: unknown[] = [];
-  for (const item of scripts) {
-    if (!item || typeof item !== "object") continue;
-    const script = item as Record<string, unknown>;
-    const dedupeKey = (script.key as string) ?? (script.id as string) ?? (script.src as string);
-    if (dedupeKey) {
-      if (map.has(dedupeKey)) {
-        const existing = map.get(dedupeKey)!;
-        const idx = result.indexOf(existing);
-        if (idx !== -1) {
-          result[idx] = script;
-        }
-        map.set(dedupeKey, script);
-      } else {
-        map.set(dedupeKey, script);
-        result.push(script);
-      }
-    } else {
-      result.push(script);
-    }
-  }
-  return result;
 }
 
 function mergeHeadArray(current: unknown, next: unknown): unknown[] {

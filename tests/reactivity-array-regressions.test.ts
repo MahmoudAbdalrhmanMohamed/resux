@@ -98,3 +98,57 @@ describe("reactive array identity methods", () => {
     expect(present).toBe(false);
   });
 });
+
+describe("identity method review follow-ups", () => {
+  it("prefers the earliest equivalent element across raw/proxy mixes", () => {
+    const item = { id: 1 };
+    const proxy = reactive(item);
+    const list = reactive([item, proxy]);
+
+    expect(list.indexOf(proxy)).toBe(0);
+    expect(list.lastIndexOf(proxy)).toBe(1);
+    expect(list.includes(proxy)).toBe(true);
+    expect(list.indexOf(list[0])).toBe(0);
+  });
+
+  it("respects fromIndex in the normalized traversal", () => {
+    const item = { id: 1 };
+    const proxy = reactive(item);
+    const list = reactive([item, proxy]);
+
+    expect(list.indexOf(proxy, 1)).toBe(1);
+    expect(list.indexOf(proxy, -1)).toBe(1);
+    expect(list.lastIndexOf(proxy, 0)).toBe(0);
+    expect(list.includes(proxy, 2)).toBe(false);
+  });
+
+  it("does not re-read elements when the search argument needs no unwrapping", () => {
+    let reads = 0;
+    const arr = [0, 0, 0];
+    Object.defineProperty(arr, "0", {
+      configurable: true,
+      get() {
+        reads += 1;
+        return 1;
+      },
+    });
+    const list = reactive(arr);
+
+    expect(list.includes(2)).toBe(false);
+    expect(reads).toBe(1);
+  });
+
+  it("preserves own-property overrides of instrumented methods", () => {
+    const arr = [1, 2, 3];
+    Object.defineProperty(arr, "includes", { value: () => false });
+
+    expect(reactive(arr).includes(1)).toBe(false);
+  });
+
+  it("preserves inherited overrides of instrumented methods", () => {
+    const arr: number[] = [1, 2, 3];
+    Object.setPrototypeOf(arr, Object.assign(Object.create(Array.prototype), { indexOf: () => 42 }));
+
+    expect(reactive(arr).indexOf(1)).toBe(42);
+  });
+});

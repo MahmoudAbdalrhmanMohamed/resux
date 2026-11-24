@@ -225,3 +225,53 @@ describe("array identity method instrumentation follow-ups", () => {
     expect(list.includes(1, 1)).toBe(false);
   });
 });
+
+describe("array identity method native edge semantics", () => {
+  it("returns the not-found result for empty arrays before coercing fromIndex", () => {
+    const throwingFromIndex = {
+      valueOf() {
+        throw new Error("fromIndex must not be coerced for empty arrays");
+      }
+    };
+    const list = reactive([] as number[]);
+
+    expect(list.includes(1, throwingFromIndex as unknown as number)).toBe(false);
+    expect(list.indexOf(1, throwingFromIndex as unknown as number)).toBe(-1);
+    expect(list.lastIndexOf(1, throwingFromIndex as unknown as number)).toBe(-1);
+    expect([].includes(1, throwingFromIndex as unknown as number)).toBe(false);
+    expect([].indexOf(1, throwingFromIndex as unknown as number)).toBe(-1);
+    expect([].lastIndexOf(1, throwingFromIndex as unknown as number)).toBe(-1);
+  });
+
+  it("skips holes in indexOf and lastIndexOf while includes treats them as undefined", () => {
+    const list = reactive(new Array<unknown>(2));
+
+    expect(list.indexOf(undefined)).toBe(-1);
+    expect(list.lastIndexOf(undefined)).toBe(-1);
+    expect(list.includes(undefined)).toBe(true);
+    expect(new Array<unknown>(2).indexOf(undefined)).toBe(-1);
+    expect(new Array<unknown>(2).lastIndexOf(undefined)).toBe(-1);
+    expect(new Array<unknown>(2).includes(undefined)).toBe(true);
+  });
+
+  it("still matches explicit undefined elements in sparse arrays", () => {
+    const raw = new Array<unknown>(3);
+    raw[1] = undefined;
+    const list = reactive(raw);
+
+    expect(list.indexOf(undefined)).toBe(1);
+    expect(list.lastIndexOf(undefined)).toBe(1);
+    expect(raw.indexOf(undefined)).toBe(1);
+    expect(raw.lastIndexOf(undefined)).toBe(1);
+  });
+
+  it("matches values inherited through the prototype chain in index searches", () => {
+    const raw = new Array<unknown>(2);
+    Object.setPrototypeOf(raw, Object.create(Array.prototype, { 0: { value: "inherited", enumerable: true } }));
+    const list = reactive(raw);
+
+    expect(list.indexOf("inherited")).toBe(0);
+    expect(list.lastIndexOf("inherited")).toBe(0);
+    expect(list.indexOf(undefined)).toBe(-1);
+  });
+});

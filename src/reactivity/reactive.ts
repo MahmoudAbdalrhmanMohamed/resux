@@ -57,35 +57,33 @@ function arrayIdentityMethod(method: ArrayIdentityMethod): (this: unknown[], ...
         track(rawArray, String(index));
       }
     }
-    const implementation = Array.prototype[method] as (...args: unknown[]) => unknown;
     const arg = args[0];
     const rawArg = toRaw(arg);
     // === covers +0/-0; Object.is covers NaN. Either means no unwrapping.
-    if (rawArg === arg || Object.is(rawArg, arg)) {
-      // No unwrapping applies, so the native lookup is exactly right — and it
-      // must not run twice, because visited elements can be getters with side
-      // effects and native semantics read each of them at most once.
-      return implementation.apply(rawArray, args);
-    }
-    // The search argument unwraps to a different identity (a reactive proxy
-    // of a raw element). Elements may be stored raw or proxied, so compare
-    // normalized identities in traversal order: an exact proxy match later in
-    // the array must not hide an equivalent raw element stored earlier. Each
-    // visited element is read at most once, matching native getter semantics.
+    const unwraps = !(rawArg === arg || Object.is(rawArg, arg));
+    // Traverse manually instead of delegating to the native method: elements
+    // are read with the proxy as receiver, so accessor getters run against
+    // the reactive surface and their internal reads stay tracked (the native
+    // method would run them against the raw array). Identity comparisons
+    // still use raw values, so a caller-passed object matches the stored raw
+    // element, and each visited index is read at most once, matching native
+    // getter semantics.
     const length = rawArray.length;
     const start = identitySearchStart(method, length, args);
     if (method === "lastIndexOf") {
       for (let index = Math.min(start, length - 1); index >= 0; index--) {
-        const element = rawArray[index];
-        if (element === arg || toRaw(element) === rawArg) {
+        const element = Reflect.get(rawArray, index, this);
+        if (element === arg || (unwraps && toRaw(element) === rawArg)) {
           return index;
         }
       }
       return -1;
     }
     for (let index = Math.max(start, 0); index < length; index++) {
-      const element = rawArray[index];
-      if (element === arg || toRaw(element) === rawArg) {
+      const element = Reflect.get(rawArray, index, this);
+      if (element === arg
+        || (unwraps && toRaw(element) === rawArg)
+        || (method === "includes" && Number.isNaN(element) && Number.isNaN(arg))) {
         return method === "includes" ? true : index;
       }
     }
@@ -112,12 +110,14 @@ const mutableHandlers: ProxyHandler<object> = {
     }
 
     if (Array.isArray(target) && typeof key === "string" && ARRAY_IDENTITY_METHODS.has(key)) {
+      // Track the method key itself so overriding one of these methods
+      // (list.includes = fn) retriggers effects that read it.
+      track(target, key);
       // Own or inherited overrides of these methods must win over the
       // instrumentation — for a non-configurable, non-writable override the
       // proxy invariants even forbid returning anything but the exact value.
       const existing = Reflect.get(target, key, receiver);
       if (existing !== (Array.prototype as unknown as Record<string, unknown>)[key]) {
-        track(target, key);
         return existing;
       }
       return arrayIdentityMethod(key as ArrayIdentityMethod);
@@ -280,4 +280,4 @@ function isArrayIndex(key: PropertyKey): boolean {
   const value = String(key);
   return /^(?:0|[1-9]\d*)$/.test(value)
     && Number(value) < 4_294_967_295;
-}
+                                 }

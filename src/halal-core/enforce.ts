@@ -67,7 +67,10 @@ export async function enforceBuildGuard(
 
   const requireAuthenticated = policy.halalAI?.requireAuthenticated === true || process.env.RESUX_HALAL_REPORT_REQUIRE_AUTHENTICATED === "true";
   let signingSecret: string | undefined = process.env.RESUX_HALAL_REPORT_SIGNING_SECRET;
-  let requireAuth = requireAuthenticated;
+  // A configured secret means the deployment expects authenticated reports:
+  // the production server guard requires a valid authenticated signature
+  // whenever a signing secret is present, so the build must sign with it.
+  let requireAuth = requireAuthenticated || Boolean(signingSecret);
 
   if (!signingSecret) {
     if (requireAuthenticated) {

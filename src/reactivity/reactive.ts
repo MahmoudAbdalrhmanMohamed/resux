@@ -69,9 +69,19 @@ function arrayIdentityMethod(method: ArrayIdentityMethod): (this: unknown[], ...
     // element, and each visited index is read at most once, matching native
     // getter semantics.
     const length = rawArray.length;
+    // Native searches return the not-found result for an empty array before
+    // coercing fromIndex, so a throwing valueOf() never runs.
+    if (length === 0) {
+      return method === "includes" ? false : -1;
+    }
     const start = identitySearchStart(method, length, args);
     if (method === "lastIndexOf") {
       for (let index = Math.min(start, length - 1); index >= 0; index--) {
+        // Native index searches skip missing properties; only includes
+        // treats holes as undefined. HasProperty covers inherited indices.
+        if (!Reflect.has(rawArray, index)) {
+          continue;
+        }
         const element = Reflect.get(rawArray, index, this);
         if (element === arg || (unwraps && toRaw(element) === rawArg)) {
           return index;
@@ -80,6 +90,9 @@ function arrayIdentityMethod(method: ArrayIdentityMethod): (this: unknown[], ...
       return -1;
     }
     for (let index = Math.max(start, 0); index < length; index++) {
+      if (method !== "includes" && !Reflect.has(rawArray, index)) {
+        continue;
+      }
       const element = Reflect.get(rawArray, index, this);
       if (element === arg
         || (unwraps && toRaw(element) === rawArg)

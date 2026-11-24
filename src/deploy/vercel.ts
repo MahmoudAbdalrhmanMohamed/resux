@@ -21,7 +21,7 @@ import type {
   DeployTargetModule,
 } from "./types.js";
 
-const SUPPORTED_NODE_VERSIONS = [18, 20, 22] as const;
+const SUPPORTED_NODE_VERSIONS = [22, 24, 26] as const;
 
 type BuildOutputRoute = Record<string, unknown>;
 

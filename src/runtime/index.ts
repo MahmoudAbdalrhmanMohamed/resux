@@ -1,5 +1,6 @@
 import { getQuery as h3GetQuery, readBody as h3ReadBody, setHeader as h3SetHeader } from "h3";
 import { iconRegistry, type IconData } from "../icons/registry.js";
+import { cspDirectiveSources, dedupeHeadScripts } from "../head/utils.js";
 import {
   buildLocalePath,
   normalizeI18nRuntimeConfig,
@@ -7666,31 +7667,6 @@ function camelCaseToMetaName(value: string, separator: "-" | "_"): string {
     .replace(/[A-Z]/g, (match) => `${separator}${match.toLowerCase()}`);
 }
 
-function dedupeHeadScripts(scripts: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
-  const map = new Map<string, Record<string, unknown>>();
-  const result: Array<Record<string, unknown>> = [];
-  for (const script of scripts) {
-    if (!script || typeof script !== "object") continue;
-    const dedupeKey = (script.key as string) ?? (script.id as string) ?? (script.src as string);
-    if (dedupeKey) {
-      if (map.has(dedupeKey)) {
-        const existing = map.get(dedupeKey)!;
-        const idx = result.indexOf(existing);
-        if (idx !== -1) {
-          result[idx] = script;
-        }
-        map.set(dedupeKey, script);
-      } else {
-        map.set(dedupeKey, script);
-        result.push(script);
-      }
-    } else {
-      result.push(script);
-    }
-  }
-  return result;
-}
-
 function mergeHead(entries: HeadEntry[]): HeadEntry {
   const merged: HeadEntry = {
     meta: [],
@@ -7777,23 +7753,6 @@ function extractCspFromHead(head: HeadEntry): string {
     }
   }
   return "";
-}
-
-function cspDirectiveSources(csp: string, names: string[]): string[] | null {
-  if (!csp.trim()) {
-    return null;
-  }
-  const directives = new Map<string, string[]>();
-  for (const rawDirective of csp.split(";")) {
-    const tokens = rawDirective.trim().split(/\s+/).filter(Boolean);
-    if (!tokens.length) continue;
-    directives.set(tokens[0].toLowerCase(), tokens.slice(1));
-  }
-  for (const name of names) {
-    const sources = directives.get(name);
-    if (sources) return sources;
-  }
-  return null;
 }
 
 function allowsInlineScriptElementForCsp(csp: string): boolean {

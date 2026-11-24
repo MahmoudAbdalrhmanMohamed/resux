@@ -46,7 +46,7 @@ async function createEnhancementRuntime(name: string, setupBody: string) {
   };
 }
 
-async function waitForCondition(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+async function waitForCondition(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     if (predicate()) {

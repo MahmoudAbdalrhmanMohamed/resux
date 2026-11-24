@@ -47,6 +47,24 @@ describe("Bug 6: Halal report signing secret in local builds", () => {
     warnSpy.mockRestore();
   });
 
+  it("signs the report with a configured signing secret so the production server guard accepts it", async () => {
+    const outDir = path.join(tempDir, ".resux");
+    await mkdir(outDir, { recursive: true });
+
+    const fixtureSecret = "resux-deploy-verification-secret-not-for-production-use";
+    process.env.RESUX_HALAL_REPORT_SIGNING_SECRET = fixtureSecret;
+
+    await enforceBuildGuard(tempDir, outDir, { ignoreTestEnv: true });
+
+    // The production server guard requires an authenticated signature
+    // whenever a signing secret is configured; the build must satisfy it.
+    const check = checkOnDiskReportSignature(outDir, {
+      secret: fixtureSecret,
+      requireAuthenticated: true
+    });
+    expect(check.valid).toBe(true);
+  });
+
   it("requires signing secret with helpful error when requireAuthenticated is explicitly enabled", async () => {
     const outDir = path.join(tempDir, ".resux");
     await mkdir(outDir, { recursive: true });

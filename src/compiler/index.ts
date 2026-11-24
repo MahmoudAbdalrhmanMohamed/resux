@@ -9,6 +9,7 @@ import vuePlugin from "@vitejs/plugin-vue";
 import ts from "typescript";
 import { build as viteBuild } from "vite";
 import { createResux } from "../core/resux.js";
+import { cspDirectiveSources } from "../head/utils.js";
 import type { ResuxHooks } from "../core/hooks.js";
 import { ResuxModuleContainer, type ResuxModuleContext as CoreResuxModuleContext, type ResuxModuleContributions } from "../core/module-container.js";
 import { buildLocalePath, normalizeI18nRuntimeConfig, type ResuxI18nRuntimeConfig } from "../i18n/shared.js";
@@ -3200,23 +3201,6 @@ function readSecurityContentSecurityPolicy(
     if (content) return content;
   }
   return "";
-}
-
-function cspDirectiveSources(csp: string, names: string[]): string[] | null {
-  if (!csp.trim()) {
-    return null;
-  }
-  const directives = new Map<string, string[]>();
-  for (const rawDirective of csp.split(";")) {
-    const tokens = rawDirective.trim().split(/\s+/).filter(Boolean);
-    if (!tokens.length) continue;
-    directives.set(tokens[0].toLowerCase(), tokens.slice(1));
-  }
-  for (const name of names) {
-    const sources = directives.get(name);
-    if (sources) return sources;
-  }
-  return null;
 }
 
 function allowsInlineStyleForCsp(csp: string): boolean {

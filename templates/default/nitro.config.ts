@@ -1,3 +1,14 @@
+import { existsSync, readdirSync } from "node:fs";
+import path from "node:path";
+
+function getServerPlugins(): string[] {
+  const dir = path.resolve("server/plugins");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => /\.(ts|js|mjs)$/.test(f) && !f.endsWith(".d.ts"))
+    .map((f) => path.join(dir, f));
+}
+
 export default {
   compatibilityDate: "2026-05-02",
   // Resux uses top-level /plugins, /modules, and /middleware for app features.
@@ -5,7 +16,7 @@ export default {
   ignore: ["./plugins/**", "./modules/**", "./middleware/**"],
   // Keep Nitro discovery scoped to the generated adapter directory and server directory.
   scanDirs: [".resux-nitro", "server"],
-  plugins: ["server/plugins/**"],
+  plugins: getServerPlugins(),
   publicAssets: [
     {
       dir: "public",

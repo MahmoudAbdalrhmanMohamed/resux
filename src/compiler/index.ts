@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync, statSync, writeFileSync, mkdirSync } from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { NodeTypes, parse as parseTemplate, type AttributeNode, type DirectiveNode, type ElementNode, type Node as VueCompilerNode, type SimpleExpressionNode, type TemplateChildNode } from "@vue/compiler-dom";
@@ -25,8 +24,6 @@ import {
   type TemplateEvent,
   type TemplateNode,
 } from "../runtime/index.js";
-
-const require = createRequire(import.meta.url);
 
 export interface CompileErrorLocation {
   file: string;

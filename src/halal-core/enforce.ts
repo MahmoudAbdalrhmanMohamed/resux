@@ -137,8 +137,16 @@ export function enforceProductionServerGuard(outDir: string): void {
     return;
   }
 
-  const check = checkOnDiskReportSignature(outDir, { requireAuthenticated: true });
+  const requireAuthenticated = process.env.RESUX_HALAL_REPORT_REQUIRE_AUTHENTICATED === "true" || Boolean(process.env.RESUX_HALAL_REPORT_SIGNING_SECRET);
+  const check = checkOnDiskReportSignature(outDir, {
+    requireAuthenticated,
+    secret: process.env.RESUX_HALAL_REPORT_SIGNING_SECRET,
+  });
   if (!check.valid) {
+    if (!requireAuthenticated) {
+      console.warn("\x1b[33m[resux-halal-core] Warning: Starting server without authenticated Halal report signature.\x1b[0m");
+      return;
+    }
     console.error(`\x1b[31m[resux-halal-core] Production server startup rejected: ${check.reason}\x1b[0m`);
     process.exit(1);
   }

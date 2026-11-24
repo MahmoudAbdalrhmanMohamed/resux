@@ -280,4 +280,4 @@ function isArrayIndex(key: PropertyKey): boolean {
   const value = String(key);
   return /^(?:0|[1-9]\d*)$/.test(value)
     && Number(value) < 4_294_967_295;
-                                 }
+}

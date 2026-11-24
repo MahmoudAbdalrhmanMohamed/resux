@@ -152,3 +152,76 @@ describe("identity method review follow-ups", () => {
     expect(reactive(arr).indexOf(1)).toBe(42);
   });
 });
+
+describe("array identity method instrumentation follow-ups", () => {
+  it("reruns effects when an identity method is overridden", () => {
+    const list = reactive([1, 2, 3]);
+    let runs = 0;
+    let result: boolean | undefined;
+
+    effect(() => {
+      runs += 1;
+      result = list.includes(2);
+    });
+
+    expect(result).toBe(true);
+    list.includes = (() => false) as unknown as typeof list.includes;
+    expect(runs).toBe(2);
+    expect(result).toBe(false);
+  });
+
+  it("tracks accessor element reads during includes", () => {
+    const raw: { needle?: number } = [] as unknown as { needle?: number };
+    Object.defineProperty(raw, "0", {
+      get(this: { needle?: number }) {
+        return this.needle;
+      },
+      configurable: true,
+      enumerable: true
+    });
+    raw.needle = 1;
+    const list = reactive(raw as unknown as number[]);
+    let runs = 0;
+    let result: boolean | undefined;
+
+    effect(() => {
+      runs += 1;
+      result = list.includes(1);
+    });
+
+    expect(result).toBe(true);
+    list.needle = 2;
+    expect(runs).toBe(2);
+    expect(result).toBe(false);
+  });
+
+  it("reads accessor elements at most once per lookup", () => {
+    let reads = 0;
+    const raw: number[] = [];
+    Object.defineProperty(raw, "0", {
+      get() {
+        reads += 1;
+        return 7;
+      },
+      configurable: true,
+      enumerable: true
+    });
+    const list = reactive(raw);
+
+    expect(list.includes(7)).toBe(true);
+    expect(reads).toBe(1);
+    reads = 0;
+    expect(list.indexOf(7)).toBe(0);
+    expect(reads).toBe(1);
+  });
+
+  it("keeps native NaN and fromIndex semantics", () => {
+    const list = reactive([1, Number.NaN, 3]);
+
+    expect(list.includes(Number.NaN)).toBe(true);
+    expect(list.indexOf(Number.NaN)).toBe(-1);
+    expect(list.indexOf(3, -1)).toBe(2);
+    expect(list.lastIndexOf(1, -3)).toBe(0);
+    expect(list.includes(1, 1)).toBe(false);
+  });
+});

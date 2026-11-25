@@ -1,38 +1,11 @@
-import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
+import { expectAllPass, runClientEngineProbe } from "./helpers/client-engine-probe.js";
 import { getClientRuntimeSource } from "resuxjs/runtime";
 
 // Behavioral regression coverage for the *client* runtime's reactive engine
 // (the plain-JS copy inside getClientRuntimeSource()). The server engine in
 // src/reactivity is covered by reactive-ref-unwrap-collections.test.ts; this
 // suite guards the browser copy against the two copies drifting apart again.
-
-type ProbeResult = { name: string; pass: boolean; detail: string };
-
-async function runClientEngineProbe(probeBody: string): Promise<ProbeResult[]> {
-  const window = new Window({ url: "http://localhost/" });
-  try {
-    const source = getClientRuntimeSource()
-      .replaceAll("import.meta", "({env:{DEV:false}})")
-      .replace(/^export \{[^}]*\};?\s*$/gm, "")
-      .replace(/^export (?=(async )?(function|const|let|var|class))/gm, "");
-    window.eval(source);
-    const body = probeBody.replaceAll("\\", "\\\\").replaceAll("`", "\\`");
-    const script = "(() => { const out = []; const t = (name, pass, detail) => out.push({ name, pass: !!pass, detail: String(detail) }); "
-      + body + "; return out; })()";
-    return window.eval(script) as ProbeResult[];
-  } finally {
-    await window.happyDOM.close();
-  }
-}
-
-function expectAllPass(results: ProbeResult[]) {
-  const failures = results.filter((r) => !r.pass);
-  expect(
-    failures.map((f) => `${f.name} :: ${f.detail}`),
-    `client engine probe failures: ${failures.map((f) => f.name).join(", ")}`,
-  ).toEqual([]);
-}
 
 describe("client runtime collection reactivity", () => {
   it("tracks Map get/set/add/delete/clear with server-equivalent semantics", async () => {

@@ -538,6 +538,7 @@ export interface ElementTemplateNode {
   if?: IfDirective;
   for?: ForDirective;
   html?: HtmlDirective;
+  ref?: string;
 }
 
 export interface SetupContext {
@@ -607,6 +608,7 @@ export interface ComponentDefinition {
   file: string;
   script: (ctx: SetupContext) => Record<string, unknown> | Promise<Record<string, unknown>>;
   template: TemplateNode[];
+  templateRefs?: string[];
   handlers: string[];
   styles?: ComponentStyle[];
   styleScopeId?: string;
@@ -4292,6 +4294,7 @@ function collectNativeElementAttributes(
   locals: Record<string, unknown>,
 ): string[] {
   const attrs: string[] = [];
+  let resolvedRef: string | undefined;
 
   for (const attr of node.attrs) {
     const attrName = nativeAttributeName(node, attr.name);
@@ -4304,11 +4307,19 @@ function collectNativeElementAttributes(
     if (attr.bindingId) {
       attrs.push(`data-rx-attr-${attr.bindingId}="${context.scopeId}:${attr.bindingId}"`);
     }
+    if (attrName === "ref" && typeof value === "string" && value.trim()) {
+      resolvedRef = value.trim();
+    }
     const isViewTransitionAttr = attrName === "data-view-transition" || attrName === "view-transition";
     if (!isViewTransitionAttr && (value === false || value === null || value === undefined)) continue;
     if (isViewTransitionAttr && (value === null || value === undefined)) continue;
 
     attrs.push(`${attrName}="${escapeAttribute(stringifyAttributeValue(attrName, value))}"`);
+  }
+
+  const effectiveRef = resolvedRef ?? node.ref;
+  if (effectiveRef) {
+    attrs.push(`data-rx-ref="${escapeAttribute(`${context.scopeId}:${effectiveRef}`)}"`);
   }
 
   for (const event of node.events) {
@@ -5461,6 +5472,9 @@ function renderResuxVideo(
   if (styleParts.length > 0) {
     attrs.push(`style="${escapeAttribute(styleParts.join("; "))}"`);
   }
+  if (node.ref) {
+    attrs.push(`data-rx-ref="${escapeAttribute(`${context.scopeId}:${node.ref}`)}"`);
+  }
   appendStyleScopeAttribute(attrs, context.styleScopeId);
   const attrText = attrs.length ? ` ${attrs.join(" ")}` : "";
   const sourceTags = hasSourceChildren
@@ -5877,6 +5891,9 @@ function resolveResuxImageRenderInput(
     || [1, 2];
   const widths = parseImageNumberList(props.widths) ?? [];
   const passthrough = collectResuxImagePassthroughAttributes(props);
+  if (node.ref) {
+    passthrough["data-rx-ref"] = `${context.scopeId}:${node.ref}`;
+  }
   const src = readStringProp(props.src)
     ?? readStringProp(props.fallbackSrc ?? props.fallback)
     ?? "";
@@ -11168,6 +11185,104 @@ function hashFetchIdentity(value) {
     + (second >>> 0).toString(16).padStart(8, "0");
 }
 
+function bindTemplateRefs(scope, definition, scopeId) {
+  if (!scope || typeof scope !== "object") return;
+  const refNames = new Set(Array.isArray(definition.templateRefs) ? definition.templateRefs : []);
+  if (Array.isArray(definition.template)) {
+    const collect = (nodes) => {
+      for (const n of nodes) {
+        if (n && n.type === "element") {
+          if (n.ref) refNames.add(n.ref);
+          if (Array.isArray(n.attrs)) {
+            for (const a of n.attrs) {
+              if (a.name === "ref" && a.kind === "static" && a.value) {
+                refNames.add(a.value);
+              }
+            }
+          }
+          if (Array.isArray(n.children)) collect(n.children);
+        }
+      }
+    };
+    collect(definition.template);
+  }
+  const scopeRefPrefix = String(scopeId || "") + ":";
+  if (scopeRefPrefix !== ":" && typeof document !== "undefined" && typeof document.querySelectorAll === "function") {
+    const escapedPrefix = scopeRefPrefix.replace(/["\\]/g, "\\$&");
+    for (const el of document.querySelectorAll('[data-rx-ref^="' + escapedPrefix + '"]')) {
+      const attrVal = el.getAttribute("data-rx-ref");
+      if (attrVal && attrVal.startsWith(scopeRefPrefix)) {
+        const dynamicName = attrVal.slice(scopeRefPrefix.length).trim();
+        if (dynamicName) {
+          refNames.add(dynamicName);
+        }
+      }
+    }
+  }
+
+  for (const refName of refNames) {
+    const target = scope[refName];
+    if (!target || !isRef(target)) continue;
+    if (target.__rx_bound_template_ref) continue;
+    target.__rx_bound_template_ref = true;
+
+    const proto = Object.getPrototypeOf(target);
+    const origDesc = Object.getOwnPropertyDescriptor(target, "value")
+      || (proto ? Object.getOwnPropertyDescriptor(proto, "value") : undefined);
+    const initialValue = target.value;
+    let customValue;
+    let hasCustomValue = false;
+    let warnedMissing = false;
+
+    Object.defineProperty(target, "value", {
+      get() {
+        if (origDesc && typeof origDesc.get === "function") {
+          origDesc.get.call(this);
+        }
+        if (hasCustomValue) {
+          return customValue;
+        }
+        const escapedAttr = String(scopeId + ":" + refName).replace(/["\\]/g, "\\$&");
+        const selector = '[data-rx-ref="' + escapedAttr + '"]';
+        let elements = [];
+        if (typeof document !== "undefined" && typeof document.querySelectorAll === "function") {
+          elements = Array.from(document.querySelectorAll(selector));
+        }
+        if (Array.isArray(initialValue)) {
+          warnedMissing = false;
+          return elements;
+        }
+        if (elements.length === 1) {
+          warnedMissing = false;
+          return elements[0];
+        }
+        if (elements.length > 1) {
+          warnedMissing = false;
+          return elements;
+        }
+        if (!warnedMissing && typeof console !== "undefined" && typeof console.warn === "function" && (typeof process === "undefined" || process.env?.NODE_ENV !== "production")) {
+          warnedMissing = true;
+          const compName = definition?.name ? "<" + definition.name + ">" : "<Component>";
+          console.warn(
+            '[resux:template-ref] Template ref "' + refName + '" could not be resolved in the DOM for component ' +
+            compName + '. Ensure the element is rendered and not removed by v-if.'
+          );
+        }
+        return initialValue ?? null;
+      },
+      set(v) {
+        hasCustomValue = true;
+        customValue = v;
+        if (origDesc && typeof origDesc.set === "function") {
+          origDesc.set.call(this, v);
+        }
+      },
+      configurable: true,
+      enumerable: true
+    });
+  }
+}
+
 export function createClientComponent(definition) {
   return {
     async createScope(serializedScope, route) {
@@ -11339,11 +11454,13 @@ export function createClientComponent(definition) {
         $device: useDevice()
       };
       const scope = await definition.script(setupContext);
+      bindTemplateRefs(scope, definition, serializedScope.id);
       serializedScope.globalStateKeys = [...globalStateKeys];
       await Promise.allSettled(mountedCallbacks.map((callback) => callback()));
       return { scopeId: serializedScope.id, scope, props, stateRefs, globalStateKeys, asyncDataRefs, pendingCompletions };
     },
     async run(scopeRecord, handlerName, event, eventLocals = {}) {
+      bindTemplateRefs(scopeRecord.scope, definition, scopeRecord.scopeId);
       const handler = scopeRecord.scope[handlerName];
       if (typeof handler !== "function") {
         throw new Error("Missing resumable handler " + handlerName + ".");
@@ -16580,19 +16697,20 @@ function renderElement(node, scope, locals, styleScopeId, scopeId, moduleId) {
     return "<" + tag + " " + attrs.join(" ") + ">" + children + "</" + tag + ">";
   }
   if (node.tag === "ResuxImg") {
-    return renderClientResuxImg(node, scope, locals, styleScopeId);
+    return renderClientResuxImg(node, scope, locals, styleScopeId, scopeId);
   }
   if (node.tag === "ResuxPicture") {
-    return renderClientResuxPicture(node, scope, locals, styleScopeId);
+    return renderClientResuxPicture(node, scope, locals, styleScopeId, scopeId);
   }
   if (node.tag === "ResuxVideo") {
-    return renderClientResuxVideo(node, scope, locals, styleScopeId);
+    return renderClientResuxVideo(node, scope, locals, styleScopeId, scopeId);
   }
   if (node.tag === "ClientEnhance" || node.tag === "ResuxClientEnhance") {
     return renderClientResuxClientEnhance(node, scope, locals, styleScopeId);
   }
   const tag = nativeElementTag(node);
   const attrs = [];
+  let resolvedRef;
   for (const attr of node.attrs) {
     const attrName = nativeAttributeName(node, attr.name);
     if (attr.kind === "static") {
@@ -16602,11 +16720,18 @@ function renderElement(node, scope, locals, styleScopeId, scopeId, moduleId) {
       if (attr.bindingId) {
         attrs.push('data-rx-attr-' + attr.bindingId + '="' + scopeId + ':' + attr.bindingId + '"');
       }
+      if (attrName === "ref" && typeof value === "string" && value.trim()) {
+        resolvedRef = value.trim();
+      }
       const isViewTransitionAttr = attrName === "data-view-transition" || attrName === "view-transition";
       if (value !== null && value !== undefined && (value !== false || isViewTransitionAttr)) {
         attrs.push(attrName + '="' + escapeAttribute(stringifyAttributeValue(attrName, value)) + '"');
       }
     }
+  }
+  const effectiveRef = resolvedRef || node.ref;
+  if (effectiveRef) {
+    attrs.push('data-rx-ref="' + escapeAttribute(scopeId + ':' + effectiveRef) + '"');
   }
   for (const event of node.events) {
     attrs.push('data-rx-on-' + event.name + '="' + scopeId + ':' + moduleId + ':' + event.handler + '"');
@@ -16830,7 +16955,7 @@ function appendClientDeferredVideoPoster(attrs, placeholderSrc, poster, deferLaz
   }
 }
 
-function renderClientResuxVideo(node, scope, locals, styleScopeId) {
+function renderClientResuxVideo(node, scope, locals, styleScopeId, scopeId) {
   const props = {};
   for (const attr of node.attrs) {
     const normalizedName = attr.name.replace(/-([a-zA-Z0-9])/g, (_, char) => char.toUpperCase());
@@ -17216,6 +17341,9 @@ function renderClientResuxVideo(node, scope, locals, styleScopeId) {
   if (styleParts.length > 0) {
     attrs.push('style="' + escapeAttribute(styleParts.join("; ")) + '"');
   }
+  if (node.ref && scopeId) {
+    attrs.push('data-rx-ref="' + escapeAttribute(scopeId + ':' + node.ref) + '"');
+  }
   if (styleScopeId) {
     attrs.push(styleScopeId + '=""');
   }
@@ -17384,8 +17512,8 @@ function renderClientResuxVideo(node, scope, locals, styleScopeId) {
   return "<div " + shellAttrs.join(" ") + "><div class=\"resux-video__stage\" data-rx-video-stage data-rx-video-custom-controls=\"" + (customControls ? "true" : "false") + "\">" + videoMarkup + interactionZonesMarkup + controlsMarkup + "</div></div>";
 }
 
-function renderClientResuxImg(node, scope, locals, styleScopeId) {
-  const input = resolveClientImageRenderInput(node, scope, locals);
+function renderClientResuxImg(node, scope, locals, styleScopeId, scopeId) {
+  const input = resolveClientImageRenderInput(node, scope, locals, scopeId);
   if (!input.src) {
     return "";
   }
@@ -17406,8 +17534,8 @@ function renderClientResuxImg(node, scope, locals, styleScopeId) {
   return renderClientResuxImgTag(input, src, srcset, styleScopeId);
 }
 
-function renderClientResuxPicture(node, scope, locals, styleScopeId) {
-  const input = resolveClientImageRenderInput(node, scope, locals);
+function renderClientResuxPicture(node, scope, locals, styleScopeId, scopeId) {
+  const input = resolveClientImageRenderInput(node, scope, locals, scopeId);
   if (!input.src) {
     return "";
   }
@@ -17523,7 +17651,7 @@ function renderClientResuxPicture(node, scope, locals, styleScopeId) {
   return "<picture" + attrText + ">" + manualChildren + generatedSources + img + "</picture>";
 }
 
-function resolveClientImageRenderInput(node, scope, locals) {
+function resolveClientImageRenderInput(node, scope, locals, scopeId) {
   const props = {};
   for (const attr of node.attrs) {
     const normalizedName = attr.name.replace(/-([a-zA-Z0-9])/g, (_, char) => char.toUpperCase());
@@ -17592,7 +17720,10 @@ function resolveClientImageRenderInput(node, scope, locals) {
     placeholderStyle: readClientStringProp(props.placeholderStyle),
     fallbackSrc: readClientStringProp(props.fallbackSrc ?? props.fallback),
     modifiers,
-    attrs: collectClientImageAttrs(props),
+    attrs: Object.assign(
+      collectClientImageAttrs(props),
+      node.ref && scopeId ? { "data-rx-ref": scopeId + ":" + node.ref } : {}
+    ),
     preload,
     deferLazy,
     lazyRootMargin,

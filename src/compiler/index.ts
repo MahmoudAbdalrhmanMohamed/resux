@@ -51,6 +51,7 @@ export interface CompiledComponent {
   serverSource: string;
   clientSource: string;
   template: TemplateNode[];
+  templateRefs?: string[];
   handlers: string[];
   styles: ComponentStyle[];
   styleScopeId?: string;
@@ -193,6 +194,7 @@ interface ClientRuntimePackageRegistry {
 interface CompileTemplateState {
   file: string;
   templateRefBindings: Set<string>;
+  templateRefs: Set<string>;
   bindingIndex: number;
   inlineHandlerIndex: number;
   handlers: TemplateEvent[];
@@ -1018,6 +1020,7 @@ export function compileVueSource(source: string, options: { file: string; id: st
     name: options.name,
     file: options.file,
     template: template.nodes,
+    templateRefs: template.templateRefs,
     analysis,
     styles: compiledStyles.styles,
     styleScopeId: compiledStyles.styleScopeId,
@@ -1030,6 +1033,7 @@ export function compileVueSource(source: string, options: { file: string; id: st
     name: options.name,
     file: options.file,
     template: template.nodes,
+    templateRefs: template.templateRefs,
     analysis,
     styles: compiledStyles.styles,
     styleScopeId: compiledStyles.styleScopeId,
@@ -1045,6 +1049,7 @@ export function compileVueSource(source: string, options: { file: string; id: st
     serverSource,
     clientSource,
     template: template.nodes,
+    templateRefs: template.templateRefs,
     handlers: [...new Set(template.handlers.map((event) => event.handler))],
     styles: compiledStyles.styles,
     styleScopeId: compiledStyles.styleScopeId,
@@ -1247,11 +1252,13 @@ function compileTemplate(
   inlineHandlers: GeneratedHandler[];
   expressions: { id: string; original: string; transformed: string; locals: string[] }[];
   allLocals: string[];
+  templateRefs: string[];
 } {
   const ast = parseTemplate(template, { comments: false });
   const state: CompileTemplateState = {
     file,
     templateRefBindings,
+    templateRefs: new Set<string>(),
     bindingIndex: 0,
     inlineHandlerIndex: 0,
     handlers: [],
@@ -1267,7 +1274,8 @@ function compileTemplate(
     handlers: state.handlers,
     inlineHandlers: state.inlineHandlers,
     expressions: state.expressions,
-    allLocals: Array.from(state.allLocals)
+    allLocals: Array.from(state.allLocals),
+    templateRefs: Array.from(state.templateRefs)
   };
 }
 
@@ -1466,6 +1474,13 @@ function compileTemplateNode(
 
   for (const prop of node.props) {
     if (prop.type === NodeTypes.ATTRIBUTE) {
+      if (prop.name === "ref" && prop.value?.content) {
+        const refName = prop.value.content.trim();
+        if (refName) {
+          state.templateRefs.add(refName);
+          element.ref = refName;
+        }
+      }
       attrs.push({
         kind: "static",
         name: prop.name,
@@ -1483,6 +1498,17 @@ function compileTemplateNode(
       const expression = expressionContent(prop.exp);
       if (!arg || !expression) {
         throw new ResuxCompileError("Dynamic bindings need an argument and expression.", locationFromVueNode(state.file, prop));
+      }
+      if (arg === "ref") {
+        const trimmed = expression.trim();
+        const quotedMatch = /^(['"`])([\s\S]*)\1$/.exec(trimmed);
+        const staticRefName = quotedMatch
+          ? quotedMatch[2].trim()
+          : (/^[A-Za-z_$][\w$]*$/.test(trimmed) ? trimmed : "");
+        if (staticRefName) {
+          state.templateRefs.add(staticRefName);
+          element.ref = staticRefName;
+        }
       }
       attrs.push({
         kind: "dynamic",
@@ -2764,6 +2790,7 @@ function createComponentModuleSource(options: {
   name: string;
   file: string;
   template: TemplateNode[];
+  templateRefs?: string[];
   analysis: ScriptAnalysis;
   styles: ComponentStyle[];
   styleScopeId?: string;
@@ -2834,6 +2861,7 @@ function createComponentModuleSource(options: {
     `file: ${JSON.stringify(normalizePath(options.file))},`,
     `script: __rx_setup,`,
     `template: __template,`,
+    `templateRefs: ${JSON.stringify(options.templateRefs ?? [])},`,
     `handlers: ${JSON.stringify([...options.analysis.handlerNames])},`,
     `styles: ${JSON.stringify(options.styles)},`,
     `styleScopeId: ${JSON.stringify(options.styleScopeId)},`,

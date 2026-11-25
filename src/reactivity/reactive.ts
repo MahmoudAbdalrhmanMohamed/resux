@@ -1,5 +1,4 @@
-import { ITERATE_KEY, MAP_KEY_ITERATE_KEY, track, trigger } from "./effect.js";
-import { ITERATE_KEY, isTracking, track, trigger } from "./effect.js";
+import { ITERATE_KEY, MAP_KEY_ITERATE_KEY, isTracking, track, trigger } from "./effect.js";
 import { hasOwn, isObject, ReactiveFlags } from "./utils.js";
 
 type ArrayIdentityMethod = "includes" | "indexOf" | "lastIndexOf";

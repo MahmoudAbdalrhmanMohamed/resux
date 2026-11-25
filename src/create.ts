@@ -655,10 +655,18 @@ const STARTER_LINK_CSS = `a {
 }
 `;
 
-async function ensureStarterBaseFiles(root: string, options: { includeLinkStyles: boolean }): Promise<void> {
-  await ensureFile(
+async function ensureStarterBaseFiles(root: string, options: { includeLinkStyles: boolean; includeTests: boolean }): Promise<void> {
+  // npm 10.9.x (bundled with the Node 22 floor of our engines range) crashes
+  // resolving vitest 4's peer graph ("Cannot read properties of null
+  // (reading 'edgesOut')"); legacy peer resolution avoids the broken path.
+  // templates/default/.npmrc is copied earlier, so overwrite it here: the
+  // correct content depends on whether this template ships vitest.
+  await writeFile(
     path.join(root, ".npmrc"),
-    "engine-strict=true\n",
+    options.includeTests
+      ? "engine-strict=true\nlegacy-peer-deps=true\n"
+      : "engine-strict=true\n",
+    "utf8",
   );
   await ensureFile(
     path.join(root, ".env.example"),
@@ -698,7 +706,7 @@ async function ensureStarterProjectStructure(
       await mkdir(path.join(root, relativeDir), { recursive: true });
     }
 
-    await ensureStarterBaseFiles(root, { includeLinkStyles: false });
+    await ensureStarterBaseFiles(root, { includeLinkStyles: false, includeTests: false });
     await ensureFile(
       path.join(root, "public", "favicon.svg"),
       `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Resux">
@@ -739,7 +747,7 @@ async function ensureStarterProjectStructure(
     await mkdir(path.join(root, relativeDir), { recursive: true });
   }
 
-  await ensureStarterBaseFiles(root, { includeLinkStyles: true });
+  await ensureStarterBaseFiles(root, { includeLinkStyles: true, includeTests: shouldIncludeTests });
   await ensureFile(
     path.join(root, "components", "AppHeader.vue"),
     `<template>

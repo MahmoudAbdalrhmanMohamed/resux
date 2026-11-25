@@ -8927,6 +8927,7 @@ const __rxFlags = {
 const __rxTargetMap = new WeakMap();
 const __rxReactiveMap = new WeakMap();
 const __rxReadonlyMap = new WeakMap();
+const __rxProxyToRaw = new WeakMap();
 let __rxActiveEffect;
 let __rxShouldTrack = true;
 const __rxTrackStack = [];
@@ -10087,6 +10088,7 @@ async function activateDeclaredClientEnhancements(root = document) {
 
 
 const __rxIterateKey = Symbol("iterate");
+const __rxMapKeyIterateKey = Symbol("Map key iterate");
 
 function __rxIsObject(value) {
   return value !== null && typeof value === "object";
@@ -10255,9 +10257,24 @@ function __rxTrigger(target, key, type = "set") {
     if (!dep) return;
     for (const effect of dep) effects.add(effect);
   };
-  addEffects(depsMap.get(key));
-  if (type === "add" || type === "delete") {
-    addEffects(depsMap.get(__rxIterateKey));
+  if (type === "clear") {
+    // Clearing a collection invalidates every dependency it owns.
+    for (const dep of depsMap.values()) {
+      addEffects(dep);
+    }
+  } else {
+    addEffects(depsMap.get(key));
+    if (type === "add" || type === "delete") {
+      addEffects(depsMap.get(__rxIterateKey));
+      if (target instanceof Map) {
+        addEffects(depsMap.get(__rxMapKeyIterateKey));
+      }
+    } else if (type === "set" && target instanceof Map) {
+      // A changed value is visible to values()/entries()/forEach iteration and
+      // size, which all track ITERATE_KEY on maps. keys() iteration is not
+      // affected by value changes.
+      addEffects(depsMap.get(__rxIterateKey));
+    }
   }
   __rxTriggerEffects(effects);
 }
@@ -10270,80 +10287,318 @@ function readonly(target) {
   return __rxCreateReactiveObject(target, true, __rxReadonlyMap, false);
 }
 
-function __rxCanUseBaseProxyHandlers(target) {
-  const rawType = Object.prototype.toString.call(target);
-  return rawType === "[object Object]" || rawType === "[object Array]";
+function __rxGetTargetType(target) {
+  switch (Object.prototype.toString.call(target)) {
+    case "[object Object]":
+    case "[object Array]":
+      return "common";
+    case "[object Map]":
+    case "[object Set]":
+    case "[object WeakMap]":
+    case "[object WeakSet]":
+      return "collection";
+    default:
+      return "invalid";
+  }
+}
+
+function __rxIsArrayIndex(key) {
+  if (typeof key === "symbol" || key === "length") {
+    return false;
+  }
+  const value = String(key);
+  return /^(?:0|[1-9]\d*)$/.test(value) && Number(value) < 4294967295;
+}
+
+function toRaw(value) {
+  let current = value;
+  while (__rxIsObject(current)) {
+    const raw = __rxProxyToRaw.get(current);
+    if (!raw || raw === current) {
+      break;
+    }
+    current = raw;
+  }
+  return current;
+}
+
+// --- Collection (Map / Set / WeakMap / WeakSet) instrumentation ------------
+// Mirrors src/reactivity/reactive.ts so resumed client scopes behave exactly
+// like the server engine.
+
+function __rxWrapCollectionValue(value, isReadonlyValue) {
+  if (!__rxIsObject(value)) {
+    return value;
+  }
+  return isReadonlyValue ? readonly(value) : reactive(value);
+}
+
+function __rxCreateIterableMethod(method, isReadonlyValue) {
+  return function () {
+    const target = toRaw(this);
+    const isMap = target instanceof Map;
+    const isKeys = method === "keys";
+    __rxTrack(target, isKeys && isMap ? __rxMapKeyIterateKey : __rxIterateKey);
+    const resolved = method === Symbol.iterator ? (isMap ? "entries" : "values") : method;
+    const inner = target[resolved].call(target);
+    const wrap = (value) => __rxWrapCollectionValue(value, isReadonlyValue);
+    const isEntries = resolved === "entries";
+
+    return {
+      next() {
+        const { value, done } = inner.next();
+        if (done) {
+          return { value, done: true };
+        }
+        if (isEntries) {
+          return { value: [wrap(value[0]), wrap(value[1])], done: false };
+        }
+        return { value: wrap(value), done: false };
+      },
+      [Symbol.iterator]() {
+        return this;
+      }
+    };
+  };
+}
+
+function __rxCreateCollectionInstrumentations(isReadonlyValue) {
+  const wrap = (value) => __rxWrapCollectionValue(value, isReadonlyValue);
+
+  return {
+    get(key) {
+      const target = toRaw(this);
+      const rawKey = toRaw(key);
+      __rxTrack(target, rawKey);
+      if (rawKey !== key) {
+        __rxTrack(target, key);
+      }
+      let result = target.get(rawKey);
+      if (result === undefined && rawKey !== key) {
+        result = target.get(key);
+      }
+      return wrap(result);
+    },
+
+    has(key) {
+      const target = toRaw(this);
+      const rawKey = toRaw(key);
+      __rxTrack(target, rawKey);
+      if (rawKey !== key) {
+        __rxTrack(target, key);
+      }
+      return target.has(rawKey) || (rawKey !== key && target.has(key));
+    },
+
+    get size() {
+      // 'this' is the receiver (the proxy) because instrumentations are read
+      // via Reflect.get(instrumentations, key, receiver).
+      const target = toRaw(this);
+      __rxTrack(target, __rxIterateKey);
+      return target.size;
+    },
+
+    set(key, value) {
+      if (isReadonlyValue) {
+        return this;
+      }
+      const target = toRaw(this);
+      const rawKey = toRaw(key);
+      const rawValue = toRaw(value);
+      const hadKey = target.has(rawKey);
+      const oldValue = target.get(rawKey);
+      target.set(rawKey, rawValue);
+      if (!hadKey) {
+        __rxTrigger(target, rawKey, "add");
+      } else if (!Object.is(rawValue, toRaw(oldValue))) {
+        __rxTrigger(target, rawKey, "set");
+      }
+      return this;
+    },
+
+    add(value) {
+      if (isReadonlyValue) {
+        return this;
+      }
+      const target = toRaw(this);
+      const rawValue = toRaw(value);
+      const hadKey = target.has(rawValue);
+      target.add(rawValue);
+      if (!hadKey) {
+        __rxTrigger(target, rawValue, "add");
+      }
+      return this;
+    },
+
+    delete(key) {
+      if (isReadonlyValue) {
+        return false;
+      }
+      const target = toRaw(this);
+      const rawKey = toRaw(key);
+      const hadKey = target.has(rawKey);
+      const success = target.delete(rawKey);
+      if (hadKey && success) {
+        __rxTrigger(target, rawKey, "delete");
+      }
+      return success;
+    },
+
+    clear() {
+      if (isReadonlyValue) {
+        return undefined;
+      }
+      const target = toRaw(this);
+      const hadItems = target.size !== 0;
+      target.clear();
+      if (hadItems) {
+        __rxTrigger(target, __rxIterateKey, "clear");
+      }
+      return undefined;
+    },
+
+    forEach(callback, thisArg) {
+      const target = toRaw(this);
+      __rxTrack(target, __rxIterateKey);
+      target.forEach((value, key) => {
+        callback.call(thisArg, wrap(value), wrap(key), this);
+      });
+    },
+
+    keys: __rxCreateIterableMethod("keys", isReadonlyValue),
+    values: __rxCreateIterableMethod("values", isReadonlyValue),
+    entries: __rxCreateIterableMethod("entries", isReadonlyValue),
+    [Symbol.iterator]: __rxCreateIterableMethod(Symbol.iterator, isReadonlyValue)
+  };
+}
+
+const __rxMutableCollectionInstrumentations = __rxCreateCollectionInstrumentations(false);
+const __rxReadonlyCollectionInstrumentations = __rxCreateCollectionInstrumentations(true);
+
+function __rxCollectionGet(instrumentations, isReadonlyValue, rawTarget, key, receiver) {
+  if (key === __rxFlags.isReactive) {
+    return !isReadonlyValue;
+  }
+  if (key === __rxFlags.isReadonly) {
+    return isReadonlyValue;
+  }
+  if (key === __rxFlags.raw) {
+    return rawTarget;
+  }
+  const source = Object.prototype.hasOwnProperty.call(instrumentations, key) && key in rawTarget
+    ? instrumentations
+    : rawTarget;
+  return Reflect.get(source, key, receiver);
 }
 
 function __rxCreateReactiveObject(target, isReadonlyValue, proxyMap, isShallow) {
-  if (!__rxIsObject(target) || !__rxCanUseBaseProxyHandlers(target)) {
+  const targetType = __rxIsObject(target) ? __rxGetTargetType(target) : "invalid";
+  if (targetType === "invalid") {
+    return target;
+  }
+  if (__rxProxyToRaw.has(target)) {
     return target;
   }
   const existing = proxyMap.get(target);
   if (existing) {
     return existing;
   }
-  const proxy = new Proxy(target, {
-    get(rawTarget, key, receiver) {
-      if (key === __rxFlags.isReactive) {
-        return !isReadonlyValue;
+  let proxy;
+  if (targetType === "collection") {
+    const instrumentations = isReadonlyValue
+      ? __rxReadonlyCollectionInstrumentations
+      : __rxMutableCollectionInstrumentations;
+    proxy = new Proxy(target, {
+      get(rawTarget, key, receiver) {
+        return __rxCollectionGet(instrumentations, isReadonlyValue, rawTarget, key, receiver);
       }
-      if (key === __rxFlags.isReadonly) {
-        return isReadonlyValue;
-      }
-      if (key === __rxFlags.raw) {
-        return rawTarget;
-      }
-      const value = Reflect.get(rawTarget, key, receiver);
-      if (!isReadonlyValue) {
-        __rxTrack(rawTarget, key);
-      }
-      if (isShallow || !__rxIsObject(value)) {
-        return value;
-      }
-      return isReadonlyValue ? readonly(value) : reactive(value);
-    },
-    set(rawTarget, key, value, receiver) {
-      if (isReadonlyValue) {
-        return true;
-      }
-      const hadKey = Object.prototype.hasOwnProperty.call(rawTarget, key);
-      const oldValue = Reflect.get(rawTarget, key, receiver);
-      const oldLength = Array.isArray(rawTarget) ? rawTarget.length : 0;
-      const success = Reflect.set(rawTarget, key, value, receiver);
-      if (success && (!hadKey || __rxHasChanged(value, oldValue))) {
-        __rxTrigger(rawTarget, key, hadKey ? "set" : "add");
-        if (
-          Array.isArray(rawTarget)
-          && key !== "length"
-          && /^(?:0|[1-9]\d*)$/.test(String(key))
-          && Number(key) >= oldLength
-          && Number(key) < 4294967295
-        ) {
-          __rxTrigger(rawTarget, "length");
+    });
+  } else {
+    proxy = new Proxy(target, {
+      get(rawTarget, key, receiver) {
+        if (key === __rxFlags.isReactive) {
+          return !isReadonlyValue;
         }
+        if (key === __rxFlags.isReadonly) {
+          return isReadonlyValue;
+        }
+        if (key === __rxFlags.raw) {
+          return rawTarget;
+        }
+        const value = Reflect.get(rawTarget, key, receiver);
+        if (!isReadonlyValue) {
+          __rxTrack(rawTarget, key);
+        }
+        // Vue-style ref unwrapping on plain object property access. Refs
+        // stored at array indices stay wrapped, matching the server engine.
+        if (isRef(value)) {
+          return !Array.isArray(rawTarget) || !__rxIsArrayIndex(key)
+            ? value.value
+            : value;
+        }
+        if (isShallow || !__rxIsObject(value)) {
+          return value;
+        }
+        return isReadonlyValue ? readonly(value) : reactive(value);
+      },
+      set(rawTarget, key, value, receiver) {
+        if (isReadonlyValue) {
+          return true;
+        }
+        const hadKey = Object.prototype.hasOwnProperty.call(rawTarget, key);
+        const storedOldValue = Reflect.get(rawTarget, key, receiver);
+        const oldLength = Array.isArray(rawTarget) ? rawTarget.length : 0;
+        // Vue-style ref assignment: writing a plain value over a stored ref
+        // updates the ref in place instead of replacing it. Arrays exempt.
+        if (!Array.isArray(rawTarget) && isRef(storedOldValue) && !isRef(value)) {
+          storedOldValue.value = value;
+          return true;
+        }
+        const oldValue = toRaw(storedOldValue);
+        const rawValue = toRaw(value);
+        const success = Reflect.set(rawTarget, key, rawValue, receiver);
+        if (success && (!hadKey || __rxHasChanged(rawValue, oldValue))) {
+          __rxTrigger(rawTarget, key, hadKey ? "set" : "add");
+          if (
+            Array.isArray(rawTarget)
+            && key !== "length"
+            && /^(?:0|[1-9]\d*)$/.test(String(key))
+            && Number(key) >= oldLength
+            && Number(key) < 4294967295
+          ) {
+            __rxTrigger(rawTarget, "length");
+          }
+        }
+        return success;
+      },
+      has(rawTarget, key) {
+        const result = Reflect.has(rawTarget, key);
+        if (!isReadonlyValue) {
+          __rxTrack(rawTarget, key);
+        }
+        return result;
+      },
+      ownKeys(rawTarget) {
+        if (!isReadonlyValue) {
+          __rxTrack(rawTarget, __rxIterateKey);
+        }
+        return Reflect.ownKeys(rawTarget);
+      },
+      deleteProperty(rawTarget, key) {
+        if (isReadonlyValue) {
+          return true;
+        }
+        const hadKey = Object.prototype.hasOwnProperty.call(rawTarget, key);
+        const success = Reflect.deleteProperty(rawTarget, key);
+        if (hadKey && success) {
+          __rxTrigger(rawTarget, key, "delete");
+        }
+        return success;
       }
-      return success;
-    },
-    ownKeys(rawTarget) {
-      if (!isReadonlyValue) {
-        __rxTrack(rawTarget, __rxIterateKey);
-      }
-      return Reflect.ownKeys(rawTarget);
-    },
-    deleteProperty(rawTarget, key) {
-      if (isReadonlyValue) {
-        return true;
-      }
-      const hadKey = Object.prototype.hasOwnProperty.call(rawTarget, key);
-      const success = Reflect.deleteProperty(rawTarget, key);
-      if (hadKey && success) {
-        __rxTrigger(rawTarget, key, "delete");
-      }
-      return success;
-    }
-  });
+    });
+  }
   proxyMap.set(target, proxy);
+  __rxProxyToRaw.set(proxy, target);
   return proxy;
 }
 

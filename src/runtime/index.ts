@@ -3986,8 +3986,14 @@ function resolveComponentDefinition(
   return undefined;
 }
 
+function normalizeTransitionBoundaryTagName(tag: string): string {
+  return String(tag || "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .toLowerCase();
+}
+
 function isTransitionBoundaryTag(tag: string): boolean {
-  const normalized = String(tag || "").toLowerCase();
+  const normalized = normalizeTransitionBoundaryTagName(tag);
   return normalized === "transition" || normalized === "transition-group";
 }
 
@@ -4015,7 +4021,7 @@ function transitionBoundaryTag(
   context: RenderTemplateContext,
   locals: Record<string, unknown>,
 ): string {
-  if (String(node.tag || "").toLowerCase() !== "transition-group") return "span";
+  if (normalizeTransitionBoundaryTagName(node.tag) !== "transition-group") return "span";
   const candidate = String(collectComponentProps(node, context.scope, locals).tag || "").trim().toLowerCase();
   if (!candidate || !/^[a-z][a-z0-9-]*$/.test(candidate) || unsafeTransitionContainerTags.has(candidate)) {
     return "span";
@@ -4036,7 +4042,7 @@ function renderTransitionBoundary(
   children: string,
 ): string {
   const name = transitionBoundaryName(node, context, locals);
-  const group = String(node.tag || "").toLowerCase() === "transition-group";
+  const group = normalizeTransitionBoundaryTagName(node.tag) === "transition-group";
   const tag = transitionBoundaryTag(node, context, locals);
   const attrs = [`data-rx-transition="${escapeAttribute(name)}"`];
   if (group) attrs.push('data-rx-transition-group="true"');
@@ -16429,7 +16435,7 @@ function collectPatches(nodes, scope, locals, patches, styleScopeId, scopeId, mo
             : (isClientTeleportBooleanEnabled(value) ? "true" : "")
         });
       }
-    } else if (normalizedTag === "transition" || normalizedTag === "transition-group") {
+    } else if (normalizeTransitionBoundaryTagName(node.tag) === "transition" || normalizeTransitionBoundaryTagName(node.tag) === "transition-group") {
       for (const attr of node.attrs) {
         if (attr.name === "name" && attr.kind === "dynamic" && attr.bindingId) {
           patches.push({
@@ -16505,6 +16511,10 @@ function normalizeClientTransitionName(value) {
   return /^[A-Za-z0-9_-]+$/.test(candidate) ? candidate : "v";
 }
 
+function normalizeTransitionBoundaryTagName(tag) {
+  return String(tag || "").replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+}
+
 function normalizeClientTransitionTag(value) {
   const candidate = String(value || "").trim().toLowerCase();
   if (!candidate || !/^[a-z][a-z0-9-]*$/.test(candidate) || unsafeClientTransitionContainerTags.has(candidate)) {
@@ -16544,8 +16554,9 @@ function renderElement(node, scope, locals, styleScopeId, scopeId, moduleId) {
     const source = "<!--resux-teleport-source:" + metadata + "-->";
     return source + (disabled ? children : "") + "<!--resux-teleport-end-->";
   }
-  if (normalizedTag === "transition" || normalizedTag === "transition-group") {
-    const group = normalizedTag === "transition-group";
+  const transitionBoundaryTagName = normalizeTransitionBoundaryTagName(node.tag);
+  if (transitionBoundaryTagName === "transition" || transitionBoundaryTagName === "transition-group") {
+    const group = transitionBoundaryTagName === "transition-group";
     const nameAttr = node.attrs.find((attr) => attr.name === "name");
     const rawName = nameAttr
       ? (nameAttr.kind === "static" ? nameAttr.value : evaluateExpression(nameAttr.value, scope, locals))

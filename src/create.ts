@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import type { Dirent } from "node:fs";
+import { existsSync, type Dirent } from "node:fs";
 import { lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -100,7 +100,58 @@ export async function runCreateResux(args: string[] = process.argv.slice(2)): Pr
     await copyTemplate(path.resolve(fileURLToPath(new URL("../templates/default", import.meta.url))), root, {
       "%PROJECT_NAME%": projectName,
       "%PROJECT_TITLE%": title
-    });
+    }, template);
+
+    if (template === "minimal") {
+      await writeFile(
+        path.join(root, "pages", "index.vue"),
+        `<script setup lang="ts">
+const count = ref(0);
+
+function increment() {
+  count.value++;
+}
+</script>
+
+<template>
+  <main class="page">
+    <h1>Welcome to Resux</h1>
+    <p>A minimal resumable application.</p>
+    <button @click="increment">Count: {{ count }}</button>
+  </main>
+</template>
+
+<style scoped>
+.page {
+  max-width: 640px;
+  margin: 4rem auto;
+  padding: 0 1rem;
+  font-family: system-ui, -apple-system, sans-serif;
+  text-align: center;
+}
+
+button {
+  margin-top: 1rem;
+  padding: 0.5rem 1rem;
+  font-size: 1rem;
+  cursor: pointer;
+}
+</style>
+`,
+        "utf8"
+      );
+
+      await writeFile(
+        path.join(root, "layouts", "default.vue"),
+        `<template>
+  <div class="shell">
+    <slot />
+  </div>
+</template>
+`,
+        "utf8"
+      );
+    }
     await writeFile(
       path.join(root, "package.json"),
       createStarterPackageJson(projectName, frameworkPackage, features, template),
@@ -424,22 +475,35 @@ async function prepareTarget(root: string, force: boolean): Promise<void> {
 async function copyTemplate(
   sourceRoot: string,
   targetRoot: string,
-  replacements: Record<string, string>
+  replacements: Record<string, string>,
+  template?: StarterTemplate
 ): Promise<void> {
-  await copyDirectory(sourceRoot, targetRoot, "", replacements);
+  await copyDirectory(sourceRoot, targetRoot, "", replacements, template);
 }
 
 async function copyDirectory(
   sourceDir: string,
   targetDir: string,
   relativeDir: string,
-  replacements: Record<string, string>
+  replacements: Record<string, string>,
+  template?: StarterTemplate
 ): Promise<void> {
   await mkdir(targetDir, { recursive: true });
   const entries = await readdir(sourceDir, { withFileTypes: true });
 
   for (const entry of entries) {
-    await copyEntry(entry, sourceDir, targetDir, relativeDir, replacements);
+    if (template === "minimal") {
+      if (
+        entry.isDirectory() &&
+        (entry.name === "plugins" || entry.name === "middleware" || entry.name === "islands" || entry.name === "server")
+      ) {
+        continue;
+      }
+      if (entry.isFile() && relativeDir === "pages" && entry.name === "about.vue") {
+        continue;
+      }
+    }
+    await copyEntry(entry, sourceDir, targetDir, relativeDir, replacements, template);
   }
 }
 
@@ -448,7 +512,8 @@ async function copyEntry(
   sourceDir: string,
   targetDir: string,
   relativeDir: string,
-  replacements: Record<string, string>
+  replacements: Record<string, string>,
+  template?: StarterTemplate
 ): Promise<void> {
   const source = path.join(sourceDir, entry.name);
   const targetName = entry.name === "_gitignore" ? ".gitignore" : entry.name;
@@ -456,7 +521,7 @@ async function copyEntry(
   const relativePath = path.join(relativeDir, entry.name);
 
   if (entry.isDirectory()) {
-    await copyDirectory(source, target, relativePath, replacements);
+    await copyDirectory(source, target, relativePath, replacements, template);
     return;
   }
 
@@ -565,6 +630,54 @@ async function applyStarterFeatureScaffold(
   await annotateStarterReadme(root, selected);
 }
 
+const STARTER_MAIN_CSS = `:root {
+  --rx-bg: #020617;
+  --rx-surface: #0f172a;
+  --rx-text: #e2e8f0;
+  --rx-muted: #94a3b8;
+  --rx-accent: #22d3ee;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background: radial-gradient(circle at top, #111827 0%, var(--rx-bg) 60%);
+  color: var(--rx-text);
+}
+`;
+
+const STARTER_LINK_CSS = `a {
+  color: var(--rx-accent);
+}
+`;
+
+async function ensureStarterBaseFiles(root: string, options: { includeLinkStyles: boolean }): Promise<void> {
+  await ensureFile(
+    path.join(root, ".npmrc"),
+    "engine-strict=true\n",
+  );
+  await ensureFile(
+    path.join(root, ".env.example"),
+    "# Runtime environment defaults\nAPP_ORIGIN=http://localhost:3000\n\n# Secret for signing production Halal Core safety reports (minimum 32 characters)\nRESUX_HALAL_REPORT_SIGNING_SECRET=\n",
+  );
+  await ensureFile(
+    path.join(root, "types", "app.d.ts"),
+    'import "resuxjs/globals";\n\nexport {};\n',
+  );
+  await ensureFile(
+    path.join(root, "types", "assets.d.ts"),
+    'declare module "*.css";\n',
+  );
+  await ensureFile(
+    path.join(root, "assets", "css", "main.css"),
+    options.includeLinkStyles ? STARTER_MAIN_CSS + STARTER_LINK_CSS : STARTER_MAIN_CSS,
+  );
+}
+
 async function ensureStarterProjectStructure(
   root: string,
   title: string,
@@ -572,6 +685,32 @@ async function ensureStarterProjectStructure(
   template: StarterTemplate,
 ): Promise<void> {
   const selected = new Set(features);
+
+  if (template === "minimal") {
+    const minimalDirs = [
+      "pages",
+      "layouts",
+      "assets/css",
+      "types",
+      "public",
+    ];
+    for (const relativeDir of minimalDirs) {
+      await mkdir(path.join(root, relativeDir), { recursive: true });
+    }
+
+    await ensureStarterBaseFiles(root, { includeLinkStyles: false });
+    await ensureFile(
+      path.join(root, "public", "favicon.svg"),
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Resux">
+  <rect width="128" height="128" rx="24" fill="#0f172a" />
+  <path d="M32 30h30c20 0 34 12 34 29 0 16-14 29-34 29H46v30H32z" fill="#22d3ee"/>
+  <circle cx="88" cy="93" r="11" fill="#a5f3fc"/>
+</svg>
+`,
+    );
+    return;
+  }
+
   const shouldIncludeTests = selected.has("tests") || template === "default" || template === "full";
   const shouldIncludeServerApi = selected.has("server-api") || template === "default" || template === "full";
   const shouldIncludePackageExamples = selected.has("package-compatibility") || template === "package-compatibility" || template === "full";
@@ -600,47 +739,7 @@ async function ensureStarterProjectStructure(
     await mkdir(path.join(root, relativeDir), { recursive: true });
   }
 
-  await ensureFile(
-    path.join(root, ".npmrc"),
-    "engine-strict=true\n",
-  );
-  await ensureFile(
-    path.join(root, ".env.example"),
-    "# Runtime environment defaults\nAPP_ORIGIN=http://localhost:3000\n",
-  );
-  await ensureFile(
-    path.join(root, "types", "app.d.ts"),
-    'import "resuxjs/globals";\n\nexport {};\n',
-  );
-  await ensureFile(
-    path.join(root, "types", "assets.d.ts"),
-    'declare module "*.css";\n',
-  );
-  await ensureFile(
-    path.join(root, "assets", "css", "main.css"),
-    `:root {
-  --rx-bg: #020617;
-  --rx-surface: #0f172a;
-  --rx-text: #e2e8f0;
-  --rx-muted: #94a3b8;
-  --rx-accent: #22d3ee;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  font-family: "Segoe UI", system-ui, sans-serif;
-  background: radial-gradient(circle at top, #111827 0%, var(--rx-bg) 60%);
-  color: var(--rx-text);
-}
-a {
-  color: var(--rx-accent);
-}
-`,
-  );
+  await ensureStarterBaseFiles(root, { includeLinkStyles: true });
   await ensureFile(
     path.join(root, "components", "AppHeader.vue"),
     `<template>
@@ -1155,6 +1254,9 @@ function createStarterResuxConfig(
 }
 
 async function removeSeoFromPage(filePath: string): Promise<void> {
+  if (!existsSync(filePath)) {
+    return;
+  }
   const source = await readFile(filePath, "utf8");
   const withoutSeo = source.replace(/\nuseSeoMeta\(\{[\s\S]*?\}\)\n/g, "\n");
   await writeFile(filePath, withoutSeo, "utf8");

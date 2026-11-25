@@ -1,4 +1,14 @@
+export interface RenderHtmlContext {
+  htmlAttrs: string[];
+  head: string[];
+  bodyPrepend: string[];
+  body: string[];
+  bodyAppend: string[];
+  bodyAttrs: string[];
+}
+
 export interface ResuxHookPayloads {
+  "render:html": RenderHtmlContext;
   "config:resolved": { rootDir: string; buildDir: string; config: Record<string, unknown> };
   "app:resolve": { appRoot: string; outDir: string };
   "app:templates": { outDir: string; templatesDir: string };

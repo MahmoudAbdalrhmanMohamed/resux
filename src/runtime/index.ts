@@ -1,5 +1,6 @@
 import { getQuery as h3GetQuery, readBody as h3ReadBody, setHeader as h3SetHeader } from "h3";
 import { iconRegistry, type IconData } from "../icons/registry.js";
+import { cspDirectiveSources, dedupeHeadScripts } from "../head/utils.js";
 import {
   buildLocalePath,
   normalizeI18nRuntimeConfig,
@@ -673,9 +674,24 @@ export interface RenderResult {
   teleports?: Record<string, string>;
 }
 
+export interface RenderHtmlContext {
+  htmlAttrs: string[];
+  head: string[];
+  bodyPrepend: string[];
+  body: string[];
+  bodyAppend: string[];
+  bodyAttrs: string[];
+}
+
 export interface RenderDocumentOptions {
   devReload?: boolean;
   isStatic?: boolean;
+  nonce?: string;
+  csp?: string;
+  fallbackViewport?: boolean;
+  hooks?: {
+    callHook(name: string, ...args: any[]): Promise<void> | void;
+  };
 }
 
 interface ScopeRecord {
@@ -2335,42 +2351,8 @@ export function shouldLoadClientRuntime(result: RenderResult): boolean {
   return getClientRuntimeBootPlan(result).mode !== "none";
 }
 
-export function renderDocument(result: RenderResult, title = "Resux App", options: RenderDocumentOptions = {}): string {
-  const bootPlan = getClientRuntimeBootPlan(result);
-  const needsClientRuntime = bootPlan.mode !== "none";
-  const payload = needsClientRuntime
-    ? escapeJsonForHtml(JSON.stringify(result.payload))
-    : "";
-  const resumeBootstrap = bootPlan.mode === "interaction"
-    ? getResumeBootstrapSource({
-      eventNames: bootPlan.eventNames,
-      deferEnhancements: bootPlan.deferEnhancements,
-      deferVueIslands: bootPlan.deferVueIslands,
-    })
-    : "";
-  const mergedHead = mergeHead([{ title }, result.head]);
-  const hasExplicitCharset = (mergedHead.meta ?? []).some((meta) => meta.charset !== undefined);
-  const hasExplicitViewport = (mergedHead.meta ?? []).some(
-    (meta) => typeof meta.name === "string" && meta.name.toLowerCase() === "viewport"
-  );
-  const htmlAttrs = {
-    lang: "en",
-    ...(mergedHead.htmlAttrs ?? {})
-  };
-  const renderedBodyAttrs = renderAttributes(mergedHead.bodyAttrs ?? {});
-  const bodyOpenTag = renderedBodyAttrs ? `<body ${renderedBodyAttrs}>` : "<body>";
-  const defaultTeleportHtml = result.teleports?.["#teleports"] ?? "";
-  const renderedAppHtml = result.html;
-  const defaultTeleportTarget =
-    `<div id="teleports" data-rx-teleport-fallback="true">${defaultTeleportHtml}</div>`;
-  return [
-    "<!doctype html>",
-    `<html ${renderAttributes(htmlAttrs)}>`,
-    "<head>",
-    ...(hasExplicitCharset ? [] : ['<meta charset="utf-8">']),
-    ...(hasExplicitViewport ? [] : ['<meta name="viewport" content="width=device-width, initial-scale=1">']),
-    renderHead(mergedHead),
-    `<style>
+function getBuiltinFrameworkStyles(): string {
+  return `<style>
 [data-rx-block] {
   display: contents !important;
 }
@@ -2669,9 +2651,52 @@ html[dir="rtl"] [data-rx-loading-indicator] .rx-loading-progress {
     transition: none;
   }
 }
-</style>`,
-    "</head>",
-    bodyOpenTag,
+</style>`;
+}
+
+function createDefaultHtmlContext(
+  result: RenderResult,
+  title = "Resux App",
+  options: RenderDocumentOptions = {},
+): RenderHtmlContext {
+  const bootPlan = getClientRuntimeBootPlan(result);
+  const needsClientRuntime = bootPlan.mode !== "none";
+  const payload = needsClientRuntime
+    ? escapeJsonForHtml(JSON.stringify(result.payload))
+    : "";
+  const resumeBootstrap = bootPlan.mode === "interaction"
+    ? getResumeBootstrapSource({
+      eventNames: bootPlan.eventNames,
+      deferEnhancements: bootPlan.deferEnhancements,
+      deferVueIslands: bootPlan.deferVueIslands,
+    })
+    : "";
+  const mergedHead = mergeHead([{ title }, result.head]);
+  const hasExplicitCharset = (mergedHead.meta ?? []).some((meta) => meta.charset !== undefined);
+  const hasExplicitViewport = (mergedHead.meta ?? []).some(
+    (meta) => typeof meta.name === "string" && meta.name.toLowerCase() === "viewport"
+  );
+  const csp = options.csp ?? extractCspFromHead(mergedHead);
+  const nonce = options.nonce ?? (result.payload?.config as any)?.resuxSecurity?.nonce;
+  const htmlAttrs = {
+    lang: "en",
+    ...(mergedHead.htmlAttrs ?? {})
+  };
+  const renderedHtmlAttrs = renderAttributes(htmlAttrs);
+  const renderedBodyAttrs = renderAttributes(mergedHead.bodyAttrs ?? {});
+  const defaultTeleportHtml = result.teleports?.["#teleports"] ?? "";
+  const renderedAppHtml = result.html;
+  const defaultTeleportTarget =
+    `<div id="teleports" data-rx-teleport-fallback="true">${defaultTeleportHtml}</div>`;
+
+  const headElements: string[] = [
+    ...(hasExplicitCharset ? [] : ['<meta charset="utf-8">']),
+    ...(hasExplicitViewport ? [] : ['<meta name="viewport" content="width=device-width, initial-scale=1">']),
+    renderHead(mergedHead, { nonce, csp }),
+    getBuiltinFrameworkStyles(),
+  ];
+
+  const bodyElements: string[] = [
     '<div id="__resux">',
     renderedAppHtml,
     "</div>",
@@ -2687,9 +2712,68 @@ html[dir="rtl"] [data-rx-loading-indicator] .rx-loading-progress {
       : (bootPlan.mode === "interaction"
         ? `<script type="module">${resumeBootstrap}</script>`
         : ""),
+  ];
+
+  return {
+    htmlAttrs: renderedHtmlAttrs ? [renderedHtmlAttrs] : [],
+    head: headElements,
+    bodyPrepend: [],
+    body: bodyElements,
+    bodyAppend: [],
+    bodyAttrs: renderedBodyAttrs ? [renderedBodyAttrs] : [],
+  };
+}
+
+function assembleHtmlDocument(htmlContext: RenderHtmlContext): string {
+  const htmlOpen = htmlContext.htmlAttrs.length ? `<html ${htmlContext.htmlAttrs.join(" ")}>` : "<html>";
+  const bodyOpen = htmlContext.bodyAttrs.length ? `<body ${htmlContext.bodyAttrs.join(" ")}>` : "<body>";
+
+  return [
+    "<!doctype html>",
+    htmlOpen,
+    "<head>",
+    ...htmlContext.head,
+    "</head>",
+    bodyOpen,
+    ...htmlContext.bodyPrepend,
+    ...htmlContext.body,
+    ...htmlContext.bodyAppend,
     "</body>",
-    "</html>"
+    "</html>",
   ].join("");
+}
+
+export function renderDocument(
+  result: RenderResult,
+  title = "Resux App",
+  options: RenderDocumentOptions = {},
+): string {
+  const htmlContext = createDefaultHtmlContext(result, title, options);
+
+  if (options.hooks) {
+    const hookResult = options.hooks.callHook("render:html", htmlContext);
+    if (hookResult && typeof (hookResult as any).catch === "function") {
+      (hookResult as Promise<void>).catch((err) => {
+        console.error("[resux] Error in render:html hook:", err);
+      });
+    }
+  }
+
+  return assembleHtmlDocument(htmlContext);
+}
+
+export async function renderDocumentAsync(
+  result: RenderResult,
+  title = "Resux App",
+  options: RenderDocumentOptions = {},
+): Promise<string> {
+  const htmlContext = createDefaultHtmlContext(result, title, options);
+
+  if (options.hooks) {
+    await options.hooks.callHook("render:html", htmlContext);
+  }
+
+  return assembleHtmlDocument(htmlContext);
 }
 
 function getDevReloadScript(): string {
@@ -7639,6 +7723,7 @@ function mergeHead(entries: HeadEntry[]): HeadEntry {
 
   merged.meta = dedupeHeadMeta(metaSources);
   merged.link = sortHeadLinksForPriority(merged.link ?? []);
+  merged.script = dedupeHeadScripts((merged.script ?? []) as Array<Record<string, unknown>>);
 
   return merged;
 }
@@ -7688,6 +7773,22 @@ function dedupeHeadMeta(sources: Array<Array<Record<string, string>>>): Array<Re
   return output;
 }
 
+function getCriticalMetaOrder(meta: Record<string, unknown>): number {
+  if (meta.charset !== undefined) {
+    return 0;
+  }
+  const rawHttpEquiv = meta["http-equiv"] ?? meta.httpEquiv;
+  if (rawHttpEquiv) {
+    return 1;
+  }
+  const rawName = meta.name;
+  const name = typeof rawName === "string" ? rawName.toLowerCase() : "";
+  if (name === "viewport") {
+    return 2;
+  }
+  return 3;
+}
+
 function isCriticalHeadMeta(meta: Record<string, unknown>): boolean {
   if (meta.charset !== undefined) {
     return true;
@@ -7699,11 +7800,49 @@ function isCriticalHeadMeta(meta: Record<string, unknown>): boolean {
   return name === "viewport" || Boolean(httpEquiv);
 }
 
-function renderHead(head: HeadEntry): string {
+function extractCspFromHead(head: HeadEntry): string {
+  for (const meta of head.meta ?? []) {
+    if (!meta || typeof meta !== "object") continue;
+    const httpEquiv = String((meta as any)["http-equiv"] ?? (meta as any).httpEquiv ?? "").trim().toLowerCase();
+    if (httpEquiv === "content-security-policy") {
+      return String((meta as any).content ?? "");
+    }
+  }
+  return "";
+}
+
+function allowsInlineScriptElementForCsp(csp: string): boolean {
+  const sources = cspDirectiveSources(csp, ["script-src-elem", "script-src", "default-src"]);
+  return sources === null || sources.includes("'unsafe-inline'");
+}
+
+const SCRIPT_BOOLEAN_ATTRIBUTES = new Set(["async", "defer", "nomodule"]);
+
+function renderScriptAttributes(attributes: Record<string, unknown>): string {
+  return Object.entries(attributes)
+    .map(([key, value]) => {
+      if (value === null || value === undefined || value === false) {
+        return "";
+      }
+      if (SCRIPT_BOOLEAN_ATTRIBUTES.has(key)) {
+        if (value === true || value === key || value === "") {
+          return key;
+        }
+      }
+      const normalized = normalizeHeadAttributeValue(key, value);
+      return normalized === null ? "" : `${key}="${escapeAttribute(normalized)}"`;
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
+function renderHead(head: HeadEntry, options: { nonce?: string; csp?: string } = {}): string {
   const tags: string[] = [];
 
-  const metaList = head.meta ?? [];
+  const metaList = [...(head.meta ?? [])];
+
   const criticalMetas = metaList.filter((meta) => isCriticalHeadMeta(meta as Record<string, unknown>));
+  criticalMetas.sort((a, b) => getCriticalMetaOrder(a as Record<string, unknown>) - getCriticalMetaOrder(b as Record<string, unknown>));
   const remainingMetas = metaList.filter((meta) => !isCriticalHeadMeta(meta as Record<string, unknown>));
 
   for (const meta of criticalMetas) {
@@ -7747,25 +7886,46 @@ function renderHead(head: HeadEntry): string {
     if (rendered) tags.push(rendered);
   }
 
+  const csp = options.csp ?? extractCspFromHead(head);
   for (const script of head.script ?? []) {
-    const rendered = renderHeadScript(script);
+    const rendered = renderHeadScript(script, { nonce: options.nonce, csp });
     if (rendered) tags.push(rendered);
   }
 
   return tags.join("");
 }
 
-function renderHeadScript(entry: Record<string, unknown>): string {
+function renderHeadScript(
+  entry: Record<string, unknown>,
+  options: { nonce?: string; csp?: string } = {},
+): string {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
     return "";
   }
   const attributes = { ...entry };
-  const innerHTML = String(attributes.innerHTML ?? attributes.children ?? "");
+  const content = String(attributes.textContent ?? attributes.innerHTML ?? attributes.children ?? "");
   delete attributes.innerHTML;
+  delete attributes.textContent;
   delete attributes.children;
-  const renderedAttributes = renderAttributes(attributes);
+  delete attributes.key;
+
+  if (!attributes.nonce && options.nonce) {
+    attributes.nonce = options.nonce;
+  }
+
+  const isInline = !attributes.src && content.length > 0;
+  if (isInline && options.csp) {
+    const hasNonce = Boolean(attributes.nonce);
+    const inlineAllowed = allowsInlineScriptElementForCsp(options.csp);
+    if (!hasNonce && !inlineAllowed) {
+      return "";
+    }
+  }
+
+  const renderedAttributes = renderScriptAttributes(attributes);
   const attrText = renderedAttributes ? ` ${renderedAttributes}` : "";
-  return `<script data-rx-head="true"${attrText}>${escapeScriptContent(innerHTML)}</script>`;
+  const scriptBody = content ? escapeScriptContent(content) : "";
+  return `<script data-rx-head="true"${attrText}>${scriptBody}</script>`;
 }
 
 function renderHeadNoscript(entry: Record<string, unknown> | string): string {
@@ -14098,7 +14258,7 @@ async function navigateTo(target,options={}){
     else if(!options.preserveScroll&&typeof scrollTo==="function")scrollTo(0,0);
     if(transitionToken===routeTransitionToken){setRouteTransition("complete",{path:routePath});completed=true}
   }catch(error){
-    setRouteTransition("error",{path:routePath});dispatchManagedEvent(document,"resux:navigation-error",{path:routePath,message:error instanceof Error?error.message:String(error)});
+    setRouteTransition("error",{path:routePath});dispatchManagedEvent(typeof document !== "undefined" ? document : null,"resux:navigation-error",{path:routePath,message:error instanceof Error?error.message:String(error)});
   }finally{
     styleController?.abort();if(routeStyleNavigationController===styleController)routeStyleNavigationController=null;
     if(!completed&&transitionToken===routeTransitionToken)setRouteTransition("idle",{path:routePath});
@@ -16192,6 +16352,38 @@ function applyHead(head) {
     nextEntries.push({ tag: "style", attrs: { "data-rx-style": style.id }, text: style.textContent ?? style.css ?? "" });
   }
 
+  const scripts = [];
+  const scriptMap = new Map();
+  for (const item of head.script ?? []) {
+    if (!item || typeof item !== "object") continue;
+    const dedupeKey = item.key ?? item.id ?? item.src;
+    if (dedupeKey) {
+      if (scriptMap.has(dedupeKey)) {
+        const existing = scriptMap.get(dedupeKey);
+        const idx = scripts.indexOf(existing);
+        if (idx !== -1) {
+          scripts[idx] = item;
+        }
+        scriptMap.set(dedupeKey, item);
+      } else {
+        scriptMap.set(dedupeKey, item);
+        scripts.push(item);
+      }
+    } else {
+      scripts.push(item);
+    }
+  }
+
+  for (const script of scripts) {
+    const attrs = { ...script };
+    const text = attrs.textContent ?? attrs.innerHTML ?? attrs.children ?? undefined;
+    delete attrs.textContent;
+    delete attrs.innerHTML;
+    delete attrs.children;
+    delete attrs.key;
+    nextEntries.push({ tag: "script", attrs, text: text !== undefined ? String(text) : undefined });
+  }
+
   const existing = new Map();
   document.querySelectorAll("[data-rx-head]").forEach((element) => {
     existing.set(headElementKey(element), element);
@@ -16212,7 +16404,14 @@ function applyHead(head) {
     const element = document.createElement(entry.tag);
     element.setAttribute("data-rx-head", "true");
     for (const [key, value] of Object.entries(entry.attrs)) {
-      element.setAttribute(key, value);
+      if (value === false || value === null || value === undefined) {
+        continue;
+      }
+      if (value === true) {
+        element.setAttribute(key, "");
+      } else {
+        element.setAttribute(key, String(value));
+      }
     }
     if (entry.text !== undefined) {
       element.textContent = entry.text;
@@ -16298,7 +16497,7 @@ async function handleDelegatedEvent(eventName, event) {
     payload.scopes[scopeId].asyncData = serialized.asyncData;
     applyPatches(scopeId, patches);
   } catch (error) {
-    dispatchManagedEvent(document, "resux:handler-error", {
+    dispatchManagedEvent(typeof document !== "undefined" ? document : null, "resux:handler-error", {
       event: eventName,
       scopeId,
       handler: handlerName,

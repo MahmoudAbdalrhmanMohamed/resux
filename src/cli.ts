@@ -37,6 +37,7 @@ import {
   type ClientRouteMiddlewareManifestRecord,
   renderApp,
   renderDocument,
+  renderDocumentAsync,
   type ComponentDefinition,
   type EventHandler,
   type HeadEntry,
@@ -69,9 +70,19 @@ import {
   runHalalVerifyReview
 } from "./halal-core/index.js";
 
-const require = createRequire(import.meta.url);
-const version =
-  (require("../package.json") as { version?: string }).version ?? "0.0.0";
+function getResuxVersion(): string {
+  try {
+    const fileUrl = typeof import.meta?.url === "string" && !import.meta.url.startsWith("file:///_")
+      ? import.meta.url
+      : undefined;
+    if (fileUrl) {
+      const req = createRequire(fileUrl);
+      return (req("../package.json") as { version?: string }).version ?? "0.4.0-beta.7";
+    }
+  } catch {}
+  return "0.4.0-beta.7";
+}
+const version = getResuxVersion();
 let activeDevBuild: Promise<void> | null = null;
 let devBuildDirty = false;
 let devBuildRevision = 0;
@@ -252,6 +263,7 @@ export interface ResuxNodeHandlerOptions {
   appRoot?: string;
   outDir?: string;
   securityHeaders?: boolean;
+  hooks?: any;
 }
 
 export function createResuxNodeHandler(options: ResuxNodeHandlerOptions = {}) {
@@ -269,6 +281,7 @@ export function createResuxNodeHandler(options: ResuxNodeHandlerOptions = {}) {
       dev: false,
       buildOptions,
       securityHeaders: options.securityHeaders ?? true,
+      hooks: options.hooks,
     });
   };
 }
@@ -2145,25 +2158,35 @@ resux start . --no-security-headers
 
 function createNitroConfig(): string {
   return `import { defineNitroConfig } from "nitropack/config";
+import { existsSync, readdirSync } from "node:fs";
+import path from "node:path";
+
+function getServerPlugins(): string[] {
+  const dir = path.resolve("server/plugins");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => /\\.(ts|js|mjs)$/.test(f) && !f.endsWith(".d.ts"))
+    .map((f) => path.join(dir, f));
+}
 
 export default defineNitroConfig({
-  srcDir: ".resux-nitro",
   compatibilityDate: "2026-05-02",
   cloudflare: {
     nodeCompat: true
   },
   // Resux uses top-level /plugins, /modules, and /middleware for app features.
-  // Nitro auto-scans these folders too, so exclude them from Nitro scanning.
-  ignore: ["plugins/**", "modules/**", "middleware/**", "assets/**"],
-  // Keep Nitro discovery scoped to the generated adapter directory.
-  scanDirs: ["."],
+  // Nitro auto-scans these folders too, so exclude only top-level Resux folders.
+  ignore: ["./plugins/**", "./modules/**", "./middleware/**", "assets/**"],
+  // Keep Nitro discovery scoped to the generated adapter directory and server directory.
+  scanDirs: [".resux-nitro", "server"],
+  plugins: getServerPlugins(),
   publicAssets: [
     {
-      dir: "../public",
+      dir: "public",
       baseURL: "/"
     },
     {
-      dir: "../.resux/client",
+      dir: ".resux/client",
       baseURL: "/__resux",
       fallthrough: true
     }
@@ -2171,7 +2194,7 @@ export default defineNitroConfig({
   serverAssets: [
     {
       baseName: "resux",
-      dir: "../.resux/server"
+      dir: ".resux/server"
     }
   ],
   handlers: [
@@ -2248,11 +2271,24 @@ export default defineNitroConfig({
 function createNitroHandler(): string {
   return `import { fromNodeMiddleware } from "h3";
 import { createResuxNodeHandler } from "resuxjs/node";
+import { useNitroApp } from "nitropack/runtime";
 
-const resuxHandler = createResuxNodeHandler();
+let resuxHandler: any;
+function getResuxHandler() {
+  if (!resuxHandler) {
+    let hooks: any;
+    try {
+      const nitroApp = useNitroApp();
+      hooks = nitroApp?.hooks;
+    } catch {}
+    resuxHandler = createResuxNodeHandler({ hooks });
+  }
+  return resuxHandler;
+}
 
 export default fromNodeMiddleware((req, res, next) => {
-  resuxHandler(req, res);
+  const handler = getResuxHandler();
+  handler(req, res);
 
   if (res.writableEnded) {
     return;
@@ -2811,6 +2847,7 @@ async function handleRequest(
     buildOptions: BuildOptions;
     vite?: ViteDevServer;
     securityHeaders: boolean;
+    hooks?: any;
   },
 ): Promise<void> {
   const requestOrigin = requestOriginFromHeaders(request);
@@ -3007,8 +3044,9 @@ async function handleRequest(
 
     const normalizedRendered = withPrioritizedHeadImagePreloads(rendered);
     let html = promoteDocumentImagePreloads(
-      renderDocument(normalizedRendered, "Resux App", {
+      await renderDocumentAsync(normalizedRendered, "Resux App", {
         devReload: options.dev,
+        hooks: options.hooks ?? options.buildOptions?.hooks,
       }),
     );
 
@@ -3061,6 +3099,7 @@ async function serveErrorDocument(
     buildOptions: BuildOptions;
     vite?: ViteDevServer;
     securityHeaders: boolean;
+    hooks?: any;
   },
   loadedManifest: LoadedManifest | undefined,
   statusCode: number,
@@ -5051,9 +5090,21 @@ function promoteDocumentImagePreloads(html: string): string {
 
   const headWithoutPreloads = headContent.replace(preloadPattern, "");
   const titleMatch = headWithoutPreloads.match(/<title\b[^>]*>[\s\S]*?<\/title>/i);
-  const insertionPoint = titleMatch
-    ? headWithoutPreloads.indexOf(titleMatch[0]) + titleMatch[0].length
-    : 0;
+  let insertionPoint = 0;
+  if (titleMatch) {
+    insertionPoint = headWithoutPreloads.indexOf(titleMatch[0]) + titleMatch[0].length;
+  } else {
+    const metaMatches = [...headWithoutPreloads.matchAll(/<meta\b[^>]*>/gi)];
+    for (const match of metaMatches) {
+      const tag = match[0].toLowerCase();
+      if (tag.includes("charset") || tag.includes("http-equiv") || tag.includes('name="viewport"') || tag.includes("name='viewport'")) {
+        const endPos = (match.index ?? 0) + match[0].length;
+        if (endPos > insertionPoint) {
+          insertionPoint = endPos;
+        }
+      }
+    }
+  }
   const reorderedHeadContent =
     headWithoutPreloads.slice(0, insertionPoint)
     + preloadTags.join("")

@@ -1,4 +1,5 @@
 import type { ResuxHooks, ResuxHookName, ResuxHookPayloads } from "./hooks.js";
+import { dedupeHeadScripts } from "../head/utils.js";
 
 export type ResuxSupportMode = "all" | "server" | "client";
 
@@ -280,7 +281,7 @@ function mergeHead(current: Record<string, unknown>, next: Record<string, unknow
     meta: mergeHeadArray(current.meta, next.meta),
     link: mergeHeadArray(current.link, next.link),
     style: mergeHeadArray(current.style, next.style),
-    script: mergeHeadArray(current.script, next.script),
+    script: dedupeHeadScripts(mergeHeadArray(current.script, next.script)),
     noscript: mergeHeadArray(current.noscript, next.noscript),
     htmlAttrs: {
       ...(isObject(current.htmlAttrs) ? current.htmlAttrs : {}),

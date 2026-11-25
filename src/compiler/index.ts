@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync, statSync, writeFileSync, mkdirSync } from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { NodeTypes, parse as parseTemplate, type AttributeNode, type DirectiveNode, type ElementNode, type Node as VueCompilerNode, type SimpleExpressionNode, type TemplateChildNode } from "@vue/compiler-dom";
@@ -10,6 +9,7 @@ import vuePlugin from "@vitejs/plugin-vue";
 import ts from "typescript";
 import { build as viteBuild } from "vite";
 import { createResux } from "../core/resux.js";
+import { cspDirectiveSources } from "../head/utils.js";
 import type { ResuxHooks } from "../core/hooks.js";
 import { ResuxModuleContainer, type ResuxModuleContext as CoreResuxModuleContext, type ResuxModuleContributions } from "../core/module-container.js";
 import { buildLocalePath, normalizeI18nRuntimeConfig, type ResuxI18nRuntimeConfig } from "../i18n/shared.js";
@@ -25,8 +25,6 @@ import {
   type TemplateEvent,
   type TemplateNode,
 } from "../runtime/index.js";
-
-const require = createRequire(import.meta.url);
 
 export interface CompileErrorLocation {
   file: string;
@@ -242,7 +240,7 @@ interface BuiltinResuxModule {
   setup: ResuxModuleSetup;
 }
 
-const RESUMABLE_HANDLER_ALLOWED_GLOBALS = new Set([
+export const RESUMABLE_HANDLER_ALLOWED_GLOBALS = new Set([
   "Math",
   "Number",
   "String",
@@ -256,6 +254,14 @@ const RESUMABLE_HANDLER_ALLOWED_GLOBALS = new Set([
   "console",
   "undefined",
   "globalThis",
+  "window",
+  "document",
+  "navigator",
+  "localStorage",
+  "sessionStorage",
+  "location",
+  "history",
+  "alert",
   "performance",
   "fetch",
   "Headers",
@@ -2610,7 +2616,7 @@ function validateTemplateHandlers(events: TemplateEvent[], analysis: ScriptAnaly
     const unsupportedCapture = findUnsupportedCapture(handlerNode, event.handler, analysis, locals);
     if (unsupportedCapture) {
       throw new ResuxCompileError(
-        `Handler "${event.handler}" captures "${unsupportedCapture}", which is not resumable in Resux.`,
+        `Handler "${event.handler}" captures "${unsupportedCapture}", which is not resumable in Resux. If this is a client or browser API, access it via "globalThis.${unsupportedCapture}" or move client-only logic into onMounted() or useClientEnhancement(). See https://resux.dev/guide/resumability-handlers for allowed globals and resumability rules.`,
         locationFromTsNode(file, analysis.sourceFile, handlerNode)
       );
     }
@@ -3195,23 +3201,6 @@ function readSecurityContentSecurityPolicy(
     if (content) return content;
   }
   return "";
-}
-
-function cspDirectiveSources(csp: string, names: string[]): string[] | null {
-  if (!csp.trim()) {
-    return null;
-  }
-  const directives = new Map<string, string[]>();
-  for (const rawDirective of csp.split(";")) {
-    const tokens = rawDirective.trim().split(/\s+/).filter(Boolean);
-    if (!tokens.length) continue;
-    directives.set(tokens[0].toLowerCase(), tokens.slice(1));
-  }
-  for (const name of names) {
-    const sources = directives.get(name);
-    if (sources) return sources;
-  }
-  return null;
 }
 
 function allowsInlineStyleForCsp(csp: string): boolean {

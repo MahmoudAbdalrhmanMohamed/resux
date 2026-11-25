@@ -24,6 +24,7 @@ export interface HalalAIConfig {
   enabled?: boolean;
   strict?: boolean;
   blockProductionBuild?: boolean;
+  requireAuthenticated?: boolean;
   scanRoutes?: boolean;
   scanMeta?: boolean;
   scanContent?: boolean;

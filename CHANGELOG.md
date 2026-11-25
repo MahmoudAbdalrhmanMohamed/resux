@@ -6,6 +6,17 @@ Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaki
 
 ## [0.4.0-beta.7] - 2026-10-05
 
+### Framework bug fixes, Nitro integration, and DX
+
+- **Head script rendering (Bug 1)**: Added runtime rendering for `head.script` and `noscript` in `renderHead()` and client `applyHead()`, supporting `src`, `async`, `defer`, `nomodule`, `type`, `innerHTML`/`textContent`, `nonce`, CSP rules via `resux:security`, and deduplication by `key`, `id`, and `src`. Made `useHead({ script })` fully functional and enabled the fonts module lazy-load observer script.
+- **Nitro server plugins bundling (Bug 2)**: Narrowed Nitro ignore configuration to top-level Resux folders and included `server/plugins/**` in Nitro scanning, ensuring server plugins using `defineNitroPlugin` are bundled into the server output.
+- **HTML transformation hook (Bug 3)**: Added the `render:html` hook (`{ htmlAttrs, head, bodyPrepend, body, bodyAppend, bodyAttrs }`) so modules and server integrations can transform SSR document HTML safely.
+- **Critical meta tag ordering (Bug 4)**: Ensured critical document-level `<meta>` tags (`charset`, `http-equiv`, `viewport`) are consistently emitted before links, stylesheets, and scripts in `<head>`.
+- **Browser globals and capture DX (Bug 5)**: Allowlisted `window`, `document`, `navigator`, `localStorage`, `sessionStorage`, `location`, `history`, and `alert` in resumable handlers via exported `RESUMABLE_HANDLER_ALLOWED_GLOBALS`, with proof they are never serialized into state payloads. Improved capture validation errors with actionable suggestions and docs links.
+- **Halal Core build signing (Bug 6)**: Generated ephemeral signing secrets with clear warnings during local builds when `RESUX_HALAL_REPORT_SIGNING_SECRET` is unset, only requiring configured secrets when authentication is explicitly enabled. Added `RESUX_HALAL_REPORT_SIGNING_SECRET` to `.env.example`.
+- **Minimal starter template cleanup (Bug 7)**: Streamlined the `minimal` scaffold template (`--template minimal`) to only include essential files (`app.vue`, `pages/index.vue`, `resux.config.ts`, `nitro.config.ts`) without demo plugins, middleware, islands, or example APIs.
+- **Documentation and version alignment (Bug 8)**: Aligned version statements and updated documentation guides for head scripts, critical meta ordering, Nitro server plugins, resumable handler globals, and build signing secrets.
+
 ### Navigation, UI compatibility, and motion
 
 - Improved client-side route transitions so navigation uses focused progress feedback without fading or blocking the whole application.

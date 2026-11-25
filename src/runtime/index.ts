@@ -10247,7 +10247,7 @@ function __rxTrack(target, key) {
   __rxActiveEffect.deps.push(dep);
 }
 
-function __rxTrigger(target, key, type = "set") {
+function __rxTrigger(target, key, type = "set", newValue) {
   const depsMap = __rxTargetMap.get(target);
   if (!depsMap) {
     return;
@@ -10261,6 +10261,20 @@ function __rxTrigger(target, key, type = "set") {
     // Clearing a collection invalidates every dependency it owns.
     for (const dep of depsMap.values()) {
       addEffects(dep);
+    }
+  } else if (Array.isArray(target) && key === "length") {
+    // Truncating or extending an array via its length invalidates the length,
+    // iteration, and every index at or past the new length (mirrors the
+    // server engine's trigger()).
+    const nextLength = Number(newValue);
+    for (const [depKey, dep] of depsMap) {
+      if (
+        depKey === "length"
+        || depKey === __rxIterateKey
+        || (__rxIsArrayIndex(depKey) && Number(depKey) >= nextLength)
+      ) {
+        addEffects(dep);
+      }
     }
   } else {
     addEffects(depsMap.get(key));
@@ -10558,7 +10572,7 @@ function __rxCreateReactiveObject(target, isReadonlyValue, proxyMap, isShallow) 
         const rawValue = toRaw(value);
         const success = Reflect.set(rawTarget, key, rawValue, receiver);
         if (success && (!hadKey || __rxHasChanged(rawValue, oldValue))) {
-          __rxTrigger(rawTarget, key, hadKey ? "set" : "add");
+          __rxTrigger(rawTarget, key, hadKey ? "set" : "add", rawValue);
           if (
             Array.isArray(rawTarget)
             && key !== "length"

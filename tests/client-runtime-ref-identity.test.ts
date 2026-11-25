@@ -1,5 +1,5 @@
-import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
+import { expectAllPass, runClientEngineProbe } from "./helpers/client-engine-probe.js";
 import { getClientRuntimeSource } from "resuxjs/runtime";
 
 // Regression coverage for ref identity semantics in the *client* runtime copy:
@@ -7,33 +7,6 @@ import { getClientRuntimeSource } from "resuxjs/runtime";
 // exactly like the server engine (src/reactivity/ref.ts uses toRaw in both the
 // constructor and the setter). Without toRaw, self-assignment triggered
 // effects and double-wrapped the proxy on every write.
-
-type ProbeResult = { name: string; pass: boolean; detail: string };
-
-async function runClientEngineProbe(probeBody: string): Promise<ProbeResult[]> {
-  const window = new Window({ url: "http://localhost/" });
-  try {
-    const source = getClientRuntimeSource()
-      .replaceAll("import.meta", "({env:{DEV:false}})")
-      .replace(/^export \{[^}]*\};?\s*$/gm, "")
-      .replace(/^export (?=(async )?(function|const|let|var|class))/gm, "");
-    window.eval(source);
-    const body = probeBody.replaceAll("\\", "\\\\").replaceAll("`", "\\`");
-    const script = "(() => { const out = []; const t = (name, pass, detail) => out.push({ name, pass: !!pass, detail: String(detail) }); "
-      + body + "; return out; })()";
-    return window.eval(script) as ProbeResult[];
-  } finally {
-    await window.happyDOM.close();
-  }
-}
-
-function expectAllPass(results: ProbeResult[]) {
-  const failures = results.filter((r) => !r.pass);
-  expect(
-    failures.map((f) => `${f.name} :: ${f.detail}`),
-    `client engine probe failures: ${failures.map((f) => f.name).join(", ")}`,
-  ).toEqual([]);
-}
 
 describe("client runtime ref identity", () => {
   it("treats proxy self-assignment as a no-op", async () => {

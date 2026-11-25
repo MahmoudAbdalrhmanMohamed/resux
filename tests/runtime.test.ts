@@ -409,6 +409,81 @@ describe("runtime SSR", () => {
     expect(result.html).not.toContain('hidden="false"');
   });
 
+  it("treats camelCase <Transition> and <TransitionGroup> tags as transition boundaries", async () => {
+    const camelGroupPage: ComponentDefinition = defineComponent({
+      id: "m-transition-group-camel-ssr",
+      name: "TransitionGroupCamelSsrPage",
+      file: "TransitionGroupCamelSsrPage.vue",
+      handlers: [],
+      async script(ctx) {
+        const items = ctx.useState("items", () => [1, 2]);
+        return { items };
+      },
+      template: [{
+        type: "element",
+        tag: "TransitionGroup",
+        attrs: [
+          { kind: "static", name: "name", value: "list" },
+          { kind: "static", name: "tag", value: "ul" }
+        ],
+        events: [],
+        children: [{
+          type: "element",
+          tag: "li",
+          attrs: [{ kind: "dynamic", name: "key", value: "item" }],
+          events: [],
+          for: { source: "items.value", value: "item", blockId: "b-list" },
+          children: [{ type: "interpolation", expression: "item", bindingId: "b-item" }],
+        }],
+      }],
+    });
+
+    const groupResult = await renderApp({
+      page: camelGroupPage,
+      route: { path: "/", params: {}, query: {} },
+    });
+
+    expect(groupResult.html).toContain('<ul data-rx-transition="list" data-rx-transition-group="true" data-rx-block="s0:b-list">');
+    expect(groupResult.html).toContain('<li key="1">');
+    expect(groupResult.html).toContain('<li key="2">');
+    expect(groupResult.html).not.toContain("<TransitionGroup");
+    expect(groupResult.html).not.toContain("<transition-group");
+
+    const camelPage: ComponentDefinition = defineComponent({
+      id: "m-transition-camel-ssr",
+      name: "TransitionCamelSsrPage",
+      file: "TransitionCamelSsrPage.vue",
+      handlers: [],
+      async script(ctx) {
+        const visible = ctx.useState("visible", () => true);
+        return { visible };
+      },
+      template: [{
+        type: "element",
+        tag: "Transition",
+        attrs: [{ kind: "static", name: "name", value: "fade" }],
+        events: [],
+        children: [{
+          type: "element",
+          tag: "div",
+          attrs: [{ kind: "dynamic", name: "hidden", value: "!visible.value", bindingId: "b0" }],
+          events: [],
+          children: [{ type: "text", value: "Panel" }],
+        }],
+      }],
+    });
+
+    const result = await renderApp({
+      page: camelPage,
+      route: { path: "/", params: {}, query: {} },
+    });
+
+    expect(result.html).toContain('data-rx-transition="fade"');
+    expect(result.html).not.toContain("<Transition");
+    expect(result.html).not.toContain("<transition");
+    expect(getClientRuntimeSource()).toContain("normalizeTransitionBoundaryTagName");
+  });
+
   it("honors TransitionGroup tag and keeps a direct reactive list marker on the semantic container", async () => {
     const page: ComponentDefinition = defineComponent({
       id: "m-transition-group-ssr",

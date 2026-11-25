@@ -44,6 +44,8 @@ describe("Bug 7: Minimal template scaffold cleanup", () => {
     expect(await pathExists(path.join(root, "tsconfig.json"))).toBe(true);
     expect(await pathExists(path.join(root, ".gitignore"))).toBe(true);
     expect(await pathExists(path.join(root, ".npmrc"))).toBe(true);
+    // minimal ships no vitest dependency, so it must not opt into legacy peer resolution
+    expect(await readFile(path.join(root, ".npmrc"), "utf8")).not.toContain("legacy-peer-deps");
     expect(await pathExists(path.join(root, ".env.example"))).toBe(true);
 
     // Scaffold noise that MUST NOT exist in minimal

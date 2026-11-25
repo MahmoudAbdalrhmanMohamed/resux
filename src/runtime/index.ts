@@ -4760,6 +4760,14 @@ const resuxLazyPlaceholderSrc =
 const resuxDefaultPlaceholderSrc = "/__resux/resux-placeholder.svg";
 const resuxResponsiveViewportWidths = [320, 640, 768, 1024, 1280, 1536, 1920, 2560];
 
+function normalizeClientEnhanceTag(value: unknown): string {
+  const candidate = String(value || "section").trim().toLowerCase();
+  if (!candidate || !/^[a-z][a-z0-9-]*$/.test(candidate) || unsafeTransitionContainerTags.has(candidate)) {
+    return "section";
+  }
+  return candidate;
+}
+
 function renderResuxClientEnhance(
   node: ElementTemplateNode,
   context: RenderTemplateContext,
@@ -4790,13 +4798,13 @@ function renderResuxClientEnhance(
   const aspectRatio = String(props.aspectRatio || "").trim();
   const noCls = props.noCls === true || props.noCls === "true";
   const demo = String(props.demo || name).trim();
-  const tag = String(props.as || "section").trim();
+  const tag = normalizeClientEnhanceTag(props.as);
 
   const styles: string[] = [];
   if (reserveHeight) styles.push(`min-height: ${reserveHeight};`);
   if (reserveWidth) styles.push(`min-width: ${reserveWidth};`);
   if (aspectRatio) styles.push(`aspect-ratio: ${aspectRatio};`);
-  const styleAttr = styles.length ? ` style="${styles.join(" ")}"` : "";
+  const styleAttr = styles.length ? ` style="${escapeAttribute(styles.join(" "))}"` : "";
 
   const attrs: string[] = [
     `data-resux-enhancement="${escapeAttribute(name)}"`,
@@ -4865,13 +4873,13 @@ async function renderResuxClientEnhanceAsync(
   const aspectRatio = String(props.aspectRatio || "").trim();
   const noCls = props.noCls === true || props.noCls === "true";
   const demo = String(props.demo || name).trim();
-  const tag = String(props.as || "section").trim();
+  const tag = normalizeClientEnhanceTag(props.as);
 
   const styles: string[] = [];
   if (reserveHeight) styles.push(`min-height: ${reserveHeight};`);
   if (reserveWidth) styles.push(`min-width: ${reserveWidth};`);
   if (aspectRatio) styles.push(`aspect-ratio: ${aspectRatio};`);
-  const styleAttr = styles.length ? ` style="${styles.join(" ")}"` : "";
+  const styleAttr = styles.length ? ` style="${escapeAttribute(styles.join(" "))}"` : "";
 
   const attrs: string[] = [
     `data-resux-enhancement="${escapeAttribute(name)}"`,
@@ -7678,12 +7686,14 @@ function mergeHead(entries: HeadEntry[]): HeadEntry {
     bodyAttrs: {}
   };
 
+  const metaSources: Array<Array<Record<string, string>>> = [];
+
   for (const entry of entries) {
     if (entry.title) {
       merged.title = entry.title;
     }
     if (entry.meta) {
-      merged.meta!.push(...entry.meta);
+      metaSources.push(entry.meta);
     }
     if (entry.link) {
       merged.link!.push(...entry.link);
@@ -7711,10 +7721,56 @@ function mergeHead(entries: HeadEntry[]): HeadEntry {
     }
   }
 
+  merged.meta = dedupeHeadMeta(metaSources);
   merged.link = sortHeadLinksForPriority(merged.link ?? []);
   merged.script = dedupeHeadScripts((merged.script ?? []) as Array<Record<string, unknown>>);
 
   return merged;
+}
+
+// Meta tags with a unique key (charset, or a name / property / http-equiv
+// value) can be overridden across head entries, so a page can replace meta
+// inherited from a layout: the LAST head entry that carries a given key owns
+// it, and earlier entries' tags with that key are dropped. Repeated tags
+// inside a single entry stay untouched because they are intentional (for
+// example an og:image array from one useSeoMeta call). Tags without a unique
+// key are kept as-is, and relative order is preserved.
+function headMetaDedupKey(meta: Record<string, string>): string | undefined {
+  if (meta.charset !== undefined) {
+    return "charset";
+  }
+  const keyedAttributes = ["name", "property", "http-equiv", "httpEquiv"] as const;
+  for (const attribute of keyedAttributes) {
+    const value = meta[attribute];
+    if (typeof value === "string" && value.trim() !== "") {
+      const prefix = attribute === "httpEquiv" ? "http-equiv" : attribute;
+      return `${prefix}:${value.trim().toLowerCase()}`;
+    }
+  }
+  return undefined;
+}
+
+function dedupeHeadMeta(sources: Array<Array<Record<string, string>>>): Array<Record<string, string>> {
+  const lastOwnerByKey = new Map<string, number>();
+  sources.forEach((source, sourceIndex) => {
+    for (const meta of source) {
+      const key = headMetaDedupKey(meta);
+      if (key !== undefined) {
+        lastOwnerByKey.set(key, sourceIndex);
+      }
+    }
+  });
+
+  const output: Array<Record<string, string>> = [];
+  sources.forEach((source, sourceIndex) => {
+    for (const meta of source) {
+      const key = headMetaDedupKey(meta);
+      if (key === undefined || lastOwnerByKey.get(key) === sourceIndex) {
+        output.push(meta);
+      }
+    }
+  });
+  return output;
 }
 
 function getCriticalMetaOrder(meta: Record<string, unknown>): number {
@@ -16942,6 +16998,14 @@ function formatClientVideoSkipDuration(seconds) {
   return Number.isInteger(normalized) ? String(Math.trunc(normalized)) + "s" : String(normalized) + "s";
 }
 
+function normalizeClientEnhanceTag(value) {
+  const candidate = String(value || "section").trim().toLowerCase();
+  if (!candidate || !/^[a-z][a-z0-9-]*$/.test(candidate) || unsafeClientTransitionContainerTags.has(candidate)) {
+    return "section";
+  }
+  return candidate;
+}
+
 function renderClientResuxClientEnhance(node, scope, locals, styleScopeId) {
   const props = {};
   for (const attr of node.attrs) {
@@ -16974,13 +17038,13 @@ function renderClientResuxClientEnhance(node, scope, locals, styleScopeId) {
   const aspectRatio = String(props.aspectRatio || "").trim();
   const noCls = props.noCls === true || props.noCls === "true" || props.noCls === "";
   const demo = String(props.demo || name).trim();
-  const tag = String(props.as || "section").trim();
+  const tag = normalizeClientEnhanceTag(props.as);
 
   const styles = [];
   if (reserveHeight) styles.push("min-height: " + reserveHeight + ";");
   if (reserveWidth) styles.push("min-width: " + reserveWidth + ";");
   if (aspectRatio) styles.push("aspect-ratio: " + aspectRatio + ";");
-  const styleAttr = styles.length ? " style=\"" + styles.join(" ") + "\"" : "";
+  const styleAttr = styles.length ? " style=\"" + escapeAttribute(styles.join(" ")) + "\"" : "";
 
   const attrs = [
     "data-resux-enhancement=\"" + escapeAttribute(name) + "\"",

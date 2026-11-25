@@ -29,6 +29,17 @@ function queueFlush(): void {
   }
   flushing = true;
   flushPromise = resolvedPromise.then(flushJobs);
+  // flushJobs rejects the flush promise with the first captured error so
+  // nextTick() awaiters can observe it. Without an attached handler that
+  // rejection is unhandled whenever nothing awaits the flush (the common
+  // case for fire-and-forget watchers), which terminates Node processes
+  // running with the default unhandled-rejection behavior. Mark the flush
+  // as handled here; nextTick() still exposes the rejection to awaiters.
+  flushPromise.catch(noopErrorObserver);
+}
+
+function noopErrorObserver(): void {
+  // Intentionally empty: the rejection remains visible through nextTick().
 }
 
 function flushJobs(): void {

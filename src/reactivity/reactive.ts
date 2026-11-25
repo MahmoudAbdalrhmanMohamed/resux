@@ -1,5 +1,127 @@
-import { ITERATE_KEY, track, trigger } from "./effect.js";
+import { ITERATE_KEY, MAP_KEY_ITERATE_KEY, isTracking, track, trigger } from "./effect.js";
 import { hasOwn, isObject, ReactiveFlags } from "./utils.js";
+
+type ArrayIdentityMethod = "includes" | "indexOf" | "lastIndexOf";
+
+const ARRAY_IDENTITY_METHODS = new Set<string>(["includes", "indexOf", "lastIndexOf"]);
+
+// Array elements are stored raw (the set trap unwraps incoming proxies), while
+// reads through the proxy wrap objects lazily. A naive pass-through of the
+// identity methods therefore compares a raw argument against lazily wrapped
+// elements (or a proxy argument against raw elements) and reports misses for
+// values that are actually present. Run the lookup against the raw target and
+// retry with unwrapped arguments, tracking each visited index so effects
+// depending on the result stay reactive.
+function toIntegerIndex(value: unknown): number {
+  const n = Number(value);
+  if (Number.isNaN(n)) {
+    return 0;
+  }
+  if (!Number.isFinite(n)) {
+    return n;
+  }
+  return Math.trunc(n);
+}
+
+// Mirrors the native fromIndex handling of includes / indexOf / lastIndexOf.
+function identitySearchStart(method: ArrayIdentityMethod, length: number, args: unknown[]): number {
+  if (method === "lastIndexOf") {
+    if (args.length < 2) {
+      return length - 1;
+    }
+    const n = toIntegerIndex(args[1]);
+    if (n === Infinity) {
+      return length - 1;
+    }
+    if (n === -Infinity) {
+      return -1;
+    }
+    return n >= 0 ? Math.min(n, length - 1) : length + n;
+  }
+  const n = args.length > 1 ? toIntegerIndex(args[1]) : 0;
+  if (n === Infinity) {
+    return length;
+  }
+  if (n === -Infinity) {
+    return 0;
+  }
+  return n >= 0 ? n : Math.max(length + n, 0);
+}
+
+function arrayIdentityMethod(method: ArrayIdentityMethod): (this: unknown[], ...args: unknown[]) => unknown {
+  return function (this: unknown[], ...args: unknown[]): unknown {
+    const rawArray = toRaw(this) as unknown[];
+    if (isTracking()) {
+      track(rawArray, "length");
+      for (let index = 0; index < rawArray.length; index++) {
+        track(rawArray, String(index));
+      }
+    }
+    const arg = args[0];
+    const rawArg = toRaw(arg);
+    // === covers +0/-0; Object.is covers NaN. Either means no unwrapping.
+    const unwraps = !(rawArg === arg || Object.is(rawArg, arg));
+    // Traverse manually instead of delegating to the native method: elements
+    // are read with the proxy as receiver, so accessor getters run against
+    // the reactive surface and their internal reads stay tracked (the native
+    // method would run them against the raw array). Identity comparisons
+    // still use raw values, so a caller-passed object matches the stored raw
+    // element, and each visited index is read at most once, matching native
+    // getter semantics.
+    const length = rawArray.length;
+    // Native searches return the not-found result for an empty array before
+    // coercing fromIndex, so a throwing valueOf() never runs.
+    if (length === 0) {
+      return method === "includes" ? false : -1;
+    }
+    const start = identitySearchStart(method, length, args);
+    if (method === "lastIndexOf") {
+      for (let index = Math.min(start, length - 1); index >= 0; index--) {
+        // Native index searches skip missing properties; only includes
+        // treats holes as undefined. HasProperty covers inherited indices.
+        if (!Reflect.has(rawArray, index)) {
+          continue;
+        }
+        const element = Reflect.get(rawArray, index, this);
+        if (element === arg || (unwraps && toRaw(element) === rawArg)) {
+          return index;
+        }
+      }
+      return -1;
+    }
+    for (let index = Math.max(start, 0); index < length; index++) {
+      if (method !== "includes" && !Reflect.has(rawArray, index)) {
+        continue;
+      }
+      const element = Reflect.get(rawArray, index, this);
+      if (element === arg
+        || (unwraps && toRaw(element) === rawArg)
+        || (method === "includes" && Number.isNaN(element) && Number.isNaN(arg))) {
+        return method === "includes" ? true : index;
+      }
+    }
+    return method === "includes" ? false : -1;
+  };
+}
+
+// Local isRef check (mirrors ref.ts) to avoid a module cycle: ref.ts imports
+// reactive() from this module.
+function isRefLike(value: unknown): boolean {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && (value as Record<PropertyKey, unknown>)[ReactiveFlags.IS_REF] === true
+  );
+}
+
+function isArrayIndex(key: PropertyKey): boolean {
+  if (typeof key === "symbol" || key === "length") {
+    return false;
+  }
+  const value = String(key);
+  return /^(?:0|[1-9]\d*)$/.test(value)
+    && Number(value) < 4_294_967_295;
+}
 
 const reactiveMap = new WeakMap<object, object>();
 const readonlyMap = new WeakMap<object, object>();
@@ -19,8 +141,31 @@ const mutableHandlers: ProxyHandler<object> = {
       return target;
     }
 
+    if (Array.isArray(target) && typeof key === "string" && ARRAY_IDENTITY_METHODS.has(key)) {
+      // Track the method key itself so overriding one of these methods
+      // (list.includes = fn) retriggers effects that read it.
+      track(target, key);
+      // Own or inherited overrides of these methods must win over the
+      // instrumentation — for a non-configurable, non-writable override the
+      // proxy invariants even forbid returning anything but the exact value.
+      const existing = Reflect.get(target, key, receiver);
+      if (existing !== (Array.prototype as unknown as Record<string, unknown>)[key]) {
+        return existing;
+      }
+      return arrayIdentityMethod(key as ArrayIdentityMethod);
+    }
+
     const result = Reflect.get(target, key, receiver);
     track(target, key);
+
+    // Vue-style ref unwrapping on plain object property access. Refs stored at
+    // array indices stay wrapped, but are returned as-is: refs are never
+    // proxied.
+    if (isRefLike(result)) {
+      return !Array.isArray(target) || !isArrayIndex(key)
+        ? (result as { value: unknown }).value
+        : result;
+    }
 
     return isObject(result) ? reactive(result) : result;
   },
@@ -39,7 +184,22 @@ const mutableHandlers: ProxyHandler<object> = {
   set(target, key, value, receiver) {
     const oldLength = Array.isArray(target) ? target.length : undefined;
     const hadKey = hasOwn(target, key);
-    const oldValue = toRaw(Reflect.get(target, key, receiver));
+    const storedOldValue = Reflect.get(target, key, receiver);
+
+    // Vue-style ref assignment: writing a plain value over a stored ref updates
+    // the ref in place (preserving its identity and firing its own
+    // subscribers) instead of replacing it. Arrays are exempt, matching the
+    // read-side unwrapping rule.
+    if (
+      !Array.isArray(target)
+      && isRefLike(storedOldValue)
+      && !isRefLike(value)
+    ) {
+      (storedOldValue as { value: unknown }).value = value;
+      return true;
+    }
+
+    const oldValue = toRaw(storedOldValue);
     const rawValue = toRaw(value);
     const success = Reflect.set(target, key, rawValue, receiver);
 
@@ -76,6 +236,11 @@ const readonlyHandlers: ProxyHandler<object> = {
     }
 
     const result = Reflect.get(target, key, receiver);
+    if (isRefLike(result)) {
+      return !Array.isArray(target) || !isArrayIndex(key)
+        ? (result as { value: unknown }).value
+        : result;
+    }
     return isObject(result) ? readonly(result) : result;
   },
 
@@ -96,24 +261,238 @@ const readonlyHandlers: ProxyHandler<object> = {
   }
 };
 
+// --- Collection (Map / Set) instrumentation -------------------------------
+
+type CollectionTarget = Map<unknown, unknown> | Set<unknown>;
+
+function wrapCollectionValue(value: unknown, isReadonly: boolean): unknown {
+  if (!isObject(value)) {
+    return value;
+  }
+  return isReadonly ? readonly(value) : reactive(value);
+}
+
+function createIterableMethod(
+  method: "keys" | "values" | "entries" | typeof Symbol.iterator,
+  isReadonly: boolean
+): (this: CollectionTarget) => IterableIterator<unknown> {
+  return function (this: CollectionTarget): IterableIterator<unknown> {
+    const target = toRaw(this) as unknown as Map<unknown, unknown> & Set<unknown>;
+    const isMap = target instanceof Map;
+    const isKeys = method === "keys";
+    track(target, isKeys && isMap ? MAP_KEY_ITERATE_KEY : ITERATE_KEY);
+    const resolved = method === Symbol.iterator ? (isMap ? "entries" : "values") : method;
+    const inner = (target[resolved] as () => Iterator<unknown>).call(target) as Iterator<unknown>;
+    const wrap = (value: unknown) => wrapCollectionValue(value, isReadonly);
+    const isEntries = resolved === "entries";
+
+    return {
+      next() {
+        const { value, done } = inner.next();
+        if (done) {
+          return { value, done: true };
+        }
+        if (isEntries) {
+          const pair = value as [unknown, unknown];
+          return { value: [wrap(pair[0]), wrap(pair[1])], done: false };
+        }
+        return { value: wrap(value), done: false };
+      },
+      [Symbol.iterator]() {
+        return this as IterableIterator<unknown>;
+      }
+    } as IterableIterator<unknown>;
+  };
+}
+
+function createCollectionInstrumentations(isReadonly: boolean): Record<PropertyKey, unknown> {
+  const wrap = (value: unknown) => wrapCollectionValue(value, isReadonly);
+
+  const instrumentations: Record<PropertyKey, unknown> = {
+    get(this: CollectionTarget, key: unknown) {
+      const target = toRaw(this) as unknown as Map<unknown, unknown>;
+      const rawKey = toRaw(key) as PropertyKey;
+      track(target, rawKey);
+      if (rawKey !== key) {
+        track(target, key as PropertyKey);
+      }
+      let result = target.get(rawKey);
+      if (result === undefined && rawKey !== key) {
+        result = target.get(key);
+      }
+      return wrap(result);
+    },
+
+    has(this: CollectionTarget, key: unknown) {
+      const target = toRaw(this) as unknown as Map<unknown, unknown>;
+      const rawKey = toRaw(key) as PropertyKey;
+      track(target, rawKey);
+      if (rawKey !== key) {
+        track(target, key as PropertyKey);
+      }
+      return target.has(rawKey) || (rawKey !== key && target.has(key));
+    },
+
+    get size() {
+      // `this` is the receiver (the proxy) because instrumentations are read
+      // via Reflect.get(instrumentations, key, receiver).
+      const target = toRaw(this) as unknown as CollectionTarget;
+      track(target, ITERATE_KEY);
+      return target.size;
+    },
+
+    set(this: CollectionTarget, key: unknown, value: unknown) {
+      if (isReadonly) {
+        return this;
+      }
+      const target = toRaw(this) as unknown as Map<unknown, unknown>;
+      const rawKey = toRaw(key) as PropertyKey;
+      const rawValue = toRaw(value);
+      const hadKey = target.has(rawKey);
+      const oldValue = target.get(rawKey);
+      target.set(rawKey, rawValue);
+      if (!hadKey) {
+        trigger(target, rawKey, "add");
+      } else if (!Object.is(rawValue, toRaw(oldValue))) {
+        trigger(target, rawKey, "set");
+      }
+      return this;
+    },
+
+    add(this: CollectionTarget, value: unknown) {
+      if (isReadonly) {
+        return this;
+      }
+      const target = toRaw(this) as unknown as Set<unknown>;
+      const rawValue = toRaw(value) as PropertyKey;
+      const hadKey = target.has(rawValue);
+      target.add(rawValue);
+      if (!hadKey) {
+        trigger(target, rawValue, "add");
+      }
+      return this;
+    },
+
+    delete(this: CollectionTarget, key: unknown) {
+      if (isReadonly) {
+        return false;
+      }
+      const target = toRaw(this) as unknown as Map<unknown, unknown>;
+      const rawKey = toRaw(key) as PropertyKey;
+      const hadKey = target.has(rawKey);
+      const success = target.delete(rawKey);
+      if (hadKey && success) {
+        trigger(target, rawKey, "delete");
+      }
+      return success;
+    },
+
+    clear(this: CollectionTarget) {
+      if (isReadonly) {
+        return undefined;
+      }
+      const target = toRaw(this) as unknown as Map<unknown, unknown>;
+      const hadItems = target.size !== 0;
+      target.clear();
+      if (hadItems) {
+        trigger(target, ITERATE_KEY, "clear");
+      }
+      return undefined;
+    },
+
+    forEach(this: CollectionTarget, callback: (value: unknown, key: unknown, owner: unknown) => void, thisArg?: unknown) {
+      const target = toRaw(this) as unknown as Map<unknown, unknown> & Set<unknown>;
+      track(target, ITERATE_KEY);
+      target.forEach((value: unknown, key: unknown) => {
+        callback.call(thisArg, wrap(value), wrap(key), this);
+      });
+    },
+
+    keys: createIterableMethod("keys", isReadonly),
+    values: createIterableMethod("values", isReadonly),
+    entries: createIterableMethod("entries", isReadonly),
+    [Symbol.iterator]: createIterableMethod(Symbol.iterator, isReadonly)
+  };
+
+  return instrumentations;
+}
+
+const mutableCollectionInstrumentations = createCollectionInstrumentations(false);
+const readonlyCollectionInstrumentations = createCollectionInstrumentations(true);
+
+const mutableCollectionHandlers: ProxyHandler<object> = {
+  get(target, key, receiver) {
+    if (key === ReactiveFlags.IS_REACTIVE) {
+      return true;
+    }
+    if (key === ReactiveFlags.IS_READONLY) {
+      return false;
+    }
+    if (key === ReactiveFlags.RAW) {
+      return target;
+    }
+    const source = hasOwn(mutableCollectionInstrumentations, key) && key in target
+      ? mutableCollectionInstrumentations
+      : target;
+    return Reflect.get(source, key, receiver);
+  }
+};
+
+const readonlyCollectionHandlers: ProxyHandler<object> = {
+  get(target, key, receiver) {
+    if (key === ReactiveFlags.IS_REACTIVE) {
+      return false;
+    }
+    if (key === ReactiveFlags.IS_READONLY) {
+      return true;
+    }
+    if (key === ReactiveFlags.RAW) {
+      return target;
+    }
+    const source = hasOwn(readonlyCollectionInstrumentations, key) && key in target
+      ? readonlyCollectionInstrumentations
+      : target;
+    return Reflect.get(source, key, receiver);
+  }
+};
+
+// --- Entry points ----------------------------------------------------------
+
+type ReactiveTargetType = "common" | "collection" | "invalid";
+
+function getTargetType(target: object): ReactiveTargetType {
+  switch (Object.prototype.toString.call(target)) {
+    case "[object Object]":
+    case "[object Array]":
+      return "common";
+    case "[object Map]":
+    case "[object Set]":
+    case "[object WeakMap]":
+    case "[object WeakSet]":
+      return "collection";
+    default:
+      return "invalid";
+  }
+}
+
 export function reactive<T extends object>(target: T): T {
-  return createReactiveObject(target, false, reactiveMap, mutableHandlers) as T;
+  return createReactiveObject(target, false, reactiveMap) as T;
 }
 
 export function readonly<T>(target: T): Readonly<T> {
   if (!isObject(target)) {
     return target as Readonly<T>;
   }
-  return createReactiveObject(target, true, readonlyMap, readonlyHandlers) as Readonly<T>;
+  return createReactiveObject(target, true, readonlyMap) as Readonly<T>;
 }
 
 function createReactiveObject(
   target: object,
   isReadonly: boolean,
-  proxyMap: WeakMap<object, object>,
-  baseHandlers: ProxyHandler<object>
+  proxyMap: WeakMap<object, object>
 ): object {
-  if (!isObject(target) || !canUseBaseProxyHandlers(target)) {
+  const targetType = isObject(target) ? getTargetType(target) : "invalid";
+  if (targetType === "invalid") {
     return target;
   }
 
@@ -126,7 +505,11 @@ function createReactiveObject(
     return existingProxy;
   }
 
-  const proxy = new Proxy(target, baseHandlers);
+  const handlers = targetType === "collection"
+    ? (isReadonly ? readonlyCollectionHandlers : mutableCollectionHandlers)
+    : (isReadonly ? readonlyHandlers : mutableHandlers);
+
+  const proxy = new Proxy(target, handlers);
   proxyMap.set(target, proxy);
   proxyToRaw.set(proxy, target);
   if (isReadonly) {
@@ -135,11 +518,6 @@ function createReactiveObject(
     reactiveProxies.add(proxy);
   }
   return proxy;
-}
-
-function canUseBaseProxyHandlers(target: object): boolean {
-  const rawType = Object.prototype.toString.call(target);
-  return rawType === "[object Object]" || rawType === "[object Array]";
 }
 
 export function isReactive(value: unknown): boolean {
@@ -167,13 +545,4 @@ export function toRaw<T>(value: T): T {
     current = raw;
   }
   return current as T;
-}
-
-function isArrayIndex(key: PropertyKey): boolean {
-  if (typeof key === "symbol" || key === "length") {
-    return false;
   }
-  const value = String(key);
-  return /^(?:0|[1-9]\d*)$/.test(value)
-    && Number(value) < 4_294_967_295;
-}

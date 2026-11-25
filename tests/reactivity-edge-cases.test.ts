@@ -4,6 +4,7 @@ import {
   nextTick,
   reactive,
   ref,
+  toRaw,
   toRefs,
   watch
 } from "resuxjs/reactivity";
@@ -29,14 +30,21 @@ describe("resux reactivity edge cases", () => {
 
     expect(state.date).toBe(date);
     expect(state.date.getUTCFullYear()).toBe(2026);
-    expect(state.map).toBe(map);
-    expect(state.map.get("count")).toBe(1);
-    expect(state.set).toBe(set);
-    expect(state.set.has("ready")).toBe(true);
     expect(state.regexp).toBe(regexp);
     expect(state.regexp.test("Resux")).toBe(true);
     expect(isReactive(state.date)).toBe(false);
-    expect(isReactive(state.map)).toBe(false);
+    expect(isReactive(state.regexp)).toBe(false);
+
+    // Maps and Sets are instrumented collections: reads come back as reactive
+    // proxies over the same target, so methods work and lookups stay reactive.
+    expect(state.map).not.toBe(map);
+    expect(isReactive(state.map)).toBe(true);
+    expect(toRaw(state.map)).toBe(map);
+    expect(state.map.get("count")).toBe(1);
+    expect(state.set).not.toBe(set);
+    expect(isReactive(state.set)).toBe(true);
+    expect(toRaw(state.set)).toBe(set);
+    expect(state.set.has("ready")).toBe(true);
   });
 
   it("tracks enumerable symbol keys in deep watches", () => {

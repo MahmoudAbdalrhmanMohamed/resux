@@ -4,6 +4,20 @@ All notable changes to Resux are documented here.
 
 Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaking API changes when they are clearly documented.
 
+## [0.4.0-beta.8] - 2026-11-25
+
+### Framework bug fixes and resumability improvements
+
+- **Reactivity array identity and scheduler robustness**: fixed array identity-search semantics for empty arrays and sparse holes, and hardened the effect scheduler against rejected handlers.
+- **Ref unwrapping and collection instrumentation**: `reactive()` now unwraps refs on property access (writing a plain value over a stored ref updates it in place; array indices keep Vue-style wrapped refs) and instruments `Map`, `Set`, `WeakMap`, and `WeakSet` with tracked `get`/`has`/`set`/`add`/`delete`/`clear`/`size` and iteration.
+- **Head meta deduplication**: merging head entries (for example layout + page) dedupes `<meta>` tags by `charset`, `name`, `property`, and `http-equiv`, with the last entry winning while intentional repeated tags stay untouched.
+- **Vercel Node runtime mapping**: Node versions are clamped for Vercel deployments (16/18/20 to 22.x, 23 to 24.x, ceiling 26.x) so deployments never target retired runtimes.
+- **ClientEnhance HTML injection hardening**: `<ClientEnhance>` validates the `as` prop against a safe tag-name allowlist and escapes reserve-height/width/aspect-ratio values inside the style attribute, applied across the server sync, server async, and client renderers.
+- **Head scripts, Nitro server plugins, and document hooks**: `head.script`/`noscript` entries render with full attribute support and deduplication; `server/plugins/**` bundle into Nitro output; the new `render:html` hook transforms the SSR document; critical meta tags (`charset`, `http-equiv`, `viewport`) emit first in `<head>`; resumable handlers allow browser globals with clearer DX errors; local builds generate ephemeral Halal signing secrets with a warning; the `minimal` scaffold template is trimmed to essentials.
+- **Windows dev static assets and head style retention**: public/assets are served before user server middleware, Windows path-boundary resolution is normalized, dev responses get `no-cache` with ETag/304 revalidation plus `nosniff` and font MIME types, head styles dedupe by `id` with CSP nonce support, client hydration no longer strips SSR `<style>` elements without ids, and pre-existing `lang` attributes are preserved.
+- **Template refs in resumable client handlers**: static and dynamic template refs compile to scoped `data-rx-ref` attributes, and client scopes lazily resolve live DOM elements (single elements, `v-for` arrays, dev warnings for missing elements) for resumable handlers and `onMounted` hooks.
+- **camelCase transition boundaries**: `<Transition>` and `<TransitionGroup>` written in camelCase (the Vue-docs style) are recognized as transition boundaries instead of crashing SSR with `Unknown component`.
+
 ## [0.4.0-beta.7] - 2026-10-05
 
 ### Framework bug fixes, Nitro integration, and DX

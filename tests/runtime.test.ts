@@ -409,7 +409,43 @@ describe("runtime SSR", () => {
     expect(result.html).not.toContain('hidden="false"');
   });
 
-  it("honors TransitionGroup tag and keeps a direct reactive list marker on the semantic container", async () => {
+  it("treats a camelCase <Transition> tag as a transition boundary", async () => {
+    const camelPage: ComponentDefinition = defineComponent({
+      id: "m-transition-camel-ssr",
+      name: "TransitionCamelSsrPage",
+      file: "TransitionCamelSsrPage.vue",
+      handlers: [],
+      async script(ctx) {
+        const visible = ctx.useState("visible", () => true);
+        return { visible };
+      },
+      template: [{
+        type: "element",
+        tag: "Transition",
+        attrs: [{ kind: "static", name: "name", value: "fade" }],
+        events: [],
+        children: [{
+          type: "element",
+          tag: "div",
+          attrs: [{ kind: "dynamic", name: "hidden", value: "!visible.value", bindingId: "b0" }],
+          events: [],
+          children: [{ type: "text", value: "Panel" }],
+        }],
+      }],
+    });
+
+    const result = await renderApp({
+      page: camelPage,
+      route: { path: "/", params: {}, query: {} },
+    });
+
+    expect(result.html).toContain('data-rx-transition="fade"');
+    expect(result.html).not.toContain("<Transition");
+    expect(result.html).not.toContain("<transition");
+    expect(getClientRuntimeSource()).toContain("normalizeTransitionBoundaryTagName");
+  });
+
+  it.each(["transition-group", "TransitionGroup"])("honors %s tag and keeps a direct reactive list marker on the semantic container", async (groupTag) => {
     const page: ComponentDefinition = defineComponent({
       id: "m-transition-group-ssr",
       name: "TransitionGroupSsrPage",
@@ -421,7 +457,7 @@ describe("runtime SSR", () => {
       },
       template: [{
         type: "element",
-        tag: "transition-group",
+        tag: groupTag,
         attrs: [
           { kind: "static", name: "name", value: "list" },
           { kind: "static", name: "tag", value: "ul" }
@@ -438,15 +474,14 @@ describe("runtime SSR", () => {
       }],
     });
 
-    const result = await renderApp({
-      page,
-      route: { path: "/", params: {}, query: {} },
-    });
+    const groupResult = await renderApp({ page, route: { path: "/", params: {}, query: {} } });
 
-    expect(result.html).toContain('<ul data-rx-transition="list" data-rx-transition-group="true" data-rx-block="s0:b-list">');
-    expect(result.html).toContain('<li key="1">');
-    expect(result.html).toContain('<li key="2">');
-    expect(result.html).not.toContain('<span data-rx-block="s0:b-list"');
+    expect(groupResult.html).toContain('<ul data-rx-transition="list" data-rx-transition-group="true" data-rx-block="s0:b-list">');
+    expect(groupResult.html).toContain('<li key="1">');
+    expect(groupResult.html).toContain('<li key="2">');
+    expect(groupResult.html).not.toContain('<span data-rx-block="s0:b-list"');
+    expect(groupResult.html).not.toContain("<TransitionGroup");
+    expect(groupResult.html).not.toContain("<transition-group");
     expect(getClientRuntimeSource()).toContain("style.animationIterationCount");
   });
 

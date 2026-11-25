@@ -10613,7 +10613,7 @@ function isReadonly(value) {
 class __rxRefImpl {
   constructor(value) {
     this.__v_isRef = true;
-    this._rawValue = value;
+    this._rawValue = toRaw(value);
     this._value = __rxIsObject(value) ? reactive(value) : value;
     this.dep = new Set();
   }
@@ -10629,10 +10629,11 @@ class __rxRefImpl {
   }
 
   set value(newValue) {
-    if (!__rxHasChanged(newValue, this._rawValue)) {
+    const rawValue = toRaw(newValue);
+    if (!__rxHasChanged(rawValue, this._rawValue)) {
       return;
     }
-    this._rawValue = newValue;
+    this._rawValue = rawValue;
     this._value = __rxIsObject(newValue) ? reactive(newValue) : newValue;
     __rxTriggerEffects(this.dep);
   }

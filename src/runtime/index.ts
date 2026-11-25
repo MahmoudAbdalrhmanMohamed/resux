@@ -4676,6 +4676,14 @@ const resuxLazyPlaceholderSrc =
 const resuxDefaultPlaceholderSrc = "/__resux/resux-placeholder.svg";
 const resuxResponsiveViewportWidths = [320, 640, 768, 1024, 1280, 1536, 1920, 2560];
 
+function normalizeClientEnhanceTag(value: unknown): string {
+  const candidate = String(value || "section").trim().toLowerCase();
+  if (!candidate || !/^[a-z][a-z0-9-]*$/.test(candidate) || unsafeTransitionContainerTags.has(candidate)) {
+    return "section";
+  }
+  return candidate;
+}
+
 function renderResuxClientEnhance(
   node: ElementTemplateNode,
   context: RenderTemplateContext,
@@ -4706,13 +4714,13 @@ function renderResuxClientEnhance(
   const aspectRatio = String(props.aspectRatio || "").trim();
   const noCls = props.noCls === true || props.noCls === "true";
   const demo = String(props.demo || name).trim();
-  const tag = String(props.as || "section").trim();
+  const tag = normalizeClientEnhanceTag(props.as);
 
   const styles: string[] = [];
   if (reserveHeight) styles.push(`min-height: ${reserveHeight};`);
   if (reserveWidth) styles.push(`min-width: ${reserveWidth};`);
   if (aspectRatio) styles.push(`aspect-ratio: ${aspectRatio};`);
-  const styleAttr = styles.length ? ` style="${styles.join(" ")}"` : "";
+  const styleAttr = styles.length ? ` style="${escapeAttribute(styles.join(" "))}"` : "";
 
   const attrs: string[] = [
     `data-resux-enhancement="${escapeAttribute(name)}"`,
@@ -4781,13 +4789,13 @@ async function renderResuxClientEnhanceAsync(
   const aspectRatio = String(props.aspectRatio || "").trim();
   const noCls = props.noCls === true || props.noCls === "true";
   const demo = String(props.demo || name).trim();
-  const tag = String(props.as || "section").trim();
+  const tag = normalizeClientEnhanceTag(props.as);
 
   const styles: string[] = [];
   if (reserveHeight) styles.push(`min-height: ${reserveHeight};`);
   if (reserveWidth) styles.push(`min-width: ${reserveWidth};`);
   if (aspectRatio) styles.push(`aspect-ratio: ${aspectRatio};`);
-  const styleAttr = styles.length ? ` style="${styles.join(" ")}"` : "";
+  const styleAttr = styles.length ? ` style="${escapeAttribute(styles.join(" "))}"` : "";
 
   const attrs: string[] = [
     `data-resux-enhancement="${escapeAttribute(name)}"`,
@@ -16791,6 +16799,14 @@ function formatClientVideoSkipDuration(seconds) {
   return Number.isInteger(normalized) ? String(Math.trunc(normalized)) + "s" : String(normalized) + "s";
 }
 
+function normalizeClientEnhanceTag(value) {
+  const candidate = String(value || "section").trim().toLowerCase();
+  if (!candidate || !/^[a-z][a-z0-9-]*$/.test(candidate) || unsafeClientTransitionContainerTags.has(candidate)) {
+    return "section";
+  }
+  return candidate;
+}
+
 function renderClientResuxClientEnhance(node, scope, locals, styleScopeId) {
   const props = {};
   for (const attr of node.attrs) {
@@ -16823,13 +16839,13 @@ function renderClientResuxClientEnhance(node, scope, locals, styleScopeId) {
   const aspectRatio = String(props.aspectRatio || "").trim();
   const noCls = props.noCls === true || props.noCls === "true" || props.noCls === "";
   const demo = String(props.demo || name).trim();
-  const tag = String(props.as || "section").trim();
+  const tag = normalizeClientEnhanceTag(props.as);
 
   const styles = [];
   if (reserveHeight) styles.push("min-height: " + reserveHeight + ";");
   if (reserveWidth) styles.push("min-width: " + reserveWidth + ";");
   if (aspectRatio) styles.push("aspect-ratio: " + aspectRatio + ";");
-  const styleAttr = styles.length ? " style=\"" + styles.join(" ") + "\"" : "";
+  const styleAttr = styles.length ? " style=\"" + escapeAttribute(styles.join(" ")) + "\"" : "";
 
   const attrs = [
     "data-resux-enhancement=\"" + escapeAttribute(name) + "\"",

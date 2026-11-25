@@ -12,6 +12,84 @@ import {
   type ElementTemplateNode,
 } from "resuxjs/runtime";
 
+// Render context shared by the SSR tests.
+function ssrRenderContext(scopeId: string, scope: Record<string, unknown>) {
+  return {
+    scope,
+    scopeId,
+    moduleId: "m0",
+    route: { path: "/", params: {}, query: {} },
+    runtimeConfig: { public: {} },
+    components: {},
+    layouts: {},
+    pageMeta: {}
+  };
+}
+
+// Writes the client runtime + a component module to a temp dir, boots them in
+// a happy-dom window with the given HTML, and returns the scope records. The
+// component source must use __RUNTIME__ as the runtime import specifier.
+async function bootClientComponent(componentSource: string, html: string, scopeIds: string[] = ["s0"]) {
+  const tempDir = path.join(os.tmpdir(), `resux-template-ref-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  await mkdir(tempDir, { recursive: true });
+  const runtimeFile = path.join(tempDir, "runtime-client.mjs");
+  const componentFile = path.join(tempDir, "component.mjs");
+  await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
+  await writeFile(
+    componentFile,
+    componentSource.replace("__RUNTIME__", JSON.stringify(pathToFileURL(runtimeFile).href)),
+    "utf8"
+  );
+
+  const window = new Window({ url: "http://localhost/" });
+  window.document.body.innerHTML = html;
+
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const previousResux = (globalThis as Record<string, unknown>).__RESUX__;
+
+  const scopeStates = Object.fromEntries(
+    scopeIds.map((id) => [id, { id, moduleId: "m0", state: {}, asyncData: {} }])
+  );
+  const route = { path: "/", params: {}, query: {} };
+  Object.assign(globalThis, {
+    document: window.document,
+    window,
+    __RESUX__: { route, scopes: scopeStates, modules: { m0: pathToFileURL(componentFile).href } }
+  });
+
+  const { default: comp } = await import(`${pathToFileURL(componentFile).href}?t=${Date.now()}`);
+  const scopeRecords: Record<string, any> = {};
+  for (const id of scopeIds) {
+    scopeRecords[id] = await comp.createScope(scopeStates[id], route);
+  }
+
+  return {
+    window,
+    comp,
+    scopeRecords,
+    restore: () => Object.assign(globalThis, {
+      document: previousDocument,
+      window: previousWindow,
+      __RESUX__: previousResux
+    })
+  };
+}
+
+// Maps compiled expressions to runnable functions over the given scope values.
+function registeredExpressions(component: { expressions?: { id: string; transformed: string }[] }, scopeValues: Record<string, unknown>) {
+  return Object.fromEntries(
+    (component.expressions ?? []).map((expr) => [
+      expr.id,
+      (scope: Record<string, unknown>) => {
+        const keys = Object.keys(scopeValues);
+        const vals = keys.map((k) => scope[k]);
+        return new Function(...keys, `return (${expr.transformed});`)(...vals);
+      }
+    ])
+  );
+}
+
 describe("template refs resumability", () => {
   it("compiler captures template ref names and sets ref on element nodes", () => {
     const component = compileVueSource(
@@ -63,16 +141,7 @@ const fileInput = ref<HTMLInputElement | null>(null)
 
     const html = await renderTemplateNodesAsync(
       component.template,
-      {
-        scope: {},
-        scopeId: "s0",
-        moduleId: "m0",
-        route: { path: "/", params: {}, query: {} },
-        runtimeConfig: { public: {} },
-        components: {},
-        layouts: {},
-        pageMeta: {}
-      },
+      ssrRenderContext("s0", {}),
       async () => ""
     );
 
@@ -81,15 +150,8 @@ const fileInput = ref<HTMLInputElement | null>(null)
   });
 
   it("client handler resolves template ref to DOM element and executes DOM methods", async () => {
-    const tempDir = path.join(os.tmpdir(), `resux-template-ref-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    await mkdir(tempDir, { recursive: true });
-    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
-    const componentFile = path.join(tempDir, "component.mjs");
-
-    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
-    await writeFile(
-      componentFile,
-      `import { createClientComponent } from ${JSON.stringify(pathToFileURL(runtimeFile).href)};
+    const { window, comp, scopeRecords, restore } = await bootClientComponent(
+      `import { createClientComponent } from __RUNTIME__;
 const __template = [
   {
     type: "element",
@@ -161,78 +223,35 @@ export default createClientComponent({
   handlers: ["openDialog"]
 });
 `,
-      "utf8"
-    );
-
-    const window = new Window({ url: "http://localhost/" });
-    window.document.body.innerHTML = `
-      <div>
+      `<div>
         <input ref="fileInput" data-rx-ref="s0:fileInput" type="file" id="target-file" />
         <button id="btn-trigger" data-rx-on-click="s0:m0:openDialog">Open File</button>
         <span id="ref-status" data-rx-text="s0:b0">unclicked</span>
-      </div>
-    `;
+      </div>`
+    );
 
     let clickCalled = false;
     const inputElement = window.document.getElementById("target-file");
     if (inputElement) {
-      inputElement.click = () => {
+      (inputElement as HTMLInputElement).click = () => {
         clickCalled = true;
       };
     }
 
-    const previousDocument = globalThis.document;
-    const previousWindow = globalThis.window;
-    const previousResux = globalThis.__RESUX__;
-
     try {
-      Object.assign(globalThis, {
-        document: window.document,
-        window,
-        __RESUX__: {
-          route: { path: "/", params: {}, query: {} },
-          scopes: {
-            s0: {
-              id: "s0",
-              moduleId: "m0",
-              state: {},
-              asyncData: {}
-            }
-          },
-          modules: {
-            m0: pathToFileURL(componentFile).href
-          }
-        }
-      });
+      expect(scopeRecords.s0.scope.fileInput.value).toBe(inputElement);
 
-      const { default: comp } = await import(`${pathToFileURL(componentFile).href}?t=${Date.now()}`);
-      const scopeRecord = await comp.createScope(globalThis.__RESUX__.scopes.s0, globalThis.__RESUX__.route);
-
-      expect(scopeRecord.scope.fileInput.value).toBe(inputElement);
-
-      const patches = await comp.run(scopeRecord, "openDialog", { target: window.document.getElementById("btn-trigger") });
-      expect(scopeRecord.scope.inputStatus.value).toBe("resolved");
+      await comp.run(scopeRecords.s0, "openDialog", { target: window.document.getElementById("btn-trigger") });
+      expect(scopeRecords.s0.scope.inputStatus.value).toBe("resolved");
       expect(clickCalled).toBe(true);
     } finally {
-      Object.assign(globalThis, {
-        document: previousDocument,
-        window: previousWindow,
-        __RESUX__: previousResux
-      });
+      restore();
     }
   });
 
   it("returns null and emits dev warning when template ref is not found in DOM", async () => {
-    const tempDir = path.join(os.tmpdir(), `resux-template-ref-missing-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    await mkdir(tempDir, { recursive: true });
-    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
-    const componentFile = path.join(tempDir, "component.mjs");
-
-    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
-    await writeFile(
-      componentFile,
-      `import { createClientComponent } from ${JSON.stringify(pathToFileURL(runtimeFile).href)};
-const __template = [];
+    const { scopeRecords, restore } = await bootClientComponent(
+      `import { createClientComponent } from __RUNTIME__;
 async function __rx_setup(__ctx) {
   const { ref } = __ctx;
   const missingEl = ref(null);
@@ -246,70 +265,30 @@ export default createClientComponent({
   name: "MissingComponent",
   file: "MissingComponent.vue",
   script: __rx_setup,
-  template: __template,
+  template: [],
   templateRefs: ["missingEl"],
   handlers: ["checkEl"]
 });
 `,
-      "utf8"
+      `<div>Empty</div>`
     );
 
-    const window = new Window({ url: "http://localhost/" });
-    window.document.body.innerHTML = `<div>Empty</div>`;
-
-    const previousDocument = globalThis.document;
-    const previousWindow = globalThis.window;
-    const previousResux = globalThis.__RESUX__;
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
     try {
-      Object.assign(globalThis, {
-        document: window.document,
-        window,
-        __RESUX__: {
-          route: { path: "/", params: {}, query: {} },
-          scopes: {
-            s0: {
-              id: "s0",
-              moduleId: "m0",
-              state: {},
-              asyncData: {}
-            }
-          },
-          modules: {
-            m0: pathToFileURL(componentFile).href
-          }
-        }
-      });
-
-      const { default: comp } = await import(`${pathToFileURL(componentFile).href}?t=${Date.now()}`);
-      const scopeRecord = await comp.createScope(globalThis.__RESUX__.scopes.s0, globalThis.__RESUX__.route);
-
-      const val = scopeRecord.scope.missingEl.value;
+      const val = scopeRecords.s0.scope.missingEl.value;
       expect(val).toBeNull();
       expect(warnSpy).toHaveBeenCalledWith(
         '[resux:template-ref] Template ref "missingEl" could not be resolved in the DOM for component <MissingComponent>. Ensure the element is rendered and not removed by v-if.'
       );
     } finally {
       warnSpy.mockRestore();
-      Object.assign(globalThis, {
-        document: previousDocument,
-        window: previousWindow,
-        __RESUX__: previousResux
-      });
+      restore();
     }
   });
 
   it("dynamically resolves template ref as elements are added and removed (v-if lifecycle)", async () => {
-    const tempDir = path.join(os.tmpdir(), `resux-template-ref-dynamic-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    await mkdir(tempDir, { recursive: true });
-    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
-    const componentFile = path.join(tempDir, "component.mjs");
-
-    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
-    await writeFile(
-      componentFile,
-      `import { createClientComponent } from ${JSON.stringify(pathToFileURL(runtimeFile).href)};
+    const { window, scopeRecords, restore } = await bootClientComponent(
+      `import { createClientComponent } from __RUNTIME__;
 async function __rx_setup(__ctx) {
   const { ref } = __ctx;
   const targetEl = ref(null);
@@ -325,36 +304,12 @@ export default createClientComponent({
   handlers: []
 });
 `,
-      "utf8"
+      `<div id="app"></div>`
     );
 
-    const window = new Window({ url: "http://localhost/" });
-    window.document.body.innerHTML = `<div id="app"></div>`;
-
-    const previousDocument = globalThis.document;
-    const previousWindow = globalThis.window;
-    const previousResux = globalThis.__RESUX__;
-
     try {
-      Object.assign(globalThis, {
-        document: window.document,
-        window,
-        __RESUX__: {
-          route: { path: "/", params: {}, query: {} },
-          scopes: {
-            s0: { id: "s0", moduleId: "m0", state: {}, asyncData: {} }
-          },
-          modules: {
-            m0: pathToFileURL(componentFile).href
-          }
-        }
-      });
-
-      const { default: comp } = await import(`${pathToFileURL(componentFile).href}?t=${Date.now()}`);
-      const scopeRecord = await comp.createScope(globalThis.__RESUX__.scopes.s0, globalThis.__RESUX__.route);
-
       // 1. Initially element is not mounted in DOM
-      expect(scopeRecord.scope.targetEl.value).toBeNull();
+      expect(scopeRecords.s0.scope.targetEl.value).toBeNull();
 
       // 2. Element is mounted into DOM (e.g. after v-if becomes true)
       const inputEl = window.document.createElement("input");
@@ -362,32 +317,21 @@ export default createClientComponent({
       window.document.getElementById("app")?.appendChild(inputEl);
 
       // Now targetEl.value must dynamically return the newly mounted element!
-      expect(scopeRecord.scope.targetEl.value).toBe(inputEl);
+      expect(scopeRecords.s0.scope.targetEl.value).toBe(inputEl);
 
       // 3. Element is unmounted from DOM (e.g. v-if becomes false)
       inputEl.remove();
 
       // Now targetEl.value must dynamically return null again!
-      expect(scopeRecord.scope.targetEl.value).toBeNull();
+      expect(scopeRecords.s0.scope.targetEl.value).toBeNull();
     } finally {
-      Object.assign(globalThis, {
-        document: previousDocument,
-        window: previousWindow,
-        __RESUX__: previousResux
-      });
+      restore();
     }
   });
 
   it("resolves multiple elements when ref is used on a list", async () => {
-    const tempDir = path.join(os.tmpdir(), `resux-template-ref-list-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    await mkdir(tempDir, { recursive: true });
-    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
-    const componentFile = path.join(tempDir, "component.mjs");
-
-    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
-    await writeFile(
-      componentFile,
-      `import { createClientComponent } from ${JSON.stringify(pathToFileURL(runtimeFile).href)};
+    const { scopeRecords, restore } = await bootClientComponent(
+      `import { createClientComponent } from __RUNTIME__;
 async function __rx_setup(__ctx) {
   const { ref } = __ctx;
   const items = ref([]);
@@ -403,52 +347,22 @@ export default createClientComponent({
   handlers: []
 });
 `,
-      "utf8"
-    );
-
-    const window = new Window({ url: "http://localhost/" });
-    window.document.body.innerHTML = `
-      <ul>
+      `<ul>
         <li data-rx-ref="s0:items">Item 1</li>
         <li data-rx-ref="s0:items">Item 2</li>
         <li data-rx-ref="s0:items">Item 3</li>
-      </ul>
-    `;
-
-    const previousDocument = globalThis.document;
-    const previousWindow = globalThis.window;
-    const previousResux = globalThis.__RESUX__;
+      </ul>`
+    );
 
     try {
-      Object.assign(globalThis, {
-        document: window.document,
-        window,
-        __RESUX__: {
-          route: { path: "/", params: {}, query: {} },
-          scopes: {
-            s0: { id: "s0", moduleId: "m0", state: {}, asyncData: {} }
-          },
-          modules: {
-            m0: pathToFileURL(componentFile).href
-          }
-        }
-      });
-
-      const { default: comp } = await import(`${pathToFileURL(componentFile).href}?t=${Date.now()}`);
-      const scopeRecord = await comp.createScope(globalThis.__RESUX__.scopes.s0, globalThis.__RESUX__.route);
-
-      const elements = scopeRecord.scope.items.value;
+      const elements = scopeRecords.s0.scope.items.value;
       expect(Array.isArray(elements)).toBe(true);
       expect(elements.length).toBe(3);
       expect(elements[0].textContent).toBe("Item 1");
       expect(elements[1].textContent).toBe("Item 2");
       expect(elements[2].textContent).toBe("Item 3");
     } finally {
-      Object.assign(globalThis, {
-        document: previousDocument,
-        window: previousWindow,
-        __RESUX__: previousResux
-      });
+      restore();
     }
   });
 
@@ -487,29 +401,10 @@ const active = true
       quotedEl: ref(null),
       boundEl: ref(null),
     };
-    const rxExpressions = Object.fromEntries(
-      (component.expressions ?? []).map((expr) => [
-        expr.id,
-        (scope: Record<string, unknown>) => {
-          const keys = Object.keys(scopeValues);
-          const vals = keys.map((k) => scope[k]);
-          return new Function(...keys, `return (${expr.transformed});`)(...vals);
-        }
-      ])
-    );
 
     const html = await renderTemplateNodesAsync(
       component.template,
-      {
-        scope: { ...scopeValues, __rx_expressions: rxExpressions },
-        scopeId: "s1",
-        moduleId: "m0",
-        route: { path: "/", params: {}, query: {} },
-        runtimeConfig: { public: {} },
-        components: {},
-        layouts: {},
-        pageMeta: {}
-      },
+      ssrRenderContext("s1", { ...scopeValues, __rx_expressions: registeredExpressions(component, scopeValues) }),
       async () => ""
     );
     expect(html).toContain('ref="quotedEl" data-rx-ref="s1:quotedEl">Quoted</div>');
@@ -520,15 +415,8 @@ const active = true
   });
 
   it("isolates template ref resolution across multiple component scopes", async () => {
-    const tempDir = path.join(os.tmpdir(), `resux-template-ref-multi-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    await mkdir(tempDir, { recursive: true });
-    const runtimeFile = path.join(tempDir, "runtime-client.mjs");
-    const componentFile = path.join(tempDir, "component.mjs");
-
-    await writeFile(runtimeFile, getClientRuntimeSource(), "utf8");
-    await writeFile(
-      componentFile,
-      `import { createClientComponent } from ${JSON.stringify(pathToFileURL(runtimeFile).href)};
+    const { scopeRecords, restore } = await bootClientComponent(
+      `import { createClientComponent } from __RUNTIME__;
 async function __rx_setup(__ctx) {
   const { ref } = __ctx;
   const box = ref(null);
@@ -544,47 +432,173 @@ export default createClientComponent({
   handlers: []
 });
 `,
-      "utf8"
+      `<div id="box-0" data-rx-ref="s0:box">First</div>
+      <div id="box-1" data-rx-ref="s1:box">Second</div>`,
+      ["s0", "s1"]
     );
 
-    const window = new Window({ url: "http://localhost/" });
-    window.document.body.innerHTML = `
-      <div id="box-0" data-rx-ref="s0:box">First</div>
-      <div id="box-1" data-rx-ref="s1:box">Second</div>
-    `;
+    try {
+      expect(scopeRecords.s0.scope.box.value?.id).toBe("box-0");
+      expect(scopeRecords.s1.scope.box.value?.id).toBe("box-1");
+    } finally {
+      restore();
+    }
+  });
+});
 
-    const previousDocument = globalThis.document;
-    const previousWindow = globalThis.window;
-    const previousResux = globalThis.__RESUX__;
+describe("template refs review fixes", () => {
+  it("media components mark the resolved dynamic ref value, not the identifier", async () => {
+    const component = compileVueSource(
+      `<script setup lang="ts">
+const refName = "videoEl"
+</script>
+<template>
+  <ResuxVideo :ref="refName" src="/v.mp4" />
+</template>`,
+      {
+        file: "MediaRef.vue",
+        id: "m0",
+        name: "MediaRef"
+      }
+    );
+
+    const scopeValues: Record<string, unknown> = { refName: "videoEl" };
+    const html = await renderTemplateNodesAsync(
+      component.template,
+      ssrRenderContext("s0", { ...scopeValues, __rx_expressions: registeredExpressions(component, scopeValues) }),
+      async () => ""
+    );
+    expect(html).toContain('data-rx-ref="s0:videoEl"');
+    expect(html).not.toContain('data-rx-ref="s0:refName"');
+  });
+
+  it("re-runs setup-time effects once template refs resolve against the DOM", async () => {
+    const { scopeRecords, restore } = await bootClientComponent(
+      `import { createClientComponent } from __RUNTIME__;
+async function __rx_setup(__ctx) {
+  const { ref, watchEffect } = __ctx;
+  const fileInput = ref(null);
+  const runs = ref(0);
+  const seen = ref("none");
+  watchEffect(() => {
+    runs.value = runs.value + 1;
+    seen.value = fileInput.value && fileInput.value.id === "target-file" ? "element" : "null";
+  });
+  return { fileInput, runs, seen, __rx_expressions: {} };
+}
+export default createClientComponent({
+  id: "m0",
+  name: "SetupEffect",
+  file: "SetupEffect.vue",
+  script: __rx_setup,
+  template: [],
+  templateRefs: ["fileInput"],
+  handlers: []
+});
+`,
+      `<input data-rx-ref="s0:fileInput" id="target-file" />`
+    );
 
     try {
-      Object.assign(globalThis, {
-        document: window.document,
-        window,
-        __RESUX__: {
-          route: { path: "/", params: {}, query: {} },
-          scopes: {
-            s0: { id: "s0", moduleId: "m0", state: {}, asyncData: {} },
-            s1: { id: "s1", moduleId: "m0", state: {}, asyncData: {} }
-          },
-          modules: {
-            m0: pathToFileURL(componentFile).href
-          }
-        }
-      });
-
-      const { default: comp } = await import(`${pathToFileURL(componentFile).href}?t=${Date.now()}`);
-      const scope0 = await comp.createScope(globalThis.__RESUX__.scopes.s0, globalThis.__RESUX__.route);
-      const scope1 = await comp.createScope(globalThis.__RESUX__.scopes.s1, globalThis.__RESUX__.route);
-
-      expect(scope0.scope.box.value?.id).toBe("box-0");
-      expect(scope1.scope.box.value?.id).toBe("box-1");
+      expect(scopeRecords.s0.scope.seen.value).toBe("element");
+      expect(scopeRecords.s0.scope.runs.value).toBeGreaterThanOrEqual(2);
     } finally {
-      Object.assign(globalThis, {
-        document: previousDocument,
-        window: previousWindow,
-        __RESUX__: previousResux
-      });
+      restore();
+    }
+  });
+
+  it("keeps v-for template refs as arrays even with a single match", async () => {
+    const component = compileVueSource(
+      `<script setup lang="ts">
+const items = ref(["a"])
+const itemEls = ref(null)
+</script>
+<template>
+  <ul><li v-for="item in items" ref="itemEls">{{ item }}</li></ul>
+</template>`,
+      {
+        file: "ForRef.vue",
+        id: "m0",
+        name: "ForRef"
+      }
+    );
+    expect(component.templateForRefs).toEqual(["itemEls"]);
+    expect(component.clientSource).toContain('templateForRefs: ["itemEls"]');
+
+    const { window, scopeRecords, restore } = await bootClientComponent(
+      `import { createClientComponent } from __RUNTIME__;
+async function __rx_setup(__ctx) {
+  const { ref } = __ctx;
+  const itemEls = ref(null);
+  return { itemEls, __rx_expressions: {} };
+}
+export default createClientComponent({
+  id: "m0",
+  name: "ForRefComponent",
+  file: "ForRefComponent.vue",
+  script: __rx_setup,
+  template: [],
+  templateRefs: ["itemEls"],
+  templateForRefs: ["itemEls"],
+  handlers: []
+});
+`,
+      `<ul><li data-rx-ref="s0:itemEls" id="only">a</li></ul>`
+    );
+
+    try {
+      const value = scopeRecords.s0.scope.itemEls.value;
+      expect(Array.isArray(value)).toBe(true);
+      expect(value).toHaveLength(1);
+      expect(value[0]).toBe(window.document.getElementById("only"));
+    } finally {
+      restore();
+    }
+  });
+
+  it("updates data-rx-ref patches when a dynamic ref changes", async () => {
+    const { comp, scopeRecords, restore } = await bootClientComponent(
+      `import { createClientComponent } from __RUNTIME__;
+const __template = [
+  {
+    type: "element",
+    tag: "input",
+    attrs: [
+      { kind: "static", name: "id", value: "target-file" },
+      { kind: "dynamic", name: "ref", value: "currentRef", bindingId: "b1" }
+    ],
+    events: [],
+    children: []
+  }
+];
+async function __rx_setup(__ctx) {
+  const { ref } = __ctx;
+  const currentRef = ref("first");
+  const first = ref(null);
+  const second = ref(null);
+  function swap() { currentRef.value = "second"; }
+  return { currentRef, first, second, swap, __rx_expressions: { currentRef: (scope) => scope.currentRef.value } };
+}
+export default createClientComponent({
+  id: "m0",
+  name: "DynamicRefSwap",
+  file: "DynamicRefSwap.vue",
+  script: __rx_setup,
+  template: __template,
+  templateRefs: ["first", "second"],
+  handlers: ["swap"]
+});
+`,
+      `<input id="target-file" data-rx-ref="s0:first" data-rx-attr-b1="s0:b1" />`
+    );
+
+    try {
+      const patches = await comp.run(scopeRecords.s0, "swap", {});
+      const refPatch = (patches || []).find((patch: { type: string; attr?: string }) => patch.type === "attr" && patch.attr === "data-rx-ref");
+      expect(refPatch).toBeTruthy();
+      expect(refPatch.value).toBe("s0:second");
+    } finally {
+      restore();
     }
   });
 });

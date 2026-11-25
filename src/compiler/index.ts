@@ -14,6 +14,7 @@ import type { ResuxHooks } from "../core/hooks.js";
 import { ResuxModuleContainer, type ResuxModuleContext as CoreResuxModuleContext, type ResuxModuleContributions } from "../core/module-container.js";
 import { buildLocalePath, normalizeI18nRuntimeConfig, type ResuxI18nRuntimeConfig } from "../i18n/shared.js";
 import { withResuxKitContext } from "../kit/index.js";
+import { isPathWithinBoundary } from "../security/path-boundary.js";
 import {
   getClientRuntimeSource,
   type ComponentStyle,
@@ -3262,17 +3263,14 @@ function readInlinePublicCss(appRoot: string, href: string, maxBytes: number): s
 
   const publicRoot = path.resolve(appRoot, "public");
   const staticRoot = path.resolve(appRoot, "static");
-  const relativePath = pathname.replace(/^\/+/, "");
+  const relativePath = pathname.replace(/^[/\\]+/, "");
   const candidates = [
-    path.resolve(publicRoot, relativePath),
-    path.resolve(staticRoot, relativePath),
+    { root: publicRoot, candidate: path.resolve(publicRoot, relativePath) },
+    { root: staticRoot, candidate: path.resolve(staticRoot, relativePath) },
   ];
 
-  for (const candidate of candidates) {
-    const allowedRoot = candidate.startsWith(publicRoot + path.sep) ? publicRoot
-      : candidate.startsWith(staticRoot + path.sep) ? staticRoot
-        : null;
-    if (!allowedRoot || !existsSync(candidate)) {
+  for (const { root, candidate } of candidates) {
+    if (!isPathWithinBoundary(root, candidate) || !existsSync(candidate)) {
       continue;
     }
     const css = ts.sys.readFile(candidate);

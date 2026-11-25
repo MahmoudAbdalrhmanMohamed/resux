@@ -118,6 +118,9 @@ describe("create app", () => {
       expect(envTypes).toContain("resuxjs/globals");
       expect(appTypes).toContain("resuxjs/globals");
       expect(npmrc).toContain("engine-strict=true");
+      // default template includes vitest ^4: legacy peer resolution must be
+      // enabled so npm 10.9.x (Node 22 floor) does not crash on install
+      expect(npmrc).toContain("legacy-peer-deps=true");
       expect(envExample).toContain("APP_ORIGIN=");
       expect(gitignore).toContain(".resux");
       expect(gitignore).toContain(".resux-nitro");

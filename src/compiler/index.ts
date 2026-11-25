@@ -52,6 +52,7 @@ export interface CompiledComponent {
   clientSource: string;
   template: TemplateNode[];
   templateRefs?: string[];
+  templateForRefs?: string[];
   handlers: string[];
   styles: ComponentStyle[];
   styleScopeId?: string;
@@ -1021,6 +1022,7 @@ export function compileVueSource(source: string, options: { file: string; id: st
     file: options.file,
     template: template.nodes,
     templateRefs: template.templateRefs,
+    templateForRefs: template.templateForRefs,
     analysis,
     styles: compiledStyles.styles,
     styleScopeId: compiledStyles.styleScopeId,
@@ -1034,6 +1036,7 @@ export function compileVueSource(source: string, options: { file: string; id: st
     file: options.file,
     template: template.nodes,
     templateRefs: template.templateRefs,
+    templateForRefs: template.templateForRefs,
     analysis,
     styles: compiledStyles.styles,
     styleScopeId: compiledStyles.styleScopeId,
@@ -1050,6 +1053,7 @@ export function compileVueSource(source: string, options: { file: string; id: st
     clientSource,
     template: template.nodes,
     templateRefs: template.templateRefs,
+    templateForRefs: template.templateForRefs,
     handlers: [...new Set(template.handlers.map((event) => event.handler))],
     styles: compiledStyles.styles,
     styleScopeId: compiledStyles.styleScopeId,
@@ -1242,6 +1246,24 @@ function readRuntimeI18nConfig(runtimeConfig: Record<string, unknown>): ResuxI18
   return normalizeI18nRuntimeConfig(i18n);
 }
 
+// Refs inside v-for subtrees resolve to one element per iteration, so they
+// must always read back as an array, even for a single rendered item.
+function collectTemplateForRefs(nodes: TemplateNode[], insideFor = false, out: Set<string> = new Set<string>()): Set<string> {
+  for (const node of nodes) {
+    if (!node || node.type !== "element") {
+      continue;
+    }
+    const nowInsideFor = insideFor || Boolean(node.for);
+    if (nowInsideFor && node.ref) {
+      out.add(node.ref);
+    }
+    if (Array.isArray(node.children)) {
+      collectTemplateForRefs(node.children, nowInsideFor, out);
+    }
+  }
+  return out;
+}
+
 function compileTemplate(
   template: string,
   file: string,
@@ -1253,6 +1275,7 @@ function compileTemplate(
   expressions: { id: string; original: string; transformed: string; locals: string[] }[];
   allLocals: string[];
   templateRefs: string[];
+  templateForRefs: string[];
 } {
   const ast = parseTemplate(template, { comments: false });
   const state: CompileTemplateState = {
@@ -1275,7 +1298,8 @@ function compileTemplate(
     inlineHandlers: state.inlineHandlers,
     expressions: state.expressions,
     allLocals: Array.from(state.allLocals),
-    templateRefs: Array.from(state.templateRefs)
+    templateRefs: Array.from(state.templateRefs),
+    templateForRefs: Array.from(collectTemplateForRefs(nodes))
   };
 }
 
@@ -2791,6 +2815,7 @@ function createComponentModuleSource(options: {
   file: string;
   template: TemplateNode[];
   templateRefs?: string[];
+  templateForRefs?: string[];
   analysis: ScriptAnalysis;
   styles: ComponentStyle[];
   styleScopeId?: string;
@@ -2862,6 +2887,7 @@ function createComponentModuleSource(options: {
     `script: __rx_setup,`,
     `template: __template,`,
     `templateRefs: ${JSON.stringify(options.templateRefs ?? [])},`,
+    `templateForRefs: ${JSON.stringify(options.templateForRefs ?? [])}`,
     `handlers: ${JSON.stringify([...options.analysis.handlerNames])},`,
     `styles: ${JSON.stringify(options.styles)},`,
     `styleScopeId: ${JSON.stringify(options.styleScopeId)},`,

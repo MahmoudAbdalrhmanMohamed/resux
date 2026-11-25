@@ -609,6 +609,7 @@ export interface ComponentDefinition {
   script: (ctx: SetupContext) => Record<string, unknown> | Promise<Record<string, unknown>>;
   template: TemplateNode[];
   templateRefs?: string[];
+  templateForRefs?: string[];
   handlers: string[];
   styles?: ComponentStyle[];
   styleScopeId?: string;
@@ -5472,8 +5473,9 @@ function renderResuxVideo(
   if (styleParts.length > 0) {
     attrs.push(`style="${escapeAttribute(styleParts.join("; "))}"`);
   }
-  if (node.ref) {
-    attrs.push(`data-rx-ref="${escapeAttribute(`${context.scopeId}:${node.ref}`)}"`);
+  const videoRef = readStringProp(props.ref) ?? node.ref;
+  if (videoRef) {
+    attrs.push(`data-rx-ref="${escapeAttribute(`${context.scopeId}:${videoRef}`)}"`);
   }
   appendStyleScopeAttribute(attrs, context.styleScopeId);
   const attrText = attrs.length ? ` ${attrs.join(" ")}` : "";
@@ -5891,8 +5893,9 @@ function resolveResuxImageRenderInput(
     || [1, 2];
   const widths = parseImageNumberList(props.widths) ?? [];
   const passthrough = collectResuxImagePassthroughAttributes(props);
-  if (node.ref) {
-    passthrough["data-rx-ref"] = `${context.scopeId}:${node.ref}`;
+  const imageRef = readStringProp(props.ref) ?? node.ref;
+  if (imageRef) {
+    passthrough["data-rx-ref"] = `${context.scopeId}:${imageRef}`;
   }
   const src = readStringProp(props.src)
     ?? readStringProp(props.fallbackSrc ?? props.fallback)
@@ -8238,12 +8241,23 @@ function collectPatches(
     } else if (node.tag !== "ResuxImg" && node.tag !== "ResuxPicture" && node.tag !== "ResuxVideo") {
       for (const attr of node.attrs) {
         if (attr.kind === "dynamic" && attr.bindingId) {
+          const attrName = nativeAttributeName(node, attr.name);
+          const attrValue = evaluateExpression(attr.value, scope, locals);
           patches.push({
             type: "attr",
             id: attr.bindingId,
-            attr: nativeAttributeName(node, attr.name),
-            value: stringifyAttributeValue(nativeAttributeName(node, attr.name), evaluateExpression(attr.value, scope, locals))
+            attr: attrName,
+            value: stringifyAttributeValue(attrName, attrValue)
           });
+          if (attrName === "ref") {
+            const refText = typeof attrValue === "string" ? attrValue.trim() : "";
+            patches.push({
+              type: "attr",
+              id: attr.bindingId,
+              attr: "data-rx-ref",
+              value: refText ? `${scopeId}:${refText}` : ""
+            });
+          }
         }
       }
     }
@@ -11188,6 +11202,7 @@ function hashFetchIdentity(value) {
 function bindTemplateRefs(scope, definition, scopeId) {
   if (!scope || typeof scope !== "object") return;
   const refNames = new Set(Array.isArray(definition.templateRefs) ? definition.templateRefs : []);
+  const forRefNames = new Set(Array.isArray(definition.templateForRefs) ? definition.templateForRefs : []);
   if (Array.isArray(definition.template)) {
     const collect = (nodes) => {
       for (const n of nodes) {
@@ -11248,7 +11263,7 @@ function bindTemplateRefs(scope, definition, scopeId) {
         if (typeof document !== "undefined" && typeof document.querySelectorAll === "function") {
           elements = Array.from(document.querySelectorAll(selector));
         }
-        if (Array.isArray(initialValue)) {
+        if (Array.isArray(initialValue) || forRefNames.has(refName)) {
           warnedMissing = false;
           return elements;
         }
@@ -11280,6 +11295,11 @@ function bindTemplateRefs(scope, definition, scopeId) {
       configurable: true,
       enumerable: true
     });
+    // Effects created during setup read the ref before this binding existed
+    // and saw null. Re-run them now that reads resolve against the live DOM.
+    if (target.dep) {
+      __rxTriggerEffects(target.dep);
+    }
   }
 }
 
@@ -16561,7 +16581,12 @@ function collectPatches(nodes, scope, locals, patches, styleScopeId, scopeId, mo
       for (const attr of node.attrs) {
         if (attr.kind === "dynamic" && attr.bindingId) {
           const attrName = nativeAttributeName(node, attr.name);
-          patches.push({ type: "attr", id: attr.bindingId, attr: attrName, value: stringifyAttributeValue(attrName, evaluateExpression(attr.value, scope, locals)) });
+          const attrValue = evaluateExpression(attr.value, scope, locals);
+          patches.push({ type: "attr", id: attr.bindingId, attr: attrName, value: stringifyAttributeValue(attrName, attrValue) });
+          if (attrName === "ref") {
+            const refText = typeof attrValue === "string" ? attrValue.trim() : "";
+            patches.push({ type: "attr", id: attr.bindingId, attr: "data-rx-ref", value: refText ? scopeId + ":" + refText : "" });
+          }
         }
       }
     }
@@ -17341,8 +17366,9 @@ function renderClientResuxVideo(node, scope, locals, styleScopeId, scopeId) {
   if (styleParts.length > 0) {
     attrs.push('style="' + escapeAttribute(styleParts.join("; ")) + '"');
   }
-  if (node.ref && scopeId) {
-    attrs.push('data-rx-ref="' + escapeAttribute(scopeId + ':' + node.ref) + '"');
+  const clientVideoRef = readClientStringProp(props.ref) || node.ref;
+  if (clientVideoRef && scopeId) {
+    attrs.push('data-rx-ref="' + escapeAttribute(scopeId + ':' + clientVideoRef) + '"');
   }
   if (styleScopeId) {
     attrs.push(styleScopeId + '=""');
@@ -17722,7 +17748,7 @@ function resolveClientImageRenderInput(node, scope, locals, scopeId) {
     modifiers,
     attrs: Object.assign(
       collectClientImageAttrs(props),
-      node.ref && scopeId ? { "data-rx-ref": scopeId + ":" + node.ref } : {}
+      (readClientStringProp(props.ref) || node.ref) && scopeId ? { "data-rx-ref": scopeId + ":" + (readClientStringProp(props.ref) || node.ref) } : {}
     ),
     preload,
     deferLazy,

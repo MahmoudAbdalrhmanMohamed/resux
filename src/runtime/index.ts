@@ -7594,12 +7594,14 @@ function mergeHead(entries: HeadEntry[]): HeadEntry {
     bodyAttrs: {}
   };
 
+  const metaSources: Array<Array<Record<string, string>>> = [];
+
   for (const entry of entries) {
     if (entry.title) {
       merged.title = entry.title;
     }
     if (entry.meta) {
-      merged.meta!.push(...entry.meta);
+      metaSources.push(entry.meta);
     }
     if (entry.link) {
       merged.link!.push(...entry.link);
@@ -7627,9 +7629,55 @@ function mergeHead(entries: HeadEntry[]): HeadEntry {
     }
   }
 
+  merged.meta = dedupeHeadMeta(metaSources);
   merged.link = sortHeadLinksForPriority(merged.link ?? []);
 
   return merged;
+}
+
+// Meta tags with a unique key (charset, or a name / property / http-equiv
+// value) can be overridden across head entries, so a page can replace meta
+// inherited from a layout: the LAST head entry that carries a given key owns
+// it, and earlier entries' tags with that key are dropped. Repeated tags
+// inside a single entry stay untouched because they are intentional (for
+// example an og:image array from one useSeoMeta call). Tags without a unique
+// key are kept as-is, and relative order is preserved.
+function headMetaDedupKey(meta: Record<string, string>): string | undefined {
+  if (meta.charset !== undefined) {
+    return "charset";
+  }
+  const keyedAttributes = ["name", "property", "http-equiv", "httpEquiv"] as const;
+  for (const attribute of keyedAttributes) {
+    const value = meta[attribute];
+    if (typeof value === "string" && value.trim() !== "") {
+      const prefix = attribute === "httpEquiv" ? "http-equiv" : attribute;
+      return `${prefix}:${value.trim().toLowerCase()}`;
+    }
+  }
+  return undefined;
+}
+
+function dedupeHeadMeta(sources: Array<Array<Record<string, string>>>): Array<Record<string, string>> {
+  const lastOwnerByKey = new Map<string, number>();
+  sources.forEach((source, sourceIndex) => {
+    for (const meta of source) {
+      const key = headMetaDedupKey(meta);
+      if (key !== undefined) {
+        lastOwnerByKey.set(key, sourceIndex);
+      }
+    }
+  });
+
+  const output: Array<Record<string, string>> = [];
+  sources.forEach((source, sourceIndex) => {
+    for (const meta of source) {
+      const key = headMetaDedupKey(meta);
+      if (key === undefined || lastOwnerByKey.get(key) === sourceIndex) {
+        output.push(meta);
+      }
+    }
+  });
+  return output;
 }
 
 function isCriticalHeadMeta(meta: Record<string, unknown>): boolean {

@@ -409,46 +409,7 @@ describe("runtime SSR", () => {
     expect(result.html).not.toContain('hidden="false"');
   });
 
-  it("treats camelCase <Transition> and <TransitionGroup> tags as transition boundaries", async () => {
-    const camelGroupPage: ComponentDefinition = defineComponent({
-      id: "m-transition-group-camel-ssr",
-      name: "TransitionGroupCamelSsrPage",
-      file: "TransitionGroupCamelSsrPage.vue",
-      handlers: [],
-      async script(ctx) {
-        const items = ctx.useState("items", () => [1, 2]);
-        return { items };
-      },
-      template: [{
-        type: "element",
-        tag: "TransitionGroup",
-        attrs: [
-          { kind: "static", name: "name", value: "list" },
-          { kind: "static", name: "tag", value: "ul" }
-        ],
-        events: [],
-        children: [{
-          type: "element",
-          tag: "li",
-          attrs: [{ kind: "dynamic", name: "key", value: "item" }],
-          events: [],
-          for: { source: "items.value", value: "item", blockId: "b-list" },
-          children: [{ type: "interpolation", expression: "item", bindingId: "b-item" }],
-        }],
-      }],
-    });
-
-    const groupResult = await renderApp({
-      page: camelGroupPage,
-      route: { path: "/", params: {}, query: {} },
-    });
-
-    expect(groupResult.html).toContain('<ul data-rx-transition="list" data-rx-transition-group="true" data-rx-block="s0:b-list">');
-    expect(groupResult.html).toContain('<li key="1">');
-    expect(groupResult.html).toContain('<li key="2">');
-    expect(groupResult.html).not.toContain("<TransitionGroup");
-    expect(groupResult.html).not.toContain("<transition-group");
-
+  it("treats a camelCase <Transition> tag as a transition boundary", async () => {
     const camelPage: ComponentDefinition = defineComponent({
       id: "m-transition-camel-ssr",
       name: "TransitionCamelSsrPage",
@@ -484,7 +445,7 @@ describe("runtime SSR", () => {
     expect(getClientRuntimeSource()).toContain("normalizeTransitionBoundaryTagName");
   });
 
-  it("honors TransitionGroup tag and keeps a direct reactive list marker on the semantic container", async () => {
+  it.each(["transition-group", "TransitionGroup"])("honors %s tag and keeps a direct reactive list marker on the semantic container", async (groupTag) => {
     const page: ComponentDefinition = defineComponent({
       id: "m-transition-group-ssr",
       name: "TransitionGroupSsrPage",
@@ -496,7 +457,7 @@ describe("runtime SSR", () => {
       },
       template: [{
         type: "element",
-        tag: "transition-group",
+        tag: groupTag,
         attrs: [
           { kind: "static", name: "name", value: "list" },
           { kind: "static", name: "tag", value: "ul" }
@@ -522,6 +483,8 @@ describe("runtime SSR", () => {
     expect(result.html).toContain('<li key="1">');
     expect(result.html).toContain('<li key="2">');
     expect(result.html).not.toContain('<span data-rx-block="s0:b-list"');
+    expect(result.html).not.toContain("<TransitionGroup");
+    expect(result.html).not.toContain("<transition-group");
     expect(getClientRuntimeSource()).toContain("style.animationIterationCount");
   });
 

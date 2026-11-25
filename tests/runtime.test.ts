@@ -474,17 +474,14 @@ describe("runtime SSR", () => {
       }],
     });
 
-    const result = await renderApp({
-      page,
-      route: { path: "/", params: {}, query: {} },
-    });
+    const groupResult = await renderApp({ page, route: { path: "/", params: {}, query: {} } });
 
-    expect(result.html).toContain('<ul data-rx-transition="list" data-rx-transition-group="true" data-rx-block="s0:b-list">');
-    expect(result.html).toContain('<li key="1">');
-    expect(result.html).toContain('<li key="2">');
-    expect(result.html).not.toContain('<span data-rx-block="s0:b-list"');
-    expect(result.html).not.toContain("<TransitionGroup");
-    expect(result.html).not.toContain("<transition-group");
+    expect(groupResult.html).toContain('<ul data-rx-transition="list" data-rx-transition-group="true" data-rx-block="s0:b-list">');
+    expect(groupResult.html).toContain('<li key="1">');
+    expect(groupResult.html).toContain('<li key="2">');
+    expect(groupResult.html).not.toContain('<span data-rx-block="s0:b-list"');
+    expect(groupResult.html).not.toContain("<TransitionGroup");
+    expect(groupResult.html).not.toContain("<transition-group");
     expect(getClientRuntimeSource()).toContain("style.animationIterationCount");
   });
 

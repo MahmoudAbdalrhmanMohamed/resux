@@ -82,6 +82,31 @@ function parseDeployConfig(value: unknown): ResuxDeployConfig {
   };
 }
 
+// Returns the text inside the `deploy: { ... }` braces so option lookups cannot
+// leak into unrelated blocks that also define `target` or `preset` keys.
+function extractDeployBlock(source: string): string | null {
+  const open = source.match(/\bdeploy\s*:\s*\{/);
+  if (!open || open.index === undefined) {
+    return null;
+  }
+
+  const start = open.index + open[0].length;
+  let depth = 1;
+  for (let index = start; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(start, index);
+      }
+    }
+  }
+
+  return source.slice(start);
+}
+
 export async function loadResuxDeployConfig(
   appRoot: string,
   outDir: string,
@@ -108,11 +133,15 @@ export async function loadResuxDeployConfig(
     }
 
     const source = await readFile(configFile, "utf8").catch(() => "");
-    const targetMatch = source.match(
-      /\bdeploy\s*:\s*\{[\s\S]*?\btarget\s*:\s*["'](auto|node|vercel|netlify|cloudflare|static)["']/i,
+    const deployBlock = extractDeployBlock(source);
+    if (deployBlock === null) {
+      continue;
+    }
+    const targetMatch = deployBlock.match(
+      /\btarget\s*:\s*["'](auto|node|vercel|netlify|cloudflare|static)["']/i,
     );
-    const presetMatch = source.match(
-      /\bdeploy\s*:\s*\{[\s\S]*?\b(?:nitroPreset|preset)\s*:\s*["']([^"']+)["']/i,
+    const presetMatch = deployBlock.match(
+      /\b(?:nitroPreset|preset)\s*:\s*["']([^"']+)["']/i,
     );
     if (!targetMatch && !presetMatch) {
       continue;

@@ -1726,6 +1726,23 @@ function compileTemplateNode(
     };
   }
 
+  // <component :is="name"> is a block: when the name changes, the runtime re-renders the wrapper
+  // with the newly resolved component. A static is="Name" never changes and needs no block.
+  if (node.tag === "component" && !element.if && !element.for) {
+    const dynamicIs = node.props.find((prop) => (
+      prop.type === NodeTypes.DIRECTIVE
+      && prop.name === "bind"
+      && prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION
+      && prop.arg.content === "is"
+    )) as DirectiveNode | undefined;
+    if (dynamicIs) {
+      element.if = {
+        expression: registerTemplateExpression("true", state.templateRefBindings, state.file, dynamicIs, state),
+        blockId: nextBindingId(state)
+      };
+    }
+  }
+
   if (addedLocals > 0) {
     state.activeLocals.splice(state.activeLocals.length - addedLocals, addedLocals);
   }

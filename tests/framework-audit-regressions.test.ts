@@ -158,6 +158,19 @@ describe("framework audit regressions", () => {
     });
   });
 
+  it("scopes source-config deploy option lookup to the deploy block", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "resux-source-deploy-"));
+    tempRoots.push(root);
+    const outDir = path.join(root, ".resux");
+    await writeFile(
+      path.join(root, "resux.config.ts"),
+      `export default {\n  deploy: {},\n  server: { target: "node", preset: "other" },\n};\n`,
+      "utf8",
+    );
+
+    await expect(loadResuxDeployConfig(root, outDir)).resolves.toEqual({});
+  });
+
   it("canonicalizes explicit default-locale prefixes before switching locales", () => {
     const config = normalizeI18nRuntimeConfig({
       defaultLocale: "en",

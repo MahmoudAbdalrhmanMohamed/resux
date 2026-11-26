@@ -4085,6 +4085,28 @@ function withClientComponentIds(ids: Record<string, string> | undefined): { comp
   return ids ? { componentIds: ids } : {};
 }
 
+// <component :is="Name">: the name must resolve to a registered or auto-discovered component. The node is
+// rewritten to the plain component tag so the normal component path renders it (props, slot, scope).
+function resolveDynamicComponentNode(
+  node: ElementTemplateNode,
+  scope: Record<string, unknown>,
+  locals: Record<string, unknown>,
+  components: Record<string, ComponentDefinition>,
+): ElementTemplateNode {
+  const isAttr = node.attrs.find((attr) => attr.name === "is");
+  if (!isAttr) {
+    throw new Error("<component> needs an `is` attribute with a registered component name.");
+  }
+  const value = isAttr.kind === "static" ? isAttr.value : evaluateExpression(isAttr.value, scope, locals);
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error("<component :is> needs the name of a registered component as a string. Component objects are not supported.");
+  }
+  if (!resolveComponentDefinition(value, components)) {
+    throw new Error(`Unknown component <${value}> in <component :is>. Use the name of a registered or auto-discovered component.`);
+  }
+  return { ...node, tag: value, attrs: node.attrs.filter((attr) => attr !== isAttr) };
+}
+
 function collectClientBlockComponentIds(
   rendered: Iterable<ComponentDefinition>,
   registries: Array<Record<string, ComponentDefinition>>,
@@ -4101,6 +4123,20 @@ function collectClientBlockComponentIds(
     for (const node of nodes) {
       if (node.type !== "element") continue;
       const blockHere = inBlock || Boolean(node.for || node.if);
+      if (blockHere && node.tag === "component") {
+        const isAttr = node.attrs.find((attr) => attr.name === "is");
+        const names = isAttr?.kind === "static" ? [isAttr.value] : Object.keys(registry);
+        for (const name of names) {
+          if (typeof name !== "string" || Object.hasOwn(result, name)) continue;
+          const target = resolveComponentDefinition(name, registry);
+          if (!target?.id) continue;
+          result[name] = target.id;
+          if (!scanned.has(target.id)) {
+            scanned.add(target.id);
+            scan(target.template ?? [], true);
+          }
+        }
+      }
       if (blockHere && isComponentTag(node.tag) && !Object.hasOwn(result, node.tag)) {
         const target = resolveComponentDefinition(node.tag, registry);
         if (target?.id) {
@@ -4329,6 +4365,10 @@ function renderTeleportBoundary(
 }
 
 function renderElement(node: ElementTemplateNode, context: RenderTemplateContext, locals: Record<string, unknown>): string {
+  if (node.tag === "component") {
+    return renderElement(resolveDynamicComponentNode(node, context.scope, locals, context.components), context, locals);
+  }
+
   if (node.tag === "ResuxPage") {
     if (!context.renderPage) {
       return "";
@@ -4570,6 +4610,10 @@ async function renderElementAsync(
   renderComponent: AsyncRenderComponent,
   locals: Record<string, unknown>
 ): Promise<string> {
+  if (node.tag === "component") {
+    return renderElementAsync(resolveDynamicComponentNode(node, context.scope, locals, context.components), context, renderComponent, locals);
+  }
+
   if (node.tag === "ResuxPage") {
     return context.renderPage
       ? `<span data-rx-page="">${await context.renderPage(context.suppressTeleportReservations)}</span>`
@@ -17541,6 +17585,16 @@ function normalizeClientTransitionTag(value) {
 }
 
 function renderElement(node, scope, locals, styleScopeId, scopeId, moduleId) {
+  if (node.tag === "component") {
+    const isAttr = node.attrs.find((attr) => attr.name === "is");
+    const name = isAttr ? (isAttr.kind === "static" ? isAttr.value : evaluateExpression(isAttr.value, scope, locals)) : "";
+    const childModuleId = typeof name === "string" && name ? clientBlockComponentModuleId(name) : "";
+    if (!childModuleId) {
+      if (isClientDevMode()) console.error("[resux] <component :is> needs the name of a registered component as a string, got: " + String(name));
+      return "<!--resux-unknown-component-->";
+    }
+    return renderClientChildPlaceholder({ ...node, tag: name, attrs: node.attrs.filter((attr) => attr !== isAttr) }, childModuleId, scope, locals, styleScopeId, scopeId, moduleId);
+  }
   const normalizedTag = String(node.tag || "").toLowerCase();
   if (normalizedTag === "slot" && clientSlotContent.size > 0 && clientSlotContent.has(scopeId)) {
     return clientSlotContent.get(scopeId);

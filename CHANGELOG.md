@@ -4,6 +4,29 @@ All notable changes to Resux are documented here.
 
 Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaking API changes when they are clearly documented.
 
+## [0.4.0] - 2026-11-26
+
+First stable release of the 0.4 line. It includes everything from the 0.4.0 betas plus the fixes below. Each fix shipped as its own pull request with a regression test, and was verified against a real consumer app after merging.
+
+### Client runtime parity with the server engine
+
+- **Collections**: `Map`, `Set`, `WeakMap`, and `WeakSet` are instrumented in the client runtime like on the server (#147).
+- **Refs and arrays**: client ref values are raw-normalized to match server ref identity (#148); array length writes notify truncated indices and iteration (#149).
+- **Watchers and scheduler**: `watch` stop is honored for already-queued jobs and repeated stops (#150); the scheduler has a post-flush queue and a rejection guard (#151).
+- **Readonly**: `readonly()` over a reactive proxy returns a true readonly view (#152) and `isReactive` agrees with the server through readonly views (#156).
+- **i18n**: `t()` stringifies number and boolean messages (#153) and interpolation matches the server engine (#154).
+- **Package cache key**: CSS is normalized and sorted in the client package cache key like on the server (#155).
+- **Dev assertions**: client state and event locals are checked for JSON serializability in development (#158).
+
+### Compiler, deploy, and tooling
+
+- Backslashes are no longer treated as escapes in attribute values when normalizing `rx` directives (#159).
+- Arrow function parameters that share a template ref name are no longer auto-unwrapped (#160).
+- Deploy option lookup is scoped to the deploy block of the source config (#157).
+- The build-time secret scan of public `runtimeConfig` now covers nested objects and arrays at any depth, with full paths in warnings; strict mode still throws (#161).
+- Scaffolded templates ship `legacy-peer-deps` in `.npmrc` for templates that use vitest ^4 (#146).
+- The CLI fallback version string now matches the package version.
+
 ## [0.4.0-beta.8] - 2026-11-25
 
 ### Framework bug fixes and resumability improvements

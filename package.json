@@ -66,7 +66,7 @@
     "build": "npm run typecheck && tsdown && node scripts/prepare-compiler-entry.mjs",
     "test": "vitest run",
     "test:types": "npm run typecheck",
-    "test:e2e": "vitest run tests/runtime.test.ts",
+    "test:e2e": "vitest run tests/runtime-ssr-core.test.ts tests/runtime-ssr-teleport.test.ts tests/runtime-ssr-media.test.ts tests/runtime-server-event-helpers.test.ts tests/runtime-client-core.test.ts tests/runtime-client-enhancements.test.ts tests/runtime-client-teleport.test.ts tests/runtime-client-media.test.ts tests/runtime-client-router.test.ts",
     "test:fixtures": "node scripts/test-fixtures.mjs",
     "test:templates": "node scripts/test-templates.mjs",
     "test:build": "npm run build",

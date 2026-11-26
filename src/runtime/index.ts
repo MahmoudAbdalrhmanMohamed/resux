@@ -623,6 +623,7 @@ export interface SerializedScope {
   props?: Record<string, JsonValue>;
   state: Record<string, JsonValue>;
   globalStateKeys?: string[];
+  emits?: Record<string, ComponentEmitBinding>;
   asyncData: Record<string, SerializedAsyncData>;
 }
 
@@ -699,7 +700,13 @@ export interface RenderDocumentOptions {
   };
 }
 
+export interface ComponentEmitBinding {
+  handler: string;
+  locals?: Record<string, JsonValue>;
+}
+
 interface ScopeRecord {
+  emits?: Record<string, ComponentEmitBinding>;
   id: string;
   moduleId: string;
   props: Record<string, unknown>;
@@ -715,6 +722,7 @@ type AsyncRenderComponent = (
   props?: ComponentProps,
   renderSlot?: AsyncRenderSlot,
   suppressTeleportReservations?: boolean,
+  emits?: Record<string, ComponentEmitBinding>,
 ) => Promise<string>;
 
 interface RenderTemplateContext {
@@ -4687,6 +4695,7 @@ async function renderElementAsync(
       props,
       renderSlot,
       context.suppressTeleportReservations,
+      collectComponentEmitBindings(node, context, locals),
     );
   };
 
@@ -7360,6 +7369,7 @@ export class AsyncResuxRenderer {
     renderSlot?: AsyncRenderSlot,
     props: ComponentProps = {},
     suppressTeleportReservations = false,
+    emits?: Record<string, ComponentEmitBinding>,
   ): Promise<string> {
     this.collectComponentStyles(definition);
     this.renderedDefinitions.set(definition.id, definition);
@@ -7386,7 +7396,8 @@ export class AsyncResuxRenderer {
       props,
       stateRefs,
       globalStateKeys,
-      asyncDataRefs
+      asyncDataRefs,
+      ...(emits ? { emits } : {})
     };
 
     return withActiveResuxApp(this.resuxApp, () => renderTemplateNodesAsync(
@@ -7413,8 +7424,8 @@ export class AsyncResuxRenderer {
           ? undefined
           : (reservation, html) => this.commitTeleport(reservation, html)
       },
-      (component, props, slot, suppress) =>
-        this.renderComponent(component, undefined, slot, props, suppress)
+      (component, props, slot, suppress, emits) =>
+        this.renderComponent(component, undefined, slot, props, suppress, emits)
     ));
   }
 
@@ -7494,6 +7505,7 @@ export class AsyncResuxRenderer {
         props: serializeProps(scope.props),
         state: serializeRefs(scope.stateRefs),
         globalStateKeys: [...scope.globalStateKeys],
+        ...(scope.emits ? { emits: scope.emits } : {}),
         asyncData: serializeAsyncData(scope.asyncDataRefs)
       };
     }
@@ -8687,6 +8699,36 @@ function collectComponentProps(
       : evaluateExpression(attr.value, scope, locals);
   }
   return props;
+}
+
+// Events written on a component tag (<Child @save="onSave" />) are delivered when the child emits them.
+// The mapping names the parent's handler (parent scope, module and handler) and carries any v-for locals
+// by value, so a resumed child can reach the parent without the server renderer running again.
+function collectComponentEmitBindings(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+): Record<string, ComponentEmitBinding> | undefined {
+  if (node.events.length === 0) {
+    return undefined;
+  }
+  const bindings: Record<string, ComponentEmitBinding> = {};
+  for (const event of node.events) {
+    const binding: ComponentEmitBinding = { handler: `${context.scopeId}:${context.moduleId}:${event.handler}` };
+    if (event.locals?.length) {
+      const eventLocals: Record<string, JsonValue> = {};
+      for (const name of event.locals) {
+        if (!Object.hasOwn(locals, name)) continue;
+        const value = locals[name];
+        if (value === undefined) continue;
+        assertJsonSerializable(value, `event local "${name}"`);
+        eventLocals[name] = value as JsonValue;
+      }
+      binding.locals = eventLocals;
+    }
+    bindings[normalizePropName(event.name)] = binding;
+  }
+  return bindings;
 }
 
 function normalizePropName(name: string): string {
@@ -12009,6 +12051,7 @@ export function createClientComponent(definition) {
       const asyncDataRefs = Object.create(null);
       const pendingCompletions = [];
       const mountedCallbacks = [];
+      const emitQueue = [];
       const props = serializedScope.props ?? {};
       const setupContext = {
         props,
@@ -12079,7 +12122,12 @@ export function createClientComponent(definition) {
           return props;
         },
         defineEmits() {
-          return () => {};
+          return (name, ...args) => {
+            emitQueue.push({ name, args });
+          };
+        },
+        emit(name, ...args) {
+          emitQueue.push({ name, args });
         },
         defineExpose() {},
         defineSlots() {
@@ -12186,9 +12234,9 @@ export function createClientComponent(definition) {
       bindTemplateRefs(scope, definition, serializedScope.id);
       serializedScope.globalStateKeys = [...globalStateKeys];
       await Promise.allSettled(mountedCallbacks.map((callback) => callback()));
-      return { scopeId: serializedScope.id, scope, props, stateRefs, globalStateKeys, asyncDataRefs, pendingCompletions };
+      return { scopeId: serializedScope.id, scope, props, stateRefs, globalStateKeys, asyncDataRefs, pendingCompletions, emitQueue };
     },
-    async run(scopeRecord, handlerName, event, eventLocals = {}) {
+    async run(scopeRecord, handlerName, event, eventLocals = {}, emitArgs = null) {
       bindTemplateRefs(scopeRecord.scope, definition, scopeRecord.scopeId);
       const handler = scopeRecord.scope[handlerName];
       if (typeof handler !== "function") {
@@ -12196,6 +12244,8 @@ export function createClientComponent(definition) {
       }
       if (Object.keys(eventLocals).length > 0) {
         await handler(event, eventLocals);
+      } else if (emitArgs) {
+        await handler(...emitArgs);
       } else {
         await handler(event);
       }
@@ -17148,6 +17198,7 @@ async function handleDelegatedEvent(eventName, event) {
     payload.scopes[scopeId].state = serialized.state;
     payload.scopes[scopeId].asyncData = serialized.asyncData;
     applyPatches(scopeId, patches);
+    await drainComponentEmits(scopeId, scopeRecord);
   } catch (error) {
     dispatchManagedEvent(typeof document !== "undefined" ? document : null, "resux:handler-error", {
       event: eventName,
@@ -17155,6 +17206,49 @@ async function handleDelegatedEvent(eventName, event) {
       handler: handlerName,
       message: error instanceof Error ? error.message : String(error)
     });
+  }
+}
+
+function normalizeEmitName(name) {
+  return String(name).replace(/-([a-zA-Z0-9])/g, (_, char) => char.toUpperCase());
+}
+
+// A child's emit() only queues the call. After the child's own handler has finished and its state is
+// serialized, each queued emit runs the parent handler named in the payload (events written on the child tag).
+async function drainComponentEmits(scopeId, record) {
+  const queue = record && record.emitQueue;
+  if (!queue || queue.length === 0) return;
+  const pending = queue.splice(0, queue.length);
+  const payload = globalThis.__RESUX__;
+  const bindings = payload && payload.scopes && payload.scopes[scopeId] ? payload.scopes[scopeId].emits : null;
+  if (!bindings) return;
+  for (const entry of pending) {
+    const binding = bindings[normalizeEmitName(entry.name)];
+    if (!binding) continue;
+    const [parentScopeId, parentModuleId, handlerName] = String(binding.handler).split(":");
+    if (!parentScopeId || !parentModuleId || !handlerName || !payload.scopes[parentScopeId]) continue;
+    try {
+      const component = await importComponent(parentModuleId, payload.modules, devImportRevision);
+      let parentRecord = scopeCache.get(parentScopeId);
+      if (!parentRecord) {
+        parentRecord = await component.createScope(payload.scopes[parentScopeId], payload.route);
+        scopeCache.set(parentScopeId, parentRecord);
+      }
+      const patches = await component.run(parentRecord, handlerName, entry.args[0], binding.locals || {}, entry.args);
+      const serialized = component.serialize(parentRecord);
+      payload.scopes[parentScopeId].props = serialized.props;
+      payload.scopes[parentScopeId].state = serialized.state;
+      payload.scopes[parentScopeId].asyncData = serialized.asyncData;
+      applyPatches(parentScopeId, patches);
+      await drainComponentEmits(parentScopeId, parentRecord);
+    } catch (error) {
+      dispatchManagedEvent(typeof document !== "undefined" ? document : null, "resux:handler-error", {
+        event: "emit:" + entry.name,
+        scopeId: parentScopeId,
+        handler: handlerName,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 }
 
@@ -17431,8 +17525,22 @@ function renderClientChildPlaceholder(node, moduleId, scope, locals, styleScopeI
   // Slot content is rendered by the parent (its scope and locals), like the server renderer does: all
   // children of the tag form one default slot. Named and scoped slots are not part of the server model.
   const slotHtml = node.children.map((child) => renderNode(child, scope, locals, styleScopeId, scopeId, parentModuleId)).join("");
+  let emits = null;
+  if (node.events && node.events.length > 0) {
+    emits = {};
+    for (const event of node.events) {
+      const binding = { handler: scopeId + ":" + parentModuleId + ":" + event.handler };
+      if (event.locals && event.locals.length > 0) {
+        binding.locals = {};
+        for (const name of event.locals) {
+          if (Object.prototype.hasOwnProperty.call(locals, name) && locals[name] !== undefined) binding.locals[name] = locals[name];
+        }
+      }
+      emits[normalizeEmitName(event.name)] = binding;
+    }
+  }
   const id = "c" + (++clientChildCounter);
-  pendingClientChildren.set(id, { moduleId, tag: node.tag, props, key, hasKey, slotHtml });
+  pendingClientChildren.set(id, { moduleId, tag: node.tag, props, key, hasKey, slotHtml, emits });
   return '<span data-rx-child="' + id + '" style="display: contents;"></span>';
 }
 
@@ -17460,15 +17568,17 @@ async function mountClientChild(placeholder) {
     const state = component.serialize(record);
     scopeCache.set(id, record);
     payload.scopes[id] = { ...serialized, props: state.props, state: state.state, asyncData: state.asyncData, globalStateKeys: record.globalStateKeys ? [...record.globalStateKeys] : [] };
+    if (entry.emits) payload.scopes[id].emits = entry.emits;
     const template = document.createElement("template");
     template.innerHTML = html;
     const parent = placeholder.parentNode;
     const nodes = Array.from(template.content.childNodes);
     clientChildRoots.set(id, nodes);
-    clientChildMeta.set(id, { tag: entry.tag, key: entry.hasKey ? "k:" + entry.key : "", propsJson: JSON.stringify(entry.props), slotHtml: entry.slotHtml });
+    clientChildMeta.set(id, { tag: entry.tag, key: entry.hasKey ? "k:" + entry.key : "", propsJson: JSON.stringify(entry.props), slotHtml: entry.slotHtml, emitsJson: JSON.stringify(entry.emits) });
     placeholder.replaceWith(template.content);
     registerDelegatedEventsFromDom(parent && parent.nodeType === 1 ? parent : document);
     await Promise.all(nodes.filter((child) => child.nodeType === 1).map((child) => mountClientChildren(child)));
+    await drainComponentEmits(id, record);
   } catch (error) {
     placeholder.replaceWith(document.createComment("resux-child-error"));
     dispatchManagedEvent(typeof document !== "undefined" ? document : null, "resux:handler-error", {
@@ -17526,7 +17636,7 @@ function restoreClientChildrenOfBlock(block, held) {
       slot = "i:" + pending.tag + ":" + n;
     }
     const old = byKey.get(slot);
-    if (!old || old.meta.tag !== pending.tag || old.meta.propsJson !== JSON.stringify(pending.props) || old.meta.slotHtml !== pending.slotHtml) continue;
+    if (!old || old.meta.tag !== pending.tag || old.meta.propsJson !== JSON.stringify(pending.props) || old.meta.slotHtml !== pending.slotHtml || old.meta.emitsJson !== JSON.stringify(pending.emits)) continue;
     byKey.delete(slot);
     pendingClientChildren.delete(id);
     for (const node of old.nodes) placeholder.parentNode.insertBefore(node, placeholder);

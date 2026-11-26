@@ -1,0 +1,236 @@
+import { describe, expect, it } from "vitest";
+import fontsModule from "../src/fonts/index.js";
+import { createMockResux } from "./helpers/fonts-fixtures.js";
+
+describe("fonts module", () => {
+  it("defaults to non-blocking preload loading for all fonts", () => {
+    const { headList, runtimeConfigs, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        google: [
+          { name: "Inter", weights: [400, 700] },
+          { name: "Alexandria", weights: [300, 600] }
+        ]
+      },
+      resux as any
+    );
+
+    expect(headList).toHaveLength(1);
+    expect(headList[0].link).toEqual([
+      { rel: "preconnect", href: "https://fonts.googleapis.com" },
+      { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" },
+      {
+        rel: "preload",
+        as: "style",
+        href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Alexandria:wght@300;600&display=swap"
+      },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Alexandria:wght@300;600&display=swap",
+        media: "print",
+        onload: "this.media='all'",
+        "data-resux-font-async": "true"
+      }
+    ]);
+    expect(headList[0].script ?? []).toEqual([]);
+    expect(headList[0].noscript).toEqual([
+      {
+        link: [{
+          rel: "stylesheet",
+          href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Alexandria:wght@300;600&display=swap"
+        }]
+      }
+    ]);
+
+    expect(runtimeConfigs[0].public.fonts.families).toEqual(["Inter", "Alexandria"]);
+    expect(runtimeConfigs[0].public.fonts.familyConfigs).toEqual([
+      { name: "Inter", strategy: "preload", deferUntilPageLoad: false },
+      { name: "Alexandria", strategy: "preload", deferUntilPageLoad: false }
+    ]);
+  });
+
+  it("supports global lazy strategy for all fonts", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        strategy: "lazy",
+        google: [
+          { name: "Inter", weights: [400, 700] },
+          { name: "Alexandria", weights: [300, 600] }
+        ]
+      },
+      resux as any
+    );
+
+    expect(headList[0].link).toEqual([
+      { rel: "preconnect", href: "https://fonts.googleapis.com" },
+      { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" },
+      {
+        rel: "preload",
+        as: "style",
+        href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Alexandria:wght@300;600&display=swap"
+      },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Alexandria:wght@300;600&display=swap",
+        media: "print",
+        "data-resux-font-lazy": "true"
+      }
+    ]);
+    expect(headList[0].script).toHaveLength(1);
+    expect(headList[0].script![0]["data-resux-font-loader"]).toBe("true");
+    expect(headList[0].script![0].innerHTML).toContain("window.addEventListener('load',loadFonts,{once:true})");
+    expect(headList[0].noscript?.[0]?.link?.[0]).toEqual({
+      rel: "stylesheet",
+      href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Alexandria:wght@300;600&display=swap"
+    });
+  });
+
+  it("allows mixing eager and lazy fonts with per-font control", () => {
+    const { headList, runtimeConfigs, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        strategy: "lazy",
+        deferUntilPageLoad: true,
+        google: [
+          { name: "Inter", weights: [400, 500, 700], strategy: "eager" },
+          { name: "Alexandria", weights: [300, 400, 600], display: "swap" }
+        ]
+      },
+      resux as any
+    );
+
+    expect(headList).toHaveLength(1);
+    // Preconnect links inserted only once
+    const links = headList[0].link!;
+    expect(links.filter((l) => l.rel === "preconnect")).toHaveLength(2);
+
+    // Eager stylesheet link for Inter
+    expect(links).toContainEqual({
+      rel: "stylesheet",
+      href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap"
+    });
+
+    // Lazy preloaded link for Alexandria
+    expect(links).toContainEqual({
+      rel: "preload",
+      as: "style",
+      href: "https://fonts.googleapis.com/css2?family=Alexandria:wght@300;400;600&display=swap"
+    });
+
+    // Lazy stylesheet stays non-blocking until the page-load activator runs.
+    expect(links).toContainEqual({
+      rel: "stylesheet",
+      href: "https://fonts.googleapis.com/css2?family=Alexandria:wght@300;400;600&display=swap",
+      media: "print",
+      "data-resux-font-lazy": "true"
+    });
+    expect(headList[0].script).toHaveLength(1);
+    expect(headList[0].script![0]["data-resux-font-loader"]).toBe("true");
+
+    expect(runtimeConfigs[0].public.fonts.familyConfigs).toEqual([
+      { name: "Inter", strategy: "eager", deferUntilPageLoad: false },
+      { name: "Alexandria", strategy: "lazy", deferUntilPageLoad: true }
+    ]);
+  });
+
+  it("allows per-font deferUntilPageLoad: false to override global lazy strategy", () => {
+    const { headList, runtimeConfigs, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        strategy: "lazy",
+        google: [
+          { name: "Inter", weights: [400], deferUntilPageLoad: false },
+          { name: "Alexandria", weights: [400] }
+        ]
+      },
+      resux as any
+    );
+
+    expect(headList[0].link).toContainEqual({
+      rel: "stylesheet",
+      href: "https://fonts.googleapis.com/css2?family=Inter:wght@400&display=swap"
+    });
+    expect(runtimeConfigs[0].public.fonts.familyConfigs).toEqual([
+      { name: "Inter", strategy: "eager", deferUntilPageLoad: false },
+      { name: "Alexandria", strategy: "lazy", deferUntilPageLoad: true }
+    ]);
+  });
+
+  it("allows per-font deferUntilPageLoad: false to override global deferUntilPageLoad", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        deferUntilPageLoad: true,
+        google: [
+          { name: "Inter", weights: [400], deferUntilPageLoad: false },
+          { name: "Alexandria", weights: [400] }
+        ]
+      },
+      resux as any
+    );
+
+    const links = headList[0].link!;
+    expect(links).toContainEqual({
+      rel: "preload",
+      as: "style",
+      href: "https://fonts.googleapis.com/css2?family=Inter:wght@400&display=swap"
+    });
+    expect(links).toContainEqual({
+      rel: "stylesheet",
+      href: "https://fonts.googleapis.com/css2?family=Inter:wght@400&display=swap",
+      media: "print",
+      onload: "this.media='all'",
+      "data-resux-font-async": "true"
+    });
+    expect(links).toContainEqual({
+      rel: "preload",
+      as: "style",
+      href: "https://fonts.googleapis.com/css2?family=Alexandria:wght@400&display=swap"
+    });
+  });
+
+  it("supports per-font strategy: 'preload'", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        google: [
+          { name: "Inter", weights: [400], strategy: "preload" }
+        ]
+      },
+      resux as any
+    );
+
+    const links = headList[0].link!;
+    expect(links).toContainEqual({
+      rel: "preload",
+      as: "style",
+      href: "https://fonts.googleapis.com/css2?family=Inter:wght@400&display=swap"
+    });
+    expect(links).toContainEqual({
+      rel: "stylesheet",
+      href: "https://fonts.googleapis.com/css2?family=Inter:wght@400&display=swap",
+      media: "print",
+      onload: "this.media='all'",
+      "data-resux-font-async": "true"
+    });
+    expect(headList[0].noscript?.[0]?.link?.[0]).toEqual({
+      rel: "stylesheet",
+      href: "https://fonts.googleapis.com/css2?family=Inter:wght@400&display=swap"
+    });
+  });
+
+  it("suppresses preconnect links when preconnect is false", () => {
+    const { headList, resux } = createMockResux();
+    fontsModule.setup(
+      {
+        preconnect: false,
+        google: [{ name: "Inter", weights: [400] }]
+      },
+      resux as any
+    );
+
+    const links = headList[0].link!;
+    expect(links.some((l) => l.rel === "preconnect")).toBe(false);
+  });
+});

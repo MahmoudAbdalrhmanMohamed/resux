@@ -58,6 +58,8 @@ npx resuxjs@latest init my-app
 
 Current framework source requires Node.js `>=20.19.0`.
 
+Known issue in 0.4.0: resuxjs runs on Node >=20.19. With npm's `engine-strict` enabled, installing it on Node 20 fails with EBADENGINE, because the dependency `unifont@^1.0.3` pulls in `undici@^8`, which requires Node >=22.19. With default npm settings this is only a warning and everything works. A proper fix is planned for 0.4.1.
+
 ## A normal Resux component
 
 ```vue

@@ -111,6 +111,15 @@ function resolveTemplateContentBounds(
   return { start: fallbackStart, end: fallbackStart + content.length };
 }
 
+function previousNonSpaceChar(source: string, index: number): string {
+  for (let cursor = index - 1; cursor >= 0; cursor--) {
+    if (!/\s/.test(source[cursor])) {
+      return source[cursor];
+    }
+  }
+  return "";
+}
+
 function findTagEnd(source: string, start: number): number {
   let quote: '"' | "'" | null = null;
 
@@ -125,7 +134,10 @@ function findTagEnd(source: string, start: number): number {
       continue;
     }
 
-    if (char === '"' || char === "'") {
+    // Only a quote that starts an attribute value (right after `=`) opens a
+    // quoted region. Quotes inside dynamic argument names such as
+    // `:['a\'b']` are part of an expression, not an attribute value.
+    if ((char === '"' || char === "'") && previousNonSpaceChar(source, index) === "=") {
       quote = char;
       continue;
     }

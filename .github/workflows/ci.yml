@@ -12,7 +12,7 @@ concurrency:
 jobs:
   checks:
     name: Production Quality Gates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -44,7 +44,7 @@ jobs:
 
   templates:
     name: Template ${{ matrix.template }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -90,7 +90,7 @@ jobs:
 
   deployments:
     name: Deployment ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -133,7 +133,7 @@ jobs:
 
   compatibility:
     name: Node ${{ matrix.node-version }} compatibility
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -191,16 +191,18 @@ jobs:
 
   portability:
     name: ${{ matrix.os }} portability
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - windows-latest
-          - macos-latest
+        include:
+          - os: windows-latest
+            runner: windows-2025
+          - os: macos-latest
+            runner: macos-15
 
     steps:
       - name: Checkout

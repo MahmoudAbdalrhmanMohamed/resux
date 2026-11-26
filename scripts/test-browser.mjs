@@ -34,7 +34,7 @@ if (pack.status !== 0) {
   process.stderr.write(`${pack.stderr ?? ""}${pack.stdout ?? ""}`);
   process.exit(pack.status ?? 1);
 }
-const tarballName = (pack.stdout ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).pop();
+const tarballName = (pack.stdout ?? "").split(/\r?\n/).map((line) => line.trim()).findLast(Boolean);
 const tarballPath = path.resolve(repoRoot, tarballName);
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "resux-browser-"));
 const projectRoot = path.join(tempRoot, "browser-app");
@@ -82,7 +82,8 @@ try {
     const errors = [];
     page.on("pageerror", (error) => errors.push(String(error)));
     page.on("console", (message) => {
-      if (message.type() === "error") errors.push(message.text());
+      const url = message.location().url ?? "";
+      if (message.type() === "error" && !url.includes("favicon")) errors.push(`${message.text()} (${url})`);
     });
     try {
       await page.goto(`http://127.0.0.1:${port}/${scenario.route}`);

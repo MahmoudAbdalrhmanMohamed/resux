@@ -540,6 +540,28 @@ export interface ElementTemplateNode {
   for?: ForDirective;
   html?: HtmlDirective;
   ref?: string;
+  /** On a `<template #name>` child: which slot it provides and how its props are bound. */
+  slot?: SlotProvider;
+  /** On a component element: the named slots it provides (default slot included when it has content). */
+  slots?: Record<string, SlotDefinition>;
+  /** Identifies the slots of this component element so a resumed child can ask the parent to render them. */
+  slotsId?: string;
+  /** Parent template locals the slot content reads (captured by value for resume). */
+  slotLocals?: string[];
+}
+
+export type SlotParam =
+  | { kind: "ident"; name: string }
+  | { kind: "pairs"; pairs: { key: string; local: string }[] };
+
+export interface SlotProvider {
+  name: string;
+  param?: SlotParam;
+}
+
+export interface SlotDefinition {
+  param?: SlotParam;
+  children: TemplateNode[];
 }
 
 export interface SetupContext {
@@ -624,6 +646,7 @@ export interface SerializedScope {
   state: Record<string, JsonValue>;
   globalStateKeys?: string[];
   emits?: Record<string, ComponentEmitBinding>;
+  slots?: Record<string, ComponentSlotBinding>;
   asyncData: Record<string, SerializedAsyncData>;
 }
 
@@ -700,6 +723,13 @@ export interface RenderDocumentOptions {
   };
 }
 
+// A slot written on a component tag (<Child><template #header>...</template></Child>) is re-rendered on the
+// client from the parent's scope. ref names the parent scope, module and slots id; locals carry v-for values.
+export interface ComponentSlotBinding {
+  ref: string;
+  locals?: Record<string, JsonValue>;
+}
+
 export interface ComponentEmitBinding {
   handler: string;
   locals?: Record<string, JsonValue>;
@@ -707,6 +737,7 @@ export interface ComponentEmitBinding {
 
 interface ScopeRecord {
   emits?: Record<string, ComponentEmitBinding>;
+  slots?: Record<string, ComponentSlotBinding>;
   id: string;
   moduleId: string;
   props: Record<string, unknown>;
@@ -717,12 +748,20 @@ interface ScopeRecord {
 
 type ComponentProps = Record<string, unknown>;
 type AsyncRenderSlot = (suppressTeleportReservations?: boolean) => Promise<string>;
+// name and props select a named or scoped slot of a component. A result of undefined means the slot was not
+// provided, so the <slot> renders its fallback content.
+type AsyncRenderNamedSlot = (
+  suppressTeleportReservations?: boolean,
+  name?: string,
+  props?: Record<string, unknown>,
+) => Promise<string | undefined>;
 type AsyncRenderComponent = (
   component: ComponentDefinition,
   props?: ComponentProps,
-  renderSlot?: AsyncRenderSlot,
+  renderSlot?: AsyncRenderNamedSlot,
   suppressTeleportReservations?: boolean,
   emits?: Record<string, ComponentEmitBinding>,
+  slots?: Record<string, ComponentSlotBinding>,
 ) => Promise<string>;
 
 interface RenderTemplateContext {
@@ -738,7 +777,7 @@ interface RenderTemplateContext {
   addHeadEntry?: (entry: HeadEntry) => void;
   suppressTeleportReservations?: boolean;
   renderPage?: AsyncRenderSlot;
-  renderSlot?: AsyncRenderSlot;
+  renderSlot?: AsyncRenderNamedSlot;
   renderLayout?: (
     name: string | false | undefined,
     slot: AsyncRenderSlot,

@@ -88,7 +88,12 @@ try {
     try {
       await page.goto(`http://127.0.0.1:${port}/${scenario.route}`);
       await page.waitForSelector(scenario.ready, { timeout: 15_000 });
-      await scenario.run(page, ctx(page));
+      const t = ctx(page);
+      for (const [kind, selector, expected, label] of scenario.steps) {
+        if (kind === "click") await page.click(selector);
+        else if (kind === "text") await t.expectText(selector, expected, label);
+        else await t.expectCount(selector, expected, label);
+      }
       if (errors.length) throw new Error(`browser errors: ${errors.join(" | ")}`);
       console.log(`[browser:${scenario.route}] ok`);
     } catch (error) {
@@ -140,89 +145,89 @@ function scenarios() {
     {
       route: "bt-vif",
       ready: "#ssr .cb",
-      async run(page, t) {
-        await t.expectText("#ssr .cb", "0", "server card starts at 0");
-        await page.click("#ssr .cb");
-        await t.expectText("#ssr .cb", "1", "server card resumes on click");
-        await page.click("#t");
-        await t.expectCount("#cond .cb", 1, "card appears inside v-if");
-        await page.click("#cond .cb");
-        await t.expectText("#cond .cb", "1", "browser-created card handles events");
-        await page.click("#ssr .cb");
-        await t.expectText("#ssr .cb", "2", "server card keeps its state");
-        await page.click("#r");
-        await t.expectText("#ssr .s", "one!", "slot content follows parent state");
-        await t.expectCount("#cond .cb", 1, "card survives a parent re-render");
-      },
+      steps: [
+        ["text", "#ssr .cb", "0", "server card starts at 0"],
+        ["click", "#ssr .cb"],
+        ["text", "#ssr .cb", "1", "server card resumes on click"],
+        ["click", "#t"],
+        ["count", "#cond .cb", 1, "card appears inside v-if"],
+        ["click", "#cond .cb"],
+        ["text", "#cond .cb", "1", "browser-created card handles events"],
+        ["click", "#ssr .cb"],
+        ["text", "#ssr .cb", "2", "server card keeps its state"],
+        ["click", "#r"],
+        ["text", "#ssr .s", "one!", "slot content follows parent state"],
+        ["count", "#cond .cb", 1, "card survives a parent re-render"],
+      ],
     },
     {
       route: "bt-dynamic",
       ready: "#dyn .badge",
-      async run(page, t) {
-        await page.click("#s");
-        await t.expectCount("#dyn .card", 1, "component :is swaps to the card");
-        await page.click("#s");
-        await t.expectCount("#dyn .badge", 1, "component :is swaps back to the badge");
-        await page.click("#dyn .bb");
-        await t.expectText("#dyn .bb", "1", "swapped component handles events");
-      },
+      steps: [
+        ["click", "#s"],
+        ["count", "#dyn .card", 1, "component :is swaps to the card"],
+        ["click", "#s"],
+        ["count", "#dyn .badge", 1, "component :is swaps back to the badge"],
+        ["click", "#dyn .bb"],
+        ["text", "#dyn .bb", "1", "swapped component handles events"],
+      ],
     },
     {
       route: "bt-emit",
       ready: "#ssr .em",
-      async run(page, t) {
-        await t.expectText("#total", "total=0", "start");
-        await page.click("#ssr .em");
-        await t.expectText("#total", "total=10", "server child emit reaches the parent");
-        await page.click("#ssr .em");
-        await t.expectText("#total", "total=20", "second emit");
-        await page.click("#t");
-        await t.expectCount("#cond .em", 1, "child appears inside v-if");
-        await page.click("#cond .em");
-        await t.expectText("#total", "total=30", "browser-created child emit reaches the parent");
-      },
+      steps: [
+        ["text", "#total", "total=0", "start"],
+        ["click", "#ssr .em"],
+        ["text", "#total", "total=10", "server child emit reaches the parent"],
+        ["click", "#ssr .em"],
+        ["text", "#total", "total=20", "second emit"],
+        ["click", "#t"],
+        ["count", "#cond .em", 1, "child appears inside v-if"],
+        ["click", "#cond .em"],
+        ["text", "#total", "total=30", "browser-created child emit reaches the parent"],
+      ],
     },
     {
       route: "bt-slots",
       ready: "#x .ls",
-      async run(page, t) {
-        await t.expectText("#x .hd", "H:L:0", "scoped header slot renders on the server");
-        await t.expectText("#x li:first-child", "a-0-L", "default scoped slot renders per item");
-        await page.click("#x .bump");
-        await t.expectText("#x li:first-child", "a-1-L", "per-item slot updates");
-        await page.click("#x .pin");
-        await page.click("#x .bump");
-        await t.expectText("#x li:first-child", "a-2-L!", "per-item slot reads fresh parent state");
-        await t.expectText("#x .ft", "Default footer", "fallback content renders for a missing slot");
-      },
+      steps: [
+        ["text", "#x .hd", "H:L:0", "scoped header slot renders on the server"],
+        ["text", "#x li:first-child", "a-0-L", "default scoped slot renders per item"],
+        ["click", "#x .bump"],
+        ["text", "#x li:first-child", "a-1-L", "per-item slot updates"],
+        ["click", "#x .pin"],
+        ["click", "#x .bump"],
+        ["text", "#x li:first-child", "a-2-L!", "per-item slot reads fresh parent state"],
+        ["text", "#x .ft", "Default footer", "fallback content renders for a missing slot"],
+      ],
     },
     {
       route: "bt-flip",
       ready: "#x .pn",
-      async run(page, t) {
-        await t.expectText("#x .pb", "hello", "slot inside v-if renders on the server");
-        await page.click("#x .pf");
-        await t.expectCount("#x .pb", 0, "v-if hides the slot");
-        await page.click("#x .pf");
-        await t.expectText("#x .pb", "hello", "slot content comes back after a re-render");
-      },
+      steps: [
+        ["text", "#x .pb", "hello", "slot inside v-if renders on the server"],
+        ["click", "#x .pf"],
+        ["count", "#x .pb", 0, "v-if hides the slot"],
+        ["click", "#x .pf"],
+        ["text", "#x .pb", "hello", "slot content comes back after a re-render"],
+      ],
     },
     {
       route: "bt-native",
       ready: "#x .plain",
-      async run(page, t) {
-        await t.expectText("#x .c", "0", "start");
-        await page.click("#x .plain >> nth=0");
-        await t.expectText("#x .c", "1", "native click on a component tag");
-        await page.click("#x .plain >> nth=2");
-        await t.expectText("#x .c", "21", "native click on a v-for child uses its local");
-        await page.click("#x .t");
-        await t.expectCount("#x .plain", 4, "block child appears");
-        await page.click("#x .plain >> nth=1");
-        await t.expectText("#x .c", "22", "native click on a browser-created child");
-        await page.click("#x .plain >> nth=2");
-        await t.expectText("#x .c", "32", "v-for child still works after the block");
-      },
+      steps: [
+        ["text", "#x .c", "0", "start"],
+        ["click", "#x .plain >> nth=0"],
+        ["text", "#x .c", "1", "native click on a component tag"],
+        ["click", "#x .plain >> nth=2"],
+        ["text", "#x .c", "21", "native click on a v-for child uses its local"],
+        ["click", "#x .t"],
+        ["count", "#x .plain", 4, "block child appears"],
+        ["click", "#x .plain >> nth=1"],
+        ["text", "#x .c", "22", "native click on a browser-created child"],
+        ["click", "#x .plain >> nth=2"],
+        ["text", "#x .c", "32", "v-for child still works after the block"],
+      ],
     },
   ];
 }

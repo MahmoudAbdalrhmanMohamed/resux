@@ -27,6 +27,10 @@ First stable release of the 0.4 line. It includes everything from the 0.4.0 beta
 - Scaffolded templates ship `legacy-peer-deps` in `.npmrc` for templates that use vitest ^4 (#146).
 - The CLI fallback version string now matches the package version.
 
+### Known issues
+
+- **Node 20 with `engine-strict`**: resuxjs runs on Node >=20.19. With npm's `engine-strict` enabled, installing it on Node 20 fails with EBADENGINE, because the dependency `unifont@^1.0.3` pulls in `undici@^8`, which requires Node >=22.19. With default npm settings this is only a warning and everything works. A proper fix is planned for 0.4.1.
+
 ## [0.4.0-beta.8] - 2026-11-25
 
 ### Framework bug fixes and resumability improvements

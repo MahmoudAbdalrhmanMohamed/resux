@@ -142,7 +142,7 @@ describe("resumable template event locals", () => {
     expect(source).toContain('data-rx-locals-');
     expect(source).toContain('readEventLocals(target, eventName)');
     expect(source).toContain('component.run(scopeRecord, handlerName, event, readEventLocals(target, eventName))');
-    expect(source).toContain('async run(scopeRecord, handlerName, event, eventLocals = {})');
+    expect(source).toContain('async run(scopeRecord, handlerName, event, eventLocals = {}, emitArgs = null)');
     expect(source).toContain('if (Object.keys(eventLocals).length > 0)');
     expect(source).toContain('await handler(event, eventLocals)');
     expect(source).toContain('await handler(event);');

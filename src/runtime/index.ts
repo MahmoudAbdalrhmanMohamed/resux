@@ -8932,6 +8932,7 @@ let __rxActiveEffect;
 let __rxShouldTrack = true;
 const __rxTrackStack = [];
 const __rxQueue = new Set();
+const __rxPostFlushQueue = new Set();
 let __rxFlushing = false;
 const __rxResolvedPromise = Promise.resolve();
 let __rxFlushPromise = null;
@@ -10098,41 +10099,72 @@ function __rxHasChanged(value, oldValue) {
   return !Object.is(value, oldValue);
 }
 
-function __rxQueueJob(job) {
-  __rxQueue.add(job);
+function __rxStartFlush() {
   if (__rxFlushing) {
     return;
   }
   __rxFlushing = true;
   __rxFlushPromise = __rxResolvedPromise.then(__rxFlushJobs);
+  // Mark the flush as handled so fire-and-forget queued jobs do not produce
+  // an unhandled rejection; nextTick awaiters still observe it (mirrors the
+  // server scheduler).
+  __rxFlushPromise.catch(__rxNoopErrorObserver);
+}
+
+function __rxNoopErrorObserver() {
+  // Intentionally empty: the rejection remains visible through nextTick().
+}
+
+function __rxQueueJob(job) {
+  __rxQueue.add(job);
+  __rxStartFlush();
+}
+
+function __rxQueuePostFlushCb(job) {
+  __rxPostFlushQueue.add(job);
+  __rxStartFlush();
 }
 
 function __rxFlushJobs() {
   let didError = false;
   let firstError;
   const executionCounts = new Map();
+  const runJobs = (jobs) => {
+    for (const job of jobs) {
+      const count = executionCounts.get(job) || 0;
+      if (count >= 100) {
+        if (!didError) {
+          didError = true;
+          firstError = new Error("Resux scheduler stopped a recursively queued job after 100 executions.");
+        }
+        continue;
+      }
+      executionCounts.set(job, count + 1);
+      try {
+        job();
+      } catch (error) {
+        if (!didError) {
+          didError = true;
+          firstError = error;
+        }
+      }
+    }
+  };
   try {
-    while (__rxQueue.size > 0) {
-      const currentQueue = [...__rxQueue];
-      __rxQueue.clear();
-      for (const job of currentQueue) {
-        const count = executionCounts.get(job) || 0;
-        if (count >= 100) {
-          if (!didError) {
-            didError = true;
-            firstError = new Error("Resux scheduler stopped a recursively queued job after 100 executions.");
-          }
-          continue;
-        }
-        executionCounts.set(job, count + 1);
-        try {
-          job();
-        } catch (error) {
-          if (!didError) {
-            didError = true;
-            firstError = error;
-          }
-        }
+    let hasJobs = true;
+    while (hasJobs) {
+      hasJobs = false;
+      if (__rxQueue.size > 0) {
+        const currentQueue = [...__rxQueue];
+        __rxQueue.clear();
+        runJobs(currentQueue);
+        hasJobs = true;
+      }
+      if (__rxPostFlushQueue.size > 0) {
+        const currentPostQueue = [...__rxPostFlushQueue];
+        __rxPostFlushQueue.clear();
+        runJobs(currentPostQueue);
+        hasJobs = true;
       }
     }
   } finally {
@@ -10801,7 +10833,7 @@ function __rxDoWatch(source, callback, options) {
 
   const scheduler = flush === "sync"
     ? job
-    : () => __rxQueueJob(job);
+    : () => __rxQueuePostFlushCb(job);
 
   const runner = effect(getter, {
     scheduler,

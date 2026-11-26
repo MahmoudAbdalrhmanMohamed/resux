@@ -11006,7 +11006,11 @@ function readClientTranslation(messages, localeCode, key) {
 
 function interpolateClientTranslation(value, params = {}) {
   if (typeof value !== "string") return value;
-  return value.replace(/\{([^{}]+)\}/g, (match, key) => Object.prototype.hasOwnProperty.call(params, key) ? String(params[key]) : match);
+  return value.replace(/\{([A-Za-z0-9_]+)\}/g, (match, key) => {
+    const param = params[key];
+    if (param === undefined || param === null) return match;
+    return String(param);
+  });
 }
 
 function buildClientLocalePath(to, localeCode, config) {

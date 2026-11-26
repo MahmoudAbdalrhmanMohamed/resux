@@ -10660,7 +10660,7 @@ function isReactive(value) {
     return Boolean(raw && raw !== value && isReactive(raw));
   }
   return false;
-  }
+}
 
 function isReadonly(value) {
   return Boolean(__rxIsObject(value) && value[__rxFlags.isReadonly]);

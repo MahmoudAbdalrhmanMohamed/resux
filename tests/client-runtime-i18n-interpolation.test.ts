@@ -4,7 +4,7 @@ import { expectAllPass, runClientEngineProbe } from "./helpers/client-engine-pro
 // Regression coverage for the client runtime i18n interpolation: the server
 // engine (src/i18n/shared.ts interpolateMessage) only fills {alphanumeric}
 // placeholders and keeps a placeholder literal when the param is undefined or
-// null. The client copy filled any {â¦} placeholder and rendered undefined
+// null. The client copy filled any {…} placeholder and rendered undefined
 // params as the string "undefined", so SSR and hydrated client disagreed.
 
 describe("client runtime i18n interpolation semantics", () => {

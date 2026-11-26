@@ -9266,11 +9266,11 @@ async function ensureClientEnhancementManifestLoaded() {
 }
 
 function packageCacheKey(name, options = {}) {
+  const css = normalizePackageCssInput(options.css).sort().join(",");
   const exportName = typeof options.exportName === "string" ? options.exportName : "";
-  const preferDefault = options.preferDefault === false ? "named" : "default";
   const mode = normalizePackageMode(options.mode, options.clientOnly ? "clientOnly" : "ssr");
-  const css = Array.isArray(options.css) ? options.css.join(",") : String(options.css || "");
-  return [name, exportName, preferDefault, mode, css].join("::");
+  const preferDefault = options.preferDefault === false ? "0" : "1";
+  return name + "::" + mode + "::" + preferDefault + "::" + exportName + "::" + css;
 }
 
 function normalizePackageCssInput(value) {

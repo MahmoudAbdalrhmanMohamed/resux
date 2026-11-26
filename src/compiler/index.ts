@@ -20,6 +20,8 @@ import {
   type ComponentStyle,
   type ElementTemplateNode,
   type PageMeta,
+  type SlotDefinition,
+  type SlotProvider,
   type ResuxPackageMode,
   type ResuxPackagesConfig,
   type TemplateAttribute,
@@ -1524,6 +1526,11 @@ function compileTemplateNode(
       continue;
     }
 
+    if (prop.name === "slot") {
+      element.slot = compileSlotProvider(prop, state);
+      continue;
+    }
+
     if (prop.name === "bind") {
       const arg = expressionContent(prop.arg);
       const expression = expressionContent(prop.exp);
@@ -1743,11 +1750,136 @@ function compileTemplateNode(
     }
   }
 
+  if ((/^[A-Z]/.test(node.tag) && !BUILT_IN_CHILDREN_TAGS.has(node.tag)) || node.tag === "component") {
+    assignComponentSlots(element, state);
+  }
+
   if (addedLocals > 0) {
     state.activeLocals.splice(state.activeLocals.length - addedLocals, addedLocals);
   }
 
   return element;
+}
+
+// Slots provided to a component: <template #name="props">, <template v-slot:name="props"> and
+// <template rx-slot:name="props"> become element.slots[name]; everything else is the default slot.
+// A v-slot on the component tag itself is the default slot with props.
+function compileSlotProvider(prop: DirectiveNode, state: CompileTemplateState): SlotProvider {
+  const arg = prop.arg;
+  if (arg && !(arg.type === NodeTypes.SIMPLE_EXPRESSION && arg.isStatic)) {
+    throw new ResuxCompileError("Dynamic slot names (v-slot:[name]) are not supported. Use a static slot name.", locationFromVueNode(state.file, prop));
+  }
+  const name = arg ? expressionContent(arg).trim() : "default";
+  const expression = expressionContent(prop.exp).trim();
+  if (!expression) {
+    return { name };
+  }
+  const source = `const ${expression} = null;`;
+  const sf = ts.createSourceFile("slot-params.ts", source, ts.ScriptTarget.Latest, true);
+  const stmt = sf.statements[0];
+  const decl = stmt && ts.isVariableStatement(stmt) ? stmt.declarationList.declarations[0] : undefined;
+  const unsupported = () => new ResuxCompileError(
+    `Slot params "${expression}" are not supported. Use a name (v-slot:${name}="props") or simple destructuring (v-slot:${name}="{ a, b: c }") without defaults, nesting or rest.`,
+    locationFromVueNode(state.file, prop),
+  );
+  if (!decl || sf.statements.length !== 1) {
+    throw unsupported();
+  }
+  if (ts.isIdentifier(decl.name)) {
+    return { name, param: { kind: "ident", name: decl.name.text } };
+  }
+  if (!ts.isObjectBindingPattern(decl.name)) {
+    throw unsupported();
+  }
+  const pairs: { key: string; local: string }[] = [];
+  for (const element of decl.name.elements) {
+    if (element.dotDotDotToken || element.initializer || !ts.isIdentifier(element.name)) {
+      throw unsupported();
+    }
+    const key = element.propertyName
+      ? (ts.isIdentifier(element.propertyName) || ts.isStringLiteral(element.propertyName) ? element.propertyName.text : "")
+      : element.name.text;
+    if (!key) {
+      throw unsupported();
+    }
+    pairs.push({ key, local: element.name.text });
+  }
+  return { name, param: { kind: "pairs", pairs } };
+}
+
+// Built-in tags render their own children (links, images, teleports, layouts), so they keep them as plain children.
+const BUILT_IN_CHILDREN_TAGS = new Set([
+  "ResuxPage", "ResuxLayout", "ResuxLink", "NuxtLink", "RouterLink", "ResuxImg", "NuxtImg", "NuxtImage",
+  "ResuxPicture", "NuxtPicture", "ResuxVideo", "ResuxIcon", "Icon", "NuxtIcon", "ClientEnhance",
+  "ResuxClientEnhance", "ResuxLoadingIndicator", "VueIsland", "Teleport"
+]);
+
+function assignComponentSlots(element: ElementTemplateNode, state: CompileTemplateState): void {
+  const slots: Record<string, SlotDefinition> = Object.create(null) as Record<string, SlotDefinition>;
+  const rest: TemplateNode[] = [];
+  const provide = (name: string, definition: SlotDefinition) => {
+    if (Object.hasOwn(slots, name)) {
+      throw new ResuxCompileError(`Slot "${name}" is provided more than once on <${element.tag}>.`, undefined);
+    }
+    slots[name] = definition;
+  };
+
+  if (element.slot) {
+    const own = element.slot;
+    delete element.slot;
+    provide(own.name, { ...(own.param ? { param: own.param } : {}), children: element.children });
+    element.children = [];
+  } else {
+    for (const child of element.children) {
+      if (child.type === "element" && child.tag === "template" && child.slot) {
+        provide(child.slot.name, { ...(child.slot.param ? { param: child.slot.param } : {}), children: child.children });
+      } else {
+        rest.push(child);
+      }
+    }
+    if (rest.some((child) => child.type !== "text" || child.value.trim().length > 0)) {
+      provide("default", { children: rest });
+    }
+    if (Object.keys(slots).length === 0) {
+      return;
+    }
+    element.children = [];
+  }
+
+  element.slots = slots;
+  element.slotsId = nextBindingId(state);
+  const identifiers = new Set<string>();
+  const byId = new Map(state.expressions.map((entry) => [entry.id, entry]));
+  const addExpression = (id: string | undefined) => {
+    const entry = id ? byId.get(id) : undefined;
+    if (entry) for (const identifier of entry.locals) identifiers.add(identifier);
+  };
+  const walk = (nodes: TemplateNode[]) => {
+    for (const node of nodes) {
+      if (node.type === "interpolation") {
+        addExpression(node.expression);
+        continue;
+      }
+      if (node.type !== "element") continue;
+      for (const attr of node.attrs) if (attr.kind === "dynamic") addExpression(attr.value);
+      for (const event of node.events) for (const local of event.locals ?? []) identifiers.add(local);
+      addExpression(node.if?.expression);
+      addExpression(node.for?.source);
+      addExpression(node.html?.expression);
+      walk(node.children);
+      for (const nested of Object.values(node.slots ?? {})) walk(nested.children);
+      if (node.slotLocals) for (const local of node.slotLocals) identifiers.add(local);
+    }
+  };
+  for (const definition of Object.values(slots)) {
+    walk(definition.children);
+  }
+  const own = new Set<string>();
+  for (const definition of Object.values(slots)) {
+    if (definition.param?.kind === "ident") own.add(definition.param.name);
+    if (definition.param?.kind === "pairs") for (const pair of definition.param.pairs) own.add(pair.local);
+  }
+  element.slotLocals = selectReferencedActiveLocals(state.activeLocals, [...identifiers].filter((name) => !own.has(name)));
 }
 
 function selectReferencedActiveLocals(activeLocals: string[], identifiers: string[]): string[] {

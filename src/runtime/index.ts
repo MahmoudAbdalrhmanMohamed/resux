@@ -12037,6 +12037,14 @@ export function createClientComponent(definition) {
         defineEmits() {
           return () => {};
         },
+        defineExpose() {},
+        defineSlots() {
+          return {};
+        },
+        defineOptions() {},
+        defineModel(name) {
+          return ref(props[name === undefined ? "modelValue" : name]);
+        },
         useRoute() {
           return route;
         },

@@ -9,6 +9,7 @@ Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaki
 ### Fixed
 
 - **Components inside `v-if` / `v-for`**: the client-side block renderer used to emit an empty literal tag (for example `<badge></badge>`) for every component, so toggling a `v-if` or changing a `v-for` list silently removed the component. Blocks now create their components in the browser on demand. The component module is imported lazily, the instance gets a client-only scope (`c1`, `c2`, ...) so its events and state resume like server-rendered ones, and the scope is released when its nodes leave the page. Pages without components inside blocks are unchanged, and the payload only lists the component names a page can actually create. Slot content for client-created components is not rendered yet.
+- **State of components inside `v-for`**: components created in the browser inside a `v-for` block now keep their state when the block re-renders for an unrelated update or when the list is reordered. Children are matched by `:key`; without a key they are matched by position and a development warning is logged. A child whose props changed is created fresh. Pages without client-created components do no extra work.
 
 ## [0.4.0] - 2026-11-26
 

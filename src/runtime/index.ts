@@ -17318,6 +17318,8 @@ function renderNode(node, scope, locals, styleScopeId, scopeId, moduleId) {
   }
   if (node.for) {
     const items = evaluateExpression(node.for.source, scope, locals);
+    const previousInFor = clientRenderInFor;
+    clientRenderInFor = true;
     const rendered = Array.isArray(items)
       ? items.map((item, index) => {
           const nextLocals = { ...locals, [node.for.value]: item };
@@ -17325,6 +17327,7 @@ function renderNode(node, scope, locals, styleScopeId, scopeId, moduleId) {
           return renderElement({ ...node, for: undefined, if: undefined }, scope, nextLocals, styleScopeId, scopeId, moduleId);
         }).join("")
       : "";
+    clientRenderInFor = previousInFor;
     return '<span data-rx-block="' + scopeId + ':' + node.for.blockId + '" style="display: contents;">' + rendered + '</span>';
   }
   if (node.if) {
@@ -17343,6 +17346,8 @@ function renderNode(node, scope, locals, styleScopeId, scopeId, moduleId) {
 let clientChildCounter = 0;
 const pendingClientChildren = new Map();
 const clientChildRoots = new Map();
+const clientChildMeta = new Map();
+let clientRenderInFor = false;
 
 function clientBlockComponentModuleId(tag) {
   const payload = globalThis.__RESUX__;
@@ -17352,15 +17357,26 @@ function clientBlockComponentModuleId(tag) {
 
 function renderClientChildPlaceholder(node, moduleId, scope, locals) {
   const props = {};
+  let key = "";
+  let hasKey = false;
   for (const attr of node.attrs) {
+    const value = attr.kind === "static" ? attr.value : evaluateExpression(attr.value, scope, locals);
+    if (attr.name === "key") {
+      key = String(value);
+      hasKey = true;
+      continue;
+    }
     const name = String(attr.name).replace(/-([a-zA-Z0-9])/g, (_, char) => char.toUpperCase());
-    props[name] = attr.kind === "static" ? attr.value : evaluateExpression(attr.value, scope, locals);
+    props[name] = value;
+  }
+  if (clientRenderInFor && !hasKey && isClientDevMode()) {
+    console.warn("[resux] <" + node.tag + "> inside v-for has no :key. Its state is matched by position, so reordering the list can move state to the wrong item.");
   }
   if (node.children.length > 0 && isClientDevMode()) {
     console.warn("[resux] <" + node.tag + "> slot content is not rendered by client-side component rendering yet.");
   }
   const id = "c" + (++clientChildCounter);
-  pendingClientChildren.set(id, { moduleId, tag: node.tag, props });
+  pendingClientChildren.set(id, { moduleId, tag: node.tag, props, key, hasKey });
   return '<span data-rx-child="' + id + '" style="display: contents;"></span>';
 }
 
@@ -17392,6 +17408,7 @@ async function mountClientChild(placeholder) {
     const parent = placeholder.parentNode;
     const nodes = Array.from(template.content.childNodes);
     clientChildRoots.set(id, nodes);
+    clientChildMeta.set(id, { tag: entry.tag, key: entry.hasKey ? "k:" + entry.key : "", propsJson: JSON.stringify(entry.props) });
     placeholder.replaceWith(template.content);
     registerDelegatedEventsFromDom(parent && parent.nodeType === 1 ? parent : document);
     await Promise.all(nodes.filter((child) => child.nodeType === 1).map((child) => mountClientChildren(child)));
@@ -17406,11 +17423,66 @@ async function mountClientChild(placeholder) {
   }
 }
 
+// A block patch re-renders the whole block. Client-created children inside it are held aside in a
+// fragment, then put back in place of their new placeholder when the key (or, unkeyed, the position
+// among same-tag siblings) and the props match, so their state survives unrelated updates and reorders.
+function holdClientChildrenOfBlock(block) {
+  const held = [];
+  for (const [id, nodes] of clientChildRoots) {
+    const first = nodes[0];
+    if (!first || !first.isConnected || !block.contains(first)) continue;
+    const owner = first.parentNode && first.parentNode.closest ? first.parentNode.closest("[data-rx-block]") : null;
+    if (owner !== block) continue;
+    held.push({ id, nodes, meta: clientChildMeta.get(id) });
+  }
+  if (held.length === 0) return held;
+  const holder = document.createDocumentFragment();
+  for (const entry of held) for (const node of entry.nodes) holder.appendChild(node);
+  held.holder = holder;
+  return held;
+}
+
+function restoreClientChildrenOfBlock(block, held) {
+  if (!held || held.length === 0) return;
+  const byKey = new Map();
+  const unkeyedCount = new Map();
+  for (const entry of held) {
+    const meta = entry.meta;
+    if (!meta) continue;
+    let slot = meta.key;
+    if (!slot) {
+      const n = unkeyedCount.get(meta.tag) || 0;
+      unkeyedCount.set(meta.tag, n + 1);
+      slot = "i:" + meta.tag + ":" + n;
+    }
+    byKey.set(slot, entry);
+  }
+  const seen = new Map();
+  for (const placeholder of Array.from(block.querySelectorAll("[data-rx-child]"))) {
+    const id = placeholder.getAttribute("data-rx-child");
+    const pending = pendingClientChildren.get(id);
+    if (!pending) continue;
+    let slot = pending.hasKey ? "k:" + pending.key : "";
+    if (!slot) {
+      const n = seen.get(pending.tag) || 0;
+      seen.set(pending.tag, n + 1);
+      slot = "i:" + pending.tag + ":" + n;
+    }
+    const old = byKey.get(slot);
+    if (!old || old.meta.tag !== pending.tag || old.meta.propsJson !== JSON.stringify(pending.props)) continue;
+    byKey.delete(slot);
+    pendingClientChildren.delete(id);
+    for (const node of old.nodes) placeholder.parentNode.insertBefore(node, placeholder);
+    placeholder.remove();
+  }
+}
+
 function releaseDetachedClientChildren() {
   const payload = globalThis.__RESUX__;
   for (const [id, nodes] of Array.from(clientChildRoots)) {
     if (nodes.some((node) => node.isConnected)) continue;
     clientChildRoots.delete(id);
+    clientChildMeta.delete(id);
     scopeCache.delete(id);
     if (payload && payload.scopes) delete payload.scopes[id];
   }
@@ -19662,8 +19734,10 @@ function applyPatches(scopeId, patches, options = {}) {
       continue;
     }
     elements.forEach((element) => {
+      const held = patch.type === "block" && clientChildRoots.size > 0 ? holdClientChildrenOfBlock(element) : null;
       if (patch.type !== "html" && patchTransitionBlock(element, patch.value)) return;
       replaceManagedRuntimeHtml(element, patch.value);
+      if (held) restoreClientChildrenOfBlock(element, held);
       void mountVueIslands(document);
       needsLazyImageActivation = true;
       needsDelegatedEventRegistration = true;

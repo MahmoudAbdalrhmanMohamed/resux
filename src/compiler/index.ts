@@ -1580,7 +1580,8 @@ function compileTemplateNode(
         name: arg,
         handler,
         modifiers,
-        ...(inlineHandler?.locals.length ? { locals: inlineHandler.locals } : {})
+        ...(inlineHandler?.locals.length ? { locals: inlineHandler.locals } : {}),
+        ...(isComponentTagName(node.tag) && NATIVE_FALLTHROUGH_EVENTS.has(arg) ? { native: true } : {})
       };
       events.push(event);
       state.handlers.push(event);
@@ -1750,7 +1751,7 @@ function compileTemplateNode(
     }
   }
 
-  if ((/^[A-Z]/.test(node.tag) && !BUILT_IN_CHILDREN_TAGS.has(node.tag)) || node.tag === "component") {
+  if (isComponentTagName(node.tag)) {
     assignComponentSlots(element, state);
   }
 
@@ -1812,6 +1813,19 @@ const BUILT_IN_CHILDREN_TAGS = new Set([
   "ResuxPage", "ResuxLayout", "ResuxLink", "NuxtLink", "RouterLink", "ResuxImg", "NuxtImg", "NuxtImage",
   "ResuxPicture", "NuxtPicture", "ResuxVideo", "ResuxIcon", "Icon", "NuxtIcon", "ClientEnhance",
   "ResuxClientEnhance", "ResuxLoadingIndicator", "VueIsland", "Teleport"
+]);
+
+function isComponentTagName(tag: string): boolean {
+  return (/^[A-Z]/.test(tag) && !BUILT_IN_CHILDREN_TAGS.has(tag)) || tag === "component";
+}
+
+// DOM events written on a component tag (<Child @click="go" />) fall through to the child's root element,
+// like Vue does for listeners the child does not declare as emits. Other names are component events only.
+const NATIVE_FALLTHROUGH_EVENTS = new Set([
+  "click", "dblclick", "contextmenu", "auxclick", "mousedown", "mouseup", "mouseenter", "mouseleave", "mouseover", "mouseout", "mousemove",
+  "pointerdown", "pointerup", "pointerenter", "pointerleave", "pointermove", "pointercancel",
+  "keydown", "keyup", "keypress", "focus", "blur", "focusin", "focusout", "input", "change", "submit", "reset",
+  "touchstart", "touchend", "touchmove", "touchcancel", "wheel", "scroll", "dragstart", "dragend", "dragover", "drop"
 ]);
 
 function assignComponentSlots(element: ElementTemplateNode, state: CompileTemplateState): void {

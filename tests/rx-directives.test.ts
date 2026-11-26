@@ -22,6 +22,14 @@ describe("Resux rx-* directives", () => {
     expect(normalized).toContain("rx-if stays in text");
   });
 
+  it("keeps normalizing after an attribute value that ends with a backslash", () => {
+    const normalized = normalizeResuxDirectiveSyntax(
+      '<a title="C:\\" rx-if="ok">x</a><b rx-if="y">z</b>',
+    );
+
+    expect(normalized).toBe('<a title="C:\\" v-if="ok">x</a><b v-if="y">z</b>');
+  });
+
   it("only rewrites the SFC template block", () => {
     const source = `<script setup lang="ts">
 const example = "rx-if"

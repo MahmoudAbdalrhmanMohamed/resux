@@ -17347,6 +17347,7 @@ let clientChildCounter = 0;
 const pendingClientChildren = new Map();
 const clientChildRoots = new Map();
 const clientChildMeta = new Map();
+const clientSlotContent = new Map();
 let clientRenderInFor = false;
 
 function clientBlockComponentModuleId(tag) {
@@ -17355,7 +17356,7 @@ function clientBlockComponentModuleId(tag) {
   return ids && Object.prototype.hasOwnProperty.call(ids, tag) ? ids[tag] : "";
 }
 
-function renderClientChildPlaceholder(node, moduleId, scope, locals) {
+function renderClientChildPlaceholder(node, moduleId, scope, locals, styleScopeId, scopeId, parentModuleId) {
   const props = {};
   let key = "";
   let hasKey = false;
@@ -17372,11 +17373,11 @@ function renderClientChildPlaceholder(node, moduleId, scope, locals) {
   if (clientRenderInFor && !hasKey && isClientDevMode()) {
     console.warn("[resux] <" + node.tag + "> inside v-for has no :key. Its state is matched by position, so reordering the list can move state to the wrong item.");
   }
-  if (node.children.length > 0 && isClientDevMode()) {
-    console.warn("[resux] <" + node.tag + "> slot content is not rendered by client-side component rendering yet.");
-  }
+  // Slot content is rendered by the parent (its scope and locals), like the server renderer does: all
+  // children of the tag form one default slot. Named and scoped slots are not part of the server model.
+  const slotHtml = node.children.map((child) => renderNode(child, scope, locals, styleScopeId, scopeId, parentModuleId)).join("");
   const id = "c" + (++clientChildCounter);
-  pendingClientChildren.set(id, { moduleId, tag: node.tag, props, key, hasKey });
+  pendingClientChildren.set(id, { moduleId, tag: node.tag, props, key, hasKey, slotHtml });
   return '<span data-rx-child="' + id + '" style="display: contents;"></span>';
 }
 
@@ -17399,6 +17400,7 @@ async function mountClientChild(placeholder) {
     const serialized = { id, moduleId: entry.moduleId, props: serializeProps(entry.props), state: {}, globalStateKeys: [], asyncData: {} };
     const record = await component.createScope(serialized, payload.route);
     if (!placeholder.isConnected) return;
+    clientSlotContent.set(id, entry.slotHtml);
     const html = component.renderHtml(record);
     const state = component.serialize(record);
     scopeCache.set(id, record);
@@ -17408,7 +17410,7 @@ async function mountClientChild(placeholder) {
     const parent = placeholder.parentNode;
     const nodes = Array.from(template.content.childNodes);
     clientChildRoots.set(id, nodes);
-    clientChildMeta.set(id, { tag: entry.tag, key: entry.hasKey ? "k:" + entry.key : "", propsJson: JSON.stringify(entry.props) });
+    clientChildMeta.set(id, { tag: entry.tag, key: entry.hasKey ? "k:" + entry.key : "", propsJson: JSON.stringify(entry.props), slotHtml: entry.slotHtml });
     placeholder.replaceWith(template.content);
     registerDelegatedEventsFromDom(parent && parent.nodeType === 1 ? parent : document);
     await Promise.all(nodes.filter((child) => child.nodeType === 1).map((child) => mountClientChildren(child)));
@@ -17469,7 +17471,7 @@ function restoreClientChildrenOfBlock(block, held) {
       slot = "i:" + pending.tag + ":" + n;
     }
     const old = byKey.get(slot);
-    if (!old || old.meta.tag !== pending.tag || old.meta.propsJson !== JSON.stringify(pending.props)) continue;
+    if (!old || old.meta.tag !== pending.tag || old.meta.propsJson !== JSON.stringify(pending.props) || old.meta.slotHtml !== pending.slotHtml) continue;
     byKey.delete(slot);
     pendingClientChildren.delete(id);
     for (const node of old.nodes) placeholder.parentNode.insertBefore(node, placeholder);
@@ -17483,6 +17485,7 @@ function releaseDetachedClientChildren() {
     if (nodes.some((node) => node.isConnected)) continue;
     clientChildRoots.delete(id);
     clientChildMeta.delete(id);
+    clientSlotContent.delete(id);
     scopeCache.delete(id);
     if (payload && payload.scopes) delete payload.scopes[id];
   }
@@ -17528,6 +17531,9 @@ function normalizeClientTransitionTag(value) {
 
 function renderElement(node, scope, locals, styleScopeId, scopeId, moduleId) {
   const normalizedTag = String(node.tag || "").toLowerCase();
+  if (normalizedTag === "slot" && clientSlotContent.size > 0 && clientSlotContent.has(scopeId)) {
+    return clientSlotContent.get(scopeId);
+  }
   if (normalizedTag === "teleport") {
     const find = (name) => node.attrs.find((attr) => attr.name === name);
     const read = (attr, fallback) => attr
@@ -17608,7 +17614,7 @@ function renderElement(node, scope, locals, styleScopeId, scopeId, moduleId) {
   if (/^[A-Z]/.test(node.tag)) {
     const childModuleId = clientBlockComponentModuleId(node.tag);
     if (childModuleId) {
-      return renderClientChildPlaceholder(node, childModuleId, scope, locals);
+      return renderClientChildPlaceholder(node, childModuleId, scope, locals, styleScopeId, scopeId, moduleId);
     }
   }
   const tag = nativeElementTag(node);

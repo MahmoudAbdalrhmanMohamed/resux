@@ -6,6 +6,10 @@ Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaki
 
 ## [Unreleased]
 
+- **Named and scoped slots**: `<template #header="{ title }">`, `v-slot:name` and `rx-slot:name` now work, on the server, in the browser and after resume. A component can use several named slots, and `<slot name="x" :prop="value">` passes props to the content. Fallback content inside `<slot>` renders when the slot is not provided. Slot params support a name or simple destructuring (no defaults, nesting, rest or dynamic `#[name]`; those are compile errors). The child's payload maps each provided slot to the parent, like component events do.
+- **Fixed: `<slot />` inside `v-if` or `v-for` of a server-rendered component** lost its content on the first client re-render and showed an empty `<slot></slot>` with no error.
+- Known limit: text in a scoped slot that reads the parent's state updates on the child's next re-render, not on the parent's own change. See the Current Limits page.
+
 ## [0.5.0-beta.1] - 2026-11-26
 
 First beta of the 0.5 line. It makes components work everywhere in a template, in the browser and after resume, and delivers component events. Pages that do not use these features have an unchanged payload and runtime behavior.

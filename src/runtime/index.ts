@@ -11038,7 +11038,9 @@ function useClientI18n(routeOverride) {
   const dir = computed(() => config.locales.find((entry) => entry.code === locale.value)?.dir || "ltr");
   const t = (key, params = {}) => {
     const value = readClientTranslation(config.messages, locale.value, key) ?? readClientTranslation(config.messages, config.fallbackLocale, key);
-    return typeof value === "string" ? interpolateClientTranslation(value, params) : String(key);
+    if (typeof value === "string") return interpolateClientTranslation(value, params);
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    return String(key);
   };
   const tm = (key) => readClientTranslation(config.messages, locale.value, key) ?? readClientTranslation(config.messages, config.fallbackLocale, key) ?? key;
   return {

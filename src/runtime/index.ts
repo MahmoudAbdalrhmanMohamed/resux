@@ -10649,7 +10649,17 @@ function __rxCreateReactiveObject(target, isReadonlyValue, proxyMap, isShallow) 
 }
 
 function isReactive(value) {
-  return Boolean(__rxIsObject(value) && value[__rxFlags.isReactive]);
+  if (!__rxIsObject(value)) {
+    return false;
+  }
+  if (value[__rxFlags.isReactive]) {
+    return true;
+  }
+  if (value[__rxFlags.isReadonly]) {
+    const raw = __rxProxyToRaw.get(value);
+    return Boolean(raw && raw !== value && isReactive(raw));
+  }
+  return false;
 }
 
 function isReadonly(value) {

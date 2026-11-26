@@ -48,11 +48,11 @@ describe("client runtime: default slot of client-created components", () => {
     expectAllPass(results);
   });
 
-  it("renders nothing for a child without slot content (server parity)", async () => {
+  it("renders the fallback content for a child without slot content (Vue semantics, server parity)", async () => {
     const results = await runClientEngineProbe(`${setup}
       await patch(noSlot, { show: true, label: "x" });
       t("child rendered", !!document.querySelector(".card"), document.body.innerHTML);
-      t("no slot output", !document.querySelector("slot") && !document.body.textContent.includes("fallback"), document.body.innerHTML);
+      t("fallback shown, no raw slot element", !document.querySelector("slot") && document.body.textContent.includes("fallback"), document.body.innerHTML);
     `);
     expectAllPass(results);
   });

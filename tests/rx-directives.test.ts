@@ -38,6 +38,24 @@ describe("Resux rx-* directives", () => {
     expect(normalized).toBe(`<div :['a\\'b']="value" v-if="ok"></div><p v-if="ok"></p>`);
   });
 
+  it("does not unwrap arrow function parameters that share a ref name", () => {
+    const component = compileVueSource(`<script setup lang="ts">
+const n = useState("n", () => 1)
+const items = useState("items", () => [1, 2, 3])
+function handle(v) { n.value = v }
+</script>
+<template>
+  <button rx-on:click="() => items.forEach((n) => handle(n))">go</button>
+  <p>{{ items.map((n) => n + 1).join(",") + n }}</p>
+</template>`, { file: "/app/pages/index.vue" });
+    const output = JSON.stringify(component);
+
+    expect(output).toContain("items.value.map((n) => n + 1)");
+    expect(output).toContain("items.value.forEach((n) => handle(n))");
+    expect(output).toContain(") + n.value");
+    expect(output).not.toContain("(n.value)");
+  });
+
   it("only rewrites the SFC template block", () => {
     const source = `<script setup lang="ts">
 const example = "rx-if"

@@ -2,9 +2,9 @@
 
 **Resux** stands for **Resumability + User Experience (UX)**.
 
-Resux is a public-beta HTML-first web framework with a custom resumable runtime. It uses familiar `.vue` files and file-based routing, but normal Resux components do **not** use Vue hydration or the Vue runtime. The compiler renders HTML on the server, serializes the state needed to continue, and loads browser handler code when interaction actually needs it.
+Resux is an HTML-first web framework with a custom resumable runtime. It uses familiar `.vue` files and file-based routing, but normal Resux components do **not** use Vue hydration or the Vue runtime. The compiler renders HTML on the server, serializes the state needed to continue, and loads browser handler code when interaction actually needs it.
 
-🧪 **Status:** Public beta. Resux is ready for evaluation and real-world testing, but its APIs may still change before 1.0.
+**Status:** Stable 0.4 release (`latest` on npm). Resux follows Semantic Versioning; before 1.0, minor releases may contain breaking API changes that are documented in the changelog.
 
 📖 **Documentation:** https://mahmoudabdalrhmanmohamed.github.io/resux-docs/
 
@@ -57,6 +57,8 @@ npx resuxjs@latest init my-app
 ```
 
 Current framework source requires Node.js `>=20.19.0`.
+
+Known issue in 0.4.0: resuxjs runs on Node >=20.19. With npm's `engine-strict` enabled, installing it on Node 20 fails with EBADENGINE, because the dependency `unifont@^1.0.3` pulls in `undici@^8`, which requires Node >=22.19. With default npm settings this is only a warning and everything works. A proper fix is planned for 0.4.1.
 
 ## A normal Resux component
 

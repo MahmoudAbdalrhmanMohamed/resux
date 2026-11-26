@@ -6,6 +6,12 @@ Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaki
 
 ## [Unreleased]
 
+## [0.5.0-beta.1] - 2026-11-26
+
+First beta of the 0.5 line. It makes components work everywhere in a template, in the browser and after resume, and delivers component events. Pages that do not use these features have an unchanged payload and runtime behavior.
+
+Known limits: slots on browser-created components are the default slot only (named and scoped slots are not supported), `<component :is>` takes registered names as strings, and native DOM events on a component tag (`@click` on `<Child>`) are still ignored. See the Current Limits page in the docs.
+
 ### Fixed
 
 - **Component events (`emit`)**: `defineEmits()` and `emit(...)` used to do nothing, so a parent's `@save` handler on a component tag never ran. An emitted event now calls the parent handler, in the browser and after resume. The server render keeps `emit` a no-op and writes the mapping from event name to parent handler (with any `v-for` locals, by value) into the page payload, so a resumed or browser-created child can reach its parent without the server running again. The handler gets all emitted arguments (an inline handler gets the first as `$event`). Events nobody listens to are ignored. Native DOM events on a component tag (`@click` on `<Child>`) and event modifiers on component events are still not supported. Pages without events on component tags have an unchanged payload.

@@ -111,19 +111,33 @@ function resolveTemplateContentBounds(
   return { start: fallbackStart, end: fallbackStart + content.length };
 }
 
+function previousNonSpaceChar(source: string, index: number): string {
+  for (let cursor = index - 1; cursor >= 0; cursor--) {
+    if (!/\s/.test(source[cursor])) {
+      return source[cursor];
+    }
+  }
+  return "";
+}
+
 function findTagEnd(source: string, start: number): number {
   let quote: '"' | "'" | null = null;
 
   for (let index = start; index < source.length; index++) {
     const char = source[index];
     if (quote) {
-      if (char === quote && source[index - 1] !== "\\") {
+      // HTML attribute values have no backslash escapes, so a value such as
+      // title="C:\" ends at its closing quote.
+      if (char === quote) {
         quote = null;
       }
       continue;
     }
 
-    if (char === '"' || char === "'") {
+    // Only a quote that starts an attribute value (right after `=`) opens a
+    // quoted region. Quotes inside dynamic argument names such as
+    // `:['a\'b']` are part of an expression, not an attribute value.
+    if ((char === '"' || char === "'") && previousNonSpaceChar(source, index) === "=") {
       quote = char;
       continue;
     }
@@ -158,7 +172,7 @@ function normalizeOpeningTag(tag: string): string {
       const valueStart = cursor;
       cursor++;
       while (cursor < tag.length) {
-        if (tag[cursor] === quote && tag[cursor - 1] !== "\\") {
+        if (tag[cursor] === quote) {
           cursor++;
           break;
         }

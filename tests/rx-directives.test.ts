@@ -22,6 +22,22 @@ describe("Resux rx-* directives", () => {
     expect(normalized).toContain("rx-if stays in text");
   });
 
+  it("keeps normalizing after an attribute value that ends with a backslash", () => {
+    const normalized = normalizeResuxDirectiveSyntax(
+      '<a title="C:\\" rx-if="ok">x</a><b rx-if="y">z</b>',
+    );
+
+    expect(normalized).toBe('<a title="C:\\" v-if="ok">x</a><b v-if="y">z</b>');
+  });
+
+  it("does not treat quotes inside dynamic argument names as attribute values", () => {
+    const normalized = normalizeResuxDirectiveSyntax(
+      `<div :['a\\'b']="value" rx-if="ok"></div><p rx-if="ok"></p>`,
+    );
+
+    expect(normalized).toBe(`<div :['a\\'b']="value" v-if="ok"></div><p v-if="ok"></p>`);
+  });
+
   it("only rewrites the SFC template block", () => {
     const source = `<script setup lang="ts">
 const example = "rx-if"

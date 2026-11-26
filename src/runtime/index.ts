@@ -637,6 +637,8 @@ export interface ResuxPayload {
   scopes: Record<string, SerializedScope>;
   globalState?: Record<string, JsonValue>;
   modules: Record<string, string>;
+  /** Component tag -> module id for components that client-rendered blocks (v-if/v-for) may need to create. */
+  componentIds?: Record<string, string>;
   vueIslands?: Record<string, string>;
   config?: RuntimeConfig;
   plugins?: ClientPluginManifestRecord[];
@@ -2832,6 +2834,7 @@ class ResuxRenderer {
   private readonly globalStateRefs: Record<string, Ref<unknown>> = Object.create(null) as Record<string, Ref<unknown>>;
   private readonly headEntries: HeadEntry[] = [];
   private readonly styleIds = new Set<string>();
+  private readonly renderedDefinitions = new Map<string, ComponentDefinition>();
   private readonly resuxApp: ResuxAppLike;
 
   constructor(
@@ -2850,6 +2853,7 @@ class ResuxRenderer {
     props: ComponentProps = {}
   ): Promise<string> {
     this.collectComponentStyles(definition);
+    this.renderedDefinitions.set(definition.id, definition);
     const scopeId = `s${this.nextScopeId++}`;
     const stateRefs: Record<string, Ref<unknown>> = Object.create(null) as Record<string, Ref<unknown>>;
     const globalStateKeys = new Set<string>();
@@ -2921,6 +2925,7 @@ class ResuxRenderer {
       scopes,
       globalState: serializeRefs(this.globalStateRefs),
       modules: this.modules,
+      ...withClientComponentIds(collectClientBlockComponentIds(this.renderedDefinitions.values(), [this.components])),
       config: publicRuntimeConfig(this.runtimeConfig)
     };
   }
@@ -4070,6 +4075,49 @@ function renderTemplateNode(node: TemplateNode, context: RenderTemplateContext, 
   }
 
   return renderElement(node, context, locals);
+}
+
+/**
+ * Maps component tags used inside v-if/v-for blocks (transitively) to their module ids, so the browser
+ * can create those components lazily when a block re-renders. Pages without such components get nothing.
+ */
+function withClientComponentIds(ids: Record<string, string> | undefined): { componentIds?: Record<string, string> } {
+  return ids ? { componentIds: ids } : {};
+}
+
+function collectClientBlockComponentIds(
+  rendered: Iterable<ComponentDefinition>,
+  registries: Array<Record<string, ComponentDefinition>>,
+): Record<string, string> | undefined {
+  const registry: Record<string, ComponentDefinition> = {};
+  for (const entries of registries) {
+    for (const [name, definition] of Object.entries(entries ?? {})) {
+      if (!(name in registry)) registry[name] = definition;
+    }
+  }
+  const result: Record<string, string> = {};
+  const scanned = new Set<string>();
+  const scan = (nodes: TemplateNode[], inBlock: boolean) => {
+    for (const node of nodes) {
+      if (node.type !== "element") continue;
+      const blockHere = inBlock || Boolean(node.for || node.if);
+      if (blockHere && isComponentTag(node.tag) && !Object.hasOwn(result, node.tag)) {
+        const target = resolveComponentDefinition(node.tag, registry);
+        if (target?.id) {
+          result[node.tag] = target.id;
+          if (!scanned.has(target.id)) {
+            scanned.add(target.id);
+            scan(target.template ?? [], true);
+          }
+        }
+      }
+      scan(node.children, blockHere);
+    }
+  };
+  for (const definition of rendered) {
+    scan(definition.template ?? [], false);
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 function resolveComponentDefinition(
@@ -7245,6 +7293,7 @@ export class AsyncResuxRenderer {
   private readonly scopes: Record<string, ScopeRecord> = {};
   private readonly globalStateRefs: Record<string, Ref<unknown>> = Object.create(null) as Record<string, Ref<unknown>>;
   private readonly styleIds = new Set<string>();
+  private readonly renderedDefinitions = new Map<string, ComponentDefinition>();
   private readonly teleportEntries: Array<{ target: string; html: string | null }> = [];
   readonly headEntries: HeadEntry[] = [];
   readonly resuxApp: ResuxAppLike;
@@ -7269,6 +7318,7 @@ export class AsyncResuxRenderer {
     suppressTeleportReservations = false,
   ): Promise<string> {
     this.collectComponentStyles(definition);
+    this.renderedDefinitions.set(definition.id, definition);
     const scopeId = `s${this.nextScopeId++}`;
     const stateRefs: Record<string, Ref<unknown>> = Object.create(null) as Record<string, Ref<unknown>>;
     const globalStateKeys = new Set<string>();
@@ -7409,6 +7459,7 @@ export class AsyncResuxRenderer {
       scopes,
       globalState: serializeRefs(this.globalStateRefs),
       modules: this.modules,
+      ...withClientComponentIds(collectClientBlockComponentIds(this.renderedDefinitions.values(), [this.components, this.layouts])),
       vueIslands: this.vueIslands,
       config: publicRuntimeConfig(this.runtimeConfig)
     };
@@ -12097,6 +12148,11 @@ export function createClientComponent(definition) {
     },
     render(scopeRecord) {
       return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId, scopeRecord.scopeId, definition.id);
+    },
+    renderHtml(scopeRecord) {
+      return definition.template
+        .map((node) => renderNode(node, scopeRecord.scope, {}, definition.styleScopeId, scopeRecord.scopeId, definition.id))
+        .join("");
     },
     serialize(scopeRecord) {
       return {
@@ -17280,6 +17336,86 @@ function renderNode(node, scope, locals, styleScopeId, scopeId, moduleId) {
   return renderElement(node, scope, locals, styleScopeId, scopeId, moduleId);
 }
 
+// Components inside client-rendered blocks (v-if / v-for). The block renderer is synchronous, so a
+// component becomes a placeholder first. mountClientChildren then imports the component module on demand,
+// creates a client-only scope (ids c1, c2, ... never clash with server ids s*), renders its template and
+// swaps the placeholder for the real nodes. Scopes are released when their nodes leave the document.
+let clientChildCounter = 0;
+const pendingClientChildren = new Map();
+const clientChildRoots = new Map();
+
+function clientBlockComponentModuleId(tag) {
+  const payload = globalThis.__RESUX__;
+  const ids = payload && payload.componentIds;
+  return ids && Object.prototype.hasOwnProperty.call(ids, tag) ? ids[tag] : "";
+}
+
+function renderClientChildPlaceholder(node, moduleId, scope, locals) {
+  const props = {};
+  for (const attr of node.attrs) {
+    const name = String(attr.name).replace(/-([a-zA-Z0-9])/g, (_, char) => char.toUpperCase());
+    props[name] = attr.kind === "static" ? attr.value : evaluateExpression(attr.value, scope, locals);
+  }
+  if (node.children.length > 0 && isClientDevMode()) {
+    console.warn("[resux] <" + node.tag + "> slot content is not rendered by client-side component rendering yet.");
+  }
+  const id = "c" + (++clientChildCounter);
+  pendingClientChildren.set(id, { moduleId, tag: node.tag, props });
+  return '<span data-rx-child="' + id + '" style="display: contents;"></span>';
+}
+
+async function mountClientChildren(root) {
+  const host = root && root.querySelectorAll ? root : document;
+  const placeholders = Array.from(host.querySelectorAll("[data-rx-child]"));
+  if (host !== document && host.matches && host.matches("[data-rx-child]")) placeholders.unshift(host);
+  await Promise.all(placeholders.map((placeholder) => mountClientChild(placeholder)));
+}
+
+async function mountClientChild(placeholder) {
+  const id = placeholder.getAttribute("data-rx-child");
+  const entry = pendingClientChildren.get(id);
+  if (!entry) return;
+  pendingClientChildren.delete(id);
+  const payload = globalThis.__RESUX__;
+  if (!placeholder.isConnected || !payload || !payload.modules || !payload.scopes) return;
+  try {
+    const component = await importComponent(entry.moduleId, payload.modules, devImportRevision);
+    const serialized = { id, moduleId: entry.moduleId, props: serializeProps(entry.props), state: {}, globalStateKeys: [], asyncData: {} };
+    const record = await component.createScope(serialized, payload.route);
+    if (!placeholder.isConnected) return;
+    const html = component.renderHtml(record);
+    const state = component.serialize(record);
+    scopeCache.set(id, record);
+    payload.scopes[id] = { ...serialized, props: state.props, state: state.state, asyncData: state.asyncData, globalStateKeys: record.globalStateKeys ? [...record.globalStateKeys] : [] };
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    const parent = placeholder.parentNode;
+    const nodes = Array.from(template.content.childNodes);
+    clientChildRoots.set(id, nodes);
+    placeholder.replaceWith(template.content);
+    registerDelegatedEventsFromDom(parent && parent.nodeType === 1 ? parent : document);
+    await Promise.all(nodes.filter((child) => child.nodeType === 1).map((child) => mountClientChildren(child)));
+  } catch (error) {
+    placeholder.replaceWith(document.createComment("resux-child-error"));
+    dispatchManagedEvent(typeof document !== "undefined" ? document : null, "resux:handler-error", {
+      event: "mount",
+      scopeId: id,
+      handler: entry.tag,
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+function releaseDetachedClientChildren() {
+  const payload = globalThis.__RESUX__;
+  for (const [id, nodes] of Array.from(clientChildRoots)) {
+    if (nodes.some((node) => node.isConnected)) continue;
+    clientChildRoots.delete(id);
+    scopeCache.delete(id);
+    if (payload && payload.scopes) delete payload.scopes[id];
+  }
+}
+
 const unsafeClientTransitionContainerTags = new Set(${JSON.stringify([...unsafeTransitionContainerTags])});
 
 function normalizeClientTeleportTarget(value) {
@@ -17396,6 +17532,12 @@ function renderElement(node, scope, locals, styleScopeId, scopeId, moduleId) {
   }
   if (node.tag === "ClientEnhance" || node.tag === "ResuxClientEnhance") {
     return renderClientResuxClientEnhance(node, scope, locals, styleScopeId);
+  }
+  if (/^[A-Z]/.test(node.tag)) {
+    const childModuleId = clientBlockComponentModuleId(node.tag);
+    if (childModuleId) {
+      return renderClientChildPlaceholder(node, childModuleId, scope, locals);
+    }
   }
   const tag = nativeElementTag(node);
   const attrs = [];
@@ -19545,6 +19687,8 @@ function applyPatches(scopeId, patches, options = {}) {
     initializeManagedVideoControls();
   }
   if (needsDelegatedEventRegistration) registerDelegatedEventsFromDom(document);
+  if (pendingClientChildren.size > 0) void mountClientChildren(document);
+  if (clientChildRoots.size > 0) releaseDetachedClientChildren();
 }
 
 function evaluateExpression(expression, scope, locals) {

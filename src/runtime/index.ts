@@ -12034,6 +12034,9 @@ export function createClientComponent(definition) {
         defineProps() {
           return props;
         },
+        defineEmits() {
+          return () => {};
+        },
         useRoute() {
           return route;
         },

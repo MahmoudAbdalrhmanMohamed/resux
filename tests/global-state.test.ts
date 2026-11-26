@@ -238,10 +238,13 @@ export default createClientComponent({ id: "global-client-counter", name: "Globa
     incrementButton!.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await waitForCondition(() => (globalThis as any).__RESUX__.globalState.session.visits === 1);
 
-    const renderedCounts = [...window.document.querySelectorAll("span")]
+    const countRenderedOnes = () => [...window.document.querySelectorAll("span")]
       .map((element) => element.textContent?.trim())
-      .filter((value) => value === "1");
-    expect(renderedCounts).toHaveLength(2);
+      .filter((value) => value === "1").length;
+    // The second consumer refreshes in a scheduled flush after the state write,
+    // so wait for the DOM instead of reading it right after the state changes.
+    await waitForCondition(() => countRenderedOnes() === 2);
+    expect(countRenderedOnes()).toBe(2);
 
     window.document.querySelector<HTMLAnchorElement>('a[href="/next"]')!
       .dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));

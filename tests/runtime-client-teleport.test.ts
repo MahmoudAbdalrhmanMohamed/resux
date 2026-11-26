@@ -99,6 +99,7 @@ export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "T
     action.dispatchEvent(new window.MouseEvent("click", { bubbles: true, button: 0 }));
     await waitForCondition(() => window.document.querySelector('[data-rx-text="s0:b1"]')?.textContent === "1");
     expect((globalThis as any).__RESUX__.scopes.s0.state.hits).toBe(1);
+    expect(window.document.querySelector('[data-rx-text="s0:b1"]')?.textContent).toBe("1");
 
     window.document.getElementById("toggle")!.dispatchEvent(
       new window.MouseEvent("click", { bubbles: true, button: 0 }),
@@ -135,7 +136,7 @@ export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "T
   it("mounts Teleports before initial client middleware aborts", async () => {
     const { runtimeUrl, handlerUrl } = await createClientRuntimeFixture(
       "resux-teleport-middleware-abort",
-      () => "export default () => false;",
+      () => 'export default () => { globalThis.__RESUX_TEST_MIDDLEWARE_RAN__ = true; return false; };',
     );
     const source = managedTeleportSourceComment({
       to: "#abort-target",
@@ -147,13 +148,20 @@ export default createClientComponent({ id: "m0", name: "TeleportPanel", file: "T
     const window = new Window({ url: "http://localhost/" });
     window.document.body.innerHTML = `<div id="__resux">${source}</div><div id="abort-target"></div>`;
     installClientRuntimeFixture(window, {}, handlerUrl);
+    (globalThis as any).__RESUX_TEST_MIDDLEWARE_RAN__ = false;
     (globalThis as any).__RESUX__.middleware = [{
       id: "abort", name: "abort", file: "abort.ts", global: true, mode: "client", src: handlerUrl,
     }];
 
-    await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
-    await waitForCondition(() => Boolean(window.document.getElementById("abort-target")?.querySelector("#abort-teleport")));
-    expect(window.document.getElementById("abort-target")?.querySelector("#abort-teleport")).toBeTruthy();
+    try {
+      await import(`${runtimeUrl}?test=${nextRuntimeImportQuery()}`);
+      await waitForCondition(() => Boolean(window.document.getElementById("abort-target")?.querySelector("#abort-teleport")));
+      await waitForCondition(() => (globalThis as any).__RESUX_TEST_MIDDLEWARE_RAN__ === true);
+      expect((globalThis as any).__RESUX_TEST_MIDDLEWARE_RAN__).toBe(true);
+      expect(window.document.getElementById("abort-target")?.querySelector("#abort-teleport")).toBeTruthy();
+    } finally {
+      delete (globalThis as any).__RESUX_TEST_MIDDLEWARE_RAN__;
+    }
   });
 
   it("recursively cleans nested Teleports when their owning reactive block is removed", async () => {
@@ -1041,6 +1049,7 @@ async function script(ctx) {
       + '<table id="fostered-source-table"></table></div>'
       + '<div id="teleports" data-rx-teleport-fallback="true"></div>';
     const unrelated = window.document.querySelector(".fostered-disabled-content") as HTMLElement;
+    const unrelatedParent = unrelated.parentElement;
     const table = window.document.getElementById("fostered-source-table")!;
     table.appendChild(window.document.createComment("resux-teleport-source:" + metadata));
     table.appendChild(window.document.createComment("resux-teleport-end"));
@@ -1054,6 +1063,7 @@ async function script(ctx) {
       const target = window.document.querySelector("[data-rx-teleport-fallback='true']") as HTMLElement;
       await waitForCondition(() => Boolean(target.querySelector(".fostered-disabled-content")));
       expect(unrelated.isConnected).toBe(true);
+      expect(unrelated.parentElement).toBe(unrelatedParent);
       expect(window.document.querySelectorAll(".fostered-disabled-content")).toHaveLength(2);
       expect(target.querySelectorAll(".fostered-disabled-content")).toHaveLength(1);
       expect(target.querySelector(".fostered-disabled-content")?.textContent).toBe("Same");
@@ -1295,7 +1305,7 @@ async function script(ctx) {
     const pluginUrl = handlerUrl.replace(/handler\.mjs$/, "slow-plugin.mjs");
     await writeFile(
       new URL(pluginUrl),
-      'export default async () => { globalThis.__RESUX_TEST_PLUGIN_STARTED__ = true; await globalThis.__RESUX_TEST_PLUGIN_GATE__; };',
+      'export default async () => { globalThis.__RESUX_TEST_PLUGIN_STARTED__ = true; await globalThis.__RESUX_TEST_PLUGIN_GATE__; globalThis.__RESUX_TEST_PLUGIN_FINISHED__ = true; };',
       "utf8",
     );
 
@@ -1313,6 +1323,7 @@ async function script(ctx) {
 
     let releasePlugin: (() => void) | undefined;
     (globalThis as any).__RESUX_TEST_PLUGIN_STARTED__ = false;
+    (globalThis as any).__RESUX_TEST_PLUGIN_FINISHED__ = false;
     (globalThis as any).__RESUX_TEST_PLUGIN_GATE__ = new Promise<void>((resolve) => {
       releasePlugin = resolve;
     });
@@ -1345,6 +1356,8 @@ async function script(ctx) {
       expect(second.querySelector('[data-rx-text="s0:b1"]')?.textContent).toBe("Updated");
 
       releasePlugin?.();
+      await waitForCondition(() => (globalThis as any).__RESUX_TEST_PLUGIN_FINISHED__ === true);
+      expect((globalThis as any).__RESUX_TEST_PLUGIN_FINISHED__).toBe(true);
       await waitForCondition(() => Boolean(second.querySelector("#plugin-gated-teleport")));
       expect(second.querySelector('[data-rx-text="s0:b1"]')?.textContent).toBe("Updated");
       expect(first.querySelector("#plugin-gated-teleport")).toBeNull();
@@ -1352,6 +1365,7 @@ async function script(ctx) {
       releasePlugin?.();
       delete (globalThis as any).__RESUX_TEST_PLUGIN_GATE__;
       delete (globalThis as any).__RESUX_TEST_PLUGIN_STARTED__;
+      delete (globalThis as any).__RESUX_TEST_PLUGIN_FINISHED__;
     }
   });
 

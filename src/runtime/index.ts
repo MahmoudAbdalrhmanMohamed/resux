@@ -11937,7 +11937,7 @@ export function createClientComponent(definition) {
             setRegistryValue(
               stateRefs,
               normalizedKey,
-              ref(hasValue ? serializedScope.state[normalizedKey] : factory?.())
+              ref(hasValue ? serializedScope.state[normalizedKey] : createClientStateValue(normalizedKey, factory))
             );
           }
           return stateRefs[normalizedKey];
@@ -17427,7 +17427,9 @@ function renderElement(node, scope, locals, styleScopeId, scopeId, moduleId) {
     if (event.locals && event.locals.length) {
       const eventLocals = {};
       for (const name of event.locals) {
-        if (Object.prototype.hasOwnProperty.call(locals, name)) eventLocals[name] = locals[name];
+        if (!Object.prototype.hasOwnProperty.call(locals, name)) continue;
+        if (locals[name] !== undefined) assertJsonSerializableInDev(locals[name], 'event local "' + name + '"');
+        eventLocals[name] = locals[name];
       }
       attrs.push('data-rx-locals-' + event.name + '=\"' + escapeAttribute(JSON.stringify(eventLocals)) + '\"');
     }
@@ -19747,6 +19749,27 @@ function assertJsonSerializable(value, label) {
   } catch {
     throw new Error(label + " must be JSON serializable.");
   }
+}
+
+function isClientDevMode() {
+  if (!isClientRuntime()) {
+    return false;
+  }
+  return Boolean(import.meta && import.meta.env && import.meta.env.DEV) || Boolean(window.__RESUX_DEV_RELOAD__);
+}
+
+// Mirrors the server's assertJsonSerializable checks for client-created state
+// and event locals, but only in dev so production pays no extra serialization.
+function assertJsonSerializableInDev(value, label) {
+  if (isClientDevMode()) {
+    assertJsonSerializable(value, label);
+  }
+}
+
+function createClientStateValue(key, factory) {
+  const value = factory?.();
+  assertJsonSerializableInDev(value, 'useState("' + key + '")');
+  return value;
 }
 
 function cloneJsonSerializable(value, label) {

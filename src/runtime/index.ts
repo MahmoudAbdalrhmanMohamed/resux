@@ -10542,7 +10542,7 @@ function __rxCreateReactiveObject(target, isReadonlyValue, proxyMap, isShallow) 
   if (targetType === "invalid") {
     return target;
   }
-  if (__rxProxyToRaw.has(target)) {
+  if (__rxProxyToRaw.has(target) && !(isReadonlyValue && isReactive(target))) {
     return target;
   }
   const existing = proxyMap.get(target);

@@ -117,7 +117,9 @@ function findTagEnd(source: string, start: number): number {
   for (let index = start; index < source.length; index++) {
     const char = source[index];
     if (quote) {
-      if (char === quote && source[index - 1] !== "\\") {
+      // HTML attribute values have no backslash escapes, so a value such as
+      // title="C:\" ends at its closing quote.
+      if (char === quote) {
         quote = null;
       }
       continue;
@@ -158,7 +160,7 @@ function normalizeOpeningTag(tag: string): string {
       const valueStart = cursor;
       cursor++;
       while (cursor < tag.length) {
-        if (tag[cursor] === quote && tag[cursor - 1] !== "\\") {
+        if (tag[cursor] === quote) {
           cursor++;
           break;
         }

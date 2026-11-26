@@ -1865,7 +1865,7 @@ function transformTemplateExpressionCode(
 
   const visit = (current: ts.Node): void => {
     if (ts.isIdentifier(current)) {
-      if (shouldAutoUnwrapTemplateIdentifier(current)) {
+      if (shouldAutoUnwrapTemplateIdentifier(current) && !isShadowedByFunctionParameter(current)) {
         if (templateRefBindings.has(current.text)) {
           const position = current.end - 1;
           if (position >= 0 && position <= expression.length) {
@@ -1904,6 +1904,25 @@ function transformTemplateExpressionCode(
   }
   
   return { transformed, identifiers: [...identifiers] };
+}
+
+// An identifier that is a parameter of an enclosing function (or the parameter
+// declaration itself) belongs to that function, so it must not be rewritten to
+// `.value` even when a template ref of the same name exists.
+function isShadowedByFunctionParameter(node: ts.Identifier): boolean {
+  for (let current: ts.Node | undefined = node; current; current = current.parent) {
+    if (!ts.isArrowFunction(current) && !ts.isFunctionExpression(current)) {
+      continue;
+    }
+
+    for (const parameter of current.parameters) {
+      if (collectBindingNames(parameter.name).includes(node.text)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function shouldAutoUnwrapTemplateIdentifier(node: ts.Identifier): boolean {

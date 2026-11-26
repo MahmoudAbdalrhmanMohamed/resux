@@ -4,6 +4,12 @@ All notable changes to Resux are documented here.
 
 Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaking API changes when they are clearly documented.
 
+## [Unreleased]
+
+### Fixed
+
+- **Components inside `v-if` / `v-for`**: the client-side block renderer used to emit an empty literal tag (for example `<badge></badge>`) for every component, so toggling a `v-if` or changing a `v-for` list silently removed the component. Blocks now create their components in the browser on demand. The component module is imported lazily, the instance gets a client-only scope (`c1`, `c2`, ...) so its events and state resume like server-rendered ones, and the scope is released when its nodes leave the page. Pages without components inside blocks are unchanged, and the payload only lists the component names a page can actually create. Slot content for client-created components is not rendered yet.
+
 ## [0.4.0] - 2026-11-26
 
 First stable release of the 0.4 line. It includes everything from the 0.4.0 betas plus the fixes below. Each fix shipped as its own pull request with a regression test, and was verified against a real consumer app after merging.
@@ -30,6 +36,7 @@ First stable release of the 0.4 line. It includes everything from the 0.4.0 beta
 ### Known issues
 
 - **Node 20 with `engine-strict`**: resuxjs runs on Node >=20.19. With npm's `engine-strict` enabled, installing it on Node 20 fails with EBADENGINE, because two dependencies require a newer Node: `undici@^8` (via `unifont@^1.0.3`, and also via `fontless@^1.3.2`) needs Node >=22.19, and `rollup-plugin-visualizer@7` (via `nitropack`) needs Node >=22. With default npm settings this is only a warning and everything works. Requiring Node >=22.19 is planned for a later minor release.
+- **Components inside `v-if` / `v-for` after a client update**: in 0.4.0, when a `v-if` or `v-for` block re-renders in the browser, every component inside it is replaced by an empty literal tag, with no error. Server-rendered first paint is correct. Avoid components inside blocks that change on the client until the next release.
 
 ## [0.4.0-beta.8] - 2026-11-25
 

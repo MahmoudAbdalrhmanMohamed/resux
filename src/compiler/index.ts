@@ -3403,29 +3403,48 @@ function scanRuntimeConfigForSecrets(config: Record<string, unknown>, halalConfi
     /https?:\/\/[^/]+:[^/]+@/
   ];
 
-  for (const [key, value] of Object.entries(publicConfig)) {
-    const upperKey = key.toUpperCase();
-    const matchesUnsafeKey = unsafeKeys.some(unsafe => upperKey.includes(unsafe));
-    if (matchesUnsafeKey) {
-      const msg = `[resux-safety] Unsafe key name "${key}" found in public runtimeConfig. Do not expose secrets to the client.`;
-      if (isStrict) {
-        throw new Error(msg);
-      } else {
-        console.warn(`\x1b[33m${msg}\x1b[0m`);
+  const report = (msg: string): void => {
+    if (isStrict) {
+      throw new Error(msg);
+    }
+    console.warn(`\x1b[33m${msg}\x1b[0m`);
+  };
+  const seen = new WeakSet<object>();
+
+  // Scan nested objects and arrays at any depth: a secret under
+  // `public.api.credentials` reaches the client exactly like a top-level one.
+  const scan = (value: unknown, pathLabel: string, keyName: string | null): void => {
+    if (keyName !== null) {
+      const upperKey = keyName.toUpperCase();
+      if (unsafeKeys.some(unsafe => upperKey.includes(unsafe))) {
+        report(`[resux-safety] Unsafe key name "${pathLabel}" found in public runtimeConfig. Do not expose secrets to the client.`);
       }
     }
 
     if (typeof value === "string") {
-      const looksLikeSecret = secretValuePatterns.some(pattern => pattern.test(value));
-      if (looksLikeSecret) {
-        const msg = `[resux-safety] Value of public runtimeConfig key "${key}" looks like a private credential or API secret. Do not expose secrets to the client.`;
-        if (isStrict) {
-          throw new Error(msg);
-        } else {
-          console.warn(`\x1b[33m${msg}\x1b[0m`);
-        }
+      if (secretValuePatterns.some(pattern => pattern.test(value))) {
+        report(`[resux-safety] Value of public runtimeConfig key "${pathLabel}" looks like a private credential or API secret. Do not expose secrets to the client.`);
+      }
+      return;
+    }
+
+    if (value && typeof value === "object") {
+      if (seen.has(value)) {
+        return;
+      }
+      seen.add(value);
+      if (Array.isArray(value)) {
+        value.forEach((item, index) => scan(item, `${pathLabel}[${index}]`, null));
+        return;
+      }
+      for (const [childKey, childValue] of Object.entries(value)) {
+        scan(childValue, `${pathLabel}.${childKey}`, childKey);
       }
     }
+  };
+
+  for (const [key, value] of Object.entries(publicConfig)) {
+    scan(value, key, key);
   }
 }
 
@@ -3454,7 +3473,9 @@ function createRuntimeConfig(config: Record<string, unknown>): Record<string, un
   };
 
   const halalConfig = (config as any).halalAI;
-  scanRuntimeConfigForSecrets(appRuntimeConfig, halalConfig);
+  // Scan only the user's own public config; framework-injected sections
+  // (packages, video, router) are not user-provided secrets.
+  scanRuntimeConfigForSecrets({ ...appRuntimeConfig, public: publicConfig }, halalConfig);
 
   return appRuntimeConfig;
 }

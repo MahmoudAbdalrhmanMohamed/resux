@@ -135,6 +135,28 @@ jobs:
         env:
           RESUX_DEPLOY_TARGET_FILTER: ${{ matrix.target }}
 
+  browser:
+    name: Browser resumability
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      CHROME_BIN: /usr/bin/google-chrome
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      - run: npm run build
+      - run: npm install --no-save --no-audit --no-fund --ignore-scripts --package-lock=false playwright-core@1.60.0
+      - name: Verify resumability in Chrome
+        run: npm run test:browser
+
   compatibility:
     name: Node ${{ matrix.node-version }} compatibility
     runs-on: ubuntu-24.04

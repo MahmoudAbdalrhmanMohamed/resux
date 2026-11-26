@@ -511,6 +511,8 @@ export interface TemplateEvent {
   handler: string;
   modifiers?: string[];
   locals?: string[];
+  /** On a component tag: a DOM event that falls through to the child's root element. */
+  native?: boolean;
 }
 
 export interface IfDirective {
@@ -762,6 +764,7 @@ type AsyncRenderComponent = (
   suppressTeleportReservations?: boolean,
   emits?: Record<string, ComponentEmitBinding>,
   slots?: Record<string, ComponentSlotBinding>,
+  rootAttrs?: string[],
 ) => Promise<string>;
 
 interface RenderTemplateContext {
@@ -4750,6 +4753,7 @@ async function renderElementAsync(
       context.suppressTeleportReservations,
       collectComponentEmitBindings(node, context, locals),
       collectComponentSlotBindings(node, context, locals),
+      collectFallthroughEventAttributes(node, context, locals),
     );
   };
 
@@ -7425,6 +7429,7 @@ export class AsyncResuxRenderer {
     suppressTeleportReservations = false,
     emits?: Record<string, ComponentEmitBinding>,
     slots?: Record<string, ComponentSlotBinding>,
+    rootAttrs?: string[],
   ): Promise<string> {
     this.collectComponentStyles(definition);
     this.renderedDefinitions.set(definition.id, definition);
@@ -7456,7 +7461,7 @@ export class AsyncResuxRenderer {
       ...(slots ? { slots } : {})
     };
 
-    return withActiveResuxApp(this.resuxApp, () => renderTemplateNodesAsync(
+    const rendered = await withActiveResuxApp(this.resuxApp, () => renderTemplateNodesAsync(
       definition.template,
       {
         scope,
@@ -7480,9 +7485,10 @@ export class AsyncResuxRenderer {
           ? undefined
           : (reservation, html) => this.commitTeleport(reservation, html)
       },
-      (component, props, slot, suppress, emits, slots) =>
-        this.renderComponent(component, undefined, slot, props, suppress, emits, slots)
+      (component, props, slot, suppress, emits, slots, nativeAttrs) =>
+        this.renderComponent(component, undefined, slot, props, suppress, emits, slots, nativeAttrs)
     ));
+    return rootAttrs && rootAttrs.length > 0 ? injectRootEventAttributes(definition.template, rendered, rootAttrs) : rendered;
   }
 
   private reserveTeleport(target: string): number | undefined {
@@ -8786,6 +8792,63 @@ function collectComponentEmitBindings(
     bindings[normalizePropName(event.name)] = binding;
   }
   return bindings;
+}
+
+// DOM events written on a component tag (<Child @click="go" />) are added to the child's root element as
+// ordinary resumable listeners that name the PARENT's handler, so no extra runtime code is needed.
+function collectFallthroughEventAttributes(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+): string[] | undefined {
+  const native = node.events.filter((event) => event.native);
+  if (native.length === 0) {
+    return undefined;
+  }
+  const attrs: string[] = [];
+  for (const event of native) {
+    appendNativeEventAttributes(attrs, event, context, locals);
+  }
+  return attrs;
+}
+
+// A component can take fallthrough listeners when its template is one plain element. Fragments, text roots,
+// conditional roots and roots that are themselves components or slots are skipped, as Vue skips non-element roots.
+export function hasFallthroughRoot(template: TemplateNode[]): boolean {
+  const roots = template.filter((node) => node.type !== "text" || node.value.trim().length > 0);
+  if (roots.length !== 1) return false;
+  const root = roots[0];
+  if (root.type !== "element" || root.if || root.for) return false;
+  return !/^[A-Z]/.test(root.tag) && root.tag !== "slot" && root.tag !== "component" && root.tag !== "template" && root.tag.toLowerCase() !== "teleport";
+}
+
+// attrs hold data-rx-on-<event> (plus locals and modifiers) for the parent's handlers. An event the root already
+// listens to itself is left alone: one element carries one handler per event.
+export function injectRootEventAttributes(template: TemplateNode[], html: string, attrs: string[]): string {
+  if (!hasFallthroughRoot(template)) return html;
+  const start = html.search(/<[A-Za-z]/);
+  if (start < 0 || html.slice(0, start).trim().length > 0) return html;
+  const end = html.indexOf(">", start);
+  if (end < 0) return html;
+  const openTag = html.slice(start, end);
+  const own = new Set([...openTag.matchAll(/\sdata-rx-on-([\w:-]+)=/g)].map((match) => match[1]));
+  const kept: string[] = [];
+  let skip = "";
+  for (const attr of attrs) {
+    const match = /^data-rx-(?:on|locals|mod)-([\w:-]+)=/.exec(attr);
+    if (match && own.has(match[1])) {
+      skip = match[1];
+      continue;
+    }
+    if (match && skip === match[1]) {
+      continue;
+    }
+    kept.push(attr);
+    skip = "";
+  }
+  if (kept.length === 0) return html;
+  const selfClosing = html[end - 1] === "/" ? end - 1 : end;
+  return `${html.slice(0, selfClosing)} ${kept.join(" ")}${html.slice(selfClosing)}`;
 }
 
 // Slot content is rendered by the parent, so the child's payload names the parent's slots id and carries the
@@ -12395,6 +12458,32 @@ export function createClientComponent(definition) {
     },
     render(scopeRecord) {
       return renderClientPatches(definition.template, scopeRecord.scope, definition.styleScopeId, scopeRecord.scopeId, definition.id);
+    },
+    // Adds the parent's fallthrough listeners (<Child @click="go" />) to this component's root element.
+    injectRootAttrs(html, attrs) {
+      const roots = definition.template.filter((node) => node.type !== "text" || node.value.trim().length > 0);
+      const root = roots.length === 1 ? roots[0] : null;
+      if (!root || root.type !== "element" || root.if || root.for) return html;
+      const tag = String(root.tag);
+      if (tag.charAt(0) !== tag.charAt(0).toLowerCase() || tag === "slot" || tag === "component" || tag === "template" || tag.toLowerCase() === "teleport") return html;
+      const start = html.indexOf("<");
+      if (start < 0 || html.slice(0, start).trim().length > 0) return html;
+      const end = html.indexOf(">", start);
+      if (end < 0) return html;
+      const openTag = html.slice(start, end);
+      const kept = [];
+      let skipped = "";
+      for (const attr of attrs) {
+        const eventName = attr.slice(attr.indexOf("data-rx-") + 8).split("=")[0].replace(/^(on|locals|mod)-/, "");
+        const isOn = attr.startsWith("data-rx-on-");
+        if (isOn && openTag.includes(" data-rx-on-" + eventName + "=")) { skipped = eventName; continue; }
+        if (!isOn && skipped === eventName) continue;
+        kept.push(attr);
+        if (isOn) skipped = "";
+      }
+      if (kept.length === 0) return html;
+      const cut = html.charAt(end - 1) === "/" ? end - 1 : end;
+      return html.slice(0, cut) + " " + kept.join(" ") + html.slice(cut);
     },
     // Renders one slot of a component tag written in this component's template (found by its slots id) with the
     // live scope and the locals captured in the payload, so a resumed child shows the parent's current content.
@@ -17782,8 +17871,23 @@ function renderClientChildPlaceholder(node, moduleId, scope, locals, styleScopeI
       emits[normalizeEmitName(event.name)] = binding;
     }
   }
+  const rootAttrs = [];
+  for (const event of node.events || []) {
+    if (!event.native) continue;
+    rootAttrs.push('data-rx-on-' + event.name + '="' + scopeId + ':' + parentModuleId + ':' + event.handler + '"');
+    if (event.locals && event.locals.length) {
+      const eventLocals = {};
+      for (const name of event.locals) {
+        if (Object.prototype.hasOwnProperty.call(locals, name) && locals[name] !== undefined) eventLocals[name] = locals[name];
+      }
+      rootAttrs.push('data-rx-locals-' + event.name + '=\"' + escapeAttribute(JSON.stringify(eventLocals)) + '\"');
+    }
+    if (event.modifiers && event.modifiers.length) {
+      rootAttrs.push('data-rx-mod-' + event.name + '="' + escapeAttribute(event.modifiers.join(",")) + '"');
+    }
+  }
   const id = "c" + (++clientChildCounter);
-  pendingClientChildren.set(id, { moduleId, tag: node.tag, props, key, hasKey, slotHtml, provider, emits });
+  pendingClientChildren.set(id, { moduleId, tag: node.tag, props, key, hasKey, slotHtml, provider, emits, rootAttrs });
   return '<span data-rx-child="' + id + '" style="display: contents;"></span>';
 }
 
@@ -17807,7 +17911,7 @@ async function mountClientChild(placeholder) {
     const record = await component.createScope(serialized, payload.route);
     if (!placeholder.isConnected) return;
     if (entry.provider) clientSlotProviders.set(id, entry.provider);
-    const html = component.renderHtml(record);
+    const html = entry.rootAttrs.length > 0 ? component.injectRootAttrs(component.renderHtml(record), entry.rootAttrs) : component.renderHtml(record);
     const state = component.serialize(record);
     scopeCache.set(id, record);
     payload.scopes[id] = { ...serialized, props: state.props, state: state.state, asyncData: state.asyncData, globalStateKeys: record.globalStateKeys ? [...record.globalStateKeys] : [] };
@@ -17817,7 +17921,7 @@ async function mountClientChild(placeholder) {
     const parent = placeholder.parentNode;
     const nodes = Array.from(template.content.childNodes);
     clientChildRoots.set(id, nodes);
-    clientChildMeta.set(id, { tag: entry.tag, key: entry.hasKey ? "k:" + entry.key : "", propsJson: JSON.stringify(entry.props), slotHtml: entry.slotHtml, emitsJson: JSON.stringify(entry.emits) });
+    clientChildMeta.set(id, { tag: entry.tag, key: entry.hasKey ? "k:" + entry.key : "", propsJson: JSON.stringify(entry.props), slotHtml: entry.slotHtml, emitsJson: JSON.stringify(entry.emits) + JSON.stringify(entry.rootAttrs) });
     placeholder.replaceWith(template.content);
     registerDelegatedEventsFromDom(parent && parent.nodeType === 1 ? parent : document);
     await Promise.all(nodes.filter((child) => child.nodeType === 1).map((child) => mountClientChildren(child)));
@@ -17879,7 +17983,7 @@ function restoreClientChildrenOfBlock(block, held) {
       slot = "i:" + pending.tag + ":" + n;
     }
     const old = byKey.get(slot);
-    if (!old || old.meta.tag !== pending.tag || old.meta.propsJson !== JSON.stringify(pending.props) || old.meta.slotHtml !== pending.slotHtml || old.meta.emitsJson !== JSON.stringify(pending.emits)) continue;
+    if (!old || old.meta.tag !== pending.tag || old.meta.propsJson !== JSON.stringify(pending.props) || old.meta.slotHtml !== pending.slotHtml || old.meta.emitsJson !== JSON.stringify(pending.emits) + JSON.stringify(pending.rootAttrs)) continue;
     byKey.delete(slot);
     pendingClientChildren.delete(id);
     for (const node of old.nodes) placeholder.parentNode.insertBefore(node, placeholder);

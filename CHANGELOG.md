@@ -6,6 +6,12 @@ Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaki
 
 ## [Unreleased]
 
+## [0.5.0-beta.2] - 2026-11-27
+
+Second beta of the 0.5 line. It adds named and scoped slots, native DOM events on a component tag (`@click` on `<Child>`), and a much smaller resume bootstrap on pages without deferred targets. The size budget for the built package is raised to 1.80 MB. Pages that do not use slots or component-tag events keep the same payload; resume behavior is unchanged.
+
+Known limit: text in a scoped slot that reads the parent's state updates on the child's next re-render. See the Current Limits page in the docs.
+
 - **Smaller resume bootstrap on pages without deferred targets**: the trigger scheduling code for deferred enhancements and Vue islands (visible, idle, interaction and manual triggers, interaction replay) is now only emitted on pages that have such a target. A plain resumable page with a few event names went from 11.8 KiB raw (3.1 KiB gzip) to 4.3 KiB raw (1.4 KiB gzip) of critical-path JavaScript. Pages with deferred targets get the same bootstrap as before, and the worst-case budget (13.6 KiB of 14 KiB) is unchanged. Resume behavior is unchanged: event delegation, modifiers and the lazy runtime import are the same code. One difference: on a page with no deferred target at render time, `window.__RESUX_ACTIVATE_DEFERRED__` exists only after the runtime has loaded.
 
 - **Native DOM events on a component tag**: `<Child @click="go" />` (and `@input`, `@keydown`, `@submit` and the other DOM events, with modifiers such as `.stop` and `.prevent`) now fall through to the child's root element and call the parent's handler, like Vue does for listeners the child does not declare as emits. It is plain resumable markup, so it works after resume, in `v-for` (with locals) and for components created in the browser. The child needs one plain element as its root; fragments, text roots and roots that are components, slots or `v-if`/`v-for` are skipped. If the root already handles the same event itself, the parent's listener is not added. Event names that are not DOM events (`@save`) stay component events. The size budget for the built package (`distRuntimeTotalBytes`) is raised from 1.70 MB to 1.80 MB: the package directory crossed the old cap; browser bytes are unchanged in the budget that matters (resume bootstrap stays 13.6 KiB).

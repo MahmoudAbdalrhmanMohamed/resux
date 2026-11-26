@@ -10777,8 +10777,13 @@ function __rxDoWatch(source, callback, options) {
   }
 
   let oldValue = __rxInitialWatchValue;
+  let stopped = false;
 
   const job = () => {
+    if (stopped) {
+      return;
+    }
+
     if (callback === null) {
       runner();
       return;
@@ -10812,6 +10817,10 @@ function __rxDoWatch(source, callback, options) {
   }
 
   return () => {
+    if (stopped) {
+      return;
+    }
+    stopped = true;
     if (cleanup) {
       cleanup();
       cleanup = undefined;

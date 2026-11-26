@@ -110,10 +110,12 @@ describe("runtime SSR: teleport", () => {
     const target = parsed.document.getElementById("teleports")!;
     expect(target.querySelectorAll("#overlay")).toHaveLength(1);
 
+    const originalOverlay = target.querySelector("#overlay");
     installClientRuntimeFixture(parsed, {}, handlerUrl);
     try {
       await import(runtimeUrl + "?test=" + nextRuntimeImportQuery());
       await waitForCondition(() => Boolean(target.querySelector("#overlay")));
+      expect(target.querySelector("#overlay")).toBe(originalOverlay);
       expect(target.querySelectorAll("#overlay")).toHaveLength(1);
       expect(target.querySelector("#inline-overlay")).toBeNull();
       expect(Array.from(target.childNodes).indexOf(target.querySelector("#overlay")!)).toBeGreaterThan(1);

@@ -2809,7 +2809,9 @@ function isResumableInitializer(node: ts.Expression | undefined): boolean {
       "useResuxImage",
       "usePackageReady",
       "defineProps",
-      "defineEmits"
+      "defineEmits",
+      "defineSlots",
+      "defineModel"
     ].includes(node.expression.text);
   }
   if (ts.isAwaitExpression(node) && ts.isCallExpression(node.expression) && ts.isIdentifier(node.expression.expression)) {
@@ -2899,7 +2901,7 @@ function createComponentModuleSource(options: {
     importsText,
     `const __template = ${JSON.stringify(options.template, null, 2)};`,
     `async function __rx_setup(__ctx) {`,
-    `const { ref, reactive, computed, watch, watchEffect, readonly, toRef, toRefs, unref, isRef, isReactive, isReadonly, nextTick, useState, useAsyncData, useRoute, useRouter, useHead, useSeoMeta, useRuntimeConfig, useResuxApp, useResuxImage, apiURL, useFetch, $fetch, useError, clearError, showError, createError, useLazyPackage, useClientPackage, usePackageReady, defineLazyPackage, defineClientOnlyPackage, definePackageAdapter, defineClientEnhancement, useClientEnhancement, onMounted, definePageMeta, defineProps, defineEmits, useLocalePath, useSwitchLocalePath, useI18n, useDevice, $device, importComponent, scopeCache, devImportRevision, applyPatches } = __ctx;`,
+    `const { ref, reactive, computed, watch, watchEffect, readonly, toRef, toRefs, unref, isRef, isReactive, isReadonly, nextTick, useState, useAsyncData, useRoute, useRouter, useHead, useSeoMeta, useRuntimeConfig, useResuxApp, useResuxImage, apiURL, useFetch, $fetch, useError, clearError, showError, createError, useLazyPackage, useClientPackage, usePackageReady, defineLazyPackage, defineClientOnlyPackage, definePackageAdapter, defineClientEnhancement, useClientEnhancement, onMounted, definePageMeta, defineProps, defineEmits, defineExpose, defineSlots, defineOptions, defineModel, useLocalePath, useSwitchLocalePath, useI18n, useDevice, $device, importComponent, scopeCache, devImportRevision, applyPatches } = __ctx;`,
     options.analysis.setupBody,
     `const __rx_expressions = {`,
     expressionClosures,

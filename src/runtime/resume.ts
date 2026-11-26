@@ -198,7 +198,7 @@ export function getResumeBootstrapSource(options: ResuxResumeBootstrapOptions): 
   }
   const runtimeSrc = options.runtimeSrc?.trim() || "/__resux/runtime-client.mjs";
 
-  return `const __rxEvents=${JSON.stringify(eventNames)};
+  const source = `const __rxEvents=${JSON.stringify(eventNames)};
 const __rxRuntime=${JSON.stringify(runtimeSrc)};
 const __rxDeferEnhancements=${options.deferEnhancements === true};
 const __rxDeferVueIslands=${options.deferVueIslands === true};
@@ -538,4 +538,26 @@ for(const name of __rxEvents){
 }
 __rxScheduleDeferredTargets();
 `;
+  const deferred = options.deferEnhancements === true || options.deferVueIslands === true;
+  return deferred ? source : withoutDeferredTargetCode(source);
+}
+
+// Deferred enhancement and Vue island scheduling (visible, idle, interaction and manual triggers, interaction
+// replay) is only needed on pages that have such targets. Pages without them skip about 7 KiB of critical-path
+// JavaScript. The pieces are cut out by their stable boundaries, so the full bootstrap above stays the single source.
+function withoutDeferredTargetCode(source: string): string {
+  const cut = (text: string, from: string, to: string): string => {
+    const start = text.indexOf(from);
+    const end = text.indexOf(to, start);
+    if (start < 0 || end < 0) throw new Error(`Resume bootstrap section ${from} not found.`);
+    return text.slice(0, start) + text.slice(end);
+  };
+  let plain = cut(source, "const __rxDeferEnhancements=", "const __rxCleanups=[];");
+  plain = cut(plain, "function __rxNormalizeTrigger(", "for(const name of __rxEvents){");
+  plain = cut(
+    plain,
+    '    if(\n      (name==="click" || name==="focusin" || name==="keydown")',
+    "    const target=__rxFindTarget(event.target",
+  );
+  return plain.replace("__rxScheduleDeferredTargets();\n", "");
 }

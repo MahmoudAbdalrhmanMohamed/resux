@@ -77,10 +77,10 @@ function getResuxVersion(): string {
       : undefined;
     if (fileUrl) {
       const req = createRequire(fileUrl);
-      return (req("../package.json") as { version?: string }).version ?? "1.0.0-rc.2";
+      return (req("../package.json") as { version?: string }).version ?? "1.0.0";
     }
   } catch {}
-  return "1.0.0-rc.2";
+  return "1.0.0";
 }
 const version = getResuxVersion();
 let activeDevBuild: Promise<void> | null = null;

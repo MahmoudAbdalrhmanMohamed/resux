@@ -71,6 +71,7 @@
     "test:fixtures": "node scripts/test-fixtures.mjs",
     "test:templates": "node scripts/test-templates.mjs",
     "test:browser": "node scripts/test-browser.mjs",
+    "bench": "node scripts/benchmark.mjs",
     "test:build": "npm run build",
     "test:deploy": "npm run verify:deploy-targets",
     "test:bundle": "node scripts/test-bundle.mjs && node scripts/report-runtime-metrics.mjs --check",

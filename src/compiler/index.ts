@@ -2926,6 +2926,10 @@ function findUnsupportedCapture(
       return;
     }
 
+    if (ts.isTypeNode(current)) {
+      return;
+    }
+
     if (ts.isVariableDeclaration(current)) {
       registerPattern(current.name);
     }

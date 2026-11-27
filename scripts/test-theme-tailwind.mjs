@@ -37,6 +37,8 @@ const run = (cmd, args, cwd) => {
   if (result.status !== 0) throw new Error(`${cmd} ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
 };
 
+const v4Css = (selector) => `@import "tailwindcss";\n@custom-variant dark (&:where(${selector}, ${selector} *));\n`;
+
 const variants = [
   {
     name: "tailwind v3 darkMode selector (class)",
@@ -49,26 +51,19 @@ const variants = [
       run("npx", ["tailwindcss", "-i", "in.css", "-o", "out.css"], dir);
     },
   },
-  {
-    name: "tailwind v4 @custom-variant dark (class)",
-    attribute: "class",
+  ...[
+    ["tailwind v4 @custom-variant dark (class)", "class", ".dark"],
+    ["tailwind v4 @custom-variant dark (data-theme)", "data-theme", "[data-theme=dark]"],
+  ].map(([name, attribute, selector]) => ({
+    name,
+    attribute,
     async build(dir) {
       await writeFile(path.join(dir, "package.json"), '{"name":"tw4","private":true}');
       run("npm", ["install", "--no-audit", "--no-fund", "tailwindcss@4", "@tailwindcss/cli@4"], dir);
-      await writeFile(path.join(dir, "in.css"), '@import "tailwindcss";\n@custom-variant dark (&:where(.dark, .dark *));\n');
+      await writeFile(path.join(dir, "in.css"), v4Css(selector));
       run("npx", ["@tailwindcss/cli", "-i", "in.css", "-o", "out.css"], dir);
     },
-  },
-  {
-    name: "tailwind v4 @custom-variant dark (data-theme)",
-    attribute: "data-theme",
-    async build(dir) {
-      await writeFile(path.join(dir, "package.json"), '{"name":"tw4d","private":true}');
-      run("npm", ["install", "--no-audit", "--no-fund", "tailwindcss@4", "@tailwindcss/cli@4"], dir);
-      await writeFile(path.join(dir, "in.css"), '@import "tailwindcss";\n@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));\n');
-      run("npx", ["@tailwindcss/cli", "-i", "in.css", "-o", "out.css"], dir);
-    },
-  },
+  })),
 ];
 
 let failed = false;

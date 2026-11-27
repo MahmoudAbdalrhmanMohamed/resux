@@ -63,6 +63,7 @@
   },
   "scripts": {
     "typecheck": "tsc -b",
+    "lint": "eslint src",
     "build": "npm run typecheck && tsdown && node scripts/prepare-compiler-entry.mjs",
     "test": "vitest run",
     "test:types": "npm run typecheck",
@@ -79,7 +80,7 @@
     "verify:deploy-targets": "npm run build && node scripts/verify-deploy-targets.mjs",
     "verify:dependencies": "node scripts/verify-dependency-baseline.mjs",
     "verify:package": "node scripts/verify-package-contract.mjs",
-    "quality": "npm run verify:dependencies && npm run build && npm test && npm run test:bundle && npm run test:fixtures && npm run verify:package",
+    "quality": "npm run verify:dependencies && npm run lint && npm run build && npm test && npm run test:bundle && npm run test:fixtures && npm run verify:package",
     "create:local": "npm run build && node dist/bin.js init",
     "pack:check": "npm run verify:dependencies && npm run build && npm test && npm run verify:package && npm pack --dry-run && npm pack --dry-run ./packages/create-resuxjs"
   },
@@ -101,9 +102,12 @@
     "vue": "^3.5.43"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^24.13.5",
+    "eslint": "^10.15.0",
     "happy-dom": "^21.0.4",
     "tsdown": "0.23.7",
+    "typescript-eslint": "^8.74.0",
     "vitest": "^4.1.11"
   },
   "overrides": {

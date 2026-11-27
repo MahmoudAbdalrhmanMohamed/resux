@@ -28,7 +28,7 @@ if (typeof globalThis !== "undefined") {
   (globalThis as any).__RESUX_ICON_REGISTRY__ = iconRegistry;
 }
 
-export default defineResuxModule<ResuxIconsModuleOptions>({
+export default /* @__PURE__ */ defineResuxModule<ResuxIconsModuleOptions>({
   defaults: {
     collections: [],
     component: "Icon",

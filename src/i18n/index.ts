@@ -381,7 +381,7 @@ export function createI18nHeadEntry(routePath: string, routeOrigin?: string): { 
   return createI18nHead(routePath, routeOrigin, runtimeI18n);
 }
 
-export default defineResuxModule<ResuxI18nModuleOptions>({
+export default /* @__PURE__ */ defineResuxModule<ResuxI18nModuleOptions>({
   defaults: {
     strategy: "prefix_except_default"
   },

@@ -72,7 +72,7 @@ describe("theme module head output", () => {
     expect(heads[0].script[0].innerHTML).toContain("__RESUX_THEME__");
     expect(heads[0].style[0].css).toContain(":root.dark{--bg:#000}");
     expect(heads[0].meta).toHaveLength(1);
-    expect(runtime[0].public.theme).toMatchObject({ defaultTheme: "system", storageKey: "resux-theme" });
+    expect(runtime[0].public.theme).toMatchObject({ defaultTheme: "system", storage: "resux-theme" });
   });
 
   it("the pre-paint script is plain inline JS that carries the settings and reads only localStorage", () => {

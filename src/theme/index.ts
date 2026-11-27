@@ -182,9 +182,9 @@ export function createThemeScript(config: ResolvedThemeConfig): string {
     e: THEME_EVENT,
     x: FORCED_ATTRIBUTE,
   });
-  return `(function(){var S=${settings},d=document.documentElement,N=document.currentScript&&document.currentScript.nonce,mq=window.matchMedia?matchMedia("(prefers-color-scheme: dark)"):null,last=null;`
+  return `(function(){var S=${settings},d=document.documentElement,N=document.currentScript&&document.currentScript.nonce,mq=window.matchMedia?matchMedia("(prefers-color-scheme: dark)"):null,last=null,mem=null;`
     + `function ok(v){return v==="light"||v==="dark"||v==="system"}`
-    + `function get(){try{var v=localStorage.getItem(S.k);return ok(v)?v:S.d}catch(e){return S.d}}`
+    + `function get(){try{var v=localStorage.getItem(S.k);return ok(v)?v:S.d}catch(e){return mem||S.d}}`
     + `function forced(){var f=d.getAttribute(S.x);return f==="light"||f==="dark"?f:null}`
     + `function sys(){return mq?(mq.matches?"dark":"light"):S.f}`
     + `function state(){var p=get(),f=forced();return{preference:p,resolved:f||(p==="system"?sys():p),forced:f}}`
@@ -196,7 +196,7 @@ export function createThemeScript(config: ResolvedThemeConfig): string {
     + `if(S.c)d.style.colorScheme=r;metas(r,s.preference!=="system"||!!s.forced);`
     + `if(style){void d.offsetHeight;setTimeout(function(){style.remove()},0)}}`
     + `function apply(quiet){var s=state();paint(s,quiet);var key=s.preference+"|"+s.resolved+"|"+s.forced;if(last!==null&&key!==last)d.dispatchEvent(new CustomEvent(S.e,{detail:s}));last=key;return s}`
-    + `window.__RESUX_THEME__={state:state,apply:apply,set:function(p){if(!ok(p))return;try{localStorage.setItem(S.k,p)}catch(e){}apply(false)},key:S.k,event:S.e,forcedAttribute:S.x};`
+    + `window.__RESUX_THEME__={state:state,apply:apply,set:function(p){if(!ok(p))return;mem=p;try{localStorage.setItem(S.k,p)}catch(e){}apply(false)},key:S.k,event:S.e,forcedAttribute:S.x};`
     + `apply(true);`
     + `if(mq){var h=function(){if(get()==="system"&&!forced())apply(false)};if(mq.addEventListener)mq.addEventListener("change",h);else if(mq.addListener)mq.addListener(h)}`
     + `window.addEventListener("storage",function(e){if(e.key===S.k||e.key===null)apply(false)});`
@@ -204,7 +204,7 @@ export function createThemeScript(config: ResolvedThemeConfig): string {
     + `})();`;
 }
 
-/** A bootstrap-free view over the pre-paint script. Safe to call on the server: it returns the config defaults. */
+/** A bootstrap-free view over the pre-paint script. On the server it returns fixed values (system, light, not forced), so do not render its state into SSR output. */
 export function useTheme(): ResuxThemeController {
   const bridge = typeof window !== "undefined" ? (window as any).__RESUX_THEME__ : undefined;
   const read = (): ResuxThemeState => bridge

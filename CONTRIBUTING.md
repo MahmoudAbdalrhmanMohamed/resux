@@ -12,7 +12,6 @@ Security vulnerabilities must follow [SECURITY.md](SECURITY.md). Do not publish 
 
 Resux requires Node.js 22.19.0 or newer.
 
-
 ```sh
 npm install
 npm run build

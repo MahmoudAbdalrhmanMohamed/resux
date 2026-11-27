@@ -2,7 +2,7 @@
 
 All notable changes to Resux are documented here.
 
-Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaking API changes when they are clearly documented.
+Resux follows Semantic Versioning. Before 1.0.0, minor releases could contain breaking API changes that were documented here.
 
 ## [1.0.0-rc.2] - 2026-11-27
 

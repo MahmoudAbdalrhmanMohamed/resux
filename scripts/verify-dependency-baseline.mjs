@@ -44,7 +44,7 @@ const expectedMajors = new Map([
   ["unifont", 1],
   ["typescript", 5],
   ["vitest", 4],
-  ["happy-dom", 20],
+  ["happy-dom", 21],
   ["@types/node", 24],
 ]);
 for (const [name, expectedMajor] of expectedMajors) {

@@ -4,10 +4,13 @@ All notable changes to Resux are documented here.
 
 Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaking API changes when they are clearly documented.
 
-## [Unreleased]
+## [0.5.0] - 2026-11-27
+
+First stable release of the 0.5 line. It collects everything from `0.5.0-beta.1` and `0.5.0-beta.2` (named and scoped slots, native DOM events on a component tag, client-created components inside `v-if` and `v-for`, a much smaller resume bootstrap) and adds the changes below. **Breaking: Node.js `>=22.19.0` is required.** Stay on 0.4.x if you need Node 20.
 
 ### Added
 
+- Browser (Chromium) resumability tests run in CI (`npm run test:browser`). They cover server-rendered and client-created components, slots, emits, `:is` and native events, and they found the scoped-slot and name-clash bugs fixed below.
 - `npm run bench` (`scripts/benchmark.mjs`): a reproducible page benchmark. It builds a small app from the packed framework, serves it with the production server and reports the median of several cold loads in headless Chromium: HTML bytes (raw and gzip), script bytes on load and after the first click, request count, DOMContentLoaded, load, and click-to-update time. See `BENCHMARKS.md` for what it measures and how to rerun it. It makes no comparison with other frameworks. The browser test setup moved to `scripts/browser-harness.mjs`, shared by the browser tests and the benchmark.
 
 ### Fixed
@@ -18,6 +21,7 @@ Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaki
 ### Changed
 
 - **Breaking: Node.js `>=22.19.0` is now required** (`engines` in `resuxjs` and `create-resuxjs`, the generated app's `package.json`, and CI). Two dependencies already needed it (`undici@^8` needs 22.19 and `rollup-plugin-visualizer@7` needs 22), so with npm `engine-strict` Node 20 installs of 0.4.0 failed with EBADENGINE. CI now tests on Node 22.19.0 and 24. Node 20 is no longer tested; stay on 0.4.x if you need it.
+- `npm audit` reports 0 vulnerabilities (dependency updates, with the happy-dom test baseline raised to 21). `npm run lint` (ESLint 10) is part of `npm run quality`: 0 errors, 44 warnings tracked for cleanup.
 - A component created in the browser (inside a `v-if` or `v-for` block) no longer restarts when its parent changes its props. The child keeps its state and DOM, gets the new props and re-renders in place. Limit: setup code that copied a prop into its own ref or computed keeps the old value.
 - The client runtime source in `src/runtime/index.ts` (11.5k of its 20.9k lines) moved into nine files under `src/runtime/client-source/`, joined by `getClientRuntimeSource()`. The generated browser script is byte-identical, so there is no change for apps. `scripts/test-bundle.mjs` now checks the generated script, not only `dist/runtime/index.js`.
 

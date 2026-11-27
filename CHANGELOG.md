@@ -17,6 +17,12 @@ First stable release of the 0.5 line. It collects everything from `0.5.0-beta.1`
 
 - A scoped slot outside any `v-if` or `v-for` (for example `<slot name="header" :count="n">`) did not update when the child re-rendered. A `<slot>` with bound props is now a block, so the child asks the parent for the slot content again. Plain slots with only static attributes are unchanged.
 - A page, layout, app or error file named like an auto-discovered component (for example `pages/bt-panel.vue` and `components/BtPanel.vue`) made the server render recurse until Node ran out of memory. The build now stops with an error that names both files.
+- A component inside a `v-if` or `v-for` that sits in another component's slot was missing from the page's component list, so any client re-render of that block turned it into an empty tag. The list now includes components found in slot content.
+- A TypeScript type annotation in a handler (for example `$fetch<{ ... }>(...)`) was reported as a capture of non-resumable state and failed the build check. Type positions are now ignored.
+- `useGlobalState` is documented and auto-imported, but generated component scripts did not define it, so any component that called it failed with "useGlobalState is not defined" (a 500 on the server).
+- A change to a `useGlobalState` value only refreshed scopes that had already run a handler. A scope that read the key but never ran one (for example a layout's cart count) stayed stale. Those scopes are now resumed when the value changes.
+- A page reached by client navigation was rendered by the server with default global state and ignored the client's current value (a cart page showed no items). It now starts from the client's state.
+- With the static target, a failed async data call during prerender was baked into the HTML with no warning. The server now warns, naming the route, the key and the error. The build is not failed.
 
 ### Changed
 

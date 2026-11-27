@@ -277,7 +277,7 @@ export default /* @__PURE__ */ defineResuxModule<ResuxThemeModuleOptions>({
         theme: {
           defaultTheme: config.defaultTheme,
           fallback: config.fallback,
-          storageKey: config.storageKey,
+          storage: config.storageKey,
           attribute: config.attribute,
         },
       },

@@ -945,6 +945,29 @@ async function refreshScopesForGlobalState(changedKeys) {
     return keys.some((key) => changedKeys.has(key));
   });
 
+  // Scopes that never ran a handler (a layout that only reads the key) are not resumed yet. Resume them
+  // here so their bindings refresh too, as the docs promise for every scope that reads the key.
+  for (const [scopeId, serializedScope] of Object.entries(payload.scopes)) {
+    if (!serializedScope || scopeCache.has(scopeId)) {
+      continue;
+    }
+    const keys = Array.isArray(serializedScope.globalStateKeys) ? serializedScope.globalStateKeys : [];
+    if (!keys.some((key) => changedKeys.has(key))) {
+      continue;
+    }
+    try {
+      const component = await importComponent(serializedScope.moduleId, payload.modules, devImportRevision).catch(() => null);
+      if (!component) {
+        continue;
+      }
+      const record = await component.createScope(serializedScope, payload.route);
+      scopeCache.set(scopeId, record);
+      affectedScopes.push([scopeId, record]);
+    } catch (error) {
+      console.error("[resux:global-state] Failed to resume scope " + scopeId + ".", error);
+    }
+  }
+
   beginManagedTeleportPatchBatch();
   try {
     await Promise.allSettled(affectedScopes.map(async ([scopeId, scopeRecord]) => {

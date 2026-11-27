@@ -7,6 +7,7 @@ import type {
   HeadEntry,
   MaybeRef,
   ResuxError,
+  ResuxFetchInit,
   ResuxAppLike,
   ResuxConfigInput,
   ResuxLazyPackageLoader,
@@ -67,8 +68,8 @@ declare global {
   const useResuxApp: () => ResuxAppLike;
   const useResuxImage: () => ResuxImageBuilder;
   const apiURL: (path: string) => string;
-  const useFetch: <T = unknown>(url: string, init?: RequestInit) => AsyncDataResource<T>;
-  const $fetch: <T = unknown>(url: string, init?: RequestInit) => Promise<T>;
+  const useFetch: <T = unknown>(url: string, init?: ResuxFetchInit) => AsyncDataResource<T>;
+  const $fetch: <T = unknown>(url: string, init?: ResuxFetchInit) => Promise<T>;
   const useError: () => Ref<ResuxError | null>;
   const clearError: () => void;
   const showError: (input: string | Partial<ResuxError>) => never;

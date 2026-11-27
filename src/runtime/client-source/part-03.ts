@@ -1018,6 +1018,35 @@ function setRegistryValue(registry, key, value) {
   });
 }
 
+function isPlainJsonBody(body) {
+  if (body === null || typeof body !== "object") return false;
+  if (Array.isArray(body)) return true;
+  const proto = Object.getPrototypeOf(body);
+  return proto === Object.prototype || proto === null;
+}
+
+function prepareFetchInit(init) {
+  if (!init || !isPlainJsonBody(init.body)) return init;
+  const headers = new Headers(init.headers);
+  if (!headers.has("content-type")) headers.set("content-type", "application/json");
+  return Object.assign({}, init, { headers, body: JSON.stringify(init.body) });
+}
+
+async function createFetchError(url, response) {
+  const error = new Error("Fetch failed for " + url + ": " + response.status);
+  error.status = response.status;
+  error.statusMessage = response.statusText;
+  let data;
+  try {
+    const text = await response.text();
+    try { data = JSON.parse(text); } catch { data = text === "" ? undefined : text; }
+  } catch {
+    data = undefined;
+  }
+  error.data = data;
+  return error;
+}
+
 function createFetchAsyncDataKey(url, init) {
   return "fetch:" + hashFetchIdentity(serializeFetchRequestIdentity(url, init));
 }
@@ -1052,6 +1081,7 @@ function serializeFetchRequestIdentity(url, init) {
 function serializeFetchRequestBody(body) {
   if (body === undefined || body === null) return null;
   if (typeof body === "string") return ["string", body];
+  if (isPlainJsonBody(body)) return ["json", JSON.stringify(body)];
   if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) {
     return ["url-search-params", body.toString()];
   }
@@ -1328,9 +1358,9 @@ export function createClientComponent(definition) {
           return setupContext.useAsyncData(key, () => setupContext.$fetch(url, init));
         },
         async $fetch(url, init) {
-          const response = await fetch(url, init);
+          const response = await fetch(url, prepareFetchInit(init));
           if (!response.ok) {
-            throw new Error("Fetch failed for " + url + ": " + response.status);
+            throw await createFetchError(url, response);
           }
           return response.json();
         },

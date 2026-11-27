@@ -6,6 +6,10 @@ Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaki
 
 ## [Unreleased]
 
+### Fixed
+
+- A scoped slot outside any `v-if` or `v-for` (for example `<slot name="header" :count="n">`) did not update when the child re-rendered. A `<slot>` with bound props is now a block, so the child asks the parent for the slot content again. Plain slots with only static attributes are unchanged.
+
 ## [0.5.0-beta.2] - 2026-11-27
 
 Second beta of the 0.5 line. It adds named and scoped slots, native DOM events on a component tag (`@click` on `<Child>`), and a much smaller resume bootstrap on pages without deferred targets. The size budget for the built package is raised to 1.80 MB. Pages that do not use slots or component-tag events keep the same payload; resume behavior is unchanged.

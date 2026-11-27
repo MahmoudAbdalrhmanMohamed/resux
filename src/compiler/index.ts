@@ -1751,6 +1751,22 @@ function compileTemplateNode(
     }
   }
 
+  // A <slot> with bound props (or a bound name) is a block too: when the child re-renders, the runtime
+  // asks the parent for the slot content again with the new props, so a scoped slot outside any v-if or
+  // v-for stays current. A slot with only static attributes never changes and needs no block.
+  if (node.tag === "slot" && !element.if && !element.for) {
+    const dynamicSlot = node.props.find((prop) => (
+      prop.type === NodeTypes.DIRECTIVE
+      && prop.name === "bind"
+    )) as DirectiveNode | undefined;
+    if (dynamicSlot) {
+      element.if = {
+        expression: registerTemplateExpression("true", state.templateRefBindings, state.file, dynamicSlot, state),
+        blockId: nextBindingId(state)
+      };
+    }
+  }
+
   if (isComponentTagName(node.tag)) {
     assignComponentSlots(element, state);
   }

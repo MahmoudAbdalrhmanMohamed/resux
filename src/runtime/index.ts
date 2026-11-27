@@ -89,6 +89,8 @@ export interface AsyncDataError {
   message: string;
 }
 
+export type ResuxFetchInit = Omit<RequestInit, "body"> & { body?: BodyInit | null | Record<string, unknown> | unknown[] };
+
 export interface ResuxError extends Error {
   statusCode?: number;
   fatal?: boolean;
@@ -610,8 +612,8 @@ export interface SetupContext {
   useResuxApp(): ResuxAppLike;
   apiURL(path: string): string;
   useResuxImage(): ResuxImageBuilder;
-  useFetch<T>(url: string, init?: RequestInit): AsyncDataResource<T>;
-  $fetch<T>(url: string, init?: RequestInit): Promise<T>;
+  useFetch<T>(url: string, init?: ResuxFetchInit): AsyncDataResource<T>;
+  $fetch<T>(url: string, init?: ResuxFetchInit): Promise<T>;
   useError(): Ref<ResuxError | null>;
   clearError(): void;
   showError(input: string | Partial<ResuxError>): never;
@@ -3015,11 +3017,40 @@ function setRegistryValue<T>(registry: Record<string, T>, key: string, value: T)
   });
 }
 
-function createFetchAsyncDataKey(url: string, init?: RequestInit): string {
+function isPlainJsonBody(body: unknown): boolean {
+  if (body === null || typeof body !== "object") return false;
+  if (Array.isArray(body)) return true;
+  const proto = Object.getPrototypeOf(body);
+  return proto === Object.prototype || proto === null;
+}
+
+function prepareFetchInit(init?: ResuxFetchInit): RequestInit | undefined {
+  if (!init || !isPlainJsonBody(init.body)) return init as RequestInit | undefined;
+  const headers = new Headers(init.headers);
+  if (!headers.has("content-type")) headers.set("content-type", "application/json");
+  return { ...init, headers, body: JSON.stringify(init.body) };
+}
+
+async function createFetchError(url: string, response: Response): Promise<Error> {
+  const error = new Error(`Fetch failed for ${url}: ${response.status}`) as Error & { status: number; statusMessage: string; data: unknown };
+  error.status = response.status;
+  error.statusMessage = response.statusText;
+  let data: unknown;
+  try {
+    const text = await response.text();
+    try { data = JSON.parse(text); } catch { data = text === "" ? undefined : text; }
+  } catch {
+    data = undefined;
+  }
+  error.data = data;
+  return error;
+}
+
+function createFetchAsyncDataKey(url: string, init?: ResuxFetchInit): string {
   return `fetch:${hashFetchIdentity(serializeFetchRequestIdentity(url, init))}`;
 }
 
-function serializeFetchRequestIdentity(url: string, init?: RequestInit): string {
+function serializeFetchRequestIdentity(url: string, init?: ResuxFetchInit): string {
   const headers: Array<[string, string]> = [];
   if (typeof Headers !== "undefined") {
     try {
@@ -3047,9 +3078,10 @@ function serializeFetchRequestIdentity(url: string, init?: RequestInit): string 
   });
 }
 
-function serializeFetchRequestBody(body: BodyInit | null | undefined): unknown {
+function serializeFetchRequestBody(body: ResuxFetchInit["body"]): unknown {
   if (body === undefined || body === null) return null;
   if (typeof body === "string") return ["string", body];
+  if (isPlainJsonBody(body)) return ["json", JSON.stringify(body)];
   if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) {
     return ["url-search-params", body.toString()];
   }
@@ -3184,11 +3216,11 @@ export function createServerSetupContext(
   globalStateKeys: Set<string> = new Set()
 ): SetupContext {
   const apiURL = (url: string): string => resolveServerApiURL(url, route, runtimeConfig);
-  const fetchJson = async <T>(url: string, init?: RequestInit): Promise<T> => {
+  const fetchJson = async <T>(url: string, init?: ResuxFetchInit): Promise<T> => {
     const requestUrl = apiURL(url);
-    const response = await fetch(requestUrl, init);
+    const response = await fetch(requestUrl, prepareFetchInit(init));
     if (!response.ok) {
-      throw new Error(`Fetch failed for ${requestUrl}: ${response.status}`);
+      throw await createFetchError(requestUrl, response);
     }
     return response.json() as Promise<T>;
   };
@@ -9029,9 +9061,9 @@ function registerResuxGlobals() {
         try {
           const app = useResuxApp();
           const apiURL = resolveServerApiURL(url, app.route, app.$config);
-          return fetch(apiURL, init).then(r => r.json());
+          return fetch(apiURL, prepareFetchInit(init)).then(r => r.json());
         } catch {
-          return fetch(url, init).then(r => r.json());
+          return fetch(url, prepareFetchInit(init)).then(r => r.json());
         }
       };
     });

@@ -14,6 +14,7 @@ Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaki
 ### Changed
 
 - A component created in the browser (inside a `v-if` or `v-for` block) no longer restarts when its parent changes its props. The child keeps its state and DOM, gets the new props and re-renders in place. Limit: setup code that copied a prop into its own ref or computed keeps the old value.
+- The client runtime source in `src/runtime/index.ts` (11.5k of its 20.9k lines) moved into nine files under `src/runtime/client-source/`, joined by `getClientRuntimeSource()`. The generated browser script is byte-identical, so there is no change for apps. `scripts/test-bundle.mjs` now checks the generated script, not only `dist/runtime/index.js`.
 
 ## [0.5.0-beta.2] - 2026-11-27
 

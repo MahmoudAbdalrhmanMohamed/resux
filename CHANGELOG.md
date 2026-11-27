@@ -6,6 +6,10 @@ Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaki
 
 ## [Unreleased]
 
+### Added
+
+- `npm run bench` (`scripts/benchmark.mjs`): a reproducible page benchmark. It builds a small app from the packed framework, serves it with the production server and reports the median of several cold loads in headless Chromium: HTML bytes (raw and gzip), script bytes on load and after the first click, request count, DOMContentLoaded, load, and click-to-update time. See `BENCHMARKS.md` for what it measures and how to rerun it. It makes no comparison with other frameworks. The browser test setup moved to `scripts/browser-harness.mjs`, shared by the browser tests and the benchmark.
+
 ### Fixed
 
 - A scoped slot outside any `v-if` or `v-for` (for example `<slot name="header" :count="n">`) did not update when the child re-rendered. A `<slot>` with bound props is now a block, so the child asks the parent for the slot content again. Plain slots with only static attributes are unchanged.

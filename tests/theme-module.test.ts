@@ -92,7 +92,7 @@ describe("theme module head output", () => {
       head: heads[0],
     } as any, "T", { nonce: "n0nce" } as any);
     expect(html).toMatch(/<script[^>]*data-resux-theme="true"[^>]*nonce="n0nce"|<script[^>]*nonce="n0nce"[^>]*data-resux-theme="true"/);
-    expect(html).toMatch(/<style[^>]*nonce="n0nce"[^>]*>:root\{--bg:#fff\}|<style[^>]*>:root\{--bg:#fff\}/);
+    expect(html).toMatch(/<style(?=[^>]*nonce="n0nce")[^>]*>:root\{--bg:#fff\}/);
   });
 
   it("forceTheme returns an htmlAttrs entry and falls back to light for bad input", () => {

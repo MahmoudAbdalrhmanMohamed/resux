@@ -3060,6 +3060,8 @@ async function handleRequest(
       return;
     }
 
+    warnPrerenderedAsyncDataErrors(request.headers, requestUrl.pathname, rendered.payload);
+
     const normalizedRendered = withPrioritizedHeadImagePreloads(rendered);
     let html = promoteDocumentImagePreloads(
       await renderDocumentAsync(normalizedRendered, "Resux App", {
@@ -3089,6 +3091,41 @@ async function handleRequest(
       return;
     }
     await serveErrorDocument(response, options, undefined, 500, error);
+  }
+}
+
+type PrerenderAsyncDataPayload = {
+  scopes: Record<string, { asyncData?: Record<string, { error: { name: string; message: string } | null }> }>;
+};
+
+export function collectPrerenderAsyncDataErrors(
+  headers: Record<string, string | string[] | undefined>,
+  payload: PrerenderAsyncDataPayload,
+): string[] {
+  if (!headers["x-nitro-prerender"]) {
+    return [];
+  }
+  const found: string[] = [];
+  for (const scope of Object.values(payload.scopes)) {
+    for (const [key, entry] of Object.entries(scope.asyncData ?? {})) {
+      if (entry.error) {
+        found.push(`${key}: ${entry.error.message}`);
+      }
+    }
+  }
+  return found;
+}
+
+function warnPrerenderedAsyncDataErrors(
+  headers: Record<string, string | string[] | undefined>,
+  pathname: string,
+  payload: PrerenderAsyncDataPayload,
+): void {
+  const errors = collectPrerenderAsyncDataErrors(headers, payload);
+  if (errors.length > 0) {
+    console.warn(
+      `[resux] Prerendering ${pathname} captured ${errors.length} async data error(s) and they will be baked into the static HTML: ${errors.join("; ")}. Fix the data source, or exclude this route from the static target.`,
+    );
   }
 }
 

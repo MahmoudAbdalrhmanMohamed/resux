@@ -57,7 +57,7 @@ Source code, package exports, tests, and published documentation must agree. Whe
 3. update the relevant documentation;
 4. note user-visible changes in the changelog when release-relevant.
 
-Resux is pre-1.0, so APIs can still evolve, but breaking changes should be deliberate and clearly documented.
+Resux follows Semantic Versioning, so breaking changes belong in major releases and should be deliberate and clearly documented.
 
 ## Coding principles
 

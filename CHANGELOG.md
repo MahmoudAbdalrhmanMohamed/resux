@@ -4,6 +4,13 @@ All notable changes to Resux are documented here.
 
 Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaking API changes when they are clearly documented.
 
+## [Unreleased]
+
+### Changed
+
+- `$fetch` and `useFetch` now accept a plain object or array as `body`. It is sent as JSON, and `content-type: application/json` is added when you did not set a content type. Strings, `FormData`, `URLSearchParams`, `Blob` and other body types are passed through unchanged. `useFetch` also tells two calls to the same URL apart when their object bodies differ.
+- A non-2xx `$fetch` response still throws `Fetch failed for <url>: <status>`, and the error now also has `status`, `statusMessage` and `data` (the response body, parsed as JSON when possible, otherwise text). The error stored for resume still carries only `name` and `message`.
+
 ## [0.5.0] - 2026-11-27
 
 First stable release of the 0.5 line. It collects everything from `0.5.0-beta.1` and `0.5.0-beta.2` (named and scoped slots, native DOM events on a component tag, client-created components inside `v-if` and `v-for`, a much smaller resume bootstrap) and adds the changes below. **Breaking: Node.js `>=22.19.0` is required.** Stay on 0.4.x if you need Node 20.

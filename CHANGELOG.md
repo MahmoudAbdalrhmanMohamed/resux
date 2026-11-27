@@ -4,6 +4,18 @@ All notable changes to Resux are documented here.
 
 Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaking API changes when they are clearly documented.
 
+## [1.0.0-rc.2] - 2026-11-27
+
+Second release candidate for 1.0. Install it with `npm install resuxjs@next`; `latest` stays on 0.5.0 until 1.0.0.
+
+### Added
+
+- `resuxjs/theme`: an opt-in dark and light mode module. It sets the mode before the first paint, so a reload does not flash. It supports a system default with a light fallback, a saved choice in `localStorage`, CSS variables per mode, per-mode `theme-color` meta tags, a forced mode per page with `forceTheme`, and `useTheme()` with `set`, `toggle` and `subscribe`. The mode is exposed as the `dark` class or a `data-theme` attribute, so it works with Tailwind v3 (`darkMode: "selector"`) and Tailwind v4 (`@custom-variant dark`). It adds nothing to the client bootstrap.
+
+### Fixed
+
+- The built-in module entries `resuxjs/fonts`, `resuxjs/icons` and `resuxjs/i18n` are now marked side-effect free. With Rolldown 1.2.19, 1.3.0 and 1.3.4 (a fresh install resolves 1.3.4), a page that imported `googleFont` from `resuxjs/fonts` failed to build with a parse error.
+
 ## [1.0.0-rc.1] - 2026-11-27
 
 First release candidate for 1.0. It adds one change on top of 0.5.0. Install it with `npm install resuxjs@next`; `latest` stays on 0.5.0 until 1.0.0.

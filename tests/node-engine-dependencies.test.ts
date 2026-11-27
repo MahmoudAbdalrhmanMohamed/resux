@@ -13,7 +13,6 @@ interface PackageLock {
 
 describe("Node engine dependency compatibility", () => {
   it("keeps the Nitro toolchain compatible with the advertised Node 22.19 minimum", async () => {
-
     const root = process.cwd();
     const packageJson = JSON.parse(
       await readFile(path.join(root, "package.json"), "utf8"),
@@ -27,7 +26,6 @@ describe("Node engine dependency compatibility", () => {
     ) as PackageLock;
 
     expect(packageJson.engines?.node).toBe(">=22.19.0");
-
     expect(packageJson.dependencies?.nitropack).toBe("~2.13.4");
     expect(packageJson.overrides?.nitropack?.["rollup-plugin-visualizer"]).toBe(
       "6.0.11",

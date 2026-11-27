@@ -664,7 +664,7 @@ function mapConfiguredFamilyToFontless(family: ResuxFontFamilyInput): any[] {
   }];
 }
 
-export default defineResuxModule<ResuxFontsModuleOptions>({
+export default /* @__PURE__ */ defineResuxModule<ResuxFontsModuleOptions>({
   defaults: {
     google: [],
     families: [],

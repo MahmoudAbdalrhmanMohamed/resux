@@ -590,7 +590,6 @@ function createStarterPackageJson(
     devDependencies,
     engines: {
       node: ">=22.19.0",
-
     },
     overrides: {
       undici: "^6.21.1",

@@ -94,7 +94,8 @@ if (pkg.private) fail("resuxjs must not be private");
 if (/\bexperimental\b/i.test(pkg.description ?? "")) {
   fail("package description still marks the framework as experimental");
 }
-if (pkg.engines?.node !== ">=20.19.0") {
+if (pkg.engines?.node !== ">=22.19.0") {
+
   fail(`unexpected Node engine: ${pkg.engines?.node ?? "missing"}`);
 }
 

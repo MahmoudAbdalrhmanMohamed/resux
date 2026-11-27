@@ -4,6 +4,23 @@ All notable changes to Resux are documented here.
 
 Resux follows Semantic Versioning. Before 1.0.0, minor releases could contain breaking API changes that were documented here.
 
+## [1.0.0] - 2026-11-27
+
+First stable 1.0 release. It has the same code as `1.0.0-rc.2` and collects everything since `0.5.0`: the `resuxjs/theme` module, the `$fetch` and `useFetch` JSON bodies, and the Rolldown build fix. Install it with `npm install resuxjs` or `npm create resuxjs@latest`. Resux requires Node.js `>=22.19.0`. See the Current Limits page in the docs for the documented limits.
+
+### Added
+
+- `resuxjs/theme`: an opt-in dark and light mode module. It sets the mode before the first paint, so a reload does not flash. It supports a system default with a light fallback, a saved choice in `localStorage`, CSS variables per mode, per-mode `theme-color` meta tags, a forced mode per page with `forceTheme`, and `useTheme()` with `set`, `toggle` and `subscribe`. The mode is exposed as the `dark` class or a `data-theme` attribute, so it works with Tailwind v3 (`darkMode: "selector"`) and Tailwind v4 (`@custom-variant dark`). It adds nothing to the client bootstrap.
+
+### Changed
+
+- `$fetch` and `useFetch` now accept a plain object or array as `body`. It is sent as JSON, and `content-type: application/json` is added when you did not set a content type. Strings, `FormData`, `URLSearchParams`, `Blob` and other body types are passed through unchanged. `useFetch` also tells two calls to the same URL apart when their object bodies differ.
+- A non-2xx `$fetch` response still throws `Fetch failed for <url>: <status>`, and the error now also has `status`, `statusMessage` and `data` (the response body, parsed as JSON when possible, otherwise text). The error stored for resume still carries only `name` and `message`.
+
+### Fixed
+
+- The built-in module entries `resuxjs/fonts`, `resuxjs/icons` and `resuxjs/i18n` are now marked side-effect free. With Rolldown 1.2.19, 1.3.0 and 1.3.4 (a fresh install resolves 1.3.4), a page that imported `googleFont` from `resuxjs/fonts` failed to build with a parse error.
+
 ## [1.0.0-rc.2] - 2026-11-27
 
 Second release candidate for 1.0. Install it with `npm install resuxjs@next`; `latest` stays on 0.5.0 until 1.0.0.

@@ -506,6 +506,22 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
       await writeFile(path.join(absoluteOut, "vite-client", "handlers", `${component.id}.mjs`), component.clientSource, "utf8");
     }
 
+    // Components are registered by name, so a page, layout, app or error file named like an auto-discovered
+    // component would replace it and render itself without end. Fail the build with both file names instead.
+    const componentFileByName = new Map<string, string>();
+    for (const file of uniqueComponentFiles) {
+      componentFileByName.set(compiledByFile.get(file)!.name, file);
+    }
+    for (const file of [...layoutFiles, ...pageFiles, ...(appFile ? [appFile] : []), ...(errorFile ? [errorFile] : [])]) {
+      const name = compiledByFile.get(file)!.name;
+      const componentFile = componentFileByName.get(name);
+      if (componentFile && componentFile !== file) {
+        throw new ResuxCompileError(
+          `${normalizePath(path.relative(absoluteRoot, file))} and the component ${normalizePath(path.relative(absoluteRoot, componentFile))} both resolve to the component name "${name}". Rename one of the files.`,
+        );
+      }
+    }
+
     const baseRoutes = createRouteManifest(absoluteRoot, pageFiles, idByFile, compiledByFile);
     for (const extender of contributions.pagesExtenders) {
       await extender(baseRoutes as unknown as Array<Record<string, unknown>>);

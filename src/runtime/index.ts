@@ -4208,6 +4208,7 @@ function collectClientBlockComponentIds(
         }
       }
       scan(node.children, blockHere);
+      for (const slot of Object.values(node.slots ?? {})) scan(slot.children, blockHere);
     }
   };
   for (const definition of rendered) {

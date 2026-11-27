@@ -77,13 +77,17 @@ describe("client runtime: keyed v-for component state", () => {
     expectAllPass(results);
   });
 
-  it("recreates a child whose props changed instead of showing stale props", async () => {
+  it("updates a child in place when its props change, keeping its state", async () => {
     const results = await runClientEngineProbe(`${setup}
       const node = { ...keyed, attrs: [{ kind: "dynamic", name: "key", value: "item.id" }, { kind: "dynamic", name: "label", value: "item.label" }] };
       await patch(node, [{ id: 1, label: "x" }]);
       await click(0);
+      const before = document.querySelectorAll("button.bb")[0];
       await patch(node, [{ id: 1, label: "y" }]);
-      t("fresh child with new props", texts() === "0:y", texts());
+      t("state kept", texts().startsWith("1:"), texts());
+      t("same DOM node reused", document.querySelectorAll("button.bb")[0] === before, "node replaced");
+      // The probe component copies label into its own scope at setup, which is the documented limit.
+      t("copied prop keeps the setup value", texts() === "1:x", texts());
     `);
     expectAllPass(results);
   });

@@ -71,7 +71,7 @@
     "test:e2e": "vitest run tests/runtime-ssr-core.test.ts tests/runtime-ssr-teleport.test.ts tests/runtime-ssr-media.test.ts tests/runtime-server-event-helpers.test.ts tests/runtime-client-core.test.ts tests/runtime-client-enhancements.test.ts tests/runtime-client-teleport.test.ts tests/runtime-client-media.test.ts tests/runtime-client-router.test.ts",
     "test:fixtures": "node scripts/test-fixtures.mjs",
     "test:templates": "node scripts/test-templates.mjs",
-    "test:browser": "node scripts/test-browser.mjs && node scripts/test-theme-browser.mjs && node scripts/test-theme-tailwind.mjs",
+    "test:browser": "node scripts/test-browser.mjs && node scripts/test-theme-browser.mjs && node scripts/test-theme-tailwind.mjs && node scripts/test-theme-csp.mjs",
     "bench": "node scripts/benchmark.mjs",
     "test:build": "npm run build",
     "test:deploy": "npm run verify:deploy-targets",

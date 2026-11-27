@@ -89,7 +89,8 @@ try {
       await page.goto(`http://127.0.0.1:${port}/${scenario.route}`);
       await page.waitForSelector(scenario.ready, { timeout: 15_000 });
       const t = ctx(page);
-      for (const [kind, selector, expected, label] of scenario.steps) {
+      for (const step of scenario.steps) {
+        const [kind, selector, expected, label] = typeof step === "string" ? step.split("|") : step;
         if (kind === "click") await page.click(selector);
         else if (kind === "text") await t.expectText(selector, expected, label);
         else await t.expectCount(selector, expected, label);
@@ -201,6 +202,26 @@ function scenarios() {
         ["text", "#x li:first-child", "a-2-L!", "per-item slot reads fresh parent state"],
         ["text", "#x .hd", "H:L!:2", "scoped header slot reads fresh parent state"],
         ["text", "#x .ft", "Default footer", "fallback content renders for a missing slot"],
+      ],
+    },
+    {
+      route: "bt-props",
+      ready: "#t",
+      steps: [
+        "click|#t",
+        "text|#x .pn|1-solo|browser-created child gets its first props",
+        "click|#x .pb",
+        "click|#x .pb",
+        "text|#x .pb|2|child counter state",
+        "click|#i",
+        "text|#x .pn|2-solo|prop change reaches the child",
+        "text|#x .pb|2|child state survives a prop change",
+        "text|#l .pn >> nth=1|2-b|v-for children get the new prop",
+        "click|#l .pb >> nth=1",
+        "click|#i",
+        "text|#l .pn >> nth=1|3-b|second prop change",
+        "text|#l .pb >> nth=1|1|v-for child state survives a prop change",
+        "text|#x .pb|2|other child state also survives",
       ],
     },
     {

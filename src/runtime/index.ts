@@ -17921,7 +17921,8 @@ async function mountClientChild(placeholder) {
     const parent = placeholder.parentNode;
     const nodes = Array.from(template.content.childNodes);
     clientChildRoots.set(id, nodes);
-    clientChildMeta.set(id, { tag: entry.tag, key: entry.hasKey ? "k:" + entry.key : "", propsJson: JSON.stringify(entry.props), slotHtml: entry.slotHtml, emitsJson: JSON.stringify(entry.emits) + JSON.stringify(entry.rootAttrs) });
+    clientChildMeta.set(id, { component, tag: entry.tag, key: entry.hasKey ? "k:" + entry.key : "", propsJson: JSON.stringify(entry.props), slotHtml: entry.slotHtml, emitsJson: JSON.stringify(entry.emits) + JSON.stringify(entry.rootAttrs) });
+
     placeholder.replaceWith(template.content);
     registerDelegatedEventsFromDom(parent && parent.nodeType === 1 ? parent : document);
     await Promise.all(nodes.filter((child) => child.nodeType === 1).map((child) => mountClientChildren(child)));
@@ -17972,6 +17973,7 @@ function restoreClientChildrenOfBlock(block, held) {
     byKey.set(slot, entry);
   }
   const seen = new Map();
+  const updates = [];
   for (const placeholder of Array.from(block.querySelectorAll("[data-rx-child]"))) {
     const id = placeholder.getAttribute("data-rx-child");
     const pending = pendingClientChildren.get(id);
@@ -17983,11 +17985,46 @@ function restoreClientChildrenOfBlock(block, held) {
       slot = "i:" + pending.tag + ":" + n;
     }
     const old = byKey.get(slot);
-    if (!old || old.meta.tag !== pending.tag || old.meta.propsJson !== JSON.stringify(pending.props) || old.meta.slotHtml !== pending.slotHtml || old.meta.emitsJson !== JSON.stringify(pending.emits) + JSON.stringify(pending.rootAttrs)) continue;
+    if (!old || old.meta.tag !== pending.tag || old.meta.slotHtml !== pending.slotHtml || old.meta.emitsJson !== JSON.stringify(pending.emits) + JSON.stringify(pending.rootAttrs)) continue;
+    const nextPropsJson = JSON.stringify(pending.props);
+    const propsChanged = old.meta.propsJson !== nextPropsJson;
+    if (propsChanged && !canUpdateClientChildProps(old)) continue;
+
     byKey.delete(slot);
     pendingClientChildren.delete(id);
     for (const node of old.nodes) placeholder.parentNode.insertBefore(node, placeholder);
     placeholder.remove();
+    if (propsChanged) updates.push([old, pending.props, nextPropsJson]);
+  }
+  // Patching can mount pending placeholders of this block, so it runs after every held child is back in place.
+  for (const update of updates) updateClientChildProps(update[0], update[1], update[2]);
+}
+
+// A held child whose props changed keeps its state and DOM: the new props are written into its scope and
+// the child renders again in place, so only the bindings that changed are patched. Setup code that copied a
+// prop into its own ref or computed reads the old value (props are plain values, not refs).
+function canUpdateClientChildProps(entry) {
+  return Boolean(entry.meta && entry.meta.component && typeof entry.meta.component.render === "function" && scopeCache.get(entry.id));
+}
+
+function updateClientChildProps(entry, nextProps, nextPropsJson) {
+  const record = scopeCache.get(entry.id);
+  const component = entry.meta.component;
+  const payload = globalThis.__RESUX__;
+  try {
+    const target = record.props;
+    for (const name of Object.keys(target)) delete target[name];
+    Object.assign(target, nextProps);
+    entry.meta.propsJson = nextPropsJson;
+    const patches = component.render(record);
+    const serialized = component.serialize(record);
+    if (payload && payload.scopes && payload.scopes[entry.id]) {
+      payload.scopes[entry.id].props = serialized.props;
+      payload.scopes[entry.id].state = serialized.state;
+    }
+    applyPatches(entry.id, patches);
+  } catch (error) {
+    console.error("[resux] Failed to update props of client-created component " + entry.meta.tag + ".", error);
   }
 }
 

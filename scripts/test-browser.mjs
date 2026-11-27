@@ -204,6 +204,26 @@ function scenarios() {
       ],
     },
     {
+      route: "bt-props",
+      ready: "#t",
+      steps: [
+        ["click", "#t"],
+        ["text", "#x .pn", "1-solo", "browser-created child gets its first props"],
+        ["click", "#x .pb"],
+        ["click", "#x .pb"],
+        ["text", "#x .pb", "2", "child counter state"],
+        ["click", "#i"],
+        ["text", "#x .pn", "2-solo", "prop change reaches the child"],
+        ["text", "#x .pb", "2", "child state survives a prop change"],
+        ["text", "#l .pn >> nth=1", "2-b", "v-for children get the new prop"],
+        ["click", "#l .pb >> nth=1"],
+        ["click", "#i"],
+        ["text", "#l .pn >> nth=1", "3-b", "second prop change"],
+        ["text", "#l .pb >> nth=1", "1", "v-for child state survives a prop change"],
+        ["text", "#x .pb", "2", "other child state also survives"],
+      ],
+    },
+    {
       route: "bt-flip",
       ready: "#x .pn",
       steps: [

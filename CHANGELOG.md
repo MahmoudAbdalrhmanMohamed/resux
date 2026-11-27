@@ -9,6 +9,7 @@ Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaki
 ### Fixed
 
 - A scoped slot outside any `v-if` or `v-for` (for example `<slot name="header" :count="n">`) did not update when the child re-rendered. A `<slot>` with bound props is now a block, so the child asks the parent for the slot content again. Plain slots with only static attributes are unchanged.
+- A page, layout, app or error file named like an auto-discovered component (for example `pages/bt-panel.vue` and `components/BtPanel.vue`) made the server render recurse until Node ran out of memory. The build now stops with an error that names both files.
 
 ## [0.5.0-beta.2] - 2026-11-27
 

@@ -4,7 +4,10 @@ All notable changes to Resux are documented here.
 
 Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaking API changes when they are clearly documented.
 
-## [Unreleased]
+## [1.0.0-rc.1] - 2026-11-27
+
+First release candidate for 1.0. It adds one change on top of 0.5.0. Install it with `npm install resuxjs@next`; `latest` stays on 0.5.0 until 1.0.0.
+
 
 ### Changed
 

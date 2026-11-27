@@ -10,7 +10,7 @@ Security vulnerabilities must follow [SECURITY.md](SECURITY.md). Do not publish 
 
 ## Development setup
 
-Resux requires Node.js 20.19.0 or newer.
+Resux requires Node.js 22.19.0 or newer.
 
 ```sh
 npm install

@@ -86,7 +86,7 @@
     "pack:check": "npm run verify:dependencies && npm run build && npm test && npm run verify:package && npm pack --dry-run && npm pack --dry-run ./packages/create-resuxjs"
   },
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.19.0"
   },
   "dependencies": {
     "@vitejs/plugin-vue": "^6.0.9",

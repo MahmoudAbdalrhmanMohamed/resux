@@ -56,9 +56,9 @@ You can also scaffold through the framework CLI:
 npx resuxjs@latest init my-app
 ```
 
-Current framework source requires Node.js `>=20.19.0`.
+Resux requires Node.js `>=22.19.0` (0.5 and newer). The 0.4 line runs on Node `>=20.19.0`.
 
-Known issue in 0.4.0: resuxjs runs on Node >=20.19. With npm's `engine-strict` enabled, installing it on Node 20 fails with EBADENGINE, because two dependencies require a newer Node: `undici@^8` (via `unifont@^1.0.3`, and also via `fontless@^1.3.2`) needs Node >=22.19, and `rollup-plugin-visualizer@7` (via `nitropack`) needs Node >=22. With default npm settings this is only a warning and everything works. Requiring Node >=22.19 is planned for a later minor release.
+Known issue in 0.4.0 (fixed in 0.5.0 by requiring Node >=22.19.0): with npm's `engine-strict` enabled, installing 0.4.0 on Node 20 fails with EBADENGINE, because `undici@^8` and `rollup-plugin-visualizer@7` need a newer Node. With default npm settings this is only a warning.
 
 ## A normal Resux component
 

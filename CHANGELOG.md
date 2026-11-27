@@ -17,6 +17,7 @@ Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaki
 
 ### Changed
 
+- **Breaking: Node.js `>=22.19.0` is now required** (`engines` in `resuxjs` and `create-resuxjs`, the generated app's `package.json`, and CI). Two dependencies already needed it (`undici@^8` needs 22.19 and `rollup-plugin-visualizer@7` needs 22), so with npm `engine-strict` Node 20 installs of 0.4.0 failed with EBADENGINE. CI now tests on Node 22.19.0 and 24. Node 20 is no longer tested; stay on 0.4.x if you need it.
 - A component created in the browser (inside a `v-if` or `v-for` block) no longer restarts when its parent changes its props. The child keeps its state and DOM, gets the new props and re-renders in place. Limit: setup code that copied a prop into its own ref or computed keeps the old value.
 - The client runtime source in `src/runtime/index.ts` (11.5k of its 20.9k lines) moved into nine files under `src/runtime/client-source/`, joined by `getClientRuntimeSource()`. The generated browser script is byte-identical, so there is no change for apps. `scripts/test-bundle.mjs` now checks the generated script, not only `dist/runtime/index.js`.
 

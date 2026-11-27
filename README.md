@@ -58,9 +58,7 @@ npx resuxjs@latest init my-app
 
 Resux requires Node.js `>=22.19.0` (0.5 and newer). The 0.4 line runs on Node `>=20.19.0`.
 
-
 Known issue in 0.4.0 (fixed in 0.5.0 by requiring Node >=22.19.0): with npm's `engine-strict` enabled, installing 0.4.0 on Node 20 fails with EBADENGINE, because `undici@^8` and `rollup-plugin-visualizer@7` need a newer Node. With default npm settings this is only a warning.
-
 
 ## A normal Resux component
 

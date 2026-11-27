@@ -4,20 +4,30 @@ All notable changes to Resux are documented here.
 
 Resux follows Semantic Versioning. Before 1.0, minor releases may contain breaking API changes when they are clearly documented.
 
-## [Unreleased]
+## [0.5.0] - 2026-11-27
+
+First stable release of the 0.5 line. It collects everything from `0.5.0-beta.1` and `0.5.0-beta.2` (named and scoped slots, native DOM events on a component tag, client-created components inside `v-if` and `v-for`, a much smaller resume bootstrap) and adds the changes below. **Breaking: Node.js `>=22.19.0` is required.** Stay on 0.4.x if you need Node 20.
 
 ### Added
 
+- Browser (Chromium) resumability tests run in CI (`npm run test:browser`). They cover server-rendered and client-created components, slots, emits, `:is` and native events, and they found the scoped-slot and name-clash bugs fixed below.
 - `npm run bench` (`scripts/benchmark.mjs`): a reproducible page benchmark. It builds a small app from the packed framework, serves it with the production server and reports the median of several cold loads in headless Chromium: HTML bytes (raw and gzip), script bytes on load and after the first click, request count, DOMContentLoaded, load, and click-to-update time. See `BENCHMARKS.md` for what it measures and how to rerun it. It makes no comparison with other frameworks. The browser test setup moved to `scripts/browser-harness.mjs`, shared by the browser tests and the benchmark.
 
 ### Fixed
 
 - A scoped slot outside any `v-if` or `v-for` (for example `<slot name="header" :count="n">`) did not update when the child re-rendered. A `<slot>` with bound props is now a block, so the child asks the parent for the slot content again. Plain slots with only static attributes are unchanged.
 - A page, layout, app or error file named like an auto-discovered component (for example `pages/bt-panel.vue` and `components/BtPanel.vue`) made the server render recurse until Node ran out of memory. The build now stops with an error that names both files.
+- A component inside a `v-if` or `v-for` that sits in another component's slot was missing from the page's component list, so any client re-render of that block turned it into an empty tag. The list now includes components found in slot content.
+- A TypeScript type annotation in a handler (for example `$fetch<{ ... }>(...)`) was reported as a capture of non-resumable state and failed the build check. Type positions are now ignored.
+- `useGlobalState` is documented and auto-imported, but generated component scripts did not define it, so any component that called it failed with "useGlobalState is not defined" (a 500 on the server).
+- A change to a `useGlobalState` value only refreshed scopes that had already run a handler. A scope that read the key but never ran one (for example a layout's cart count) stayed stale. Those scopes are now resumed when the value changes.
+- A page reached by client navigation was rendered by the server with default global state and ignored the client's current value (a cart page showed no items). It now starts from the client's state.
+- With the static target, a failed async data call during prerender was baked into the HTML with no warning. The server now warns, naming the route, the key and the error. The build is not failed.
 
 ### Changed
 
 - **Breaking: Node.js `>=22.19.0` is now required** (`engines` in `resuxjs` and `create-resuxjs`, the generated app's `package.json`, and CI). Two dependencies already needed it (`undici@^8` needs 22.19 and `rollup-plugin-visualizer@7` needs 22), so with npm `engine-strict` Node 20 installs of 0.4.0 failed with EBADENGINE. CI now tests on Node 22.19.0 and 24. Node 20 is no longer tested; stay on 0.4.x if you need it.
+- `npm audit` reports 0 vulnerabilities (dependency updates, with the happy-dom test baseline raised to 21). `npm run lint` (ESLint 10) is part of `npm run quality`: 0 errors, 44 warnings tracked for cleanup.
 - A component created in the browser (inside a `v-if` or `v-for` block) no longer restarts when its parent changes its props. The child keeps its state and DOM, gets the new props and re-renders in place. Limit: setup code that copied a prop into its own ref or computed keeps the old value.
 - The client runtime source in `src/runtime/index.ts` (11.5k of its 20.9k lines) moved into nine files under `src/runtime/client-source/`, joined by `getClientRuntimeSource()`. The generated browser script is byte-identical, so there is no change for apps. `scripts/test-bundle.mjs` now checks the generated script, not only `dist/runtime/index.js`.
 

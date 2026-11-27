@@ -1166,6 +1166,7 @@ async function navigateTo(target,options={}){
     await disposeClientEnhancements();setRouteTransition("swapping",{path:routePath});
     const preserveLayout=!didClientLocaleChange(previousPayload,nextPayload);
     let preserved;
+    const serverGlobalState=Object.assign({},nextPayload?.globalState||{});
     const performSwap = () => {
       if(transitionToken!==routeTransitionToken)return;
       preserved=replaceRouteHtml(root,result.html,preserveLayout);
@@ -1174,6 +1175,7 @@ async function navigateTo(target,options={}){
     await runRouteViewTransitionSwap(options,nextPayload,previousPayload,performSwap);
     if(!preserved)return;
     getClientResuxApp(globalThis.__RESUX__.route);applyHead(result.head);animateRouteSwap(preserved.root);clearScopeCacheExcept(preserved.scopeIds);
+    for(const [key,value] of Object.entries(globalThis.__RESUX__.globalState||{})){if(JSON.stringify(value)!==JSON.stringify(serverGlobalState[key]))queueGlobalStateRefresh(key)}
     void resumePendingAsyncData();mountManagedTeleports(document,{deferMissingTarget:true});initializeManagedRuntimeContent(document);
     if(!options.preserveScroll&&nextUrl.hash)document.getElementById(nextUrl.hash.slice(1))?.scrollIntoView();
     else if(!options.preserveScroll&&typeof scrollTo==="function")scrollTo(0,0);

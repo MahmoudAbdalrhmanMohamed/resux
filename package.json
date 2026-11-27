@@ -87,7 +87,6 @@
   },
   "engines": {
     "node": ">=22.19.0"
-
   },
   "dependencies": {
     "@vitejs/plugin-vue": "^6.0.9",

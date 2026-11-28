@@ -56,4 +56,35 @@ describe("relative imports from server handlers, middleware and plugins", () => 
     // Re-exports in a barrel file are followed too.
     expect(await readFile(path.join(serverDir, "imported", "lib", "index.mjs"), "utf8")).toContain('./nested/deep.mjs');
   }, 60000);
+  it("keeps an unresolved re-export a build error instead of emitting an empty module", async () => {
+    const root = path.join(os.tmpdir(), `resux-server-relative-imports-missing-${Date.now()}`);
+    await write(root, "package.json", JSON.stringify({ name: "server-relative-imports-missing", private: true, type: "module" }));
+    await write(root, "pages/index.vue", `<template><main>ok</main></template>`);
+    await write(root, "lib/index.ts", `export * from "./missing.ts";\nexport const a = 1;\n`);
+    await write(root, "server/api/hi.ts", `import { a } from "../../lib";\nexport default defineEventHandler(() => ({ a }));\n`);
+
+    await expect(buildProject(root, path.join(root, ".resux"))).rejects.toThrow();
+    await expect(readFile(path.join(root, ".resux", "server", "imported", "lib", "missing.mjs"), "utf8")).rejects.toThrow();
+  }, 60000);
+
+  it("re-evaluates compiled helper imports per build in dev only", async () => {
+    const root = path.join(os.tmpdir(), `resux-server-relative-imports-dev-${Date.now()}`);
+    await write(root, "package.json", JSON.stringify({ name: "server-relative-imports-dev", private: true, type: "module" }));
+    await write(root, "pages/index.vue", `<template><main>ok</main></template>`);
+    await write(root, "lib/hello.ts", `export const hello = (): string => "hi";\n`);
+    await write(root, "lib/wrap.ts", `import { hello } from "./hello";\nexport const wrap = (): string => hello();\n`);
+    await write(root, "server/api/hi.ts", `import { wrap } from "../../lib/wrap";\nexport default defineEventHandler(() => ({ msg: wrap() }));\n`);
+
+    const devOut = path.join(root, ".resux-dev");
+    await buildProject(root, devOut, { vite: "dev" });
+    const devHandler = await readFile(path.join(devOut, "server", "handlers", "h0.mjs"), "utf8");
+    expect(devHandler).toMatch(/from "\.\.\/imported\/lib\/wrap\.mjs\?t=\d+"/);
+    expect(await readFile(path.join(devOut, "server", "imported", "lib", "wrap.mjs"), "utf8")).toMatch(/from "\.\/hello\.mjs\?t=\d+"/);
+
+    const prodOut = path.join(root, ".resux-prod");
+    await buildProject(root, prodOut);
+    const prodHandler = await readFile(path.join(prodOut, "server", "handlers", "h0.mjs"), "utf8");
+    expect(prodHandler).toContain('from "../imported/lib/wrap.mjs"');
+    expect(await readFile(path.join(prodOut, "server", "imported", "lib", "wrap.mjs"), "utf8")).toContain('from "./hello.mjs"');
+  }, 60000);
 });

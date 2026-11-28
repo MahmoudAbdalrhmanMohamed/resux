@@ -537,7 +537,6 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
     const cacheBust = buildOptions.vite === "dev" ? String(Date.now()) : undefined;
     const components = allFiles.map((file) => compiledByFile.get(file)!);
     const layouts = layoutFiles.map((file) => compiledByFile.get(file)!);
-    const layouts = layoutFiles.map((file) => compiledByFile.get(file)!);
     const plugins = unique(pluginFiles).sort((left, right) => normalizePath(left).localeCompare(normalizePath(right))).map((file, pluginIndex) => {
       const compiled = compilePluginFile(file, pluginIndex, absoluteOut, cacheBust);
       const mode = pluginModeByFile.get(file);
@@ -3930,7 +3929,6 @@ function rewriteSupportModuleUserImports(
     }
     const compiled = ensureCompiledUserModule(resolved, projectRoot, buildOutDir, undefined, options.cacheBust);
     replacements.push({
-      start: specifier.getStart(sourceFile),
       start: specifier.getStart(sourceFile),
       end: specifier.getEnd(),
       replacement: JSON.stringify(options.cacheBust ? `${relativeImportPath(supportOutDir, compiled)}?t=${options.cacheBust}` : relativeImportPath(supportOutDir, compiled)),

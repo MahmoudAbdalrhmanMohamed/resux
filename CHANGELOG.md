@@ -4,6 +4,12 @@ All notable changes to Resux are documented here.
 
 Resux follows Semantic Versioning. Before 1.0.0, minor releases could contain breaking API changes that were documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- Server handlers, server middleware and server plugins can now import other project files by relative path or with the `@/` and `~/` aliases (for example `import { hello } from "../../lib/hello"`). Before, the build failed with "Module not found" because these files are copied into `.resux/server/` before bundling. The imported `.ts`, `.tsx`, `.js` and `.jsx` files are now compiled into `.resux/server/imported/`, the same way component scripts already did, and `export ... from` re-exports (barrel files) are followed too.
+
 ## [1.0.0] - 2026-11-27
 
 First stable 1.0 release. It has the same code as `1.0.0-rc.2` and collects everything since `0.5.0`: the `resuxjs/theme` module, the `$fetch` and `useFetch` JSON bodies, and the Rolldown build fix. Install it with `npm install resuxjs` or `npm create resuxjs@latest`. Resux requires Node.js `>=22.19.0`. See the Current Limits page in the docs for the documented limits.

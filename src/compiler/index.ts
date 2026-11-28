@@ -383,6 +383,8 @@ interface SupportModuleTranspileOptions {
   prefix?: string;
   autoImports?: Array<{ from: string; names: readonly string[] }>;
   rewriteImports?: Record<string, string>;
+  /** Compile project files this module imports by relative path or "@/" and "~/" into the build output. */
+  userImports?: { outDir: string; supportDir: string; cacheBust?: string };
 }
 
 export async function buildProject(appRoot: string, outDir = path.join(appRoot, ".resux"), options: BuildOptions = {}): Promise<BuildResult> {
@@ -530,10 +532,13 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
     const routes = localizeRouteManifest(baseRoutes, runtimeConfig);
     await hooks.callHook("pages:resolved", { pages: routes as unknown as Array<Record<string, unknown>> });
 
+    // In dev the server modules are imported straight from the build output, so compiled helper imports need a per-build
+    // query to be re-evaluated after an edit (the handler import in the manifest already has one).
+    const cacheBust = buildOptions.vite === "dev" ? String(Date.now()) : undefined;
     const components = allFiles.map((file) => compiledByFile.get(file)!);
     const layouts = layoutFiles.map((file) => compiledByFile.get(file)!);
     const plugins = unique(pluginFiles).sort((left, right) => normalizePath(left).localeCompare(normalizePath(right))).map((file, pluginIndex) => {
-      const compiled = compilePluginFile(file, pluginIndex);
+      const compiled = compilePluginFile(file, pluginIndex, absoluteOut, cacheBust);
       const mode = pluginModeByFile.get(file);
       if (mode) {
         compiled.mode = mode;
@@ -553,7 +558,7 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
       }))
       .sort((left, right) => left.name.localeCompare(right.name) || normalizePath(left.file).localeCompare(normalizePath(right.file)));
     const middleware = unique(middlewareFiles).sort((left, right) => normalizePath(left).localeCompare(normalizePath(right))).map((file, middlewareIndex) => {
-      const compiled = compileMiddlewareFile(file, middlewareIndex);
+      const compiled = compileMiddlewareFile(file, middlewareIndex, absoluteOut, cacheBust);
       const meta = middlewareMetaByFile.get(file);
       if (meta) {
         compiled.mode = meta.mode;
@@ -562,8 +567,8 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
       }
       return compiled;
     });
-    const serverMiddleware = serverMiddlewareFiles.map((file, middlewareIndex) => compileServerMiddlewareFile(file, middlewareIndex));
-    const serverHandlers = uniqueServerHandlers(serverHandlerFiles).map((record, handlerIndex) => compileServerHandlerFile(record.file, handlerIndex, record.path));
+    const serverMiddleware = serverMiddlewareFiles.map((file, middlewareIndex) => compileServerMiddlewareFile(file, middlewareIndex, absoluteOut, cacheBust));
+    const serverHandlers = uniqueServerHandlers(serverHandlerFiles).map((record, handlerIndex) => compileServerHandlerFile(record.file, handlerIndex, record.path, absoluteOut, cacheBust));
     const app = appFile ? compiledByFile.get(appFile) : undefined;
     const error = errorFile ? compiledByFile.get(errorFile) : undefined;
     await hooks.callHook("components:extend", { components: components as unknown as Array<Record<string, unknown>> });
@@ -2293,7 +2298,8 @@ function ensureCompiledUserModule(
   resolvedFile: string,
   projectRoot: string,
   outDir: string,
-  compiledSet = new Set<string>()
+  compiledSet = new Set<string>(),
+  cacheBust?: string
 ): string {
   const relativePath = normalizePath(path.relative(projectRoot, resolvedFile));
   const safeRelativePath = relativePath
@@ -2323,7 +2329,7 @@ function ensureCompiledUserModule(
   const replacements: Array<{ start: number; end: number; replacement: string }> = [];
 
   for (const statement of sourceFile.statements) {
-    if (ts.isImportDeclaration(statement) && statement.moduleSpecifier && ts.isStringLiteral(statement.moduleSpecifier)) {
+    if ((ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) && statement.moduleSpecifier && ts.isStringLiteral(statement.moduleSpecifier)) {
       const specifier = statement.moduleSpecifier;
       const importPath = specifier.text;
       if (importPath.startsWith(".") || importPath.startsWith("@/") || importPath.startsWith("~/")) {
@@ -2335,8 +2341,8 @@ function ensureCompiledUserModule(
         }
         resolvedImported = resolveFileExtension(resolvedImported);
         const ext = path.extname(resolvedImported).toLowerCase();
-        if (ext === ".ts" || ext === ".tsx" || ext === ".js" || ext === ".jsx") {
-          const compiledTarget = ensureCompiledUserModule(resolvedImported, projectRoot, outDir, compiledSet);
+        if ((ext === ".ts" || ext === ".tsx" || ext === ".js" || ext === ".jsx") && existsSync(resolvedImported)) {
+          const compiledTarget = ensureCompiledUserModule(resolvedImported, projectRoot, outDir, compiledSet, cacheBust);
           const relativeToCompiled = path.relative(path.dirname(targetJsFile), compiledTarget);
           const relativeImportPath = relativeToCompiled.startsWith(".")
             ? relativeToCompiled.replace(/\\/g, "/")
@@ -2344,7 +2350,7 @@ function ensureCompiledUserModule(
           replacements.push({
             start: specifier.getStart(sourceFile),
             end: specifier.getEnd(),
-            replacement: JSON.stringify(relativeImportPath)
+            replacement: JSON.stringify(cacheBust ? `${relativeImportPath}?t=${cacheBust}` : relativeImportPath)
           });
         }
       }
@@ -3794,7 +3800,7 @@ function supportFileBaseName(file: string): string {
   return extensionStripped.replace(/(?:\.global|\.client|\.server)+$/, "");
 }
 
-function compilePluginFile(file: string, index: number): CompiledPlugin {
+function compilePluginFile(file: string, index: number, outDir: string, cacheBust?: string): CompiledPlugin {
   const mode = supportFileMode(file);
   return {
     id: `p${index}`,
@@ -3806,6 +3812,7 @@ function compilePluginFile(file: string, index: number): CompiledPlugin {
         from: "resuxjs/runtime",
         names: SUPPORT_CLIENT_RUNTIME_HELPERS,
       }],
+      userImports: { outDir, cacheBust, supportDir: "resux-plugins" },
     }),
     clientSource: transpileSupportModule(file, {
       prefix: `import { defineResuxPlugin } from "/__resux/runtime-client.mjs";\nconst defineNuxtPlugin = defineResuxPlugin;\n`,
@@ -3821,7 +3828,7 @@ function compilePluginFile(file: string, index: number): CompiledPlugin {
   };
 }
 
-function compileMiddlewareFile(file: string, index: number): CompiledMiddleware {
+function compileMiddlewareFile(file: string, index: number, outDir: string, cacheBust?: string): CompiledMiddleware {
   const baseName = supportFileBaseName(file);
   const mode = supportFileMode(file);
   const global = /\.global(?:\.(?:client|server))?\.[cm]?[tj]s$/.test(file);
@@ -3832,10 +3839,10 @@ function compileMiddlewareFile(file: string, index: number): CompiledMiddleware 
     file,
     mode,
     global,
-    serverSource: transpileSupportModule(
-      file,
-      `import { defineResuxRouteMiddleware, navigateTo, abortNavigation } from "resuxjs/runtime";\n`
-    ),
+    serverSource: transpileSupportModule(file, {
+      prefix: `import { defineResuxRouteMiddleware, navigateTo, abortNavigation } from "resuxjs/runtime";\n`,
+      userImports: { outDir, cacheBust, supportDir: "resux-middleware" },
+    }),
     clientSource: transpileSupportModule(
       file,
       `import { defineResuxRouteMiddleware, defineClientRouteRedirect as navigateTo, defineClientRouteAbort as abortNavigation } from "/__resux/runtime-client.mjs";\n`
@@ -3843,15 +3850,18 @@ function compileMiddlewareFile(file: string, index: number): CompiledMiddleware 
   };
 }
 
-function compileServerMiddlewareFile(file: string, index: number): CompiledServerMiddleware {
+function compileServerMiddlewareFile(file: string, index: number, outDir: string, cacheBust?: string): CompiledServerMiddleware {
   return {
     id: `s${index}`,
     file,
-    source: transpileSupportModule(file, `import { defineServerMiddleware, defineEventHandler, eventHandler, readBody, getQuery, setHeader } from "resuxjs/runtime";\n`)
+    source: transpileSupportModule(file, {
+      prefix: `import { defineServerMiddleware, defineEventHandler, eventHandler, readBody, getQuery, setHeader } from "resuxjs/runtime";\n`,
+      userImports: { outDir, cacheBust, supportDir: "request-middleware" },
+    })
   };
 }
 
-function compileServerHandlerFile(file: string, index: number, routePath: string): ServerHandlerRecord {
+function compileServerHandlerFile(file: string, index: number, routePath: string, outDir: string, cacheBust?: string): ServerHandlerRecord {
   const params = collectRouteParams(routePath);
 
   return {
@@ -3859,7 +3869,10 @@ function compileServerHandlerFile(file: string, index: number, routePath: string
     path: routePath,
     file,
     params,
-    source: transpileSupportModule(file, `import { defineEventHandler, eventHandler, readBody, getQuery, setHeader } from "resuxjs/runtime";\n`)
+    source: transpileSupportModule(file, {
+      prefix: `import { defineEventHandler, eventHandler, readBody, getQuery, setHeader } from "resuxjs/runtime";\n`,
+      userImports: { outDir, cacheBust, supportDir: "handlers" },
+    })
   };
 }
 
@@ -3868,7 +3881,9 @@ function transpileSupportModule(file: string, input: string | SupportModuleTrans
   const options: SupportModuleTranspileOptions = typeof input === "string"
     ? { prefix: input }
     : input;
-  const rewrittenSource = rewriteSupportModuleImports(source, options.rewriteImports);
+  const rewrittenSource = options.userImports
+    ? rewriteSupportModuleUserImports(rewriteSupportModuleImports(source, options.rewriteImports), file, options.userImports)
+    : rewriteSupportModuleImports(source, options.rewriteImports);
   const autoImportPrefix = createSupportModuleAutoImportPrefix(file, rewrittenSource, options.autoImports ?? []);
   return ts.transpileModule(`${options.prefix ?? ""}${autoImportPrefix}${rewrittenSource}`, {
     compilerOptions: {
@@ -3877,6 +3892,55 @@ function transpileSupportModule(file: string, input: string | SupportModuleTrans
       importsNotUsedAsValues: ts.ImportsNotUsedAsValues.Remove
     }
   }).outputText;
+}
+
+const USER_MODULE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx"]);
+
+// Server handlers, server middleware and server plugins are written to .resux/server/<supportDir>/, so a relative
+// import in them no longer points at the project file. Compile the imported project files into the build output
+// (the same way component scripts do) and point the import at the compiled copy.
+function rewriteSupportModuleUserImports(
+  source: string,
+  file: string,
+  options: { outDir: string; supportDir: string; cacheBust?: string },
+): string {
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.ES2022, true);
+  const projectRoot = findProjectRoot(file);
+  const buildOutDir = path.resolve(options.outDir);
+  const supportOutDir = path.join(buildOutDir, "server", options.supportDir);
+  const replacements: Array<{ start: number; end: number; replacement: string }> = [];
+
+  for (const statement of sourceFile.statements) {
+    const specifier = (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) ? statement.moduleSpecifier : undefined;
+    if (!specifier || !ts.isStringLiteral(specifier)) {
+      continue;
+    }
+    const importPath = specifier.text;
+    const isAlias = importPath.startsWith("@/") || importPath.startsWith("~/");
+    if (!importPath.startsWith(".") && !isAlias) {
+      continue;
+    }
+    const absolute = isAlias
+      ? path.resolve(projectRoot, importPath.slice(2))
+      : path.resolve(path.dirname(file), importPath);
+    const resolved = resolveFileExtension(absolute);
+    if (!USER_MODULE_EXTENSIONS.has(path.extname(resolved).toLowerCase()) || !existsSync(resolved)) {
+      continue;
+    }
+    const compiled = ensureCompiledUserModule(resolved, projectRoot, buildOutDir, undefined, options.cacheBust);
+    replacements.push({
+      start: specifier.getStart(sourceFile),
+      end: specifier.getEnd(),
+      replacement: JSON.stringify(options.cacheBust ? `${relativeImportPath(supportOutDir, compiled)}?t=${options.cacheBust}` : relativeImportPath(supportOutDir, compiled)),
+    });
+  }
+
+  replacements.sort((a, b) => b.start - a.start);
+  let output = source;
+  for (const entry of replacements) {
+    output = output.slice(0, entry.start) + entry.replacement + output.slice(entry.end);
+  }
+  return output;
 }
 
 function rewriteSupportModuleImports(source: string, rewrites?: Record<string, string>): string {

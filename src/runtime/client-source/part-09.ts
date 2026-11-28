@@ -1068,7 +1068,7 @@ function applyPatches(scopeId, patches, options = {}) {
       continue;
     }
     elements.forEach((element) => {
-      const held = patch.type === "block" && clientChildRoots.size > 0 ? holdClientChildrenOfBlock(element) : null;
+      const held = patch.type === "block" && (clientChildRoots.size > 0 || globalThis.__RESUX__?.componentIds) ? holdClientChildrenOfBlock(element) : null;
       if (patch.type !== "html" && patchTransitionBlock(element, patch.value)) return;
       replaceManagedRuntimeHtml(element, patch.value);
       if (held) restoreClientChildrenOfBlock(element, held);

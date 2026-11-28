@@ -871,9 +871,34 @@ function renderClientChildPlaceholder(node, moduleId, scope, locals, styleScopeI
       rootAttrs.push('data-rx-mod-' + event.name + '="' + escapeAttribute(event.modifiers.join(",")) + '"');
     }
   }
+  // Attributes that may fall through to the child's root; the child's declared props filter them once it is loaded.
+  const fallthrough = [];
+  for (const attr of node.attrs) {
+    if (attr.name === "key" || attr.name === "ref" || attr.name === "is") continue;
+    const value = attr.kind === "static" ? attr.value : evaluateExpression(attr.value, scope, locals);
+    if (attr.kind !== "static" && (value === false || value === null || value === undefined)) continue;
+    fallthrough.push({ name: String(attr.name), value });
+  }
   const id = "c" + (++clientChildCounter);
-  pendingClientChildren.set(id, { moduleId, tag: node.tag, props, key, hasKey, slotHtml, provider, emits, rootAttrs });
+  pendingClientChildren.set(id, { moduleId, tag: node.tag, props, key, hasKey, slotHtml, provider, emits, rootAttrs, fallthrough });
   return '<span data-rx-child="' + id + '" style="display: contents;"></span>';
+}
+
+// Mirrors the server: undeclared attributes of a component tag fall through to the child's root element.
+function clientFallthroughAttrs(component, fallthrough) {
+  if (!fallthrough || fallthrough.length === 0 || component.inheritAttrs === false) return [];
+  const declared = Array.isArray(component.declaredProps)
+    ? new Set(component.declaredProps.map((name) => String(name).replace(/-([a-zA-Z0-9])/g, (_, char) => char.toUpperCase())))
+    : null;
+  const attrs = [];
+  for (const item of fallthrough) {
+    const name = item.name;
+    const byName = name === "class" || name === "style" || name === "id" || name.indexOf("aria-") === 0 || name.indexOf("data-") === 0;
+    const normalized = name.replace(/-([a-zA-Z0-9])/g, (_, char) => char.toUpperCase());
+    if (declared ? declared.has(normalized) : !byName) continue;
+    attrs.push(name + '="' + escapeAttribute(stringifyAttributeValue(name, item.value)) + '"');
+  }
+  return attrs;
 }
 
 async function mountClientChildren(root) {
@@ -896,7 +921,8 @@ async function mountClientChild(placeholder) {
     const record = await component.createScope(serialized, payload.route);
     if (!placeholder.isConnected) return;
     if (entry.provider) clientSlotProviders.set(id, entry.provider);
-    const html = entry.rootAttrs.length > 0 ? component.injectRootAttrs(component.renderHtml(record), entry.rootAttrs) : component.renderHtml(record);
+    const rootAttrs = clientFallthroughAttrs(component, entry.fallthrough).concat(entry.rootAttrs);
+    const html = rootAttrs.length > 0 ? component.injectRootAttrs(component.renderHtml(record), rootAttrs) : component.renderHtml(record);
     const state = component.serialize(record);
     scopeCache.set(id, record);
     payload.scopes[id] = { ...serialized, props: state.props, state: state.state, asyncData: state.asyncData, globalStateKeys: record.globalStateKeys ? [...record.globalStateKeys] : [] };

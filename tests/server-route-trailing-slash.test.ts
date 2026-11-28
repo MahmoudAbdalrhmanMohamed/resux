@@ -50,7 +50,10 @@ describe("server route matching of trailing slashes and percent-encoding", () =>
     expect(matchServerHandler("/api/sp%20ace", "GET")?.route.path).toBe("/api/sp ace");
     // Params are decoded once, and a malformed escape stays as typed instead of throwing.
     expect(matchServerHandler("/api/users/a%20b", "GET")?.params).toEqual({ id: "a b" });
-    expect(matchServerHandler("/api/users/a%2Fb", "GET")?.params).toEqual({ id: "a/b" });
+    // An encoded slash stays encoded (uppercase), like Nitro: it never becomes a path separator inside a value.
+    expect(matchServerHandler("/api/users/a%2Fb", "GET")?.params).toEqual({ id: "a%2Fb" });
+    expect(matchServerHandler("/api/users/a%2fb", "GET")?.params).toEqual({ id: "a%2Fb" });
+    expect(matchServerHandler("/api/files/a%2Fb/c", "GET")?.params).toEqual({ path: "a%2Fb/c" });
     expect(matchServerHandler("/api/users/%2541", "GET")?.params).toEqual({ id: "%41" });
     expect(matchServerHandler("/api/users/%E0%A4%A", "GET")?.params).toEqual({ id: "%E0%A4%A" });
     // Misses stay misses.

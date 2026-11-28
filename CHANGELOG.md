@@ -4,6 +4,12 @@ All notable changes to Resux are documented here.
 
 Resux follows Semantic Versioning. Before 1.0.0, minor releases could contain breaking API changes that were documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- Server route files with a method suffix, such as `server/api/hello.get.ts` (the name `create-resuxjs` generates), are now served at `/api/hello` for that method only. Before, `resux dev` and `resux start` served the file at the literal path `/api/hello.get` for every method, while the Nitro output served `/api/hello`, so the same file answered on different URLs. Discovery now strips `.get`, `.post`, `.put`, `.delete`, `.patch`, `.head`, `.options`, `.connect` and `.trace` like Nitro does, and a request with another method falls through (404). `resux dev`, `resux start` and the Nitro output now agree.
+
 ## [1.0.0] - 2026-11-27
 
 First stable 1.0 release. It has the same code as `1.0.0-rc.2` and collects everything since `0.5.0`: the `resuxjs/theme` module, the `$fetch` and `useFetch` JSON bodies, and the Rolldown build fix. Install it with `npm install resuxjs` or `npm create resuxjs@latest`. Resux requires Node.js `>=22.19.0`. See the Current Limits page in the docs for the documented limits.

@@ -1236,6 +1236,8 @@ function bindTemplateRefs(scope, definition, scopeId) {
 
 export function createClientComponent(definition) {
   return {
+    declaredProps: definition.declaredProps,
+    inheritAttrs: definition.inheritAttrs,
     async createScope(serializedScope, route) {
       const stateRefs = Object.create(null);
       const globalStateKeys = new Set(Array.isArray(serializedScope.globalStateKeys) ? serializedScope.globalStateKeys : []);
@@ -1468,8 +1470,27 @@ export function createClientComponent(definition) {
         if (isOn) skipped = "";
       }
       if (kept.length === 0) return html;
-      const cut = html.charAt(end - 1) === "/" ? end - 1 : end;
-      return html.slice(0, cut) + " " + kept.join(" ") + html.slice(cut);
+      let open = openTag;
+      const extra = [];
+      for (const attr of kept) {
+        const eq = attr.indexOf("=");
+        const name = eq < 0 ? attr : attr.slice(0, eq);
+        const value = eq < 0 ? "" : attr.slice(eq + 2, attr.length - 1);
+        const existing = new RegExp("\\s" + name.replace(/[^\w-]/g, "\\$&") + '="([^"]*)"').exec(open);
+        if (existing && (name === "class" || name === "style")) {
+          const joined = name === "style" ? existing[1].replace(/;?\s*$/, "") + ";" + value : existing[1] + " " + value;
+          open = open.replace(existing[0], " " + name + '="' + joined + '"');
+        } else if (existing && (name === "id" || name.startsWith("aria-") || (name.startsWith("data-") && !name.startsWith("data-rx-")))) {
+          open = open.replace(existing[0], " " + attr);
+        } else {
+          extra.push(attr);
+        }
+      }
+      html = html.slice(0, start) + open + html.slice(end);
+      if (extra.length === 0) return html;
+      const end2 = start + open.length;
+      const cut = html.charAt(end2 - 1) === "/" ? end2 - 1 : end2;
+      return html.slice(0, cut) + " " + extra.join(" ") + html.slice(cut);
     },
     // Renders one slot of a component tag written in this component's template (found by its slots id) with the
     // live scope and the locals captured in the payload, so a resumed child shows the parent's current content.

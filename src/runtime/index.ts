@@ -8914,7 +8914,7 @@ export function hasFallthroughRoot(template: TemplateNode[]): boolean {
   const roots = template.filter((node) => node.type !== "text" || node.value.trim().length > 0);
   if (roots.length !== 1) return false;
   const root = roots[0];
-  if (root.type !== "element" || root.if || root.for) return false;
+  if (root.type !== "element" || root.for) return false;
   return !/^[A-Z]/.test(root.tag) && root.tag !== "slot" && root.tag !== "component" && root.tag !== "template" && root.tag.toLowerCase() !== "teleport";
 }
 
@@ -8922,6 +8922,17 @@ export function hasFallthroughRoot(template: TemplateNode[]): boolean {
 // listens to itself is left alone: one element carries one handler per event.
 export function injectRootEventAttributes(template: TemplateNode[], html: string, attrs: string[]): string {
   if (!hasFallthroughRoot(template)) return html;
+  const root = template.filter((node) => node.type !== "text" || node.value.trim().length > 0)[0] as ElementTemplateNode;
+  if (!root.if) return applyRootAttributes(html, attrs);
+  // A v-if root renders inside <span data-rx-block>. The wrapper keeps the attributes so the browser can put them
+  // back when the block shows the root again after hiding it.
+  const wrapperEnd = html.startsWith("<span data-rx-block") ? html.indexOf(">") : -1;
+  if (wrapperEnd < 0) return html;
+  const marked = `<span data-rx-fall="${escapeAttribute(JSON.stringify(attrs))}"${html.slice("<span".length, wrapperEnd + 1)}`;
+  return marked + applyRootAttributes(html.slice(wrapperEnd + 1), attrs);
+}
+
+function applyRootAttributes(html: string, attrs: string[]): string {
   const start = html.search(/<[A-Za-z]/);
   if (start < 0 || html.slice(0, start).trim().length > 0) return html;
   const end = html.indexOf(">", start);

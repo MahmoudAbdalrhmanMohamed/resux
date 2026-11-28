@@ -3343,7 +3343,7 @@ function createHandlerMatcher(pattern) {
 }
 function safeDecode(value) {
   try {
-    return decodeURIComponent(value);
+    return value.split(/%2f/i).map(decodeURIComponent).join("%2F");
   } catch {
     return value;
   }

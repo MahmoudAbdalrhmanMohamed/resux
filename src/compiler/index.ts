@@ -3061,6 +3061,7 @@ function createComponentModuleSource(options: {
 }): string {
   const importPath = options.client ? "/__resux/runtime-client.mjs" : "resuxjs/runtime";
   const factory = options.client ? "createClientComponent" : "defineComponent";
+  const attrOptions = readAttrFallthroughOptions(options.analysis.sourceFile);
   
   const expressionClosures = (options.expressions ?? []).map((expr) => {
     const destructure = expr.locals.length > 0
@@ -3127,7 +3128,9 @@ function createComponentModuleSource(options: {
     `handlers: ${JSON.stringify([...options.analysis.handlerNames])},`,
     `styles: ${JSON.stringify(options.styles)},`,
     `styleScopeId: ${JSON.stringify(options.styleScopeId)},`,
-    `meta: ${JSON.stringify(options.analysis.pageMeta ?? {})}`,
+    `meta: ${JSON.stringify(options.analysis.pageMeta ?? {})},`,
+    `declaredProps: ${JSON.stringify(attrOptions.props)},`,
+    `inheritAttrs: ${attrOptions.inherit}`,
     `});`
   ].join("\n");
 
@@ -5445,4 +5448,84 @@ export function resolveFileExtension(filePath: string): string {
 
 export function fileUrl(file: string): string {
   return pathToFileURL(file).href;
+}
+
+// Declared prop names and inheritAttrs, read from the script at compile time. A component tag's attributes
+// that are not declared props fall through to the child's root element (Vue semantics). When the declared
+// props cannot be resolved statically (an imported or computed props type), props is null and the runtime
+// falls back to the by-name set (class, style, id, aria-*, data-*).
+function readAttrFallthroughOptions(sf: ts.SourceFile): { props: string[] | null; inherit: boolean } {
+  const props = new Set<string>();
+  let known = true;
+  let inherit = true;
+  const typeMembers = (type: ts.TypeNode, seen: Set<string>): void => {
+    if (ts.isTypeLiteralNode(type)) {
+      for (const member of type.members) {
+        if (member.name && (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name))) props.add(member.name.text);
+        else known = false;
+      }
+      return;
+    }
+    if (ts.isParenthesizedTypeNode(type)) return typeMembers(type.type, seen);
+    if (ts.isIntersectionTypeNode(type)) {
+      for (const part of type.types) typeMembers(part, seen);
+      return;
+    }
+    if (ts.isTypeReferenceNode(type) && ts.isIdentifier(type.typeName) && !seen.has(type.typeName.text)) {
+      const name = type.typeName.text;
+      seen.add(name);
+      let found = false;
+      for (const statement of sf.statements) {
+        if (ts.isInterfaceDeclaration(statement) && statement.name.text === name) {
+          found = true;
+          for (const member of statement.members) {
+            if (member.name && (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name))) props.add(member.name.text);
+            else known = false;
+          }
+          for (const heritage of statement.heritageClauses ?? []) {
+            for (const parent of heritage.types) {
+              if (ts.isIdentifier(parent.expression)) typeMembers(ts.factory.createTypeReferenceNode(parent.expression), seen);
+              else known = false;
+            }
+          }
+        } else if (ts.isTypeAliasDeclaration(statement) && statement.name.text === name) {
+          found = true;
+          typeMembers(statement.type, seen);
+        }
+      }
+      if (!found) known = false;
+      return;
+    }
+    known = false;
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const name = node.expression.text;
+      const arg = node.arguments[0];
+      if (name === "defineProps") {
+        const type = node.typeArguments?.[0];
+        if (type) typeMembers(type, new Set());
+        else if (arg && ts.isArrayLiteralExpression(arg)) {
+          for (const element of arg.elements) {
+            if (ts.isStringLiteral(element)) props.add(element.text);
+            else known = false;
+          }
+        } else if (arg && ts.isObjectLiteralExpression(arg)) {
+          for (const property of arg.properties) {
+            if (property.name && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))) props.add(property.name.text);
+            else known = false;
+          }
+        } else if (arg) known = false;
+      } else if (name === "defineModel") {
+        props.add(arg && ts.isStringLiteral(arg) ? arg.text : "modelValue");
+      } else if (name === "defineOptions" && arg && ts.isObjectLiteralExpression(arg)) {
+        for (const property of arg.properties) {
+          if (ts.isPropertyAssignment(property) && ts.isIdentifier(property.name) && property.name.text === "inheritAttrs" && property.initializer.kind === ts.SyntaxKind.FalseKeyword) inherit = false;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return { props: known ? [...props] : null, inherit };
 }

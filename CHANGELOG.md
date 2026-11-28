@@ -6,6 +6,10 @@ Resux follows Semantic Versioning. Before 1.0.0, minor releases could contain br
 
 ## [Unreleased]
 
+### Added
+
+- Attributes written on a component tag that the child does not declare as props now fall through to the child's root element, like Vue: `class` and `style` are merged (the child's own first, then the parent's), and `id`, `aria-*`, `data-*` and any other attribute are set on the root. A declared prop (`defineProps`, `defineModel`) is read as a prop and not repeated on the root, and `defineOptions({ inheritAttrs: false })` turns the fallthrough off. A child with more than one root element drops them. The same applies to children the browser creates, for example new items in a `v-for` block. When the compiler cannot read the declared props (a props type imported from another file, or a props object built elsewhere), only `class`, `style`, `id`, `aria-*` and `data-*` fall through. Dynamic values are read when the child is rendered; they are not patched afterwards.
+
 ### Fixed
 
 - Server routes in `resux dev` and `resux start` now match a trailing slash (`/api/hello/`) and percent-encoded characters in a static segment (`/api/hel%6Co`), like the Nitro output does. A malformed escape in a param (`%E0%A4%A`) no longer crashes the request with a 500; the param keeps the text as typed.

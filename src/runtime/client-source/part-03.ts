@@ -1236,6 +1236,8 @@ function bindTemplateRefs(scope, definition, scopeId) {
 
 export function createClientComponent(definition) {
   return {
+    declaredProps: definition.declaredProps,
+    inheritAttrs: definition.inheritAttrs,
     async createScope(serializedScope, route) {
       const stateRefs = Object.create(null);
       const globalStateKeys = new Set(Array.isArray(serializedScope.globalStateKeys) ? serializedScope.globalStateKeys : []);
@@ -1449,27 +1451,14 @@ export function createClientComponent(definition) {
     injectRootAttrs(html, attrs) {
       const roots = definition.template.filter((node) => node.type !== "text" || node.value.trim().length > 0);
       const root = roots.length === 1 ? roots[0] : null;
-      if (!root || root.type !== "element" || root.if || root.for) return html;
+      if (!root || root.type !== "element" || root.for) return html;
       const tag = String(root.tag);
       if (tag.charAt(0) !== tag.charAt(0).toLowerCase() || tag === "slot" || tag === "component" || tag === "template" || tag.toLowerCase() === "teleport") return html;
-      const start = html.indexOf("<");
-      if (start < 0 || html.slice(0, start).trim().length > 0) return html;
-      const end = html.indexOf(">", start);
-      if (end < 0) return html;
-      const openTag = html.slice(start, end);
-      const kept = [];
-      let skipped = "";
-      for (const attr of attrs) {
-        const eventName = attr.slice(attr.indexOf("data-rx-") + 8).split("=")[0].replace(/^(on|locals|mod)-/, "");
-        const isOn = attr.startsWith("data-rx-on-");
-        if (isOn && openTag.includes(" data-rx-on-" + eventName + "=")) { skipped = eventName; continue; }
-        if (!isOn && skipped === eventName) continue;
-        kept.push(attr);
-        if (isOn) skipped = "";
-      }
-      if (kept.length === 0) return html;
-      const cut = html.charAt(end - 1) === "/" ? end - 1 : end;
-      return html.slice(0, cut) + " " + kept.join(" ") + html.slice(cut);
+      if (!root.if) return injectAttrsIntoHtml(html, attrs);
+      // A v-if root sits inside <span data-rx-block>; the wrapper keeps the attributes for later re-renders.
+      const wrapperEnd = html.indexOf("<span data-rx-block") === 0 ? html.indexOf(">") : -1;
+      if (wrapperEnd < 0) return html;
+      return '<span data-rx-fall="' + escapeAttribute(JSON.stringify(attrs)) + '"' + html.slice(5, wrapperEnd + 1) + injectAttrsIntoHtml(html.slice(wrapperEnd + 1), attrs);
     },
     // Renders one slot of a component tag written in this component's template (found by its slots id) with the
     // live scope and the locals captured in the payload, so a resumed child shows the parent's current content.

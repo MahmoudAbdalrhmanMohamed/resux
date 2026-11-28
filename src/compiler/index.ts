@@ -4438,13 +4438,14 @@ function isStatementExported(statement: ts.Statement): boolean {
   return Boolean(modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword));
 }
 
+// For one path, method-specific handlers sort before the any-method handler, so `hi.get.ts` wins over `hi.ts` for GET like in Nitro.
 function uniqueServerHandlers(records: Array<{ file: string; path: string; method?: string }>): Array<{ file: string; path: string; method?: string }> {
   const map = new Map<string, { file: string; path: string; method?: string }>();
   for (const record of records) {
     const key = `${record.method ?? ""}::${normalizeRoutePath(record.path)}::${normalizePath(path.resolve(record.file))}`;
     map.set(key, { file: path.resolve(record.file), path: normalizeRoutePath(record.path), ...(record.method ? { method: record.method } : {}) });
   }
-  return [...map.values()].sort((left, right) => left.path.localeCompare(right.path) || (left.method ?? "").localeCompare(right.method ?? "") || normalizePath(left.file).localeCompare(normalizePath(right.file)));
+  return [...map.values()].sort((left, right) => left.path.localeCompare(right.path) || Number(!left.method) - Number(!right.method) || (left.method ?? "").localeCompare(right.method ?? "") || normalizePath(left.file).localeCompare(normalizePath(right.file)));
 }
 
 async function writeModuleTemplates(outDir: string, contributions: ResuxModuleContributions): Promise<string[]> {

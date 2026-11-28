@@ -9,6 +9,7 @@ Resux follows Semantic Versioning. Before 1.0.0, minor releases could contain br
 ### Fixed
 
 - Server handlers, server middleware and server plugins can now import other project files by relative path or with the `@/` and `~/` aliases (for example `import { hello } from "../../lib/hello"`). Before, the build failed with "Module not found" because these files are copied into `.resux/server/` before bundling. The imported `.ts`, `.tsx`, `.js` and `.jsx` files are now compiled into `.resux/server/imported/`, the same way component scripts already did, and `export ... from` re-exports (barrel files) are followed too.
+- Server route files with a method suffix, such as `server/api/hello.get.ts` (the name `create-resuxjs` generates), are now served at `/api/hello` for that method only. Before, `resux dev` and `resux start` served the file at the literal path `/api/hello.get` for every method, while the Nitro output served `/api/hello`, so the same file answered on different URLs. Discovery now strips `.get`, `.post`, `.put`, `.delete`, `.patch`, `.head`, `.options`, `.connect` and `.trace` like Nitro does, and a request with another method falls through (404). `resux dev`, `resux start` and the Nitro output now agree.
 
 ## [1.0.0] - 2026-11-27
 

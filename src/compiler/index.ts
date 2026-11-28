@@ -104,6 +104,8 @@ export interface CompiledServerMiddleware {
 export interface ServerHandlerRecord {
   id: string;
   path: string;
+  /** Upper-case HTTP method when the file name carries a method suffix (`hello.get.ts`); undefined matches every method. */
+  method?: string;
   file: string;
   params: string[];
   source: string;
@@ -476,7 +478,7 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
     }
 
     const serverMiddlewareFiles = await discoverSupportTsFiles(absoluteRoot, path.join("server", "middleware"));
-    const serverHandlerFiles = [
+    const serverHandlerFiles: Array<{ file: string; path: string; method?: string }> = [
       ...await discoverServerFiles(path.join(absoluteRoot, "server", "api"), "/api"),
       ...await discoverServerFiles(path.join(absoluteRoot, "server", "routes"), "")
     ];
@@ -568,7 +570,7 @@ export async function buildProject(appRoot: string, outDir = path.join(appRoot, 
       return compiled;
     });
     const serverMiddleware = serverMiddlewareFiles.map((file, middlewareIndex) => compileServerMiddlewareFile(file, middlewareIndex, absoluteOut, cacheBust));
-    const serverHandlers = uniqueServerHandlers(serverHandlerFiles).map((record, handlerIndex) => compileServerHandlerFile(record.file, handlerIndex, record.path, absoluteOut, cacheBust));
+    const serverHandlers = uniqueServerHandlers(serverHandlerFiles).map((record, handlerIndex) => compileServerHandlerFile(record.file, handlerIndex, record.path, absoluteOut, cacheBust, record.method));
     const app = appFile ? compiledByFile.get(appFile) : undefined;
     const error = errorFile ? compiledByFile.get(errorFile) : undefined;
     await hooks.callHook("components:extend", { components: components as unknown as Array<Record<string, unknown>> });
@@ -784,6 +786,7 @@ function createBuildCompatibilityId(input: {
   }
   for (const entry of input.serverHandlers) {
     hash.update(entry.id);
+    hash.update(entry.method ?? "");
     hash.update(entry.source);
   }
   hash.update(JSON.stringify(input.packages));
@@ -3231,6 +3234,7 @@ function createServerManifestSource(
     .map((handler) => `{
       id: ${JSON.stringify(handler.id)},
       path: ${JSON.stringify(handler.path)},
+      method: ${JSON.stringify(handler.method ?? null)},
       file: ${JSON.stringify(normalizePath(handler.file))},
       params: ${JSON.stringify(handler.params)},
       handler: ${handler.id},
@@ -3308,8 +3312,10 @@ export function matchRoute(pathname) {
   }
   return null;
 }
-export function matchServerHandler(pathname) {
+export function matchServerHandler(pathname, method) {
+  const requestMethod = typeof method === "string" ? method.toUpperCase() : undefined;
   for (const route of serverHandlers) {
+    if (route.method && requestMethod && route.method !== requestMethod) continue;
     const params = route.match(pathname);
     if (params) return { route, params };
   }
@@ -3861,12 +3867,13 @@ function compileServerMiddlewareFile(file: string, index: number, outDir: string
   };
 }
 
-function compileServerHandlerFile(file: string, index: number, routePath: string, outDir: string, cacheBust?: string): ServerHandlerRecord {
+function compileServerHandlerFile(file: string, index: number, routePath: string, outDir: string, cacheBust?: string, method?: string): ServerHandlerRecord {
   const params = collectRouteParams(routePath);
 
   return {
     id: `h${index}`,
     path: routePath,
+    ...(method ? { method } : {}),
     file,
     params,
     source: transpileSupportModule(file, {
@@ -4495,13 +4502,14 @@ function isStatementExported(statement: ts.Statement): boolean {
   return Boolean(modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword));
 }
 
-function uniqueServerHandlers(records: Array<{ file: string; path: string }>): Array<{ file: string; path: string }> {
-  const map = new Map<string, { file: string; path: string }>();
+// For one path, method-specific handlers sort before the any-method handler, so `hi.get.ts` wins over `hi.ts` for GET like in Nitro.
+function uniqueServerHandlers(records: Array<{ file: string; path: string; method?: string }>): Array<{ file: string; path: string; method?: string }> {
+  const map = new Map<string, { file: string; path: string; method?: string }>();
   for (const record of records) {
-    const key = `${normalizeRoutePath(record.path)}::${normalizePath(path.resolve(record.file))}`;
-    map.set(key, { file: path.resolve(record.file), path: normalizeRoutePath(record.path) });
+    const key = `${record.method ?? ""}::${normalizeRoutePath(record.path)}::${normalizePath(path.resolve(record.file))}`;
+    map.set(key, { file: path.resolve(record.file), path: normalizeRoutePath(record.path), ...(record.method ? { method: record.method } : {}) });
   }
-  return [...map.values()].sort((left, right) => left.path.localeCompare(right.path) || normalizePath(left.file).localeCompare(normalizePath(right.file)));
+  return [...map.values()].sort((left, right) => left.path.localeCompare(right.path) || Number(!left.method) - Number(!right.method) || (left.method ?? "").localeCompare(right.method ?? "") || normalizePath(left.file).localeCompare(normalizePath(right.file)));
 }
 
 async function writeModuleTemplates(outDir: string, contributions: ResuxModuleContributions): Promise<string[]> {
@@ -4568,7 +4576,7 @@ function buildRuntimeArtifacts(input: RuntimeArtifactsInput): RuntimeArtifacts {
     clientEnhancements: input.clientEnhancements.map(({ name, id, file, src }) => ({ name, id, file, src })),
     middleware: input.middleware.map(({ id, name, file, global, mode }) => ({ id, name, file, global, mode })),
     serverMiddleware: input.serverMiddleware.map(({ id, file }) => ({ id, file })),
-    serverHandlers: input.serverHandlers.map(({ id, path: routePath, file, params }) => ({ id, path: routePath, file, params })),
+    serverHandlers: input.serverHandlers.map(({ id, path: routePath, method, file, params }) => ({ id, path: routePath, ...(method ? { method } : {}), file, params })),
     vueIslands: input.vueIslands,
     app: input.app?.id,
     error: input.error?.id,
@@ -4580,7 +4588,7 @@ function buildRuntimeArtifacts(input: RuntimeArtifactsInput): RuntimeArtifacts {
 
   const buildManifest = {
     routes: input.routes.map((route) => route.path),
-    serverHandlers: input.serverHandlers.map((handler) => ({ path: handler.path, file: handler.file })),
+    serverHandlers: input.serverHandlers.map((handler) => ({ path: handler.path, ...(handler.method ? { method: handler.method } : {}), file: handler.file })),
     plugins: input.plugins.map((plugin) => ({ file: plugin.file, mode: plugin.mode })),
     clientEnhancements: input.clientEnhancements.map((entry) => ({ name: entry.name, id: entry.id, file: entry.file, src: entry.src })),
     middleware: input.middleware.map((entry) => ({ name: entry.name, file: entry.file, mode: entry.mode, global: entry.global })),
@@ -4666,7 +4674,7 @@ function buildRuntimeArtifacts(input: RuntimeArtifactsInput): RuntimeArtifacts {
     `declare module "resuxjs/server-routes" {`,
     `  export interface ResuxServerRouteMap {`,
     ...(input.serverHandlers.length
-      ? input.serverHandlers.map((handler) => `    "${handler.path}": unknown;`)
+      ? [...new Set(input.serverHandlers.map((handler) => handler.path))].map((routePath) => `    "${routePath}": unknown;`)
       : ["    // no server routes detected"]),
     `  }`,
     `}`,
@@ -5200,26 +5208,32 @@ async function discoverSupportTsFilesInDir(dir: string): Promise<string[]> {
   }
 }
 
-async function discoverServerFiles(dir: string, routePrefix: string): Promise<Array<{ file: string; path: string }>> {
+// Same method suffixes Nitro reads from file names (`hello.get.ts`, `upload.post.ts`).
+const SERVER_FILE_METHOD_SUFFIX = /\.(get|post|put|delete|patch|head|options|connect|trace)$/;
+
+async function discoverServerFiles(dir: string, routePrefix: string): Promise<Array<{ file: string; path: string; method?: string }>> {
   try {
     const entries = await readdir(dir, { withFileTypes: true });
-    const files: Array<{ file: string; path: string }> = [];
+    const files: Array<{ file: string; path: string; method?: string }> = [];
 
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         files.push(...await discoverServerFiles(fullPath, `${routePrefix}/${entry.name}`));
       } else if (entry.isFile() && /\.[cm]?[tj]s$/.test(entry.name)) {
-        const name = entry.name.replace(/\.[cm]?[tj]s$/, "");
+        const baseName = entry.name.replace(/\.[cm]?[tj]s$/, "");
+        const methodMatch = SERVER_FILE_METHOD_SUFFIX.exec(baseName);
+        const name = methodMatch ? baseName.slice(0, methodMatch.index) : baseName;
         const segment = name === "index" ? "" : `/${name}`;
         files.push({
           file: fullPath,
-          path: normalizeRoutePath(`${routePrefix}${segment}`)
+          path: normalizeRoutePath(`${routePrefix}${segment}`),
+          ...(methodMatch ? { method: methodMatch[1].toUpperCase() } : {})
         });
       }
     }
 
-    return files.sort((a, b) => a.path.localeCompare(b.path));
+    return files.sort((a, b) => a.path.localeCompare(b.path) || (a.method ?? "").localeCompare(b.method ?? ""));
   } catch {
     return [];
   }

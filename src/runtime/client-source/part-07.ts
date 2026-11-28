@@ -927,6 +927,7 @@ async function mountClientChild(placeholder) {
 // fragment, then put back in place of their new placeholder when the key (or, unkeyed, the position
 // among same-tag siblings) and the props match, so their state survives unrelated updates and reorders.
 function holdClientChildrenOfBlock(block) {
+  adoptServerChildrenOfBlock(block);
   const held = [];
   for (const [id, nodes] of clientChildRoots) {
     const first = nodes[0];
@@ -942,6 +943,63 @@ function holdClientChildrenOfBlock(block) {
   return held;
 }
 
+// Keyed components the server rendered inside a block are wrapped in <!--rx-c:SCOPE:KEY--> ... <!--/rx-c-->.
+// The first time the block re-renders, those children are registered like client-created ones (same scope,
+// same DOM nodes) so a child that still has the same key, props and emits is put back instead of being
+// created again, and its state survives. Children with slot content, nested markers or unreadable
+// scopes are left alone and are created fresh, as before.
+function adoptServerChildrenOfBlock(block) {
+  const payload = globalThis.__RESUX__;
+  if (!payload || !payload.scopes || typeof document.createTreeWalker !== "function") return;
+  const walker = document.createTreeWalker(block, 128);
+  const found = [];
+  let open = null;
+  let depth = 0;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const data = node.data;
+    if (data.startsWith("rx-c:")) {
+      if (depth === 0) open = node;
+      depth++;
+    } else if (data === "/rx-c" && depth > 0) {
+      depth--;
+      if (depth === 0 && open && open.parentNode === node.parentNode) found.push([open, node]);
+      if (depth === 0) open = null;
+    }
+  }
+  for (const [start, end] of found) {
+    const parts = start.data.split(":");
+    const id = parts[1];
+    const scope = payload.scopes[id];
+    const owner = start.parentNode && start.parentNode.closest ? start.parentNode.closest("[data-rx-block]") : null;
+    const nodes = [];
+    for (let node = start.nextSibling; node && node !== end; node = node.nextSibling) nodes.push(node);
+    start.remove();
+    end.remove();
+    if (!scope || (owner && owner !== block) || nodes.length === 0 || scope.slots || clientChildRoots.has(id)) continue;
+    let key = parts.slice(2).join(":");
+    try { key = decodeURIComponent(key); } catch (error) { /* keep the raw key */ }
+    clientChildRoots.set(id, nodes);
+    clientChildMeta.set(id, { server: true, moduleId: scope.moduleId, key: "k:" + key, propsJson: stableChildJson(withoutKey(scope.props)), emitsJson: JSON.stringify(scope.emits || null) });
+  }
+}
+
+function withoutKey(props) {
+  const out = {};
+  for (const name of Object.keys(props || {})) if (name !== "key") out[name] = props[name];
+  return out;
+}
+
+function stableChildJson(value) {
+  return JSON.stringify(value, (name, item) => {
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+      const sorted = {};
+      for (const prop of Object.keys(item).sort()) sorted[prop] = item[prop];
+      return sorted;
+    }
+    return item;
+  });
+}
+
 function restoreClientChildrenOfBlock(block, held) {
   if (!held || held.length === 0) return;
   const byKey = new Map();
@@ -950,6 +1008,7 @@ function restoreClientChildrenOfBlock(block, held) {
     const meta = entry.meta;
     if (!meta) continue;
     let slot = meta.key;
+    if (meta.server && !slot) continue;
     if (!slot) {
       const n = unkeyedCount.get(meta.tag) || 0;
       unkeyedCount.set(meta.tag, n + 1);
@@ -970,6 +1029,16 @@ function restoreClientChildrenOfBlock(block, held) {
       slot = "i:" + pending.tag + ":" + n;
     }
     const old = byKey.get(slot);
+    if (old && old.meta.server) {
+      if (old.meta.moduleId !== pending.moduleId || pending.slotHtml || pending.rootAttrs.length > 0) continue;
+      if (old.meta.emitsJson !== JSON.stringify(pending.emits || null)) continue;
+      if (old.meta.propsJson !== stableChildJson(serializeProps(pending.props))) continue;
+      byKey.delete(slot);
+      pendingClientChildren.delete(id);
+      for (const node of old.nodes) placeholder.parentNode.insertBefore(node, placeholder);
+      placeholder.remove();
+      continue;
+    }
     if (!old || old.meta.tag !== pending.tag || old.meta.slotHtml !== pending.slotHtml || old.meta.emitsJson !== JSON.stringify(pending.emits) + JSON.stringify(pending.rootAttrs)) continue;
     const nextPropsJson = JSON.stringify(pending.props);
     const propsChanged = old.meta.propsJson !== nextPropsJson;

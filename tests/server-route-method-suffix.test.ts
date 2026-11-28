@@ -29,6 +29,9 @@ describe("method suffix in server route file names", () => {
     await write(root, "server/api/users/[id].delete.ts", handler);
     // A name that only looks like a suffix is part of the path.
     await write(root, "server/api/get.ts", handler);
+    // A method-specific file wins over the any-method file for its method; the other methods use the any-method file.
+    await write(root, "server/api/both.ts", handler);
+    await write(root, "server/api/both.get.ts", handler);
 
     await buildProject(root, outDir);
 
@@ -38,9 +41,11 @@ describe("method suffix in server route file names", () => {
     const summary = manifest.serverHandlers.map((entry) => `${entry.method ?? "ANY"} ${entry.path}`).sort();
     expect(summary).toEqual([
       "ANY /api/any",
+      "ANY /api/both",
       "ANY /api/get",
       "DELETE /api/users/:id",
       "GET /api",
+      "GET /api/both",
       "GET /api/hi",
       "GET /health",
       "POST /api/hi",
@@ -67,5 +72,7 @@ describe("method suffix in server route file names", () => {
     expect(matchServerHandler("/api/users/7", "DELETE")?.params).toEqual({ id: "7" });
     expect(matchServerHandler("/api/users/7", "GET")).toBeNull();
     expect(matchServerHandler("/api/get", "GET")?.route.path).toBe("/api/get");
+    expect(matchServerHandler("/api/both", "GET")?.route).toMatchObject({ path: "/api/both", method: "GET" });
+    expect(matchServerHandler("/api/both", "PUT")?.route).toMatchObject({ path: "/api/both", method: null });
   }, 60000);
 });

@@ -191,6 +191,7 @@ interface LoadedRouteRecord {
 interface LoadedServerHandlerRecord {
   id: string;
   path: string;
+  method?: string | null;
   file: string;
   params: string[];
   handler: EventHandler;
@@ -231,7 +232,7 @@ interface LoadedManifest {
   routeRules?: Record<string, RouteRule>;
   routes: LoadedRouteRecord[];
   matchRoute(pathname: string): { route: LoadedRouteRecord; params: Record<string, string> } | null;
-  matchServerHandler?(pathname: string): { route: LoadedServerHandlerRecord; params: Record<string, string> } | null;
+  matchServerHandler?(pathname: string, method?: string): { route: LoadedServerHandlerRecord; params: Record<string, string> } | null;
 }
 
 interface CliOptions {
@@ -1041,7 +1042,7 @@ async function inspectProject(
     clientEnhancements?: unknown[];
     middleware?: unknown[];
     serverMiddleware?: unknown[];
-    serverHandlers?: Array<{ path: string; file: string }>;
+    serverHandlers?: Array<{ path: string; method?: string; file: string }>;
     routeRules?: Record<string, unknown>;
     features?: BuildOptions;
   };
@@ -1154,7 +1155,7 @@ async function inspectProject(
     console.log("\nServer handlers");
     for (const handler of summary.serverHandlers) {
       console.log(
-        `  ${handler.path} -> ${path.relative(appRoot, handler.file)}`,
+        `  ${handler.method ? `${handler.method} ` : ""}${handler.path} -> ${path.relative(appRoot, handler.file)}`,
       );
     }
   }
@@ -5337,7 +5338,7 @@ async function serveServerHandler(
   manifest: LoadedManifest,
   routeRule: RouteRule | null,
 ): Promise<boolean> {
-  const matched = manifest.matchServerHandler?.(requestUrl.pathname);
+  const matched = manifest.matchServerHandler?.(requestUrl.pathname, request.method);
   if (!matched) {
     return false;
   }

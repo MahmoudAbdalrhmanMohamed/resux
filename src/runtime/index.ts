@@ -777,9 +777,12 @@ type AsyncRenderComponent = (
   emits?: Record<string, ComponentEmitBinding>,
   slots?: Record<string, ComponentSlotBinding>,
   rootAttrs?: string[],
+  blockKey?: string,
 ) => Promise<string>;
 
 interface RenderTemplateContext {
+  /** True while rendering the body of a v-for / v-if block, where keyed child components get adoption markers. */
+  inBlock?: boolean;
   scope: Record<string, unknown>;
   scopeId: string;
   moduleId: string;
@@ -4680,7 +4683,7 @@ async function renderTemplateNodeAsync(
         nextLocals[node.for.index] = index;
       }
       rendered.push(
-        await renderElementAsync({ ...node, for: undefined, if: undefined }, context, renderComponent, nextLocals)
+        await renderElementAsync({ ...node, for: undefined, if: undefined }, { ...context, inBlock: true }, renderComponent, nextLocals)
       );
     }
 
@@ -4689,7 +4692,7 @@ async function renderTemplateNodeAsync(
 
   if (node.if) {
     const rendered = evaluateExpression(node.if.expression, context.scope, locals)
-      ? await renderElementAsync({ ...node, if: undefined }, context, renderComponent, locals)
+      ? await renderElementAsync({ ...node, if: undefined }, { ...context, inBlock: true }, renderComponent, locals)
       : "";
     return `<span data-rx-block="${context.scopeId}:${node.if.blockId}" style="display: contents;">${rendered}</span>`;
   }
@@ -4797,6 +4800,7 @@ async function renderElementAsync(
       collectComponentEmitBindings(node, context, locals),
       collectComponentSlotBindings(node, context, locals),
       collectFallthroughEventAttributes(node, context, locals),
+      collectBlockChildKey(node, context, props),
     );
   };
 
@@ -7473,6 +7477,7 @@ export class AsyncResuxRenderer {
     emits?: Record<string, ComponentEmitBinding>,
     slots?: Record<string, ComponentSlotBinding>,
     rootAttrs?: string[],
+    blockKey?: string,
   ): Promise<string> {
     this.collectComponentStyles(definition);
     this.renderedDefinitions.set(definition.id, definition);
@@ -7528,10 +7533,11 @@ export class AsyncResuxRenderer {
           ? undefined
           : (reservation, html) => this.commitTeleport(reservation, html)
       },
-      (component, props, slot, suppress, emits, slots, nativeAttrs) =>
-        this.renderComponent(component, undefined, slot, props, suppress, emits, slots, nativeAttrs)
+      (component, props, slot, suppress, emits, slots, nativeAttrs, blockKey) =>
+        this.renderComponent(component, undefined, slot, props, suppress, emits, slots, nativeAttrs, blockKey)
     ));
-    return rootAttrs && rootAttrs.length > 0 ? injectRootEventAttributes(definition.template, rendered, rootAttrs) : rendered;
+    const html = rootAttrs && rootAttrs.length > 0 ? injectRootEventAttributes(definition.template, rendered, rootAttrs) : rendered;
+    return blockKey === undefined ? html : `<!--rx-c:${scopeId}:${encodeURIComponent(blockKey)}-->${html}<!--/rx-c-->`;
   }
 
   private reserveTeleport(target: string): number | undefined {
@@ -8835,6 +8841,21 @@ function collectComponentEmitBindings(
     bindings[normalizePropName(event.name)] = binding;
   }
   return bindings;
+}
+
+// A keyed component inside a v-for / v-if block is wrapped in a pair of comments that name its scope and key,
+// so the browser can keep the server-rendered child (DOM and state) when the block first re-renders.
+// Unkeyed children and children outside blocks get no markers, so their output is unchanged.
+function collectBlockChildKey(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  props: ComponentProps,
+): string | undefined {
+  if (!context.inBlock || !node.attrs.some((attr) => attr.name === "key")) {
+    return undefined;
+  }
+  const key = props.key;
+  return key === undefined || key === null ? undefined : String(key);
 }
 
 // DOM events written on a component tag (<Child @click="go" />) are added to the child's root element as

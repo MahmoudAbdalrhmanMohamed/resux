@@ -1069,6 +1069,9 @@ function applyPatches(scopeId, patches, options = {}) {
     }
     elements.forEach((element) => {
       const held = patch.type === "block" && (clientChildRoots.size > 0 || globalThis.__RESUX__?.componentIds) ? holdClientChildrenOfBlock(element) : null;
+      if (patch.type === "block" && element.hasAttribute("data-rx-fall")) {
+        try { patch.value = injectAttrsIntoHtml(patch.value, JSON.parse(element.getAttribute("data-rx-fall"))); } catch {}
+      }
       if (patch.type !== "html" && patchTransitionBlock(element, patch.value)) return;
       replaceManagedRuntimeHtml(element, patch.value);
       if (held) restoreClientChildrenOfBlock(element, held);
@@ -1097,6 +1100,48 @@ function applyPatches(scopeId, patches, options = {}) {
   if (needsDelegatedEventRegistration) registerDelegatedEventsFromDom(document);
   if (pendingClientChildren.size > 0) void mountClientChildren(document);
   if (clientChildRoots.size > 0) releaseDetachedClientChildren();
+}
+
+// Puts the parent's attributes on the first element of html (a component's root). class and style are merged
+// (the element's own first), id/aria-*/data-* replace, a listener the root already has is left alone.
+function injectAttrsIntoHtml(html, attrs) {
+  const start = html.indexOf("<");
+  if (start < 0 || html.slice(0, start).trim().length > 0 || !/[A-Za-z]/.test(html.charAt(start + 1))) return html;
+  const end = html.indexOf(">", start);
+  if (end < 0) return html;
+  const openTag = html.slice(start, end);
+  const kept = [];
+  let skipped = "";
+  for (const attr of attrs) {
+    const eventName = attr.slice(attr.indexOf("data-rx-") + 8).split("=")[0].replace(/^(on|locals|mod)-/, "");
+    const isOn = attr.startsWith("data-rx-on-");
+    if (isOn && openTag.includes(" data-rx-on-" + eventName + "=")) { skipped = eventName; continue; }
+    if (!isOn && skipped === eventName && attr.startsWith("data-rx-")) continue;
+    kept.push(attr);
+    if (isOn) skipped = "";
+  }
+  if (kept.length === 0) return html;
+  let open = openTag;
+  const extra = [];
+  for (const attr of kept) {
+    const eq = attr.indexOf("=");
+    const name = eq < 0 ? attr : attr.slice(0, eq);
+    const value = eq < 0 ? "" : attr.slice(eq + 2, attr.length - 1);
+    const existing = new RegExp("\\s" + name.replace(/[^\w-]/g, "\\$&") + '="([^"]*)"').exec(open);
+    if (existing && (name === "class" || name === "style")) {
+      const joined = name === "style" ? existing[1].replace(/;?\s*$/, "") + ";" + value : existing[1] + " " + value;
+      open = open.replace(existing[0], " " + name + '="' + joined + '"');
+    } else if (existing && (name === "id" || name.startsWith("aria-") || (name.startsWith("data-") && !name.startsWith("data-rx-")))) {
+      open = open.replace(existing[0], " " + attr);
+    } else {
+      extra.push(attr);
+    }
+  }
+  html = html.slice(0, start) + open + html.slice(end);
+  if (extra.length === 0) return html;
+  const end2 = start + open.length;
+  const cut = html.charAt(end2 - 1) === "/" ? end2 - 1 : end2;
+  return html.slice(0, cut) + " " + extra.join(" ") + html.slice(cut);
 }
 
 function evaluateExpression(expression, scope, locals) {

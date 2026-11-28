@@ -3238,7 +3238,7 @@ function createServerManifestSource(
       file: ${JSON.stringify(normalizePath(handler.file))},
       params: ${JSON.stringify(handler.params)},
       handler: ${handler.id},
-      match: createMatcher(${JSON.stringify(handler.path)})
+      match: createHandlerMatcher(${JSON.stringify(handler.path)})
     }`)
     .join(",\n");
   const routeEntries = routes
@@ -3320,6 +3320,33 @@ export function matchServerHandler(pathname, method) {
     if (params) return { route, params };
   }
   return null;
+}
+function createHandlerMatcher(pattern) {
+  const parts = pattern.split("/").filter(Boolean);
+  return (pathname) => {
+    const trimmed = pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+    const segments = trimmed === "/" ? [] : trimmed.slice(1).split("/");
+    const params = {};
+    for (let index = 0; index < parts.length; index += 1) {
+      const part = parts[index];
+      if (part.startsWith(":") && part.endsWith("*")) {
+        params[part.slice(1, -1)] = safeDecode(segments.slice(index).join("/"));
+        return params;
+      }
+      const segment = segments[index];
+      if (segment === undefined || segment === "") return null;
+      if (part.startsWith(":")) params[part.slice(1)] = safeDecode(segment);
+      else if (safeDecode(segment) !== part) return null;
+    }
+    return segments.length === parts.length ? params : null;
+  };
+}
+function safeDecode(value) {
+  try {
+    return value.split(/%2f/i).map(decodeURIComponent).join("%2F");
+  } catch {
+    return value;
+  }
 }
 function createMatcher(pattern) {
   const names = [];

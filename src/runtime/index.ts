@@ -651,6 +651,10 @@ export interface ComponentDefinition {
   styles?: ComponentStyle[];
   styleScopeId?: string;
   meta?: PageMeta;
+  /** Prop names the compiler read from defineProps/defineModel; null when they could not be resolved statically. */
+  declaredProps?: string[] | null;
+  /** False when the component calls defineOptions({ inheritAttrs: false }). */
+  inheritAttrs?: boolean;
 }
 
 export interface SerializedScope {
@@ -4799,7 +4803,7 @@ async function renderElementAsync(
       context.suppressTeleportReservations,
       collectComponentEmitBindings(node, context, locals),
       collectComponentSlotBindings(node, context, locals),
-      collectFallthroughEventAttributes(node, context, locals),
+      [...collectFallthroughAttributes(node, context, locals, component), ...(collectFallthroughEventAttributes(node, context, locals) ?? [])],
       collectBlockChildKey(node, context, props),
     );
   };
@@ -8843,6 +8847,34 @@ function collectComponentEmitBindings(
   return bindings;
 }
 
+// Attributes written on a component tag that are not declared props fall through to the child's root element,
+// like Vue. When the compiler could not resolve the declared props (declaredProps is null), only class, style,
+// id, aria-* and data-* fall through. inheritAttrs: false turns the whole thing off.
+function collectFallthroughAttributes(
+  node: ElementTemplateNode,
+  context: RenderTemplateContext,
+  locals: Record<string, unknown>,
+  component: ComponentDefinition,
+): string[] {
+  if (component.inheritAttrs === false) return [];
+  const declared = Array.isArray(component.declaredProps) ? new Set(component.declaredProps.map(normalizePropName)) : null;
+  const attrs: string[] = [];
+  for (const attr of node.attrs) {
+    const name = attr.name;
+    if (name === "key" || name === "ref" || name === "is") continue;
+    const byName = name === "class" || name === "style" || name === "id" || name.startsWith("aria-") || name.startsWith("data-");
+    if (declared ? declared.has(normalizePropName(name)) : !byName) continue;
+    if (attr.kind === "static") {
+      attrs.push(`${name}="${escapeAttribute(attr.value)}"`);
+      continue;
+    }
+    const value = evaluateExpression(attr.value, context.scope, locals);
+    if (value === false || value === null || value === undefined) continue;
+    attrs.push(`${name}="${escapeAttribute(stringifyAttributeValue(name, value))}"`);
+  }
+  return attrs;
+}
+
 // A keyed component inside a v-for / v-if block is wrapped in a pair of comments that name its scope and key,
 // so the browser can keep the server-rendered child (DOM and state) when the block first re-renders.
 // Unkeyed children and children outside blocks get no markers, so their output is unchanged.
@@ -8911,8 +8943,28 @@ export function injectRootEventAttributes(template: TemplateNode[], html: string
     skip = "";
   }
   if (kept.length === 0) return html;
-  const selfClosing = html[end - 1] === "/" ? end - 1 : end;
-  return `${html.slice(0, selfClosing)} ${kept.join(" ")}${html.slice(selfClosing)}`;
+  let open = html.slice(start, end);
+  const extra: string[] = [];
+  for (const attr of kept) {
+    const merge = /^(class|style)="(.*)"$/s.exec(attr);
+    const existing = merge ? new RegExp(`\\s${merge[1]}="([^"]*)"`).exec(open) : null;
+    if (merge && existing) {
+      const joined = merge[1] === "style"
+        ? `${existing[1].replace(/;?\s*$/, "")};${merge[2]}`
+        : `${existing[1]} ${merge[2]}`;
+      open = open.replace(existing[0], ` ${merge[1]}="${joined}"`);
+    } else if (!merge && new RegExp(`\\s${attr.split("=")[0]}=`).test(open) && /^(id|aria-|data-)/.test(attr) && !attr.startsWith("data-rx-")) {
+      const name = attr.split("=")[0];
+      open = open.replace(new RegExp(`\\s${name}="[^"]*"`), ` ${attr}`);
+    } else {
+      extra.push(attr);
+    }
+  }
+  html = html.slice(0, start) + open + html.slice(end);
+  const end2 = start + open.length;
+  if (extra.length === 0) return html;
+  const selfClosing = html[end2 - 1] === "/" ? end2 - 1 : end2;
+  return `${html.slice(0, selfClosing)} ${extra.join(" ")}${html.slice(selfClosing)}`;
 }
 
 // Slot content is rendered by the parent, so the child's payload names the parent's slots id and carries the

@@ -4502,6 +4502,18 @@ function isStatementExported(statement: ts.Statement): boolean {
   return Boolean(modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword));
 }
 
+// First match wins, so handlers are ordered the way Nitro ranks routes: at the first segment where two paths differ, a static segment goes before a `:param`, and a `:param` before a `:catch*` catch-all. A shorter path (no segment left) goes before a longer one.
+function compareServerRoutePaths(left: string, right: string): number {
+  const rank = (segment: string | undefined): number => segment === undefined ? -1 : segment.startsWith(":") ? (segment.endsWith("*") ? 2 : 1) : 0;
+  const leftSegments = left.split("/").filter(Boolean);
+  const rightSegments = right.split("/").filter(Boolean);
+  for (let index = 0; index < Math.max(leftSegments.length, rightSegments.length); index += 1) {
+    const difference = rank(leftSegments[index]) - rank(rightSegments[index]);
+    if (difference !== 0) return difference;
+  }
+  return left.localeCompare(right);
+}
+
 // For one path, method-specific handlers sort before the any-method handler, so `hi.get.ts` wins over `hi.ts` for GET like in Nitro.
 function uniqueServerHandlers(records: Array<{ file: string; path: string; method?: string }>): Array<{ file: string; path: string; method?: string }> {
   const map = new Map<string, { file: string; path: string; method?: string }>();
@@ -4509,7 +4521,7 @@ function uniqueServerHandlers(records: Array<{ file: string; path: string; metho
     const key = `${record.method ?? ""}::${normalizeRoutePath(record.path)}::${normalizePath(path.resolve(record.file))}`;
     map.set(key, { file: path.resolve(record.file), path: normalizeRoutePath(record.path), ...(record.method ? { method: record.method } : {}) });
   }
-  return [...map.values()].sort((left, right) => left.path.localeCompare(right.path) || Number(!left.method) - Number(!right.method) || (left.method ?? "").localeCompare(right.method ?? "") || normalizePath(left.file).localeCompare(normalizePath(right.file)));
+  return [...map.values()].sort((left, right) => compareServerRoutePaths(left.path, right.path) || Number(!left.method) - Number(!right.method) || (left.method ?? "").localeCompare(right.method ?? "") || normalizePath(left.file).localeCompare(normalizePath(right.file)));
 }
 
 async function writeModuleTemplates(outDir: string, contributions: ResuxModuleContributions): Promise<string[]> {
